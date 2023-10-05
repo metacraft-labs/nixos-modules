@@ -163,6 +163,7 @@
 
       flake.lib = {
         services = import "${self}/services";
+        modules = import "${self}/modules";
       };
     };
 }

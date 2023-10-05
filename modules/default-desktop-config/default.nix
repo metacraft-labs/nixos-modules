@@ -1,18 +1,11 @@
 {
-  dirs,
-  lib,
-  ...
-}: {
-  imports = [
-    "${dirs.modules}/default-server-config"
-    ./boot.nix
-    ./gnome_desktop_env.nix
-    ./ledger-nano-udev-rules.nix
-    ./packages.nix
-    ./services.nix
-    ./sleep.nix
-    ./virtualisation.nix
-  ];
-
-  mcl.sleep.enable = lib.mkDefault false;
+  all = import ./all.nix;
+  boot = import ./boot.nix;
+  gnome_desktop_env = import ./gnome_desktop_env.nix;
+  ledger-nano-udev-rules = import ./ledger-nano-udev-rules.nix;
+  packages = import ./packages.nix;
+  services = import ./services.nix;
+  sleep = import ./sleep.nix;
+  users = import ./users.nix;
+  virtualisation = import ./virtualisation.nix;
 }
