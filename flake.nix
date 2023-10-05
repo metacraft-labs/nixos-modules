@@ -160,5 +160,9 @@
         devShells.default = import ./shells/default.nix {inherit pkgs flake inputs';};
         devShells.ci = import ./shells/ci.nix {inherit pkgs;};
       };
+
+      flake.lib = {
+        services = import "${self}/services";
+      };
     };
 }
