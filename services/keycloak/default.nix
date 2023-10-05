@@ -4,7 +4,7 @@
   ...
 }: {
   imports = [
-    "${dirs.services}/nginx"
+    ../nginx
     (import "${dirs.lib}/import-agenix.nix" "keycloak")
   ];
 
