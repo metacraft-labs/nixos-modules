@@ -1,7 +1,6 @@
 {
   config,
   lib,
-  dirs,
   ...
 }: {
   options.mcl.host-info = with lib; {

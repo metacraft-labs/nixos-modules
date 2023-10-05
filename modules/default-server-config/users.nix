@@ -1,5 +1,4 @@
 {
-  dirs,
   config,
   lib,
   ...

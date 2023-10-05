@@ -1,7 +1,6 @@
 {
   config,
   pkgs,
-  defaultUser,
   ...
 }: {
   programs = {
@@ -11,9 +10,6 @@
     };
     git = {
       enable = true;
-      #   config = {
-      # safe.directory = "/home/${defaultUser}/code/repost/dotfiles";
-      #   };
     };
     neovim = {
       enable = true;

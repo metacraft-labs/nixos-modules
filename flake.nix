@@ -163,8 +163,6 @@
         devShells.default = import ./shells/default.nix {inherit pkgs flake inputs';};
         devShells.ci = import ./shells/ci.nix {inherit pkgs;};
       };
-
-<<<<<<< HEAD
       flake.lib.create = {
         rootDir,
         machinesDir ? null,
@@ -180,10 +178,6 @@
           make-config = import ./lib/make-config.nix {inherit lib rootDir machinesDir usersDir;};
           utils = import ./lib {inherit usersDir rootDir machinesDir;};
         };
-=======
-      flake.lib = {
-        services = import "${self}/services";
->>>>>>> 483bf91 (feat(services): Add `lib.services` to flake)
       };
     };
 }

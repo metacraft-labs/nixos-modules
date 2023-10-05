@@ -1,13 +1,13 @@
 {
   config,
   lib,
-  dirs,
+  libs,
   ...
 }: let
   cfg = config.users.mcl;
   enabled = cfg.includedUsers != [] || cfg.includedGroups != [];
 
-  utils = import dirs.lib;
+  utils = libs.utils;
   allUsers = utils.usersInfo;
   allGroups = let
     predefinedGroups = config.ids.gids;

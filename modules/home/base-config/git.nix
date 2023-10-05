@@ -8,7 +8,7 @@
     package = pkgs.gitFull;
     delta.enable = true;
     includes = [
-      {path = ../../../users + "/${username}/.gitconfig";}
+      # {path = ../../../users + "/${username}/.gitconfig";}
     ];
   };
 

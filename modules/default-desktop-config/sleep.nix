@@ -1,7 +1,6 @@
 {
   config,
   lib,
-  dirs,
   ...
 }: let
   enabled = config.mcl.sleep.enable;

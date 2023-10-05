@@ -1,7 +1,7 @@
-{dirs, ...}: {
+{
   imports = [
-    "${dirs.modules}/host-info.nix"
-    "${dirs.modules}/users.nix"
+    ../host-info.nix
+    ../users.nix
     ./i18n.nix
     ./networking.nix
     ./nix.nix
