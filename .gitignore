@@ -1,0 +1,8 @@
+# Nix build artifacts
+result
+.result
+
+# Direnv
+.direnv
+
+*.qcow2
