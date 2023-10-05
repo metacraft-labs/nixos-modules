@@ -164,6 +164,10 @@
       flake.lib = {
         services = import "${self}/services";
         modules = import "${self}/modules";
+        shells = {
+          default = import "${self}/shells";
+          ci = import "${self}/shells/ci.nix";
+        };
       };
     };
 }
