@@ -175,6 +175,10 @@
           modules = self + "/modules";
           machines = rootDir + "/machines";
         };
+        libs = {
+          make-config = import ./lib/make-config.nix {inherit lib rootDir machinesDir usersDir;};
+          utils = import ./lib {inherit usersDir rootDir machinesDir;};
+        };
       };
     };
 }
