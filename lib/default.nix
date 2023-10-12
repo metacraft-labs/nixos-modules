@@ -1,4 +1,9 @@
-let
+{
+  usersDir,
+  rootDir,
+  machinesDir,
+  ...
+}: let
   inherit (import ./current-flake.nix) lib;
   inherit (builtins) attrValues map filter concatLists length listToAttrs typeOf split tail;
   inherit (lib) pipe filterAttrs strings;
@@ -72,10 +77,10 @@ in rec {
   allUsers = builtins.attrNames (
     lib.filterAttrs
     (n: v: v == "directory")
-    (builtins.readDir ../users)
+    (builtins.readDir "${usersDir}")
   );
 
-  readUserInfo = user: import ../users/${user}/user-info.nix;
+  readUserInfo = user: import "${usersDir}/${user}/user-info.nix";
 
   usersInfo = lib.genAttrs allUsers (name: (readUserInfo name).userInfo);
 }

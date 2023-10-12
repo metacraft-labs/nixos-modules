@@ -5,7 +5,8 @@ let
     url = "https://github.com/${owner}/${repo}/archive/${rev}.tar.gz";
     sha256 = narHash;
   };
+  flake = import ../flake.nix;
 in {
-  inherit currentFlake;
+  inherit currentFlake flake;
   lib = (import nixpkgs {system = "x86_64-linux";}).lib;
 }

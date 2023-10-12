@@ -1,7 +1,7 @@
 moduleName: {
   config,
-  dirs,
   lib,
+  dirs,
   ...
 }: let
   machineConfigPath = config.mcl.host-info.configPath;
