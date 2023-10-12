@@ -160,6 +160,9 @@
         inherit (pkgs.lib) hasSuffix;
         utils = import "${self}/lib";
       in {
+        imports = [
+          ./packages
+        ];
         devShells.default = import ./shells/default.nix {inherit pkgs flake inputs';};
         devShells.ci = import ./shells/ci.nix {inherit pkgs;};
       };
