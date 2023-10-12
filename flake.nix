@@ -137,11 +137,15 @@
 
   outputs = inputs @ {
     self,
+    nixpkgs,
     flake-parts,
     cachix-deploy,
     home-manager,
     ...
-  }:
+  }: let
+    lib = import "${nixpkgs}/lib";
+    flake = import "${self}/flake.nix";
+  in
     flake-parts.lib.mkFlake {inherit inputs;} {
       systems = ["x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin"];
       perSystem = {
@@ -154,11 +158,16 @@
       }: let
         cachix-deploy-lib = cachix-deploy.lib pkgs;
         inherit (pkgs.lib) hasSuffix;
-        flake = import "${self}/flake.nix";
         utils = import "${self}/lib";
       in {
         devShells.default = import ./shells/default.nix {inherit pkgs flake inputs';};
         devShells.ci = import ./shells/ci.nix {inherit pkgs;};
       };
+
+      flake.lib.create = {
+        rootDir,
+        machinesDir ? null,
+        usersDir ? null,
+      }: {};
     };
 }
