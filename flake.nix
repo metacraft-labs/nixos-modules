@@ -168,6 +168,13 @@
         rootDir,
         machinesDir ? null,
         usersDir ? null,
-      }: {};
+      }: {
+        dirs = {
+          lib = self + "/lib";
+          services = self + "/services";
+          modules = self + "/modules";
+          machines = rootDir + "/machines";
+        };
+      };
     };
 }
