@@ -133,6 +133,11 @@
       inputs.flake-parts.follows = "flake-parts";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+
+    validator-ejector = {
+      url = "github:metacraft-labs/validator-ejector?ref=add/nix-package";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs = inputs @ {
@@ -161,7 +166,7 @@
         utils = import "${self}/lib";
       in {
         imports = [
-          ./packages
+          (import ./packages {inherit pkgs inputs';})
         ];
         devShells.default = import ./shells/default.nix {inherit pkgs flake inputs';};
         devShells.ci = import ./shells/ci.nix {inherit pkgs;};
