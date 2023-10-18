@@ -152,6 +152,9 @@
     flake = import "${self}/flake.nix";
   in
     flake-parts.lib.mkFlake {inherit inputs;} {
+      imports = [
+        ./modules/lido/validator-ejector
+      ];
       systems = ["x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin"];
       perSystem = {
         pkgs,
