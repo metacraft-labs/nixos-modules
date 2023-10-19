@@ -153,7 +153,7 @@
   in
     flake-parts.lib.mkFlake {inherit inputs;} {
       imports = [
-        ./modules/lido/validator-ejector
+        ./modules/lido
       ];
       systems = ["x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin"];
       perSystem = {
