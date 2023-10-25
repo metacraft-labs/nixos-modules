@@ -27,6 +27,6 @@ in
 
     shellHook = ''
       export REPO_ROOT="$PWD"
-      figlet -w$COLUMNS "${flake.description}"
+      figlet -t "${flake.description}"
     '';
   }
