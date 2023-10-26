@@ -10,6 +10,7 @@
       {config, ...}:
         config.packages.validator-ejector
     );
+    inherit (import ../../lib.nix {inherit lib;}) toEnvVariables;
   in {
     options.services.lido-validator-ejector = with lib; {
       enable = mkEnableOption (lib.mdDoc "Lido Validator Ejector");
@@ -199,31 +200,7 @@
 
         wantedBy = ["multi-user.target"];
 
-        environment =
-          lib.filterAttrs
-          (k: v: (v != "null") && (v != "") && (v != null))
-          {
-            EXECUTION_NODE = cfg.args.execution-node;
-            CONSENSUS_NODE = cfg.args.consensus-node;
-            LOCATOR_ADDRESS = cfg.args.locator-address;
-            STAKING_MODULE_ID = builtins.toJSON cfg.args.staking-module-id;
-            OPERATOR_ID = builtins.toJSON cfg.args.operator-id;
-            MESSAGES_LOCATION = cfg.args.messages-location;
-            VALIDATOR_EXIT_WEBHOOK = cfg.args.validator-exit-webhook;
-            ORACLE_ADDRESSES_ALLOWLIST = builtins.toJSON cfg.args.oracle-addresses-allowlist;
-            MESSAGES_PASSWORD = cfg.args.messages-password;
-            MESSAGES_PASSWORD_FILE = cfg.args.messages-password-file;
-            BLOCKS_PRELOAD = builtins.toJSON cfg.args.blocks-preload;
-            BLOCKS_LOOP = builtins.toJSON cfg.args.blocks-loop;
-            JOB_INTERVAL = builtins.toJSON cfg.args.job-interval;
-            HTTP_PORT = builtins.toJSON cfg.args.http-port;
-            RUN_METRICS = builtins.toJSON cfg.args.run-metrics;
-            RUN_HEALTH_CHECK = builtins.toJSON cfg.args.run-health-check;
-            LOGGER_LEVEL = cfg.args.logger-level;
-            LOGGER_FORMAT = cfg.args.logger-format;
-            LOGGER_SECRETS = builtins.toJSON cfg.args.logger-secrets;
-            DRY_RUN = builtins.toJSON cfg.args.dry-run;
-          };
+        environment = toEnvVariables cfg.args;
 
         path = [package];
 

@@ -10,6 +10,7 @@
       {config, ...}:
         config.packages.lido-withdrawals-automation
     );
+    inherit (import ../../lib.nix {inherit lib;}) toEnvVariables;
   in {
     options.services.lido-withdrawals-automation = with lib; {
       enable = mkEnableOption (lib.mdDoc "Lido Withdrawals Automation");
@@ -64,20 +65,7 @@
 
         wantedBy = ["multi-user.target"];
 
-        environment =
-          lib.filterAttrs
-          (k: v: (v != "null") && (v != "") && (v != null))
-          {
-            PERCENTAGE = builtins.toJSON cfg.args.percentage;
-            KAPI_URL = cfg.args.kapi-url;
-            REMOTE_SIGNER_URL = cfg.args.remote-signer-url;
-            KEYMANAGER_URLS = cfg.args.keymanager-urls;
-            PASSWORD = cfg.args.password;
-            OUTPUT_FOLDER = cfg.args.output-folder;
-            OPERATOR_ID = builtins.toJSON cfg.args.operator-id;
-            BEACON_NODE_URL = cfg.args.beacon-node-url;
-            MODULE_ID = builtins.toJSON cfg.args.module-id;
-          };
+        environment = toEnvVariables cfg.args;
 
         path = [package];
 
