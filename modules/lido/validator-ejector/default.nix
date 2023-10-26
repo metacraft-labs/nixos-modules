@@ -14,7 +14,7 @@
     options.services.lido-validator-ejector = with lib; {
       enable = mkEnableOption (lib.mdDoc "Lido Validator Ejector");
 
-      environments = {
+      args = {
         execution-node = mkOption {
           type = types.str;
           example = "http://1.2.3.4:8545";
@@ -203,26 +203,26 @@
           lib.filterAttrs
           (k: v: (v != "null") && (v != "") && (v != null))
           {
-            EXECUTION_NODE = cfg.environments.execution-node;
-            CONSENSUS_NODE = cfg.environments.consensus-node;
-            LOCATOR_ADDRESS = cfg.environments.locator-address;
-            STAKING_MODULE_ID = builtins.toJSON cfg.environments.staking-module-id;
-            OPERATOR_ID = builtins.toJSON cfg.environments.operator-id;
-            MESSAGES_LOCATION = cfg.environments.messages-location;
-            VALIDATOR_EXIT_WEBHOOK = cfg.environments.validator-exit-webhook;
-            ORACLE_ADDRESSES_ALLOWLIST = builtins.toJSON cfg.environments.oracle-addresses-allowlist;
-            MESSAGES_PASSWORD = cfg.environments.messages-password;
-            MESSAGES_PASSWORD_FILE = cfg.environments.messages-password-file;
-            BLOCKS_PRELOAD = builtins.toJSON cfg.environments.blocks-preload;
-            BLOCKS_LOOP = builtins.toJSON cfg.environments.blocks-loop;
-            JOB_INTERVAL = builtins.toJSON cfg.environments.job-interval;
-            HTTP_PORT = builtins.toJSON cfg.environments.http-port;
-            RUN_METRICS = builtins.toJSON cfg.environments.run-metrics;
-            RUN_HEALTH_CHECK = builtins.toJSON cfg.environments.run-health-check;
-            LOGGER_LEVEL = cfg.environments.logger-level;
-            LOGGER_FORMAT = cfg.environments.logger-format;
-            LOGGER_SECRETS = builtins.toJSON cfg.environments.logger-secrets;
-            DRY_RUN = builtins.toJSON cfg.environments.dry-run;
+            EXECUTION_NODE = cfg.args.execution-node;
+            CONSENSUS_NODE = cfg.args.consensus-node;
+            LOCATOR_ADDRESS = cfg.args.locator-address;
+            STAKING_MODULE_ID = builtins.toJSON cfg.args.staking-module-id;
+            OPERATOR_ID = builtins.toJSON cfg.args.operator-id;
+            MESSAGES_LOCATION = cfg.args.messages-location;
+            VALIDATOR_EXIT_WEBHOOK = cfg.args.validator-exit-webhook;
+            ORACLE_ADDRESSES_ALLOWLIST = builtins.toJSON cfg.args.oracle-addresses-allowlist;
+            MESSAGES_PASSWORD = cfg.args.messages-password;
+            MESSAGES_PASSWORD_FILE = cfg.args.messages-password-file;
+            BLOCKS_PRELOAD = builtins.toJSON cfg.args.blocks-preload;
+            BLOCKS_LOOP = builtins.toJSON cfg.args.blocks-loop;
+            JOB_INTERVAL = builtins.toJSON cfg.args.job-interval;
+            HTTP_PORT = builtins.toJSON cfg.args.http-port;
+            RUN_METRICS = builtins.toJSON cfg.args.run-metrics;
+            RUN_HEALTH_CHECK = builtins.toJSON cfg.args.run-health-check;
+            LOGGER_LEVEL = cfg.args.logger-level;
+            LOGGER_FORMAT = cfg.args.logger-format;
+            LOGGER_SECRETS = builtins.toJSON cfg.args.logger-secrets;
+            DRY_RUN = builtins.toJSON cfg.args.dry-run;
           };
 
         path = [package];
