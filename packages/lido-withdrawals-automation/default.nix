@@ -1,29 +1,29 @@
-{pkgs}: let
-  nodejs = pkgs.nodejs-18_x;
-in
-  with pkgs;
-    buildNpmPackage rec {
-      pname = "lido-withdrawals-automation";
-      version = "0.1.0";
-      src = fetchFromGitHub {
-        owner = "status-im";
-        repo = "lido-withdrawals-automation";
-        rev = "9a52167e86d8b727b27fd4ebe0d93935725a0ac3";
-        hash = "sha256-xnFpMQrJTv4uUSqoMCQEdr+Eu80ac6dYQhAh0rBzvTQ=";
-      };
+{
+  lib,
+  fetchFromGitHub,
+  buildNpmPackage,
+}:
+buildNpmPackage rec {
+  pname = "lido-withdrawals-automation";
+  version = "1.0.2";
 
-      npmDepsHash = "sha256-cR9smnQtOnpY389ay54SdbR5qsD2MD6zB2X43tfoHwM=";
+  src = fetchFromGitHub {
+    owner = "status-im";
+    repo = "lido-withdrawals-automation";
+    rev = "v${version}";
+    hash = "sha256-xnFpMQrJTv4uUSqoMCQEdr+Eu80ac6dYQhAh0rBzvTQ=";
+  };
+  npmDepsHash = "sha256-cR9smnQtOnpY389ay54SdbR5qsD2MD6zB2X43tfoHwM=";
 
-      npmPackFlags = ["--ignore-scripts"];
-      dontNpmBuild = true;
-      doCheck = false;
+  dontNpmBuild = true;
+  doCheck = true;
 
-      nativeBuildInputs = [nodejs];
+  checkPhase = ''
+    npm run coverage
+  '';
 
-      buildInputs = [];
-
-      meta = with lib; {
-        mainProgram = "lido-withdrawals-automation";
-        homepage = "https://github.com/status-im/lido-withdrawals-automation";
-      };
-    }
+  meta = with lib; {
+    mainProgram = "lido-withdrawals-automation";
+    homepage = "https://github.com/status-im/lido-withdrawals-automation";
+  };
+}
