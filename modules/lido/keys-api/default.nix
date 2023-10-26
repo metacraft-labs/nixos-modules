@@ -10,6 +10,7 @@
       {config, ...}:
         config.packages.lido-keys-api
     );
+    inherit (import ../../lib.nix {inherit lib;}) toEnvVariables;
   in {
     options.services.lido-keys-api = with lib; {
       enable = mkEnableOption (lib.mdDoc "Lido Keys API");
@@ -168,32 +169,7 @@
         backend = "docker";
         containers.lido-keys-api = {
           image = "lidofinance/lido-keys-api:stable";
-          environment =
-            lib.filterAttrs
-            (k: v: (v != "null") && (v != "") && (v != null))
-            {
-              PORT = cfg.args.port;
-              CORS_WHITELIST_REGEXP = cfg.args.cors-whitelist-regexp;
-              GLOBAL_THROTTLE_TTL = cfg.args.global-throttle-ttl;
-              GLOBAL_THROTTLE_LIMIT = cfg.args.global-trottle-limit;
-              GLOBAL_CACHE_TTL = cfg.args.global-cache-ttl;
-              SENTRY_DSN = cfg.args.sentry-dsn;
-              LOG_LEVEL = cfg.args.log-level;
-              LOG_FORMAT = cfg.args.log-format;
-              PROVIDERS_URLS = cfg.args.providers-urls;
-              CHRONIX_PROVIDER_MAINNET_URL = cfg.args.chronix-provider-mainnet-url;
-              CHAIN_ID = cfg.args.chain-id;
-              DB_NAME = cfg.args.db-name;
-              DB_PORT = cfg.args.db-port;
-              DB_HOST = cfg.args.db-host;
-              DB_USER = cfg.args.db-user;
-              DB_PASSWORD = cfg.args.db-password;
-              PROVIDER_JSON_RPC_MAX_BATCH_SIZE = cfg.args.provider-json-rpc-max-batch-size;
-              PROVIDER_CONCURRENT_REQUESTS = cfg.args.provider-concurrent-requests;
-              PROVIDER_BATCH_AGGREGATION_WAIT_MS = cfg.args.provider-batch-aggregation-wait-ms;
-              CL_API_URLS = cfg.args.cl-api-urls;
-              VALIDATOR_REGISTRY_ENABLE = cfg.args.validator-registry-enable;
-            };
+          environment = toEnvVariables cfg.args;
         };
       };
 
