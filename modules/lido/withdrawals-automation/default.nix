@@ -13,7 +13,7 @@
   in {
     options.services.lido-withdrawals-automation = with lib; {
       enable = mkEnableOption (lib.mdDoc "Lido Withdrawals Automation");
-      environments = {
+      args = {
         percentage = mkOption {
           type = types.nullOr types.int;
           default = null;
@@ -68,15 +68,15 @@
           lib.filterAttrs
           (k: v: (v != "null") && (v != "") && (v != null))
           {
-            PERCENTAGE = builtins.toJSON cfg.environments.percentage;
-            KAPI_URL = cfg.environments.kapi-url;
-            REMOTE_SIGNER_URL = cfg.environments.remote-signer-url;
-            KEYMANAGER_URLS = cfg.environments.keymanager-urls;
-            PASSWORD = cfg.environments.password;
-            OUTPUT_FOLDER = cfg.environments.output-folder;
-            OPERATOR_ID = builtins.toJSON cfg.environments.operator-id;
-            BEACON_NODE_URL = cfg.environments.beacon-node-url;
-            MODULE_ID = builtins.toJSON cfg.environments.module-id;
+            PERCENTAGE = builtins.toJSON cfg.args.percentage;
+            KAPI_URL = cfg.args.kapi-url;
+            REMOTE_SIGNER_URL = cfg.args.remote-signer-url;
+            KEYMANAGER_URLS = cfg.args.keymanager-urls;
+            PASSWORD = cfg.args.password;
+            OUTPUT_FOLDER = cfg.args.output-folder;
+            OPERATOR_ID = builtins.toJSON cfg.args.operator-id;
+            BEACON_NODE_URL = cfg.args.beacon-node-url;
+            MODULE_ID = builtins.toJSON cfg.args.module-id;
           };
 
         path = [package];
