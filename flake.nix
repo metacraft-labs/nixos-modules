@@ -154,6 +154,7 @@
     flake-parts.lib.mkFlake {inherit inputs;} {
       imports = [
         ./modules/lido
+        ./packages
       ];
       systems = ["x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin"];
       perSystem = {
@@ -168,9 +169,6 @@
         inherit (pkgs.lib) hasSuffix;
         utils = import "${self}/lib";
       in {
-        imports = [
-          (import ./packages {inherit pkgs inputs';})
-        ];
         devShells.default = import ./shells/default.nix {inherit pkgs flake inputs';};
         devShells.ci = import ./shells/ci.nix {inherit pkgs;};
       };
