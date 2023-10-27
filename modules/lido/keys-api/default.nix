@@ -32,7 +32,7 @@
           '';
         };
 
-        global-trottle-limit = mkOption {
+        global-throttle-limit = mkOption {
           type = types.nullOr types.int;
           default = null;
           example = 100;
