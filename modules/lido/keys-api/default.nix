@@ -171,7 +171,7 @@
             ports = ["${toString cfg.args.port}:${toString cfg.args.port}"];
             dependsOn = ["postgresql-lido"];
             extraOptions = [
-              "--add-host=host.docker.internal:host-gateway"
+              "--network=host"
             ];
           };
 
@@ -183,6 +183,9 @@
               POSTGRES_PASSWORD = "${cfg.args.db-password}";
             };
             ports = ["${toString cfg.args.db-port}:${toString cfg.args.db-port}"];
+            extraOptions = [
+              "--network=host"
+            ];
           };
         };
       };
