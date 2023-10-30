@@ -170,6 +170,9 @@
             environment = toEnvVariables cfg.args;
             ports = ["${toString cfg.args.port}:${toString cfg.args.port}"];
             dependsOn = ["postgresql-lido"];
+            extraOptions = [
+              "--add-host=host.docker.internal:host-gateway"
+            ];
           };
 
           postgresql-lido = {
