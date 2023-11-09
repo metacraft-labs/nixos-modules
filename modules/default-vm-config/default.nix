@@ -56,7 +56,7 @@
           initialPassword = "1234";
         }))
     ];
-    users.mcl.includedUsers = ["bean" "johnny"];
+    users.includedUsers = ["bean" "johnny"];
 
     system.activationScripts.agenixInstall.deps = ["installSSHHostKeys"];
 

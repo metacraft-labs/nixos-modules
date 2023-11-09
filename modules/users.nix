@@ -1,13 +1,16 @@
 {
+  usersDir,
+  rootDir,
+  machinesDir,
+}: {
   config,
   lib,
-  libs,
   ...
 }: let
-  cfg = config.users.mcl;
+  cfg = config.users;
   enabled = cfg.includedUsers != [] || cfg.includedGroups != [];
 
-  utils = libs.utils;
+  utils = import ../lib {inherit usersDir rootDir machinesDir;};
   allUsers = utils.usersInfo;
   allGroups = let
     predefinedGroups = config.ids.gids;
@@ -38,7 +41,7 @@
   in
     utils.allAssignedGroups' selectedUsers predefinedGroups;
 in {
-  options.users.mcl = with lib; {
+  options.users = with lib; {
     includedUsers = mkOption {
       type = types.listOf (types.enum allUserNames);
       default = [];

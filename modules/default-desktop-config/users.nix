@@ -1,4 +1,4 @@
 {
   users.groups.plugdev = {};
-  users.mcl.includedGroups = ["plugdev" "libvirtd" "docker"];
+  users.includedGroups = ["plugdev" "libvirtd" "docker"];
 }
