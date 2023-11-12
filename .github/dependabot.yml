@@ -1,0 +1,17 @@
+version: 2
+updates:
+
+- package-ecosystem: github-actions
+  directory: "/"
+  schedule:
+    interval: daily
+    time: '00:00'
+    timezone: UTC
+  commit-message:
+      prefix: "chore"
+      include: "scope"
+  groups:
+    gh-actions:
+      patterns:
+        # Bundle all GH Actions updates in a single PR
+        - "*"
