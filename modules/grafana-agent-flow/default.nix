@@ -14,9 +14,10 @@
   in {
     options.services.grafana-agent-flow = with lib; {
       enable = mkEnableOption (lib.mdDoc "Grafana Agent (Flow mode)");
-      config = {
-        type = types.path;
+      config-file = mkOption {
+        type = types.str;
         default = "./config.river";
+        example = "./config.river";
       };
     };
     config = {
@@ -30,7 +31,7 @@
         };
 
         serviceConfig = {
-          ExecStart = "${package}/bin/grafana-agent-flow run ${cfg.config}";
+          ExecStart = ''${package}/bin/grafana-agent-flow run ${cfg.config-file}'';
         };
       };
     };
