@@ -89,6 +89,15 @@
           '';
         };
 
+        chronix-provider-goerli-url = mkOption {
+          type = types.nullOr types.str;
+          default = null;
+          example = "https://goerli.infura.io/v3/XXX,https://eth-goerli.alchemyapi.io/v2/YYY";
+          description = ''
+            provider url for e2e tests
+          '';
+        };
+
         chain-id = mkOption {
           type = types.nullOr types.int;
           default = null;
