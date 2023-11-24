@@ -11,16 +11,16 @@ buildNpmPackage rec {
     owner = "status-im";
     repo = "lido-withdrawals-automation";
     rev = "v${version}";
-    hash = "sha256-PZNT6mlzkkq4ILQOxKOeJr/hNt2WzwyJcdIYzarKa0o=";
+    hash = "sha256-XW+IpB+KHYXf0tm90bztjuM/tYRM1/uzZ9rwg50gAcU=";
   };
   npmDepsHash = "sha256-cR9smnQtOnpY389ay54SdbR5qsD2MD6zB2X43tfoHwM=";
 
   dontNpmBuild = true;
   doCheck = true;
 
-  # checkPhase = ''
-  #   npm run coverage
-  # '';
+  checkPhase = ''
+    npm run coverage
+  '';
 
   meta = with lib; {
     mainProgram = "lido-withdrawals-automation";
