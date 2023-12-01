@@ -42,11 +42,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1701256969,
-        "narHash": "sha256-257psngMJFU4lJNGQ1nhP01ho9V4WJxZ5y3hHYloh3k=",
+        "lastModified": 1701353772,
+        "narHash": "sha256-hkarfx28vsRUR62gnrSE/H2Grxfy+yt/1RgcLmGz5G0=",
         "owner": "cachix",
         "repo": "cachix",
-        "rev": "4ec549470813ee894ed93b8e02cf354e0224da18",
+        "rev": "d6c66e2393e25627acc0dc5f97c1b7c92693c7aa",
         "type": "github"
       },
       "original": {
@@ -198,11 +198,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1701343561,
-        "narHash": "sha256-lHsa9c9bi7yMM7PBbr4OykM5WPbjQR9sOazSZn5mDNE=",
+        "lastModified": 1701389645,
+        "narHash": "sha256-Kt9P5WrAuoTIQtr/QzRftAYqwTKzxsRYWqryD+c+0r4=",
         "owner": "metacraft-labs",
         "repo": "ethereum.nix",
-        "rev": "3c83075bc5cd556a1a60584366c29029132162c3",
+        "rev": "9c874431e445f615599f719fe423fd982ac7d671",
         "type": "github"
       },
       "original": {
