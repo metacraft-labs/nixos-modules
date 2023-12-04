@@ -57,6 +57,11 @@
           default = null;
           example = 1;
         };
+        keymanager-token-file = mkOption {
+          type = types.nullOr types.path;
+          default = null;
+          example = ./token;
+        };
       };
     };
     config = {
@@ -65,13 +70,27 @@
 
         wantedBy = ["multi-user.target"];
 
-        environment = toEnvVariables cfg.args;
+        environment = lib.mkMerge [
+          (toEnvVariables
+            cfg.args)
+
+          (lib.mkIf (cfg.args.keymanager-token-file != null) {
+            KEYMANAGER_TOKEN_FILE = lib.mkForce "%d/keymanager-token-file";
+          })
+        ];
 
         path = [package];
 
-        serviceConfig = {
-          ExecStart = "${lib.getExe package}";
-        };
+        serviceConfig = lib.mkMerge [
+          {
+            User = "lido";
+            DynamicUser = true;
+            ExecStart = "${lib.getExe package}";
+          }
+          (lib.mkIf (cfg.args.keymanager-token-file != null) {
+            LoadCredential = ["keymanager-token-file:${cfg.args.keymanager-token-file}"];
+          })
+        ];
       };
     };
   };
