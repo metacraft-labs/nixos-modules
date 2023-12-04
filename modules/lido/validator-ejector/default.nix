@@ -205,6 +205,7 @@
         path = [package];
 
         serviceConfig = {
+          Group = "lido";
           ExecStart = "${lib.getExe package}";
 
           WorkingDirectory = "${package}/libexec/validator-ejector";

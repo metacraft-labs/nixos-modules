@@ -62,6 +62,11 @@
           default = null;
           example = ./token;
         };
+        overwrite = mkOption {
+          type = types.nullOr (types.enum ["always" "never" "prompt"]);
+          default = null;
+          example = "always";
+        };
       };
     };
     config = {
@@ -70,22 +75,20 @@
 
         wantedBy = ["multi-user.target"];
 
-        environment = lib.mkMerge [
-          (toEnvVariables
-            cfg.args)
-
-          (lib.mkIf (cfg.args.keymanager-token-file != null) {
-            KEYMANAGER_TOKEN_FILE = lib.mkForce "%d/keymanager-token-file";
-          })
-        ];
+        environment = toEnvVariables cfg.args;
 
         path = [package];
 
         serviceConfig = lib.mkMerge [
           {
-            User = "lido";
-            DynamicUser = true;
-            ExecStart = "${lib.getExe package}";
+            Group = "lido";
+            ExecStart = lib.getExe (pkgs.writeShellApplication {
+              name = "repl";
+              text = ''
+                export KEYMANAGER_TOKEN_FILE=$CREDENTIALS_DIRECTORY/keymanager-token-file
+                ${lib.getExe package}
+              '';
+            });
           }
           (lib.mkIf (cfg.args.keymanager-token-file != null) {
             LoadCredential = ["keymanager-token-file:${cfg.args.keymanager-token-file}"];
