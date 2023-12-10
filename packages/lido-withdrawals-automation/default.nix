@@ -10,8 +10,8 @@ buildNpmPackage rec {
   src = fetchFromGitHub {
     owner = "status-im";
     repo = "lido-withdrawals-automation";
-    rev = "v${version}";
-    hash = "sha256-R7G4YtbWVpQS47FOg8juQ6yPMbxN3JYOwPSHzxZx210=";
+    rev = "605bd0a2f5867de01612d05352f8345cf53b3985";
+    hash = "sha256-azEnN2+uA6BgIHfxU/J23uLnr1TvGFnDyHxFWOyAwIU=";
   };
 
   npmDepsHash = "sha256-cR9smnQtOnpY389ay54SdbR5qsD2MD6zB2X43tfoHwM=";
