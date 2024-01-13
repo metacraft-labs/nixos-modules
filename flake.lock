@@ -199,11 +199,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1705076220,
-        "narHash": "sha256-7gpfCLZF3fSco8BOIk/xZOzDK3n0MK2J711tFW/JDM8=",
+        "lastModified": 1705189113,
+        "narHash": "sha256-ZETEXzIbveou7SkdJ8I9qpPw8qyfxCvmi05Hl500KwM=",
         "owner": "metacraft-labs",
         "repo": "ethereum.nix",
-        "rev": "ace11c7d9a5fa7f820480ce05c5fde18626076dd",
+        "rev": "5e4444561452074543fa48341ee85d9fb1b3af2e",
         "type": "github"
       },
       "original": {
