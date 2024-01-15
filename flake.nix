@@ -2,14 +2,14 @@
   description = "Metacraft Nixos Modules";
 
   inputs = {
-    nixos-2305.url = "github:NixOS/nixpkgs/nixos-23.05";
+    nixos-2311.url = "github:NixOS/nixpkgs/nixos-23.11";
 
-    nixpkgs.follows = "nixos-2305";
+    nixpkgs.follows = "nixos-2311";
 
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
 
     home-manager = {
-      url = "github:nix-community/home-manager/release-23.05";
+      url = "github:nix-community/home-manager/release-23.11";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
@@ -60,7 +60,6 @@
       inputs.nixpkgs-unstable.follows = "nixpkgs-unstable";
       inputs.flake-parts.follows = "flake-parts";
       inputs.flake-compat.follows = "flake-compat";
-      inputs.hercules-ci-effects.follows = "hercules-ci-effects";
       inputs.treefmt-nix.follows = "treefmt-nix";
     };
 
@@ -88,7 +87,7 @@
 
     nixos-images = {
       url = "github:nix-community/nixos-images";
-      inputs.nixos-2305.follows = "nixos-2305";
+      inputs.nixos-2311.follows = "nixos-2311";
       inputs.nixos-unstable.follows = "nixpkgs-unstable";
     };
 
@@ -98,7 +97,6 @@
       inputs.nixos-images.follows = "nixos-images";
       inputs.flake-parts.follows = "flake-parts";
       inputs.disko.follows = "disko";
-      inputs.nixos-2305.follows = "nixos-2305";
       inputs.treefmt-nix.follows = "treefmt-nix";
     };
 
