@@ -82,6 +82,20 @@
         serviceConfig = lib.mkMerge [
           {
             Group = "lido";
+            ExecStartPre = pkgs.writeShellScript "healthcheck.sh" ''
+              #!/usr/bin/env bash
+              set -euo pipefail
+
+              while true; do
+              if ${lib.getExe pkgs.curl} -sSf ${cfg.args.kapi-url} > /dev/null; then
+                  echo "${cfg.args.kapi-url} is online"
+                  break
+              else
+                  echo "${cfg.args.kapi-url} is offline, waiting..."
+                  sleep 5  # Adjust the sleep duration as needed
+              fi
+              done
+            '';
             ExecStart = lib.getExe (pkgs.writeShellApplication {
               name = "repl";
               text = ''
