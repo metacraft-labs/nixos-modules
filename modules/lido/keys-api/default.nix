@@ -175,7 +175,7 @@
         backend = "docker";
         containers = {
           lido-keys-api = {
-            image = "lidofinance/lido-keys-api:stable";
+            image = "lidofinance/lido-keys-api:1.0.1";
             environment = toEnvVariables cfg.args;
             ports = ["${toString cfg.args.port}:${toString cfg.args.port}"];
             dependsOn = ["postgresql-lido"];
