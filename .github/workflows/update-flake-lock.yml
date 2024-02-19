@@ -1,8 +1,11 @@
-name: Update Nix Flake lockfile
+name: "Update Nix Flake lockfile"
 
 on:
   # Enable option to manually run the action:
   workflow_dispatch:
+
+  # Make Reusable:
+  workflow_call:
 
   # Run every Sunday at 00:00:
   schedule:
