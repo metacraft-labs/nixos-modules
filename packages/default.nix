@@ -9,6 +9,7 @@
       pyroscope = pkgs.callPackage ./pyroscope {};
       grafana-agent = import ./grafana-agent {inherit inputs';};
       validator-ejector = inputs'.validator-ejector.packages.validator-ejector;
+      ci-matrix = pkgs.callPackage ./ci-matrix {};
     };
   };
 }
