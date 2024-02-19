@@ -13,7 +13,7 @@ eval_packages_to_json() {
 
   cachix_url="https://${CACHIX_CACHE}.cachix.org"
 
-  nix_eval_for_all_systems "$flake_attr_pre" "$flake_attr_post" \
+  nix_json=$(nix_eval_for_all_systems "$flake_attr_pre" "$flake_attr_post" \
     | jq -sr '{
       "x86_64-linux": "ubuntu-latest",
       "x86_64-darwin": "macos-14",
@@ -31,11 +31,25 @@ eval_packages_to_json() {
       os: $system_to_gh_platform[.system]
     })
       | sort_by(.package | ascii_downcase)
-  '
+  ')
+
+  mapfile -t nix_array < <(echo "$nix_json" | jq -c '.[]')
+  for nix in "${nix_array[@]}"; do
+    isCached=$(  echo "$nix" | jq -cr '.isCached')
+    cache_url=$( echo "$nix" | jq -cr '.cache_url')
+    if [ "$isCached" = "false" ]; then
+      isAvailable=$( [ $(curl --silent -H "Authorization: Bearer $CACHIX_AUTH_TOKEN" -I "$cache_url"\
+        | grep -E "^HTTP" \
+        | awk -F " " '{print $2}') == 200 ] \
+        && echo "true" || echo "false")
+      nix=$(echo "$nix" | jq -c ".isCached = $isAvailable")
+    fi
+    echo $nix
+  done
 }
 
 save_gh_ci_matrix() {
-  packages_to_build=$(echo "$packages" | jq -c '. | map(select(.isCached | not))')
+  packages_to_build=$(echo "$packages" | jq -sc '. | map(select(.isCached | not))')
   matrix='{"include":'"$packages_to_build"'}'
   res_path=''
   if [ "${IS_INITIAL:-true}" = "true" ]; then
@@ -50,7 +64,7 @@ save_gh_ci_matrix() {
 convert_nix_eval_to_table_summary_json() {
   is_initial="${IS_INITIAL:-true}"
   echo "$packages" \
-  | jq '
+  | jq -s '
     def getStatus(pkg; key):
       if (pkg | has(key))
       then if pkg[key].isCached
@@ -76,7 +90,6 @@ convert_nix_eval_to_table_summary_json() {
 
 printTableForCacheStatus() {
   packages="$(eval_packages_to_json "$@")"
-
   save_gh_ci_matrix
 
   {
