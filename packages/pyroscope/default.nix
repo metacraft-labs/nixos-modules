@@ -21,7 +21,7 @@ buildGoModule rec {
   #   export GOWORK=off
   # '';
 
-  buildInputs = with pkgs; [gcc glibc pkg-config];
+  buildInputs = with pkgs; [gcc pkg-config];
   nativeBuildInputs = buildInputs;
 
   subPackages = ["cmd/pyroscope" "cmd/profilecli"];
