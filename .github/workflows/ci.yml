@@ -1,0 +1,91 @@
+name: "CI"
+
+on:
+  workflow_dispatch:
+  merge_group:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_call:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.repository }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  generate-matrix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 'Post initial package status comment'
+        uses: marocchino/sticky-pull-request-comment@v2.9.0
+        with:
+          recreate: true
+          message: |
+            Thanks for your Pull Request!
+
+            This comment will be updated automatically with the status of each package.
+
+      - name: Generate CI Matrix
+        id: generate-matrix
+        uses:  metacraft-labs/nixos-modules/.github/generate-matrix@main
+        with:
+          is-initial: 'true'
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+    outputs:
+      matrix: ${{ steps.generate-matrix.outputs.matrix }}
+      comment: ${{ steps.generate-matrix.outputs.comment }}
+
+  build:
+    needs: generate-matrix
+    if: needs.generate-matrix.outputs.matrix != '{}' && needs.generate-matrix.outputs.matrix != '{"include":[]}'
+
+    strategy:
+      fail-fast: false
+      matrix: ${{fromJSON(needs.generate-matrix.outputs.matrix)}}
+
+    name: ${{ matrix.package }} | ${{ matrix.system }}
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.allowedToFail }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v25
+        with:
+          extra_nix_config: accept-flake-config = true
+
+      - uses: cachix/cachix-action@v14
+        with:
+          name: ${{ vars.CACHIX_CACHE }}
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+      - name: Build ${{ matrix.package }}
+        run: nix build -L --json --no-link '.#${{ matrix.attrPath }}'
+
+  results:
+    runs-on: ubuntu-latest
+    name: Final Results
+    needs: [build, generate-matrix]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate Matrix
+        uses:  metacraft-labs/nixos-modules/.github/generate-matrix@main
+        with:
+          is-initial: 'false'
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
+      - run: exit 1
+        if: >-
+          ${{ fromJSON(needs.generate-matrix.outputs.matrix).include.length > 0 &&
+            (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
+      - run: exit 0
+        if: ${{fromJSON(needs.generate-matrix.outputs.matrix).include.length == 0}}
