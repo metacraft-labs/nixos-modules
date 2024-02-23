@@ -6,12 +6,12 @@
     ...
   }: let
     db = config.services.ethereum-validators-monitoring.db;
-    eachService = config.services.ethereum-validators-monitoring.network;
+    eachService = config.services.ethereum-validators-monitoring.instances;
     inherit (import ../../lib.nix {inherit lib;}) toEnvVariables;
 
     args = import ./args.nix lib;
 
-    evmOptions = with lib; {
+    monitoringOptions = with lib; {
       options = {
         enable = mkEnableOption (lib.mdDoc "Ethereum Validators Monitoring");
         inherit args;
@@ -19,35 +19,35 @@
     };
   in {
     options.services.ethereum-validators-monitoring = with lib; {
-      network = mkOption {
-        type = types.attrsOf (types.submodule evmOptions);
+      instances = mkOption {
+        type = types.attrsOf (types.submodule monitoringOptions);
         default = {};
-        description = mdDoc "Specification of one or more Ethereum Validators Monitoring services.";
+        description = mdDoc "Specification of one or Ethereum Validators Monitoring instances.";
       };
 
       db = {
-        db-host = mkOption {
-          type = types.nullOr types.str;
+        host = mkOption {
+          type = types.str;
           description = "Clickhouse server host.";
         };
 
-        db-user = mkOption {
-          type = types.nullOr types.str;
+        user = mkOption {
+          type = types.str;
           description = "Clickhouse server user.";
         };
 
-        db-password = mkOption {
-          type = types.nullOr types.str;
+        password = mkOption {
+          type = types.str;
           description = "Clickhouse server password.";
         };
 
-        db-name = mkOption {
-          type = types.nullOr types.str;
+        name = mkOption {
+          type = types.str;
           description = "Clickhouse server DB name.";
         };
 
-        db-port = mkOption {
-          type = types.nullOr types.port;
+        port = mkOption {
+          type = types.port;
           default = 8123;
           description = "Clickhouse server port.";
         };
@@ -69,11 +69,11 @@
                     environment =
                       (toEnvVariables cfg.args)
                       // {
-                        DB_HOST = db.db-host;
-                        DB_USER = db.db-user;
-                        DB_PASSWORD = db.db-password;
-                        DB_NAME = db.db-name;
-                        DB_PORT = toString db.db-port;
+                        DB_HOST = db.host;
+                        DB_USER = db.user;
+                        DB_PASSWORD = db.password;
+                        DB_NAME = db.name;
+                        DB_PORT = toString db.port;
                       };
                     ports = ["${toString cfg.args.external-http-port}:${toString cfg.args.external-http-port}"];
                     dependsOn = ["clickhouse-server"];
@@ -87,11 +87,11 @@
             clickhouse-server = {
               image = "yandex/clickhouse-server";
               environment = {
-                CLICKHOUSE_USER = db.db-user;
-                CLICKHOUSE_PASSWORD = db.db-password;
-                CLICKHOUSE_DB = db.db-name;
+                CLICKHOUSE_USER = db.user;
+                CLICKHOUSE_PASSWORD = db.password;
+                CLICKHOUSE_DB = db.name;
               };
-              ports = ["${toString db.db-port}:${toString db.db-port}"];
+              ports = ["${toString db.port}:${toString db.port}"];
               volumes = ["./.volumes/clickhouse:/var/lib/clickhouse"];
               extraOptions = [
                 "--network=host"
