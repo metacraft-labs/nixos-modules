@@ -36,9 +36,9 @@
           description = "Clickhouse server user.";
         };
 
-        password = mkOption {
-          type = types.str;
-          description = "Clickhouse server password.";
+        password-file = mkOption {
+          type = types.path;
+          description = "Clickhouse server password file.";
         };
 
         name = mkOption {
@@ -55,6 +55,17 @@
     };
 
     config = lib.mkIf (eachService != {}) {
+      systemd.services.ethereum-validators-monitoring-preStart = {
+        after = ["network.target"];
+        wantedBy = ["multi-user.target"];
+        script = ''
+          umask 177
+          mkdir -p /var/lib/ethereum-validators-monitoring
+          echo DB_PASSWORD="$(cat ${db.password-file})" > /var/lib/ethereum-validators-monitoring/env
+          echo CLICKHOUSE_PASSWORD="$(cat ${db.password-file})" > /var/lib/ethereum-validators-monitoring/clickhouse-env
+        '';
+      };
+
       virtualisation.oci-containers = {
         backend = "docker";
         containers =
@@ -71,10 +82,10 @@
                       // {
                         DB_HOST = db.host;
                         DB_USER = db.user;
-                        DB_PASSWORD = db.password;
                         DB_NAME = db.name;
                         DB_PORT = toString db.port;
                       };
+                    environmentFiles = ["/var/lib/ethereum-validators-monitoring/env"];
                     ports = ["${toString cfg.args.external-http-port}:${toString cfg.args.external-http-port}"];
                     dependsOn = ["clickhouse-server"];
                     extraOptions = [
@@ -88,9 +99,9 @@
               image = "yandex/clickhouse-server";
               environment = {
                 CLICKHOUSE_USER = db.user;
-                CLICKHOUSE_PASSWORD = db.password;
                 CLICKHOUSE_DB = db.name;
               };
+              environmentFiles = ["/var/lib/ethereum-validators-monitoring/clickhouse-env"];
               ports = ["${toString db.port}:${toString db.port}"];
               volumes = ["./.volumes/clickhouse:/var/lib/clickhouse"];
               extraOptions = [
