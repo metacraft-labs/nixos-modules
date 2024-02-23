@@ -31,6 +31,7 @@
         grafana-agent = import ./grafana-agent {inherit inputs';};
         ci-matrix = pkgs.callPackage ./ci-matrix {};
         folder-size-metrics = pkgs.callPackage ./folder-size-metrics {};
+        deploy-spec = pkgs.callPackage ./deploy-spec {};
       }
       // pkgs.lib.optionalAttrs isLinux {
         inherit (inputs'.validator-ejector.packages) validator-ejector;
