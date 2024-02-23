@@ -26,6 +26,7 @@ eval_packages_to_json() {
       allowedToFail: false,
       isCached,
       system,
+      out: .outputs.out,
       cache_url: .outputs.out
         | "'"$cachix_url"'/\(match("^\/nix\/store\/([^-]+)-").captures[0].string).narinfo",
       os: $system_to_gh_platform[.system]
@@ -61,6 +62,16 @@ save_gh_ci_matrix() {
   echo "matrix=$matrix" >> "${GITHUB_OUTPUT:-${result_dir}/gh-output.env}"
 }
 
+save_cachix_deploy_spec() {
+  echo "$packages"  | jq -sr '
+    {
+      agents: map({
+        key: .package, value: .out
+      }) | from_entries
+    }' \
+    > .result/cachix-deploy-spec.json
+}
+
 convert_nix_eval_to_table_summary_json() {
   is_initial="${IS_INITIAL:-true}"
   echo "$packages" \
@@ -91,6 +102,7 @@ convert_nix_eval_to_table_summary_json() {
 printTableForCacheStatus() {
   packages="$(eval_packages_to_json "$@")"
   save_gh_ci_matrix
+  save_cachix_deploy_spec
 
   {
     echo "Thanks for your Pull Request!"
