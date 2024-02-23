@@ -10,6 +10,7 @@
         pyroscope = pkgs.callPackage ./pyroscope {};
         grafana-agent = import ./grafana-agent {inherit inputs';};
         ci-matrix = pkgs.callPackage ./ci-matrix {};
+        deploy-spec = pkgs.callPackage ./deploy-spec {};
       }
       // pkgs.lib.optionalAttrs pkgs.hostPlatform.isLinux rec {
         validator-ejector = inputs'.validator-ejector.packages.validator-ejector;
