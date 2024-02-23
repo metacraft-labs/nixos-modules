@@ -34,7 +34,7 @@ runs:
         IS_INITIAL: ${{ inputs.is-initial }}
         CACHIX_CACHE: ${{ inputs.cachix-cache }}
         CACHIX_AUTH_TOKEN: ${{ inputs.cachix-auth-token }}
-      run: nix run github:metacraft-labs/nixos-modules/main#ci-matrix
+      run: nix run github:metacraft-labs/nixos-modules/feat/CD#ci-matrix
 
     - name: Upload CI Matrix
       uses: actions/upload-artifact@v4
