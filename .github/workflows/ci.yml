@@ -49,6 +49,8 @@ jobs:
           is-initial: 'true'
           cachix-cache: ${{ vars.CACHIX_CACHE }}
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
     outputs:
       matrix: ${{ steps.generate-matrix.outputs.matrix }}
       comment: ${{ steps.generate-matrix.outputs.comment }}
@@ -81,7 +83,7 @@ jobs:
 
       - name: Build ${{ matrix.package }}
         run: |
-          nix run github:Mic92/nix-fast-build -- --skip-cached --flake '.#${{ matrix.attrPath }}' | grep --color=always -v "warning: Git tree" | grep --color=always -v "warning: unknown setting" | grep --color=always -v "error (ignored): error: SQLite database"
+          nix run github:Mic92/nix-fast-build -- --skip-cached --flake '.#${{ matrix.attrPath }}' 3>&1 1>&2 2>&3 3>&- | grep --color=always -v "warning: Git tree" | grep --color=always -v "warning: unknown setting" | grep --color=always -v "error (ignored): error: SQLite database"
 
   deploy:
     needs: build
@@ -95,9 +97,6 @@ jobs:
         with:
           extra-conf:
             accept-flake-config = true
-
-      - name: Run the Magic Nix Cache
-        uses: DeterminateSystems/magic-nix-cache-action@v2
 
       - uses: cachix/cachix-action@v14
         with:
@@ -128,6 +127,8 @@ jobs:
           is-initial: 'false'
           cachix-cache: ${{ vars.CACHIX_CACHE }}
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
 
       - run: exit 1
         if: >-
