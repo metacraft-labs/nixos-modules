@@ -4,8 +4,7 @@ set -euo pipefail
 
 root_dir="$(git rev-parse --show-toplevel)"
 
-# shellcheck source=./nix-eval-jobs.sh
-source "$root_dir/scripts/nix-eval-jobs.sh"
+source "@nixEvalJobsSh@"
 
 eval_packages_to_json() {
   flake_attr_pre="${1:-checks}"
@@ -14,7 +13,7 @@ eval_packages_to_json() {
   cachix_url="https://${CACHIX_CACHE}.cachix.org"
 
   nix_json=$(nix_eval_for_all_systems "$flake_attr_pre" "$flake_attr_post" \
-    | jq -sr '{
+    | @jqBin@ -sr '{
       "x86_64-linux": "ubuntu-latest",
       "x86_64-darwin": "macos-14",
       "aarch64-darwin": "macos-14"
@@ -34,23 +33,23 @@ eval_packages_to_json() {
       | sort_by(.package | ascii_downcase)
   ')
 
-  mapfile -t nix_array < <(echo "$nix_json" | jq -c '.[]')
+  mapfile -t nix_array < <(echo "$nix_json" | @jqBin@ -c '.[]')
   for nix in "${nix_array[@]}"; do
-    isCached=$(  echo "$nix" | jq -cr '.isCached')
-    cache_url=$( echo "$nix" | jq -cr '.cache_url')
+    isCached=$(  echo "$nix" | @jqBin@ -cr '.isCached')
+    cache_url=$( echo "$nix" | @jqBin@ -cr '.cache_url')
     if [ "$isCached" = "false" ]; then
       isAvailable=$( [ $(curl --silent -H "Authorization: Bearer $CACHIX_AUTH_TOKEN" -I "$cache_url"\
         | grep -E "^HTTP" \
         | awk -F " " '{print $2}') == 200 ] \
         && echo "true" || echo "false")
-      nix=$(echo "$nix" | jq -c ".isCached = $isAvailable")
+      nix=$(echo "$nix" | @jqBin@ -c ".isCached = $isAvailable")
     fi
     echo $nix
   done
 }
 
 save_gh_ci_matrix() {
-  packages_to_build=$(echo "$packages" | jq -sc '. | map(select(.isCached | not))')
+  packages_to_build=$(echo "$packages" | @jqBin@ -sc '. | map(select(.isCached | not))')
   matrix='{"include":'"$packages_to_build"'}'
   res_path=''
   if [ "${IS_INITIAL:-true}" = "true" ]; then
@@ -63,7 +62,7 @@ save_gh_ci_matrix() {
 }
 
 save_cachix_deploy_spec() {
-  echo "$packages"  | jq -sr '
+  echo "$packages"  | @jqBin@ -sr '
     {
       agents: map({
         key: .package, value: .out
@@ -75,7 +74,7 @@ save_cachix_deploy_spec() {
 convert_nix_eval_to_table_summary_json() {
   is_initial="${IS_INITIAL:-true}"
   echo "$packages" \
-  | jq -s '
+  | @jqBin@ -s '
     def getStatus(pkg; key):
       if (pkg | has(key))
       then if pkg[key].isCached
@@ -112,7 +111,7 @@ printTableForCacheStatus() {
     # shellcheck disable=SC2016
     echo '| package | `x86_64-linux` | `x86_64-darwin` | `aarch64-darwin` |'
     echo '| ------- | -------------- | --------------- | ---------------- |'
-    convert_nix_eval_to_table_summary_json | jq -r '
+    convert_nix_eval_to_table_summary_json | @jqBin@ -r '
       .[] | "| `\(.package)` | \(.["x86_64-linux"]) | \(.["x86_64-darwin"]) | \(.["aarch64-darwin"]) |"
     '
     echo
