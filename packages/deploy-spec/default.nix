@@ -1,19 +1,11 @@
 {pkgs}: let
+  cachixBin = "${pkgs.cachix}/bin/cachix";
 in
-  with pkgs;
-    stdenv.mkDerivation rec {
-      pname = "deploy-spec";
-      version = "main";
-
-      src = ./.;
-
-      buildPhase = ''
-        sed -i 's|cachix|${cachix}/bin/cachix|' *.sh
-      '';
-      installPhase = ''
-        mkdir -p $out/bin
-        cp deploy-spec.sh $out/bin'';
-      doCheck = false;
-
-      meta.mainProgram = "deploy-spec.sh";
-    }
+  pkgs.substituteAll {
+    name = "deploy-spec";
+    inherit cachixBin;
+    dir = "bin";
+    isExecutable = true;
+    src = ./deploy-spec.sh;
+    meta.mainProgram = "deploy-spec.sh";
+  }
