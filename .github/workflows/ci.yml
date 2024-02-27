@@ -79,7 +79,8 @@ jobs:
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
       - name: Build ${{ matrix.package }}
-        run: nix build -L --json --no-link '.#${{ matrix.attrPath }}'
+        run: |
+          nix run github:Mic92/nix-fast-build -- --skip-cached --flake '.#${{ matrix.attrPath }}' | grep --color=always -v "warning: Git tree" | grep --color=always -v "warning: unknown setting" | grep --color=always -v "error (ignored): error: SQLite database"
 
   deploy:
     needs: build
