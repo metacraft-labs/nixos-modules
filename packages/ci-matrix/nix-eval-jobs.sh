@@ -7,7 +7,7 @@ result_dir="$root_dir/.result"
 gc_roots_dir="$result_dir/gc-roots"
 
 # shellcheck source=./system-info.sh
-source "$root_dir/scripts/system-info.sh"
+source "@systemInfoSh@"
 
 create_result_dirs() {
   mkdir -p "$result_dir" "$gc_roots_dir"
@@ -23,7 +23,7 @@ nix_eval_jobs() {
   {
     (
       set -x
-      nix-eval-jobs \
+      @nixEvalJobsBin@ \
         --quiet \
         --option warn-dirty false \
         --check-cache-status \
@@ -33,7 +33,7 @@ nix_eval_jobs() {
         --flake "$root_dir#$flake_attr"
     ) \
       | tee /dev/fd/3 \
-      | stdbuf -i0 -o0 -e0 jq --color-output -c '{ attr, isCached, out: .outputs.out }' > /dev/stderr
+      | stdbuf -i0 -o0 -e0 @jqBin@ --color-output -c '{ attr, isCached, out: .outputs.out }' > /dev/stderr
   } 3>&1 2> >(
     grep -vP "(SQLite database|warning: unknown setting 'allowed-users'|warning: unknown setting 'trusted-users')" \
     >&2
