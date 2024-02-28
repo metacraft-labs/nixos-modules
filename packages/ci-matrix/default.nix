@@ -1,5 +1,6 @@
 {
   pkgs,
+  unstablePkgs,
   lib,
 }: let
   options = {
@@ -8,7 +9,7 @@
 
     jqBin = "${pkgs.jq}/bin/jq";
     cachixBin = "${pkgs.cachix}/bin/cachix";
-    nixEvalJobsBin = "${pkgs.nix-eval-jobs}/bin/nix-eval-jobs";
+    nixEvalJobsBin = "${unstablePkgs.nix-eval-jobs}/bin/nix-eval-jobs";
   };
 
   scripts = rec {
