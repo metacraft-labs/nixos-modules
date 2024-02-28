@@ -5,6 +5,7 @@
     ...
   }: let
     inherit (pkgs.hostPlatform) isLinux isx86;
+    unstablePkgs = inputs'.nixpkgs-unstable.legacyPackages;
   in rec {
     legacyPackages = {
       inputs = {
@@ -29,7 +30,7 @@
         lido-withdrawals-automation = pkgs.callPackage ./lido-withdrawals-automation {};
         pyroscope = pkgs.callPackage ./pyroscope {};
         grafana-agent = import ./grafana-agent {inherit inputs';};
-        ci-matrix = pkgs.callPackage ./ci-matrix {};
+        ci-matrix = pkgs.callPackage ./ci-matrix {inherit unstablePkgs;};
         folder-size-metrics = pkgs.callPackage ./folder-size-metrics {};
         deploy-spec = pkgs.callPackage ./deploy-spec {};
       }
