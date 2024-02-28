@@ -7,5 +7,5 @@ in
     dir = "bin";
     isExecutable = true;
     src = ./deploy-spec.sh;
-    meta.mainProgram = "deploy-spec.sh";
+    meta.mainProgram = "deploy-spec";
   }
