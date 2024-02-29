@@ -102,13 +102,13 @@ jobs:
           substituters: ${{ vars.SUBSTITUTERS }}
 
       - uses: cachix/cachix-action@v14
-        if: ${{inputs.do_deploy == 'true'}} && (github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
+        if: ${{inputs.do_deploy == 'true' && (github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) }}
         with:
           name: ${{ vars.CACHIX_CACHE }}
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
       - name: Deploy
-        if: ${{inputs.do_deploy == 'true'}} && (github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
+        if: ${{inputs.do_deploy == 'true' && (github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) }}
         env:
           CACHIX_ACTIVATE_TOKEN: "${{ secrets.CACHIX_ACTIVATE_TOKEN }}"
         run: nix run github:metacraft-labs/nixos-modules/feat/CD#deploy-spec
