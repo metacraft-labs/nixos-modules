@@ -37,6 +37,7 @@ runs:
           substituters = https://cache.nixos.org ${{inputs.substituters}}
           trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= ${{inputs.trusted-public-keys}}
           netrc-file = /home/runner/.config/nix/netrc
+        nix-installer-tag: v0.15.1
     - name: Configure Nix
       shell: bash
       run: |
