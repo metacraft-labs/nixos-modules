@@ -134,4 +134,6 @@ jobs:
           ${{ fromJSON(needs.generate-matrix.outputs.matrix).include.length > 0 &&
             (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
       - run: exit 0
-        if: ${{fromJSON(needs.generate-matrix.outputs.matrix).include.length == 0}}
+        if: >-
+          ${{fromJSON(needs.generate-matrix.outputs.matrix).include.length == 0 &&
+          (contains(needs.*.result, 'success') || contains(needs.*.result, 'skipped')) }}
