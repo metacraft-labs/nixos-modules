@@ -92,12 +92,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@v9
-        if: ${{inputs.do_deploy == 'true'}} && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+      - name: Generate Matrix
+        uses:  metacraft-labs/nixos-modules/.github/generate-matrix@feat/CD
         with:
-          extra-conf:
-            accept-flake-config = true
+          is-initial: 'false'
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
 
       - uses: cachix/cachix-action@v14
         if: ${{inputs.do_deploy == 'true'}} && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
@@ -110,15 +112,6 @@ jobs:
         env:
           CACHIX_ACTIVATE_TOKEN: "${{ secrets.CACHIX_ACTIVATE_TOKEN }}"
         run: nix run github:metacraft-labs/nixos-modules/feat/CD#deploy-spec
-
-      - name: Generate Matrix
-        uses:  metacraft-labs/nixos-modules/.github/generate-matrix@feat/CD
-        with:
-          is-initial: 'false'
-          cachix-cache: ${{ vars.CACHIX_CACHE }}
-          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
-          substituters: ${{ vars.SUBSTITUTERS }}
 
       - run: exit 1
         if: >-
