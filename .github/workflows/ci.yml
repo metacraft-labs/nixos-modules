@@ -113,7 +113,6 @@ jobs:
     name: Final Results
     needs: [build, deploy, generate-matrix]
     if: |
-      always() &&
       needs.build.result == 'success' &&
       needs.generate-matrix.result == 'success' &&
       (needs.deploy.result == 'success' || needs.deploy.result == 'skipped')
