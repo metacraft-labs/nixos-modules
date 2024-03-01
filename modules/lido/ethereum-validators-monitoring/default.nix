@@ -103,7 +103,7 @@
               };
               environmentFiles = ["/var/lib/ethereum-validators-monitoring/clickhouse-env"];
               ports = ["${toString db.port}:${toString db.port}"];
-              volumes = ["./.volumes/clickhouse:/var/lib/clickhouse"];
+              volumes = ["./.docker/.volumes/clickhouse:/var/lib/clickhouse"];
               extraOptions = [
                 "--network=host"
               ];
