@@ -18,46 +18,59 @@ inputs:
   substituters:
     description: Substituters
     required: true
-  flake_pre:
-    description: Prefix for the flake to evaluate
-    required: false
-    default: ""
-  flake_post:
-    description: Postfix for the flake to evaluate
-    required: false
-    default: ""
   comment_matrix:
     description: Whether to post a comment/upload the matrix
     required: false
     default: true
+  precalc_matrix:
+    description: Pre-calculated matrix
+    required: true
 
 outputs:
   matrix:
     description: 'Generated Matrix'
-    value: ${{ steps.generate-matrix.outputs.matrix }}
+    value: ${{ steps.print-matrix.outputs.matrix }}
+  comment:
+    description: 'Comment'
+    value: ${{ steps.print-matrix.outputs.comment }}
 
 runs:
   using: "composite"
   steps:
     - name: Install Nix
-      uses: cachix/install-nix-action@v27
+      uses: DeterminateSystems/nix-installer-action@v9
       with:
-        extra_nix_config: |
+        extra-conf: |
           accept-flake-config = true
           substituters = https://cache.nixos.org ${{inputs.substituters}}
           trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= ${{inputs.trusted-public-keys}}
           netrc-file = /home/runner/.config/nix/netrc
+        nix-installer-tag: v0.15.1
     - name: Configure Nix
       shell: bash
       run: |
         mkdir -p /home/runner/.config/nix
         echo "machine ${{inputs.cachix-cache}}.cachix.org password ${{inputs.cachix-auth-token}}" >> /home/runner/.config/nix/netrc
 
-    - name: Generate CI Matrix
-      id: generate-matrix
+    - name: Print CI Matrix
+      id: print-matrix
       shell: bash
       env:
         IS_INITIAL: ${{ inputs.is-initial }}
         CACHIX_CACHE: ${{ inputs.cachix-cache }}
         CACHIX_AUTH_TOKEN: ${{ inputs.cachix-auth-token }}
-      run: nix run github:metacraft-labs/nixos-modules/feat/CD#ci-matrix ${{ inputs.flake_pre }} ${{ inputs.flake_post }}
+        PRECALC_MATRIX: ${{ inputs.precalc_matrix }}
+      run: nix run github:metacraft-labs/nixos-modules/feat/CD#print-table
+
+    - name: Upload CI Matrix
+      if: ${{ inputs.comment_matrix == true }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: matrix-${{ inputs.is-initial == 'true' && 'pre' || 'post' }}.json
+        path: matrix-${{ inputs.is-initial == 'true' && 'pre' || 'post' }}.json
+
+    - name: Update GitHub Comment
+      if: ${{ inputs.comment_matrix == true }}
+      uses: marocchino/sticky-pull-request-comment@v2.9.0
+      with:
+        path: comment.md

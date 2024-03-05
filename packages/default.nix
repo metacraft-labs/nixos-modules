@@ -30,12 +30,16 @@
         lido-withdrawals-automation = pkgs.callPackage ./lido-withdrawals-automation {};
         pyroscope = pkgs.callPackage ./pyroscope {};
         grafana-agent = import ./grafana-agent {inherit inputs';};
-        folder-size-metrics = pkgs.callPackage ./folder-size-metrics {};
-        deploy-spec = pkgs.callPackage ./deploy-spec {};
       }
       // pkgs.lib.optionalAttrs isLinux {
         inherit (inputs'.validator-ejector.packages) validator-ejector;
-        ci-matrix = pkgs.callPackage ./ci-matrix {inherit unstablePkgs;};
+        system-info = pkgs.callPackage ./system-info {inherit unstablePkgs;};
+        nix-eval-jobs = pkgs.callPackage ./nix-eval-jobs {inherit unstablePkgs system-info;};
+        print-table = pkgs.callPackage ./print-table {inherit unstablePkgs;};
+        ci-matrix = pkgs.callPackage ./ci-matrix {inherit unstablePkgs print-table nix-eval-jobs inputs';};
+        deploy-spec = pkgs.callPackage ./deploy-spec {inherit inputs';};
+        shard-matrix = pkgs.callPackage ./shard-matrix {inherit ci-matrix;};
+        folder-size-metrics = pkgs.callPackage ./folder-size-metrics {};
       }
       // pkgs.lib.optionalAttrs (isLinux && isx86) {
         mcl = pkgs.callPackage ./mcl {

@@ -28,12 +28,36 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  generate-matrix:
+  generate-matrix-matrix:
+    name: Generate Matrix of Matrices
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v9
+        with:
+          extra-conf: accept-flake-config = true
+          nix-installer-tag: v0.15.1
+
+      - name: Generate Matrix for Matrix
+        id: generate-matrix
+        run: |
+          nix run github:metacraft-labs/nixos-modules/feat/CD#shard-matrix
+    outputs:
+      gen_matrix: ${{ steps.generate-matrix.outputs.gen_matrix }}
+  generate-matrix:
+    needs: generate-matrix-matrix
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: ${{fromJSON(needs.generate-matrix-matrix.outputs.gen_matrix)}}
+
+    name: Generate Matrix ${{ matrix.digit != -1 && matrix.digit || '' }}
+    steps:
+      - uses: actions/checkout@v4
+
       - name: 'Post initial package status comment'
+        if: ${{ matrix.digit < 1 }}
         uses: marocchino/sticky-pull-request-comment@v2.9.0
         with:
           recreate: true
@@ -51,17 +75,51 @@ jobs:
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
+          flake_pre: ${{ matrix.prefix }}
+          flake_post: ${{ matrix.postfix }}
+      - uses: actions/upload-artifact@v3
+        with:
+            name: ${{ hashFiles('matrix-pre.json') || 'none' }}
+            path: matrix-pre.json
+            if-no-files-found: warn
     outputs:
       matrix: ${{ steps.generate-matrix.outputs.matrix }}
       comment: ${{ steps.generate-matrix.outputs.comment }}
 
-  build:
+  slurp-matrix:
+    runs-on:  ubuntu-latest
     needs: generate-matrix
-    if: needs.generate-matrix.outputs.matrix != '{}' && needs.generate-matrix.outputs.matrix != '{"include":[]}'
+    name: Merge Matrix
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v3
+      - run: |
+          ls */matrix-pre.json
+          cat */matrix-pre.json
+          matrix="$(cat */matrix-pre.json | jq -cr '.include' | jq -s 'add' | jq -c '. | {include: .}')"
+          echo $matrix
+          echo "matrix=$matrix" >> $GITHUB_OUTPUT
+        id: matrix
+      - name: Post Comment
+        id: print-matrix
+        uses:  metacraft-labs/nixos-modules/.github/print-matrix@feat/CD
+        with:
+          is-initial: 'true'
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+          precalc_matrix: ${{ steps.matrix.outputs.matrix }}
+  build:
+    needs: slurp-matrix
+    if: needs.slurp-matrix.outputs.matrix != '' && needs.slurp-matrix.outputs.matrix != '{}' && needs.slurp-matrix.outputs.matrix != '{"include":[]}'
 
     strategy:
       fail-fast: false
-      matrix: ${{fromJSON(needs.generate-matrix.outputs.matrix)}}
+      matrix: ${{fromJSON( needs.slurp-matrix.outputs.matrix )}}
 
     name: ${{ matrix.package }} | ${{ matrix.system }}
     runs-on: ${{ matrix.os }}
@@ -83,23 +141,24 @@ jobs:
 
       - name: Build ${{ matrix.package }}
         run: |
-          nix run github:Mic92/nix-fast-build -- --skip-cached --no-nom --flake '.#${{ matrix.attrPath }}' 3>&1 1>&2 2>&3 3>&- | grep --color=always -v "warning: Git tree" | grep --color=always -v "warning: unknown setting" | grep --color=always -v "error (ignored): error: SQLite database"
+          nix run github:Mic92/nix-fast-build -- --debug --systems ${{ matrix.system }} --skip-cached --no-nom --flake '.#${{ matrix.attrPath }}' 3>&1 1>&2 2>&3 3>&- | grep --color=always -v "warning: Git tree" | grep --color=always -v "warning: unknown setting" | grep --color=always -v "error (ignored): error: SQLite database"
 
   results:
     runs-on: ubuntu-latest
     name: Final Results
-    needs: [build , generate-matrix]
+    needs: [build, slurp-matrix]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Generate Matrix
-        uses:  metacraft-labs/nixos-modules/.github/generate-matrix@feat/CD
+      - name: Post Comment
+        uses:  metacraft-labs/nixos-modules/.github/print-matrix@feat/CD
         with:
           is-initial: 'false'
           cachix-cache: ${{ vars.CACHIX_CACHE }}
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
+          precalc_matrix: ${{ needs.slurp-matrix.outputs.matrix }}
 
       - uses: cachix/cachix-action@v14
         if: ${{inputs.do_deploy == 'true' && (github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) }}
@@ -115,9 +174,9 @@ jobs:
 
       - run: exit 1
         if: >-
-          ${{ fromJSON(needs.generate-matrix.outputs.matrix).include.length > 0 &&
+          ${{ fromJSON(needs.slurp-matrix.outputs.matrix).include.length > 0 &&
             (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
       - run: exit 0
         if: >-
-          ${{fromJSON(needs.generate-matrix.outputs.matrix).include.length == 0 &&
+          ${{fromJSON(needs.slurp-matrix.outputs.matrix).include.length == 0 &&
           (contains(needs.*.result, 'success') || contains(needs.*.result, 'skipped')) }}
