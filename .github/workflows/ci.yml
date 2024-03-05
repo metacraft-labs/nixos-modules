@@ -28,12 +28,36 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  generate-matrix:
+  generate-matrix-matrix:
+    name: Generate Matrix of Matrices
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v9
+        with:
+          extra-conf: accept-flake-config = true
+          nix-installer-tag: v0.15.1
+
+      - name: Generate Matrix for Matrix
+        id: generate-matrix
+        run: |
+          nix run github:metacraft-labs/nixos-modules/feat/CD#shard-matrix
+    outputs:
+      gen_matrix: ${{ steps.generate-matrix.outputs.gen_matrix }}
+  generate-matrix:
+    needs: generate-matrix-matrix
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: ${{fromJSON(needs.generate-matrix-matrix.outputs.gen_matrix)}}
+
+    name: Generate Matrix ${{ matrix.digit != -1 && matrix.digit || '' }}
+    steps:
+      - uses: actions/checkout@v4
+
       - name: 'Post initial package status comment'
+        if: ${{ matrix.digit < 1 }}
         uses: marocchino/sticky-pull-request-comment@v2.9.0
         with:
           recreate: true
@@ -51,17 +75,20 @@ jobs:
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
+          flake_pre: ${{ matrix.prefix }}
+          flake_post: ${{ matrix.postfix }}
+          comment_matrix: ${{ matrix.digit < 1}}
     outputs:
       matrix: ${{ steps.generate-matrix.outputs.matrix }}
       comment: ${{ steps.generate-matrix.outputs.comment }}
 
   build:
     needs: generate-matrix
-    if: needs.generate-matrix.outputs.matrix != '{}' && needs.generate-matrix.outputs.matrix != '{"include":[]}'
+    if: needs.generate-matrix.outputs.matrix != '' && needs.generate-matrix.outputs.matrix != '{}' && needs.generate-matrix.outputs.matrix != '{"include":[]}'
 
     strategy:
       fail-fast: false
-      matrix: ${{fromJSON(needs.generate-matrix.outputs.matrix)}}
+      matrix: ${{fromJSON( format('{"include":[{0}]}', needs.generate-matrix.outputs.matrix) )}}
 
     name: ${{ matrix.package }} | ${{ matrix.system }}
     runs-on: ${{ matrix.os }}

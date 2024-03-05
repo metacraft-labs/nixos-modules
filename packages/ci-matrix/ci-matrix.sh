@@ -6,6 +6,8 @@ root_dir="$(git rev-parse --show-toplevel)"
 
 source "@nixEvalJobsSh@"
 
+create_result_dirs
+
 eval_packages_to_json() {
   flake_attr_pre="${1:-checks}"
   flake_attr_post="${2:-}"
@@ -58,7 +60,12 @@ save_gh_ci_matrix() {
     res_path='matrix-post.json'
   fi
   echo "$matrix" > "$res_path"
-  echo "matrix=$matrix" >> "${GITHUB_OUTPUT:-${result_dir}/gh-output.env}"
+  gh_output="${GITHUB_OUTPUT:-${result_dir}/gh-output.env}"
+  if [[ "$(cat "$gh_output")" == *"matrix="* ]]; then
+    echo ",$packages_to_build" >> "${GITHUB_OUTPUT:-${result_dir}/gh-output.env}"
+  else
+    echo "matrix=$packages_to_build" > "${GITHUB_OUTPUT:-${result_dir}/gh-output.env}"
+  fi
 }
 
 save_cachix_deploy_spec() {
@@ -68,7 +75,7 @@ save_cachix_deploy_spec() {
         key: .package, value: .out
       }) | from_entries
     }' \
-    > .result/cachix-deploy-spec.json
+    > "${result_dir}/cachix-deploy-spec.json"
 }
 
 convert_nix_eval_to_table_summary_json() {
