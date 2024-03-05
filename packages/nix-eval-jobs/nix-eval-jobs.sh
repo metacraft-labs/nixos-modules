@@ -16,13 +16,14 @@ create_result_dirs() {
 nix_eval_jobs() {
   flake_attr="$1"
 
+  thisproc="$$"
   get_platform
   get_available_memory_mb
   get_nix_eval_worker_count
 
   {
     (
-      set -x
+      set -euxo pipefail
       @nixEvalJobsBin@ \
         --quiet \
         --option warn-dirty false \
@@ -35,10 +36,12 @@ nix_eval_jobs() {
       | tee /dev/fd/3 \
       | stdbuf -i0 -o0 -e0 @jqBin@ --color-output -c '{ attr, isCached, out: .outputs.out }' > /dev/stderr
   } 3>&1 2> >(
-    grep -vP "(SQLite database|warning: unknown setting 'allowed-users'|warning: unknown setting 'trusted-users')" \
-    >&2
+    grep -vP "SQLite database|warning: unknown setting 'allowed-users'|warning: unknown setting 'trusted-users'|warning: unknown setting 'bash-prompt-prefix'|trace: warning: The legacy table is outdated and should not be used. We recommend using the gpt type instead.|Please note that certain features, such as the test framework, may not function properly with the legacy table type.|If you encounter errors similar to:|error: The option .disko.devices.disk.disk1.content.partitions.*.content._config|this is likely due to the use of the legacy table type." \
+    | ( tee /dev/fd/4 | grep -i 'error:' >/dev/null && kill $thisproc || exit 0; ) 4>&2
   )
 }
+
+
 
 nix_eval_for_all_systems() {
   flake_pre="$1"
