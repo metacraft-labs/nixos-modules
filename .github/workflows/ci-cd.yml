@@ -27,9 +27,6 @@ jobs:
           extra-conf:
             accept-flake-config = true
 
-      - name: Run the Magic Nix Cache
-        uses: DeterminateSystems/magic-nix-cache-action@v2
-
       - uses: cachix/cachix-action@v14
         with:
           name: ${{ vars.CACHIX_CACHE }}
