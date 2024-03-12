@@ -1101,11 +1101,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1697552005,
-        "narHash": "sha256-WSf/igBl9akFK9Qzv4QpRoh0K1bus2eJ9uI/KgULSbA=",
+        "lastModified": 1710236967,
+        "narHash": "sha256-2HJmglBoFg9h9GEAg/PT9wINa8ENtF58B13Gtz0pr/I=",
         "owner": "metacraft-labs",
         "repo": "validator-ejector",
-        "rev": "cef31cac3f7f7ad7271d2dc1f59b0ba5395a3e18",
+        "rev": "bfeb33e99e18a6bc9f6321e5329e7da0a55a1c2e",
         "type": "github"
       },
       "original": {
