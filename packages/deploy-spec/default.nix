@@ -1,5 +1,8 @@
-{pkgs}: let
-  cachixBin = "${pkgs.cachix}/bin/cachix";
+{
+  pkgs,
+  inputs',
+}: let
+  cachixBin = "${inputs'.cachix.packages.cachix}/bin/cachix";
 in
   pkgs.substituteAll {
     name = "deploy-spec";

@@ -11,14 +11,14 @@ save_gh_ci_matrix() {
 
 }
 
-hasShards="$(@nixBin@ eval .#legacyPackages.x86_64-linux.checks.shardCount && echo "true" || echo "false")";
-if [ "$hasShards" = "false" ]; then
+shardCount="$(nix eval .#legacyPackages.x86_64-linux.checks.shardCount || echo "-1")";
+if [ "$shardCount" = "-1" ]; then
   echo "No shards found, exiting"
   save_gh_ci_matrix '{"include":[{prefix: "", postfix: "", "digit": -1}]}'
   exit 0
 fi
 
-numShards=$(( $(@nixBin@ eval .#legacyPackages.x86_64-linux.checks.shardCount) - 1))
+numShards=$(( shardCount - 1))
 
 shards=$(for i in $(seq 0 $numShards); do echo '{"prefix" : "legacyPackages", "postfix" : "checks.shards.'"$i"'", "digit": '"$i"' }'; done | paste -sd, -)
 

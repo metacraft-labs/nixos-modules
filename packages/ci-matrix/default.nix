@@ -2,38 +2,23 @@
   pkgs,
   unstablePkgs,
   lib,
+  nix-eval-jobs,
+  print-table,
+  inputs',
 }: let
-  options = {
+  jqBin = "${pkgs.jq}/bin/jq";
+  cachixBin = "${inputs'.cachix.packages.cachix}/bin/cachix";
+  nixEvalJobsSh = "${nix-eval-jobs}/bin/nix-eval-jobs";
+  printTableSh = "${print-table}/bin/print-table";
+in
+  pkgs.substituteAll {
+    name = "ci-matrix";
     dir = "bin";
     isExecutable = true;
 
-    jqBin = "${pkgs.jq}/bin/jq";
-    cachixBin = "${pkgs.cachix}/bin/cachix";
-    nixEvalJobsBin = "${unstablePkgs.nix-eval-jobs}/bin/nix-eval-jobs";
-  };
+    inherit jqBin cachixBin nixEvalJobsSh printTableSh;
 
-  scripts = rec {
-    system-info = pkgs.substituteAll ({
-        src = ./system-info.sh;
-      }
-      // options);
-    nix-eval-jobs = pkgs.substituteAll ({
-        systemInfoSh = "${system-info}/bin/system-info.sh";
-        src = ./nix-eval-jobs.sh;
-      }
-      // options);
-    ci-matrix = pkgs.substituteAll ({
-        nixEvalJobsSh = "${nix-eval-jobs}/bin/nix-eval-jobs.sh";
-        src = ./ci-matrix.sh;
-      }
-      // options);
-  };
-in
-  with pkgs;
-    pkgs.symlinkJoin rec {
-      name = "ci-matrix";
+    src = ./ci-matrix.sh;
 
-      paths = lib.attrValues scripts;
-
-      meta.mainProgram = "ci-matrix.sh";
-    }
+    meta.mainProgram = "ci-matrix";
+  }

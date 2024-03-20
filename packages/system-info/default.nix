@@ -1,14 +1,15 @@
 {
   pkgs,
-  ci-matrix,
+  unstablePkgs,
+  lib,
 }: let
   jqBin = "${pkgs.jq}/bin/jq";
 in
   pkgs.substituteAll {
-    name = "shard-matrix";
+    name = "system-info";
     inherit jqBin;
     dir = "bin";
     isExecutable = true;
-    src = ./shard-matrix.sh;
-    meta.mainProgram = "shard-matrix";
+    src = ./system-info.sh;
+    meta.mainProgram = "system-info";
   }
