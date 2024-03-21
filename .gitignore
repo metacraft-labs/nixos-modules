@@ -4,6 +4,7 @@ result
 
 # Direnv
 .direnv
+.env
 
 *.qcow2
 
