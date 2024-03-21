@@ -181,6 +181,30 @@
         "type": "github"
       }
     },
+    "dlang-nix": {
+      "inputs": {
+        "flake-compat": [
+          "flake-compat"
+        ],
+        "flake-parts": [
+          "flake-parts"
+        ],
+        "nixpkgs": "nixpkgs"
+      },
+      "locked": {
+        "lastModified": 1709505433,
+        "narHash": "sha256-NmJC8Sl4ht0ChCZRgKeMFq2xhB83+pSvEPgrIa5INb4=",
+        "owner": "PetarKirov",
+        "repo": "dlang.nix",
+        "rev": "c44ea56df1bddec059f21198d9baa1f132db5ec9",
+        "type": "github"
+      },
+      "original": {
+        "owner": "PetarKirov",
+        "repo": "dlang.nix",
+        "type": "github"
+      }
+    },
     "ethereum-nix": {
       "inputs": {
         "devour-flake": "devour-flake",
@@ -679,6 +703,22 @@
         "type": "github"
       }
     },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1709237383,
+        "narHash": "sha256-cy6ArO4k5qTx+l5o+0mL9f5fa86tYUX3ozE1S+Txlds=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "1536926ef5621b09bba54035ae2bb6d806d72ac8",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
     "nixpkgs-regression": {
       "locked": {
         "lastModified": 1643052045,
@@ -781,6 +821,7 @@
         "cachix": "cachix",
         "devenv": "devenv",
         "disko": "disko",
+        "dlang-nix": "dlang-nix",
         "ethereum-nix": "ethereum-nix",
         "flake-compat": "flake-compat_2",
         "flake-parts": "flake-parts",
