@@ -23,6 +23,8 @@ in
       nix-output-monitor
       repl
       rage
+      inputs'.dlang-nix.packages.dmd
+      inputs'.dlang-nix.packages.dub
     ];
 
     shellHook = ''
