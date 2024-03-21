@@ -4,9 +4,11 @@
   nixConfig = {
     extra-substituters = [
       "https://mcl-public-cache.cachix.org"
+      "https://dlang-community.cachix.org"
     ];
     extra-trusted-public-keys = [
       "mcl-public-cache.cachix.org-1:OcUzMeoSAwNEd3YCaEbNjLV5/Gd+U5VFxdN2WGHfpCI="
+      "dlang-community.cachix.org-1:eAX1RqX4PjTDPCAp/TvcZP+DYBco2nJBackkAJ2BsDQ="
     ];
   };
 
@@ -166,6 +168,14 @@
     crane = {
       url = "github:ipetkov/crane";
       inputs.nixpkgs.follows = "nixpkgs";
+    };
+
+    dlang-nix = {
+      url = "github:PetarKirov/dlang.nix";
+      inputs = {
+        flake-compat.follows = "flake-compat";
+        flake-parts.follows = "flake-parts";
+      };
     };
   };
 
