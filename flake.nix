@@ -144,7 +144,6 @@
     self,
     nixpkgs,
     flake-parts,
-    home-manager,
     ...
   }: let
     lib = import "${nixpkgs}/lib";
@@ -161,15 +160,9 @@
       systems = ["x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin"];
       perSystem = {
         pkgs,
-        lib,
-        system,
-        unstablePkgs,
         inputs',
         ...
-      }: let
-        inherit (pkgs.lib) hasSuffix;
-        utils = import "${self}/lib";
-      in {
+      }: {
         devShells.default = import ./shells/default.nix {inherit pkgs flake inputs';};
         devShells.ci = import ./shells/ci.nix {inherit pkgs;};
       };
