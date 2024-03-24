@@ -59,6 +59,8 @@
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.nixpkgs-unstable.follows = "nixpkgs-unstable";
       inputs.flake-parts.follows = "flake-parts";
+      inputs.flake-utils.follows = "flake-utils";
+      inputs.systems.follows = "systems";
       inputs.flake-compat.follows = "flake-compat";
       inputs.treefmt-nix.follows = "treefmt-nix";
     };
@@ -66,12 +68,14 @@
     agenix = {
       url = "github:ryantm/agenix";
       inputs.nixpkgs.follows = "nixpkgs";
+      inputs.systems.follows = "systems";
       inputs.darwin.follows = "nix-darwin";
       inputs.home-manager.follows = "home-manager";
     };
 
     devenv = {
       url = "github:cachix/devenv";
+      inputs.cachix.follows = "cachix";
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.pre-commit-hooks.follows = "pre-commit-hooks";
       inputs.flake-compat.follows = "flake-compat";
