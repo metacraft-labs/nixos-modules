@@ -88,38 +88,6 @@
         "type": "github"
       }
     },
-    "cachix-deploy": {
-      "inputs": {
-        "darwin": [
-          "nix-darwin"
-        ],
-        "disko": [
-          "disko"
-        ],
-        "home-manager": [
-          "home-manager"
-        ],
-        "nixos-anywhere": [
-          "nixos-anywhere"
-        ],
-        "nixpkgs": [
-          "nixpkgs"
-        ]
-      },
-      "locked": {
-        "lastModified": 1689691408,
-        "narHash": "sha256-XWrxsfn2VNexC5Z/PqdX5VCNjMQLOW1Mqstqznzmx2c=",
-        "owner": "cachix",
-        "repo": "cachix-deploy-flake",
-        "rev": "347933f81e9212cb98b78b6529e86fd810fcf8ae",
-        "type": "github"
-      },
-      "original": {
-        "owner": "cachix",
-        "repo": "cachix-deploy-flake",
-        "type": "github"
-      }
-    },
     "devenv": {
       "inputs": {
         "flake-compat": [
@@ -823,7 +791,6 @@
       "inputs": {
         "agenix": "agenix",
         "cachix": "cachix",
-        "cachix-deploy": "cachix-deploy",
         "devenv": "devenv",
         "disko": "disko",
         "ethereum-nix": "ethereum-nix",
