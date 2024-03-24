@@ -100,15 +100,6 @@
       inputs.treefmt-nix.follows = "treefmt-nix";
     };
 
-    cachix-deploy = {
-      url = "github:cachix/cachix-deploy-flake";
-      inputs.nixpkgs.follows = "nixpkgs";
-      inputs.disko.follows = "disko";
-      inputs.home-manager.follows = "home-manager";
-      inputs.darwin.follows = "nix-darwin";
-      inputs.nixos-anywhere.follows = "nixos-anywhere";
-    };
-
     disko = {
       url = "github:nix-community/disko";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -153,7 +144,6 @@
     self,
     nixpkgs,
     flake-parts,
-    cachix-deploy,
     home-manager,
     ...
   }: let
@@ -177,7 +167,6 @@
         inputs',
         ...
       }: let
-        cachix-deploy-lib = cachix-deploy.lib pkgs;
         inherit (pkgs.lib) hasSuffix;
         utils = import "${self}/lib";
       in {
