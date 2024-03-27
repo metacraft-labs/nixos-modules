@@ -60,7 +60,7 @@ runs:
         CACHIX_CACHE: ${{ inputs.cachix-cache }}
         CACHIX_AUTH_TOKEN: ${{ inputs.cachix-auth-token }}
         PRECALC_MATRIX: ${{ inputs.precalc_matrix }}
-      run: nix run github:metacraft-labs/nixos-modules/feat/CD#print-table
+      run: nix run github:metacraft-labs/nixos-modules/feat/CD#ci-matrix print-table
 
     - name: Upload CI Matrix
       if: ${{ inputs.comment_matrix == true }}
