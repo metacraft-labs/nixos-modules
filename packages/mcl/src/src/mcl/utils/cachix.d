@@ -1,6 +1,6 @@
 module mcl.utils.cachix;
 
-import std.format : fmt = format;
+import std.format: fmt = format;
 
 string getCachixDeploymentApiUrl(string workspace, string machine, uint deploymentId)
 in (workspace && machine && deploymentId) =>
