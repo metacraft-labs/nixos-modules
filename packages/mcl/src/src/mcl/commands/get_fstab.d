@@ -1,17 +1,17 @@
 module mcl.commands.get_fstab;
 
-import std;
-import std.conv : to;
-import std.json : JSONValue;
-import std.format : fmt = format;
-import std.exception : enforce;
+import std.stdio: writeln;
+import std.conv: to;
+import std.json: JSONValue;
+import std.format: fmt = format;
+import std.exception: enforce;
 
-import mcl.utils.cachix : cachixNixStoreUrl, getCachixDeploymentApiUrl;
-import mcl.utils.env : optional, parseEnv;
-import mcl.utils.fetch : fetchJson;
-import mcl.utils.nix;
-import mcl.utils.string : camelCaseToCapitalCase;
-import mcl.utils.process : execute;
+import mcl.utils.cachix: cachixNixStoreUrl, getCachixDeploymentApiUrl;
+import mcl.utils.env: optional, parseEnv;
+import mcl.utils.fetch: fetchJson;
+import mcl.utils.nix: queryStorePath, nixBuild;
+import mcl.utils.string: camelCaseToCapitalCase;
+import mcl.utils.process: execute;
 
 export void get_fstab() {
     const params = parseEnv!Params;

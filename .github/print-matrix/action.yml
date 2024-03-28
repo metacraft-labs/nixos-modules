@@ -60,7 +60,13 @@ runs:
         CACHIX_CACHE: ${{ inputs.cachix-cache }}
         CACHIX_AUTH_TOKEN: ${{ inputs.cachix-auth-token }}
         PRECALC_MATRIX: ${{ inputs.precalc_matrix }}
-      run: nix run github:metacraft-labs/nixos-modules/feat/CD#print-table
+      run: |
+        nix run github:metacraft-labs/nixos-modules/feat/CD#mcl print_table
+
+        # echo "comment<<$EOF" >> $GITHUB_OUTPUT
+        # cat comment.md >> $GITHUB_OUTPUT
+        # echo $EOF >> $GITHUB_OUTPUT
+        # cat $GITHUB_OUTPUT
 
     - name: Upload CI Matrix
       if: ${{ inputs.comment_matrix == true }}
@@ -73,4 +79,5 @@ runs:
       if: ${{ inputs.comment_matrix == true }}
       uses: marocchino/sticky-pull-request-comment@v2.9.0
       with:
+        recreate: true
         path: comment.md

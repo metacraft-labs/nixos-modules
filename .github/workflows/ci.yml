@@ -43,7 +43,7 @@ jobs:
       - name: Generate Matrix for Matrix
         id: generate-matrix
         run: |
-          nix run github:metacraft-labs/nixos-modules/feat/CD#shard-matrix
+          nix run github:metacraft-labs/nixos-modules/feat/CD#mcl shard_matrix
     outputs:
       gen_matrix: ${{ steps.generate-matrix.outputs.gen_matrix }}
   generate-matrix:
@@ -121,7 +121,7 @@ jobs:
       fail-fast: false
       matrix: ${{fromJSON( needs.slurp-matrix.outputs.matrix )}}
 
-    name: ${{ matrix.package }} | ${{ matrix.system }}
+    name: ${{ matrix.name }} | ${{ matrix.system }}
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.allowedToFail }}
 
@@ -139,8 +139,9 @@ jobs:
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
           extraPullNames: ${{ vars.EXTRA_CACHIX_CACHES }}
 
-      - name: Build ${{ matrix.package }}
+      - name: Build ${{ matrix.name }}
         run: |
+          set -euo pipefail
           nix run github:Mic92/nix-fast-build -- --debug --systems ${{ matrix.system }} --skip-cached --no-nom --flake '.#${{ matrix.attrPath }}' 3>&1 1>&2 2>&3 3>&- | grep --color=always -v "warning: Git tree" | grep --color=always -v "warning: unknown setting" | grep --color=always -v "error (ignored): error: SQLite database"
 
   results:
@@ -170,7 +171,7 @@ jobs:
         if: ${{inputs.do_deploy == 'true' && (github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) }}
         env:
           CACHIX_ACTIVATE_TOKEN: "${{ secrets.CACHIX_ACTIVATE_TOKEN }}"
-        run: nix run github:metacraft-labs/nixos-modules/feat/CD#deploy-spec
+        run: nix run github:metacraft-labs/nixos-modules/feat/CD#mcl deploy_spec
 
       - run: exit 1
         if: >-
