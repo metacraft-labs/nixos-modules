@@ -73,4 +73,5 @@ runs:
       if: ${{ inputs.comment_matrix == true }}
       uses: marocchino/sticky-pull-request-comment@v2.9.0
       with:
+        recreate: true
         path: comment.md

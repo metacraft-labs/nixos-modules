@@ -104,6 +104,12 @@
       inputs.treefmt-nix.follows = "treefmt-nix";
     };
 
+    nix2container = {
+      url = "github:nlewo/nix2container";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.flake-utils.follows = "flake-utils";
+    };
+
     disko = {
       url = "github:nix-community/disko";
       inputs.nixpkgs.follows = "nixpkgs";
