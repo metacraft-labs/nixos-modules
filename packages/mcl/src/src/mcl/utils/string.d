@@ -1,5 +1,6 @@
 module mcl.utils.string;
-
+import std.traits: EnumMembers, hasUDA, getUDAs;
+import std.conv: to;
 string camelCaseToCapitalCase(string camelCase) {
     import std.algorithm : splitWhen, map, joiner;
     import std.conv : to;
@@ -10,6 +11,28 @@ string camelCaseToCapitalCase(string camelCase) {
         .map!asUpperCase
         .joiner("_")
         .to!string;
+}
+
+struct StringRepresentation { string repr; }
+
+string enumToString(T)(in T value) if (is (T == enum))
+{
+    switch (value)
+    {
+        static foreach(enumMember; EnumMembers!T)
+        {
+            case enumMember:
+            {
+                static if (!hasUDA!(enumMember, StringRepresentation))
+                {
+                    static assert(0, "Unsupported enum member: `" ~ enumMember ~  "`");
+                }
+                return getUDAs!(enumMember, StringRepresentation)[0].repr;
+            }
+        }
+        default:
+            assert(0, "Not supported case: " ~ value.to!string);
+    }
 }
 
 unittest {

@@ -1,9 +1,13 @@
-import std.stdio : writefln, writeln;
+import std.stdio: writefln, writeln;
 
 import cmds = mcl.commands;
 
 alias supportedCommands = imported!`std.traits`.AliasSeq!(
-    cmds.get_fstab
+    cmds.get_fstab,
+    cmds.deploy_spec,
+    cmds.ci_matrix,
+    cmds.print_table,
+    cmds.shard_matrix
 );
 
 int main(string[] args)
@@ -16,17 +20,22 @@ int main(string[] args)
         default:
             return wrongUsage("unknown command: `" ~ args[1] ~ "`");
 
-    	static foreach (cmd; supportedCommands)
+        static foreach (cmd; supportedCommands)
             case __traits(identifier, cmd):
+            {
+
+                writeln("Running ", __traits(identifier, cmd));
                 cmd();
-    }
+                return 0;
+
+            }
+        }
     catch (Exception e)
     {
         writefln("Error: %s", e.msg);
         return 1;
     }
 
-    return 0;
 }
 
 int wrongUsage(string error)
@@ -36,5 +45,5 @@ int wrongUsage(string error)
 	static foreach (cmd; supportedCommands)
         writefln("    mcl %s", __traits(identifier, cmd));
 
-   return 1;
+    return 1;
 }
