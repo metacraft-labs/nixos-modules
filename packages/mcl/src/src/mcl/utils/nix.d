@@ -1,11 +1,12 @@
 module mcl.utils.nix;
 
-import std.algorithm : filter, endsWith;
-import std.array : array;
-import std.conv : to;
-import std.exception : enforce;
-import std.format : fmt = format;
-import std.string : lineSplitter;
+import std.algorithm: filter, endsWith;
+import std.array: array;
+import std.conv: to;
+import std.exception: enforce;
+import std.format: fmt = format;
+import std.string: lineSplitter, strip;
+import std.json: parseJSON, JSONValue;
 
 import mcl.utils.process : execute;
 
@@ -42,6 +43,25 @@ string[] nixQueryReferences(string nixStorePath, string storeUrl) {
         .to!(string[]);
 }
 
-void nixBuild(string storePath) {
-    ["nix", "build", storePath].execute();
+string nixCommand(T)(T cmd, string[] args) if (is (T == string ) || is(T == string[])) {
+    auto command = "nix" ~ (cmd ~ args);
+    return command.execute().strip();
 }
+
+string nixBuild(string storePath, string[] extraArgs = []) {
+    return nixCommand("build", extraArgs ~ storePath);
+}
+
+string nixRun(string flakePath, string[] extraArgs = []) {
+    return nixCommand("run", extraArgs ~ flakePath);
+}
+
+string nixEval(string flakePath, string[] extraArgs = []) {
+    return nixCommand("eval", extraArgs ~ flakePath);
+}
+
+JSONValue nixEvalJson(string flakePath, string[] extraArgs = []) {
+    return parseJSON(nixCommand(["eval", "--json"], extraArgs));
+}
+
+//TODO: Add unittest to test nixEval as a JSONValue
