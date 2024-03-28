@@ -18,23 +18,21 @@ inputs:
   substituters:
     description: Substituters
     required: true
-  flake_pre:
-    description: Prefix for the flake to evaluate
-    required: false
-    default: ""
-  flake_post:
-    description: Postfix for the flake to evaluate
-    required: false
-    default: ""
   comment_matrix:
     description: Whether to post a comment/upload the matrix
     required: false
     default: true
+  precalc_matrix:
+    description: Pre-calculated matrix
+    required: true
 
 outputs:
   matrix:
     description: 'Generated Matrix'
-    value: ${{ steps.generate-matrix.outputs.matrix }}
+    value: ${{ steps.print-matrix.outputs.matrix }}
+  comment:
+    description: 'Comment'
+    value: ${{ steps.print-matrix.outputs.comment }}
 
 runs:
   using: "composite"
@@ -54,11 +52,28 @@ runs:
         mkdir -p /home/runner/.config/nix
         echo "machine ${{inputs.cachix-cache}}.cachix.org password ${{inputs.cachix-auth-token}}" >> /home/runner/.config/nix/netrc
 
-    - name: Generate CI Matrix
-      id: generate-matrix
+    - name: Print CI Matrix
+      id: print-matrix
       shell: bash
       env:
         IS_INITIAL: ${{ inputs.is-initial }}
         CACHIX_CACHE: ${{ inputs.cachix-cache }}
         CACHIX_AUTH_TOKEN: ${{ inputs.cachix-auth-token }}
-      run: nix run github:metacraft-labs/nixos-modules/feat/CD#ci-matrix ${{ inputs.flake_pre }} ${{ inputs.flake_post }}
+        PRECALC_MATRIX: ${{ inputs.precalc_matrix }}
+      run: |
+        nix run github:metacraft-labs/nixos-modules/feat/CD#ci-matrix print-table
+        echo "comment=$(cat comment.md)" >> $GITHUB_OUTPUT
+
+    - name: Upload CI Matrix
+      if: ${{ inputs.comment_matrix == true }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: matrix-${{ inputs.is-initial == 'true' && 'pre' || 'post' }}.json
+        path: matrix-${{ inputs.is-initial == 'true' && 'pre' || 'post' }}.json
+
+    - name: Update GitHub Comment
+      if: ${{ inputs.comment_matrix == true }}
+      uses: marocchino/sticky-pull-request-comment@v2.9.0
+      with:
+        recreate: true
+        message: ${{ steps.print-matrix.outputs.comment }}

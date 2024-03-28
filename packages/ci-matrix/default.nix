@@ -1,21 +1,40 @@
-{pkgs}: let
+{
+  pkgs,
+  unstablePkgs,
+  lib,
+  inputs',
+  writeShellApplication,
+}: let
+  dlangProg = pkgs.stdenv.mkDerivation rec {
+    name = "ci-matrix-d";
+    src = ./ci-matrix.d;
+    dontUnpack = true;
+    nativeBuildInputs = with pkgs; [dmd ldc];
+    buildInputs = with pkgs; [ncurses zlib];
+
+    buildPhase = ''
+      runHook preBuild
+      dmd -debug -preview=in "${src}"
+      runHook postBuild
+    '';
+
+    installPhase = ''
+      runHook preInstall
+      mkdir -p $out/bin
+      cp *-ci-matrix $out/bin/ci-matrix-d
+      chmod +x $out/bin/ci-matrix-d
+      runHook postInstall
+    '';
+
+    postInstall = ''
+      ${pkgs.removeReferencesTo}/bin/remove-references-to -t ${pkgs.ldc} $out/bin/ci-matrix-d
+    '';
+  };
 in
-  with pkgs;
-    stdenv.mkDerivation rec {
-      pname = "ci-matrix";
-      version = "main";
+  writeShellApplication {
+    name = "ci-matrix";
 
-      src = ./.;
+    runtimeInputs = [dlangProg unstablePkgs.nix-eval-jobs];
 
-      buildPhase = ''
-        sed -i 's|jq|${jq}/bin/jq|' *.sh
-        sed -i 's|nix-eval-jobs |${nix-eval-jobs}/bin/nix-eval-jobs |' *.sh
-        sed -i 's|"$root_dir/scripts/|"'$out'/bin/|' *.sh
-      '';
-      installPhase = ''
-        mkdir -p $out/bin
-        cp {ci-matrix,nix-eval-jobs,system-info}.sh $out/bin'';
-      doCheck = false;
-
-      meta.mainProgram = "ci-matrix.sh";
-    }
+    text = builtins.readFile ./ci-matrix.sh;
+  }

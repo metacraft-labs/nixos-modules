@@ -23,6 +23,7 @@ in
       nix-output-monitor
       repl
       rage
+      act
     ];
 
     shellHook = ''
