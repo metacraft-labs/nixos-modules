@@ -1,0 +1,10 @@
+name "mcl"
+description "Swiss-knife for managing NixOS deployments"
+authors "Metacraft Labs"
+copyright "Copyright © 2024, Metacraft Labs"
+license "MIT"
+targetPath "build"
+
+dflags "-preview=shortenedMethods"
+dflags "-defaultlib=libphobos2.so" platform="dmd"
+lflags "-fuse-ld=gold" platform="dmd"
