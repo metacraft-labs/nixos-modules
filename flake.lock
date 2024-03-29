@@ -611,6 +611,32 @@
         "type": "github"
       }
     },
+    "nix-fast-build": {
+      "inputs": {
+        "flake-parts": [
+          "flake-parts"
+        ],
+        "nixpkgs": [
+          "nixpkgs"
+        ],
+        "treefmt-nix": [
+          "treefmt-nix"
+        ]
+      },
+      "locked": {
+        "lastModified": 1709911523,
+        "narHash": "sha256-XNutwbRI6h57ybeKy0yYupfngWYcfcIqE0b0LgXnyxs=",
+        "owner": "Mic92",
+        "repo": "nix-fast-build",
+        "rev": "692fe3e98f36b60c678d637235271b57910a7f80",
+        "type": "github"
+      },
+      "original": {
+        "owner": "Mic92",
+        "repo": "nix-fast-build",
+        "type": "github"
+      }
+    },
     "nix-github-actions": {
       "inputs": {
         "nixpkgs": [
@@ -897,6 +923,7 @@
         "home-manager": "home-manager",
         "microvm": "microvm",
         "nix-darwin": "nix-darwin",
+        "nix-fast-build": "nix-fast-build",
         "nix2container": "nix2container",
         "nixd": "nixd",
         "nixos-2311": "nixos-2311",

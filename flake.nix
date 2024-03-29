@@ -177,6 +177,15 @@
         flake-parts.follows = "flake-parts";
       };
     };
+
+    nix-fast-build = {
+      url = "github:Mic92/nix-fast-build";
+      inputs = {
+        nixpkgs.follows = "nixpkgs";
+        flake-parts.follows = "flake-parts";
+        treefmt-nix.follows = "treefmt-nix";
+      };
+    };
   };
 
   outputs = inputs @ {
