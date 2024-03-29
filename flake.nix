@@ -1,6 +1,15 @@
 {
   description = "Metacraft Nixos Modules";
 
+  nixConfig = {
+    extra-substituters = [
+      "https://mcl-public-cache.cachix.org"
+    ];
+    extra-trusted-public-keys = [
+      "mcl-public-cache.cachix.org-1:OcUzMeoSAwNEd3YCaEbNjLV5/Gd+U5VFxdN2WGHfpCI="
+    ];
+  };
+
   inputs = {
     nixos-2311.url = "github:NixOS/nixpkgs/nixos-23.11";
 
