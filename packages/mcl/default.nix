@@ -5,11 +5,11 @@
   dcompiler,
   unstablePkgs,
   pkgs,
+  fetchgit,
   ...
 }:
-stdenv.mkDerivation (finalAttrs: {
-  pname = "mcl";
-  version = "0.0.1";
+stdenv.mkDerivation rec {
+  name = "mcl";
   src = lib.fileset.toSource {
     root = ./.;
     fileset = lib.fileset.fileFilter (file: builtins.any file.hasExt ["d" "sdl" "json"]) ./.;
@@ -17,13 +17,24 @@ stdenv.mkDerivation (finalAttrs: {
 
   nativeBuildInputs = [dub dcompiler pkgs.makeWrapper];
 
-  buildPhase = "dub build";
+  silly = fetchgit {
+    url = "https://gitlab.com/AntonMeep/silly";
+    rev = "v1.1.1";
+    sha256 = "sha256-pggc+tlxoiSngmSwOT7euXkbcChwRuicVo/FL20tn3s=";
+  };
+
+  buildPhase = ''
+    mkdir home
+    export HOME="$(pwd)/home"
+    dub add-local "${silly}" "1.1.1"
+    dub build
+  '';
   checkPhase = "dub test";
   installPhase = ''
-    install -D -m755 ./build/${finalAttrs.pname} $out/bin/${finalAttrs.pname}
+    install -D -m755 ./build/${name} $out/bin/${name}
   '';
   postFixup = ''
-    wrapProgram $out/bin/${finalAttrs.pname} --set PATH ${lib.makeBinPath [
+    wrapProgram $out/bin/${name} --set PATH ${lib.makeBinPath [
       pkgs.cachix
       pkgs.git
       pkgs.nix
@@ -32,5 +43,5 @@ stdenv.mkDerivation (finalAttrs: {
     ]}
   '';
 
-  meta.mainProgram = finalAttrs.pname;
-})
+  meta.mainProgram = name;
+}

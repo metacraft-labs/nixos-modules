@@ -48,6 +48,14 @@ GitHubOS getGHOS(string os) {
             return GitHubOS.ubuntuLatest;
     }
 }
+
+@("getGHOS")
+unittest {
+    assert(getGHOS("ubuntu-latest") == GitHubOS.ubuntuLatest);
+    assert(getGHOS("macos-14") == GitHubOS.macos14);
+    assert(getGHOS("crazyos-inator-2000") == GitHubOS.ubuntuLatest);
+}
+
 SupportedSystem getSystem(string system) {
     switch (system) {
         case "x86_64-linux":
@@ -61,6 +69,14 @@ SupportedSystem getSystem(string system) {
     }
 }
 
+@("getSystem")
+unittest {
+    assert(getSystem("x86_64-linux") == SupportedSystem.x86_64_linux);
+    assert(getSystem("x86_64-darwin") == SupportedSystem.x86_64_darwin);
+    assert(getSystem("aarch64-darwin") == SupportedSystem.aarch64_darwin);
+    assert(getSystem("bender-bending-rodriguez-os") == SupportedSystem.x86_64_linux);
+}
+
 struct Package {
     string name;
     bool allowedToFail = false;
@@ -70,6 +86,13 @@ struct Package {
     GitHubOS os;
     SupportedSystem system;
     string output;
+}
+
+version(unittest) {
+    static immutable Package[] testPackageArray = [
+        Package("testPackage", false, "testPackagePath", "https://testPackage.com", true, GitHubOS.ubuntuLatest, SupportedSystem.x86_64_linux, "testPackageOutput"),
+        Package("testPackage2", true, "testPackagePath2", "https://testPackage2.com", false, GitHubOS.macos14, SupportedSystem.aarch64_darwin, "testPackageOutput2")
+    ];
 }
 
 struct Matrix {
@@ -89,6 +112,13 @@ struct SummaryTableEntry {
     SummaryTableEntry_aarch64 aarch64;
 }
 
+version(unittest) {
+    static immutable SummaryTableEntry[] testSummaryTableEntryArray = [
+        SummaryTableEntry("testPackage", SummaryTableEntry_x86_64("✅ cached", "✅ cached"), SummaryTableEntry_aarch64("🚫 not supported")),
+        SummaryTableEntry("testPackage2", SummaryTableEntry_x86_64("⏳ building...", "❌ build failed"), SummaryTableEntry_aarch64("⏳ building..."))
+    ];
+}
+
 int exit_code = 0;
 
 Params params;
@@ -103,7 +133,7 @@ export void print_table() {
     params = parseEnv!Params;
 
     createResultDirs();
-    curlCheck([]);
+    curlCheck();
 }
 struct Params {
     @optional() string flakePre;
@@ -121,6 +151,13 @@ struct Params {
 
 GitHubOS systemToGHPlatform(SupportedSystem os) {
     return os == SupportedSystem.x86_64_linux ? GitHubOS.ubuntuLatest : GitHubOS.macos14;
+}
+
+@("systemToGHPlatform")
+unittest {
+    assert(systemToGHPlatform(SupportedSystem.x86_64_linux) == GitHubOS.ubuntuLatest);
+    assert(systemToGHPlatform(SupportedSystem.x86_64_darwin) == GitHubOS.macos14);
+    assert(systemToGHPlatform(SupportedSystem.aarch64_darwin) == GitHubOS.macos14);
 }
 
 static immutable string[] uselessWarnings =
@@ -200,6 +237,11 @@ int getNixEvalWorkerCount() {
     return params.maxWorkers == 0 ? (threadsPerCPU() < 8 ? threadsPerCPU() : 8) : params.maxWorkers;
 }
 
+@("getNixEvalWorkerCount")
+unittest {
+    assert(getNixEvalWorkerCount() == (threadsPerCPU() < 8 ? threadsPerCPU() : 8));
+}
+
 int getAvailableMemoryMB() {
 
     // free="$(< /proc/meminfo grep MemFree | tr -s ' ' | cut -d ' ' -f 2)"
@@ -227,10 +269,27 @@ int getAvailableMemoryMB() {
     return maxMemoryMB;
 }
 
+@("getAvailableMemoryMB")
+unittest {
+    assert(getAvailableMemoryMB() > 0);
+}
+
 void saveCachixDeploySpec(Package[] packages) {
     auto agents = packages.map!(pkg => JSONValue(["package": pkg.name, "out": pkg.output])).array;
     auto resPath = resultDir() ~ "/cachix-deploy-spec.json";
     resPath.write(JSONValue(agents).toString(JSONOptions.doNotEscapeSlashes));
+}
+
+@("saveCachixDeploySpec")
+unittest {
+    import std.file: rmdirRecurse;
+    createResultDirs();
+    saveCachixDeploySpec(cast(Package[]) testPackageArray);
+    JSONValue deploySpec = parseJSON((resultDir() ~ "/cachix-deploy-spec.json").readText);
+    assert(testPackageArray[0].name == deploySpec[0]["package"].str);
+    assert(testPackageArray[0].output == deploySpec[0]["out"].str);
+    assert(testPackageArray[1].name == deploySpec[1]["package"].str);
+    assert(testPackageArray[1].output == deploySpec[1]["out"].str);
 }
 
 void saveGHCIMatrix(Package[] packages) {
@@ -240,6 +299,15 @@ void saveGHCIMatrix(Package[] packages) {
     resPath.write(JSONValue(matrix).toString(JSONOptions.doNotEscapeSlashes));
 }
 
+@("saveGHCIMatrix")
+unittest {
+    import std.file: rmdirRecurse;
+    createResultDirs();
+    saveGHCIMatrix(cast(Package[]) testPackageArray);
+    JSONValue matrix = parseJSON((rootDir() ~ (params.isInitial ? "matrix-pre.json" : "matrix-post.json")).readText);
+    assert(testPackageArray[1].name == matrix["include"][0]["name"].str); //testPackageArray[1] is not cached, so it should be in the matrix
+}
+
 void saveGHCIComment(SummaryTableEntry[] tableSummaryJSON) {
     string comment = "Thanks for your Pull Request!";
     comment ~= "\n\nBelow you will find a summary of the cachix status of each package, for each supported platform.";
@@ -247,6 +315,20 @@ void saveGHCIComment(SummaryTableEntry[] tableSummaryJSON) {
     comment ~= "\n| ------- | -------------- | --------------- | ---------------- |";
     comment ~= tableSummaryJSON.map!(pkg => "\n| " ~ pkg.name ~ " | " ~ pkg.x86_64.linux ~ " | " ~ pkg.x86_64.darwin ~ " | " ~ pkg.aarch64.darwin ~ " |").join("");
     (rootDir() ~ "comment.md").write(comment);
+}
+
+@("saveGHCIComment")
+unittest {
+    import std.file: rmdirRecurse;
+    createResultDirs();
+    saveGHCIComment(cast(SummaryTableEntry[]) testSummaryTableEntryArray);
+    string comment = (rootDir() ~ "comment.md").readText;
+    foreach (pkg; testSummaryTableEntryArray) {
+        assert(comment.indexOf(pkg.name) != -1);
+        assert(comment.indexOf(pkg.x86_64.linux) != -1);
+        assert(comment.indexOf(pkg.x86_64.darwin) != -1);
+        assert(comment.indexOf(pkg.aarch64.darwin) != -1);
+    }
 }
 
 string getStatus(JSONValue pkg, string key) {
@@ -263,7 +345,7 @@ string getStatus(JSONValue pkg, string key) {
     }
 }
 
-SummaryTableEntry[] convertNixEvalToTableSummaryJSON(Package[] packages) {
+SummaryTableEntry[] convertNixEvalToTableSummary(Package[] packages) {
 
     SummaryTableEntry[] tableSummary = packages
         .chunkBy!((a, b) => a.name == b.name)
@@ -282,15 +364,41 @@ SummaryTableEntry[] convertNixEvalToTableSummaryJSON(Package[] packages) {
     return tableSummary;
 }
 
+@("convertNixEvalToTableSummary/getStatus")
+unittest {
+    auto tableSummary = convertNixEvalToTableSummary(cast(Package[]) testPackageArray);
+    assert(tableSummary[0].name == testPackageArray[0].name);
+    assert(tableSummary[0].x86_64.linux == "[✅ cached](https://testPackage.com)");
+    assert(tableSummary[0].x86_64.darwin == "🚫 not supported");
+    assert(tableSummary[0].aarch64.darwin == "🚫 not supported");
+    assert(tableSummary[1].name == testPackageArray[1].name);
+    assert(tableSummary[1].x86_64.linux == "🚫 not supported");
+    assert(tableSummary[1].x86_64.darwin == "🚫 not supported");
+    assert(tableSummary[1].aarch64.darwin == "❌ build failed");
+
+    params.isInitial = true;
+    tableSummary = convertNixEvalToTableSummary(cast(Package[]) testPackageArray);
+    params.isInitial = false;
+    assert(tableSummary[0].name == testPackageArray[0].name);
+    assert(tableSummary[0].x86_64.linux == "[✅ cached](https://testPackage.com)");
+    assert(tableSummary[0].x86_64.darwin == "🚫 not supported");
+    assert(tableSummary[0].aarch64.darwin == "🚫 not supported");
+    assert(tableSummary[1].name == testPackageArray[1].name);
+    assert(tableSummary[1].x86_64.linux == "🚫 not supported");
+    assert(tableSummary[1].x86_64.darwin == "🚫 not supported");
+    assert(tableSummary[1].aarch64.darwin == "⏳ building...");
+
+}
+
 void printTableForCacheStatus(Package[] packages) {
     if (params.precalcMatrix == "") {
         saveGHCIMatrix(packages);
     }
     saveCachixDeploySpec(packages);
-    saveGHCIComment(convertNixEvalToTableSummaryJSON(packages));
+    saveGHCIComment(convertNixEvalToTableSummary(packages));
 }
 
-void curlCheck(Package[] packages) {
+void curlCheck() {
     string precalcMatrixStr = params.precalcMatrix == "" ? "{\"include\": []}" : params.precalcMatrix;
     enforce!MissingEnvVarsException(
     params.precalcMatrix != "",
@@ -327,4 +435,3 @@ void curlCheck(Package[] packages) {
     }).array;
     printTableForCacheStatus(checkedPackages);
 }
-
