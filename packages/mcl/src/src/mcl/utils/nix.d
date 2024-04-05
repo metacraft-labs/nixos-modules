@@ -1,4 +1,5 @@
 module mcl.utils.nix;
+import mcl.utils.test;
 
 import std.algorithm: filter, endsWith;
 import std.array: array;
@@ -48,20 +49,65 @@ string nixCommand(T)(T cmd, string[] args) if (is (T == string ) || is(T == stri
     return command.execute().strip();
 }
 
-string nixBuild(string storePath, string[] extraArgs = []) {
-    return nixCommand("build", extraArgs ~ storePath);
+T nixCommand(T,Y)(Y cmd, string[] args = []) if (is(T == JSONValue)){
+    return parseJSON(nixCommand(cmd ~ ["--json"], args));
 }
 
-string nixRun(string flakePath, string[] extraArgs = []) {
-    return nixCommand("run", extraArgs ~ flakePath);
+template NixCommand(string name) {
+    import mcl.utils.string: kebabCaseToCamelCase;
+    const char[] NixCommand = `string ` ~ ("nix-" ~ name).kebabCaseToCamelCase ~ `(string path, string[] extraArgs = []) {
+        return nixCommand("` ~ name ~ `", extraArgs ~ path);
+    }` ~
+    `T ` ~ ("nix-" ~ name).kebabCaseToCamelCase ~ `(T)(string path, string[] extraArgs = []) if (is(T == JSONValue)){
+        return nixCommand!JSONValue("` ~ name ~ `", extraArgs ~ path);
+    }`;
 }
 
-string nixEval(string flakePath, string[] extraArgs = []) {
-    return nixCommand("eval", extraArgs ~ flakePath);
+static foreach (command;   ["build" ,"copy" ,"derivation" ,"doctor" ,"eval" ,"fmt" ,"help" ,"key" ,"nar" ,"print-dev-env" ,"realisation" ,"repl" ,
+                            "search" ,"show-config" ,"upgrade-nix" ,"bundle" ,"daemon" ,"develop" ,"edit" ,"flake" ,"hash" ,"help-stores" ,"log" ,
+                            "path-info" ,"profile" ,"registry" ,"run" ,"shell" ,"store" ,"why-depends"]) {
+    mixin(NixCommand!(command));
 }
 
-JSONValue nixEvalJson(string flakePath, string[] extraArgs = []) {
-    return parseJSON(nixCommand(["eval", "--json"], extraArgs));
+@("nix.run")
+unittest
+{
+    import std.stdio: writeln;
+    import std.range: front;
+
+    import std.path: absolutePath, dirName;
+    auto p = __FILE__.absolutePath.dirName;
+
+    string output = nix().run(p ~ "/test/test.nix", ["--file"]);
+    assert(output == "Hello World");
+}
+@("nix.build!JSONValue")
+unittest
+{
+    import std.stdio: writeln;
+    import std.range: front;
+
+    import std.path: absolutePath, dirName;
+    auto p = __FILE__.absolutePath.dirName;
+
+    JSONValue output = nix().build!JSONValue(p ~ "/test/test.nix", ["--file"]).array.front;
+    assert(execute([output["outputs"]["out"].str ~ "/bin/helloWorld"]).strip == "Hello World");
 }
 
-//TODO: Add unittest to test nixEval as a JSONValue
+@("nix.eval!JSONValue")
+unittest
+{
+    auto result = nixEval!JSONValue(".#mcl.meta");
+    result["position"] = JSONValue("N/A");
+    assert(result == JSONValue([
+        "available": JSONValue(true),
+        "broken": JSONValue(false),
+        "insecure": JSONValue(false),
+        "mainProgram": JSONValue("mcl"),
+        "name": JSONValue("mcl"),
+        "outputsToInstall": JSONValue(["out"]),
+        "position": JSONValue("N/A"),
+        "unfree": JSONValue(false),
+        "unsupported": JSONValue(false)
+        ]));
+}
