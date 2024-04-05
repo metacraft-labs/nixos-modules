@@ -6,7 +6,7 @@ import std.stdio: writeln;
 import std.string: strip;
 import std.regex: matchFirst, regex;
 
-import mcl.utils.nix: nixEval;
+import mcl.utils.nix: nix;
 import mcl.utils.path: createResultDirs, resultDir;
 import mcl.utils.env: parseEnv, optional;
 import mcl.utils.json: toJSON;
