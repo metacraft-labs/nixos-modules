@@ -9,7 +9,7 @@ import std.exception: enforce;
 import mcl.utils.cachix: cachixNixStoreUrl, getCachixDeploymentApiUrl;
 import mcl.utils.env: optional, parseEnv;
 import mcl.utils.fetch: fetchJson;
-import mcl.utils.nix: queryStorePath, nixBuild;
+import mcl.utils.nix: queryStorePath, nix;
 import mcl.utils.string: camelCaseToCapitalCase;
 import mcl.utils.process: execute;
 
@@ -21,7 +21,7 @@ export void get_fstab() {
         ["-etc", "-etc-fstab"],
         params.cachixStoreUrl
     );
-    nixBuild(fstabStorePath);
+    nix.build(fstabStorePath);
     writeln(fstabStorePath);
 }
 

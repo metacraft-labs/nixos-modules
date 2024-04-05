@@ -44,29 +44,56 @@ string[] nixQueryReferences(string nixStorePath, string storeUrl) {
         .to!(string[]);
 }
 
-string nixCommand(T)(T cmd, string[] args) if (is (T == string ) || is(T == string[])) {
-    auto command = "nix" ~ (cmd ~ args);
-    return command.execute().strip();
-}
+auto nix() => NixCommand();
 
-T nixCommand(T,Y)(Y cmd, string[] args = []) if (is(T == JSONValue)){
-    return parseJSON(nixCommand(cmd ~ ["--json"], args));
-}
+struct NixCommand
+{
+    static immutable supportedCommands = ["build" ,"copy" ,"derivation" ,"doctor" ,"eval" ,"fmt" ,"help" ,"key" ,"nar" ,"print-dev-env" ,"realisation" ,"repl" ,
+        "search" ,"show-config" ,"upgrade-nix" ,"bundle" ,"daemon" ,"develop" ,"edit" ,"flake" ,"hash" ,"help-stores" ,"log" ,
+        "path-info" ,"profile" ,"registry" ,"run" ,"shell" ,"store" ,"why-depends"];
 
-template NixCommand(string name) {
-    import mcl.utils.string: kebabCaseToCamelCase;
-    const char[] NixCommand = `string ` ~ ("nix-" ~ name).kebabCaseToCamelCase ~ `(string path, string[] extraArgs = []) {
-        return nixCommand("` ~ name ~ `", extraArgs ~ path);
-    }` ~
-    `T ` ~ ("nix-" ~ name).kebabCaseToCamelCase ~ `(T)(string path, string[] extraArgs = []) if (is(T == JSONValue)){
-        return nixCommand!JSONValue("` ~ name ~ `", extraArgs ~ path);
-    }`;
-}
+    template opDispatch(string commandName)
+    {
+        T opDispatch(T = string)(string path, string[] args = [])
+        {
+            import std.algorithm : canFind;
 
-static foreach (command;   ["build" ,"copy" ,"derivation" ,"doctor" ,"eval" ,"fmt" ,"help" ,"key" ,"nar" ,"print-dev-env" ,"realisation" ,"repl" ,
-                            "search" ,"show-config" ,"upgrade-nix" ,"bundle" ,"daemon" ,"develop" ,"edit" ,"flake" ,"hash" ,"help-stores" ,"log" ,
-                            "path-info" ,"profile" ,"registry" ,"run" ,"shell" ,"store" ,"why-depends"]) {
-    mixin(NixCommand!(command));
+            static assert(
+                is(T == string) || is(T == JSONValue),
+                "NixCommand only supports string or JSONValue template args, not `" ~ T.stringof ~ "`."
+            );
+
+            static assert(
+                supportedCommands.canFind(commandName),
+                "`" ~ commandName ~ "` is not a valid Nix command."
+            );
+
+            enum isJSON = is(T == JSONValue);
+
+            version (unittest)
+            {
+                auto command = [
+                    "nix", "--experimental-features", "nix-command", commandName,
+                    (isJSON ? "--json" : "")
+                ] ~ args ~ path;
+            }
+            else
+            {
+                if (isJSON)
+                {
+                    args ~= "--json";
+                }
+                auto command = ["nix", commandName] ~ args ~ path;
+            }
+
+            auto output = command.execute().strip();
+
+            static if (isJSON)
+                return parseJSON(output);
+            else
+                return output;
+        }
+    }
 }
 
 @("nix.run")
@@ -97,7 +124,7 @@ unittest
 @("nix.eval!JSONValue")
 unittest
 {
-    auto result = nixEval!JSONValue(".#mcl.meta");
+    auto result = nix.eval!JSONValue(".#mcl.meta");
     result["position"] = JSONValue("N/A");
     assert(result == JSONValue([
         "available": JSONValue(true),
