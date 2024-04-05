@@ -1,4 +1,7 @@
 module mcl.utils.env;
+import mcl.utils.test;
+
+import std.stdio : writeln;
 
 struct Optional {}
 auto optional() => Optional();
@@ -39,4 +42,42 @@ T parseEnv(T)() {
     result.setup();
 
     return result;
+}
+
+version(unittest) {
+    struct Config {
+        @optional() string opt;
+        int a;
+        string b;
+        float c = 1.0;
+
+        void setup() {
+        }
+    }
+}
+
+@("parseEnv")
+unittest
+{
+    import std.process : environment;
+    import std.exception : assertThrown;
+
+
+    environment["A"] = "1";
+    environment["B"] = "2";
+    environment["C"] = "1.0";
+
+    auto config = parseEnv!Config;
+
+    assert(config.a == 1);
+    assert(config.b == "2");
+    assert(config.c == 1.0);
+    assert(config.opt is null);
+
+    environment["OPT"] = "3";
+    config = parseEnv!Config;
+    assert(config.opt == "3");
+
+    environment.remove("A");
+    assertThrown(config = parseEnv!Config, "missing environment variables:\nA\n");
 }
