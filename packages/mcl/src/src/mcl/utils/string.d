@@ -23,18 +23,6 @@ string camelCaseToCapitalCase(string camelCase) {
         .to!string;
 }
 
-string kebabCaseToCamelCase(string kebabCase) {
-    import std.algorithm : map;
-    import std.string : capitalize;
-    import std.array : join, split;
-
-    return kebabCase
-        .split("-")
-        .map!capitalize
-        .join.to!string.
-        lowerCaseFirst;
-}
-
 @("camelCaseToCapitalCase")
 unittest {
     assert(camelCaseToCapitalCase("camelCase") == "CAMEL_CASE");
@@ -53,6 +41,40 @@ unittest {
     assert(camelCaseToCapitalCase("parsedJSON") == "PARSED_JSON");
     assert(camelCaseToCapitalCase("fromXmlToJson") == "FROM_XML_TO_JSON");
     assert(camelCaseToCapitalCase("fromXML2JSON") == "FROM_XML2JSON");
+}
+
+string kebabCaseToCamelCase(string kebabCase) {
+    import std.algorithm : map;
+    import std.string : capitalize;
+    import std.array : join, split;
+
+    return kebabCase
+        .split("-")
+        .map!capitalize
+        .join.to!string.
+        lowerCaseFirst;
+}
+
+@("kebabCaseToCamelCase")
+unittest {
+    assert(kebabCaseToCamelCase("kebab-case") == "kebabCase");
+    assert(kebabCaseToCamelCase("kebab-case-") == "kebabCase");
+    assert(kebabCaseToCamelCase("kebab-case--") == "kebabCase");
+    assert(kebabCaseToCamelCase("kebab-case--a") == "kebabCaseA");
+    assert(kebabCaseToCamelCase("kebab-case--a-") == "kebabCaseA");
+
+    assert(kebabCaseToCamelCase(
+        "once-upon-a-midnight-dreary-while-i-pondered-weak-and-weary" ~
+    "-over-many-a-quaint-and-curious-volume-of-forgotten-lore" ~
+    "-while-i-nodded-nearly-napping-suddenly-there-came-a-tapping" ~
+    "-as-of-someone-gently-rapping-rapping-at-my-chamber-door" ~
+    "-tis-some-visitor-i-muttered-tapping-at-my-chamber-door" ~
+    "-only-this-and-nothing-more") == "onceUponAMidnightDrearyWhileIPonderedWeakAndWeary" ~
+    "OverManyAQuaintAndCuriousVolumeOfForgottenLore"~"WhileINoddedNearlyNappingSuddenlyThereCameATapping" ~
+    "AsOfSomeoneGentlyRappingRappingAtMyChamberDoor" ~
+    "TisSomeVisitorIMutteredTappingAtMyChamberDoor" ~
+    "OnlyThisAndNothingMore");
+
 }
 
 struct StringRepresentation { string repr; }
