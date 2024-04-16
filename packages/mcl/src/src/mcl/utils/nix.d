@@ -79,7 +79,8 @@ struct NixCommand
             version (unittest)
             {
                 auto command = [
-                    "nix", "--experimental-features", "nix-command", commandName,
+                    "nix", "--experimental-features", "nix-command flakes",
+                    commandName,
                     (isJSON ? "--json" : "")
                 ] ~ args ~ path;
             }
@@ -112,7 +113,7 @@ unittest
 
     auto p = __FILE__.absolutePath.dirName;
 
-    string output = nix().run(p ~ "/test/test.nix", ["--file"]);
+    string output = nix().run(p ~ "/test/test.nix", [ "--file"]);
     assert(output == "Hello World");
 }
 
@@ -133,17 +134,12 @@ unittest
 @("nix.eval!JSONValue")
 unittest
 {
-    auto result = nix.eval!JSONValue(".#mcl.meta");
-    result["position"] = JSONValue("N/A");
-    assert(result == JSONValue([
-            "available": JSONValue(true),
-            "broken": JSONValue(false),
-            "insecure": JSONValue(false),
-            "mainProgram": JSONValue("mcl"),
-            "name": JSONValue("mcl"),
-            "outputsToInstall": JSONValue(["out"]),
-            "position": JSONValue("N/A"),
-            "unfree": JSONValue(false),
-            "unsupported": JSONValue(false)
-        ]));
+    import std.file : readText;
+    import std.path : absolutePath, dirName;
+    import std.json : parseJSON;
+
+    auto p = __FILE__.absolutePath.dirName;
+
+    auto result = nix().eval!JSONValue(p ~ "/test/eval.nix", ["--file"]);
+    assert(result == ((p ~ "/test/eval.json").readText.parseJSON));
 }
