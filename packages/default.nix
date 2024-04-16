@@ -37,8 +37,9 @@
       }
       // pkgs.lib.optionalAttrs (isLinux && isx86) rec {
         mcl = pkgs.callPackage ./mcl {
-          inherit (inputs'.dlang-nix.packages) dub;
-          dcompiler = inputs'.dlang-nix.packages.ldc;
+          buildDubPackage = inputs'.dlang-nix.legacyPackages.buildDubPackage.override {
+            ldc = inputs'.dlang-nix.packages."ldc-binary-1_34_0";
+          };
           inherit unstablePkgs;
         };
       };
