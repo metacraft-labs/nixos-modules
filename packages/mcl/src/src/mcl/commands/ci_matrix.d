@@ -150,6 +150,7 @@ export void print_table()
 {
     params = parseEnv!Params;
 
+    createResultDirs();
     Package[] precalcMatrix = getPrecalcMatrix();
     auto checkedPackages = precalcMatrix.map!(checkPackage).array;
     printTableForCacheStatus(checkedPackages);
