@@ -1,4 +1,4 @@
-import std.stdio: writefln, writeln;
+import std.stdio : writefln, writeln;
 
 import cmds = mcl.commands;
 
@@ -15,13 +15,14 @@ int main(string[] args)
     if (args.length < 2)
         return wrongUsage("no command selected");
 
-    try switch (args[1])
+    try
+        switch (args[1])
     {
-        default:
-            return wrongUsage("unknown command: `" ~ args[1] ~ "`");
+    default:
+        return wrongUsage("unknown command: `" ~ args[1] ~ "`");
 
         static foreach (cmd; supportedCommands)
-            case __traits(identifier, cmd):
+    case __traits(identifier, cmd):
             {
 
                 writeln("Running ", __traits(identifier, cmd));
@@ -29,7 +30,7 @@ int main(string[] args)
                 return 0;
 
             }
-        }
+    }
     catch (Exception e)
     {
         writefln("Error: %s", e.msg);
@@ -42,7 +43,7 @@ int wrongUsage(string error)
 {
     writefln("Error: %s.", error);
     writeln("Usage:\n");
-	static foreach (cmd; supportedCommands)
+    static foreach (cmd; supportedCommands)
         writefln("    mcl %s", __traits(identifier, cmd));
 
     return 1;
