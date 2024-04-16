@@ -1,13 +1,13 @@
 module mcl.utils.nix;
 import mcl.utils.test;
 
-import std.algorithm: filter, endsWith;
-import std.array: array;
-import std.conv: to;
-import std.exception: enforce;
-import std.format: fmt = format;
-import std.string: lineSplitter, strip;
-import std.json: parseJSON, JSONValue;
+import std.algorithm : filter, endsWith;
+import std.array : array;
+import std.conv : to;
+import std.exception : enforce;
+import std.format : fmt = format;
+import std.string : lineSplitter, strip;
+import std.json : parseJSON, JSONValue;
 
 import mcl.utils.process : execute;
 
@@ -21,7 +21,8 @@ string queryStorePath(string storePath, string[] referenceSuffixes, string store
     return lastMatch;
 }
 
-string findMatchingNixReferences(string nixStorePath, string suffix, string storeUrl) {
+string findMatchingNixReferences(string nixStorePath, string suffix, string storeUrl)
+{
     auto matches = nixQueryReferences(nixStorePath, storeUrl)
         .filter!(path => path.endsWith(suffix))
         .array;
@@ -34,7 +35,8 @@ string findMatchingNixReferences(string nixStorePath, string suffix, string stor
     return matches[0];
 }
 
-string[] nixQueryReferences(string nixStorePath, string storeUrl) {
+string[] nixQueryReferences(string nixStorePath, string storeUrl)
+{
     return [
         "nix-store", "--store", storeUrl, "--query", "--references", nixStorePath
     ]
@@ -48,9 +50,13 @@ auto nix() => NixCommand();
 
 struct NixCommand
 {
-    static immutable supportedCommands = ["build" ,"copy" ,"derivation" ,"doctor" ,"eval" ,"fmt" ,"help" ,"key" ,"nar" ,"print-dev-env" ,"realisation" ,"repl" ,
-        "search" ,"show-config" ,"upgrade-nix" ,"bundle" ,"daemon" ,"develop" ,"edit" ,"flake" ,"hash" ,"help-stores" ,"log" ,
-        "path-info" ,"profile" ,"registry" ,"run" ,"shell" ,"store" ,"why-depends"];
+    static immutable supportedCommands = [
+        "build", "copy", "derivation", "doctor", "eval", "fmt", "help", "key",
+        "nar", "print-dev-env", "realisation", "repl",
+        "search", "show-config", "upgrade-nix", "bundle", "daemon", "develop",
+        "edit", "flake", "hash", "help-stores", "log",
+        "path-info", "profile", "registry", "run", "shell", "store", "why-depends"
+    ];
 
     template opDispatch(string commandName)
     {
@@ -99,22 +105,25 @@ struct NixCommand
 @("nix.run")
 unittest
 {
-    import std.stdio: writeln;
-    import std.range: front;
+    import std.stdio : writeln;
+    import std.range : front;
 
-    import std.path: absolutePath, dirName;
+    import std.path : absolutePath, dirName;
+
     auto p = __FILE__.absolutePath.dirName;
 
     string output = nix().run(p ~ "/test/test.nix", ["--file"]);
     assert(output == "Hello World");
 }
+
 @("nix.build!JSONValue")
 unittest
 {
-    import std.stdio: writeln;
-    import std.range: front;
+    import std.stdio : writeln;
+    import std.range : front;
 
-    import std.path: absolutePath, dirName;
+    import std.path : absolutePath, dirName;
+
     auto p = __FILE__.absolutePath.dirName;
 
     JSONValue output = nix().build!JSONValue(p ~ "/test/test.nix", ["--file"]).array.front;
@@ -127,14 +136,14 @@ unittest
     auto result = nix.eval!JSONValue(".#mcl.meta");
     result["position"] = JSONValue("N/A");
     assert(result == JSONValue([
-        "available": JSONValue(true),
-        "broken": JSONValue(false),
-        "insecure": JSONValue(false),
-        "mainProgram": JSONValue("mcl"),
-        "name": JSONValue("mcl"),
-        "outputsToInstall": JSONValue(["out"]),
-        "position": JSONValue("N/A"),
-        "unfree": JSONValue(false),
-        "unsupported": JSONValue(false)
+            "available": JSONValue(true),
+            "broken": JSONValue(false),
+            "insecure": JSONValue(false),
+            "mainProgram": JSONValue("mcl"),
+            "name": JSONValue("mcl"),
+            "outputsToInstall": JSONValue(["out"]),
+            "position": JSONValue("N/A"),
+            "unfree": JSONValue(false),
+            "unsupported": JSONValue(false)
         ]));
 }

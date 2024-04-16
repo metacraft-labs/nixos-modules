@@ -1,19 +1,20 @@
 module mcl.commands.get_fstab;
 
-import std.stdio: writeln;
-import std.conv: to;
-import std.json: JSONValue;
-import std.format: fmt = format;
-import std.exception: enforce;
+import std.stdio : writeln;
+import std.conv : to;
+import std.json : JSONValue;
+import std.format : fmt = format;
+import std.exception : enforce;
 
-import mcl.utils.cachix: cachixNixStoreUrl, getCachixDeploymentApiUrl;
-import mcl.utils.env: optional, parseEnv;
-import mcl.utils.fetch: fetchJson;
-import mcl.utils.nix: queryStorePath, nix;
-import mcl.utils.string: camelCaseToCapitalCase;
-import mcl.utils.process: execute;
+import mcl.utils.cachix : cachixNixStoreUrl, getCachixDeploymentApiUrl;
+import mcl.utils.env : optional, parseEnv;
+import mcl.utils.fetch : fetchJson;
+import mcl.utils.nix : queryStorePath, nix;
+import mcl.utils.string : camelCaseToCapitalCase;
+import mcl.utils.process : execute;
 
-export void get_fstab() {
+export void get_fstab()
+{
     const params = parseEnv!Params;
     const machineStorePath = getCachixDeploymentStorePath(params);
     const fstabStorePath = queryStorePath(
@@ -25,7 +26,8 @@ export void get_fstab() {
     writeln(fstabStorePath);
 }
 
-struct Params {
+struct Params
+{
     string cachixAuthToken;
     string cachixCache;
     @optional() string cachixStoreUrl;
@@ -33,10 +35,12 @@ struct Params {
     string machineName;
     uint deploymentId;
 
-    void setup() {
+    void setup()
+    {
 
         cachixStoreUrl = cachixNixStoreUrl(cachixCache);
-        if (!cachixDeployWorkspace) cachixDeployWorkspace = cachixCache;
+        if (!cachixDeployWorkspace)
+            cachixDeployWorkspace = cachixCache;
     }
 }
 

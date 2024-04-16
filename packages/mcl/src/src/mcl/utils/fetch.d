@@ -1,14 +1,17 @@
 module mcl.utils.fetch;
 import mcl.utils.test;
 
-import std.json: JSONValue;
+import std.json : JSONValue;
 
-JSONValue fetchJson(string url, string authToken = "") {
+JSONValue fetchJson(string url, string authToken = "")
+{
     import std.json : parseJSON;
     import std.net.curl : HTTP, get;
     import std.logger : log, LogLevel;
+
     auto client = HTTP();
-    if (authToken != "") {
+    if (authToken != "")
+    {
         client.addRequestHeader("Authorization", "Bearer " ~ authToken);
     }
 
