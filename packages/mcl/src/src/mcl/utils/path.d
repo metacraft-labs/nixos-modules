@@ -1,56 +1,66 @@
 module mcl.utils.path;
 import mcl.utils.test;
 
-import std.process: execute;
-import std.string: strip;
-import std.file: mkdirRecurse, rmdir,exists;
+import std.process : execute;
+import std.string : strip;
+import std.file : mkdirRecurse, rmdir, exists;
 
-string getTopLevel() {
+string getTopLevel()
+{
     version (unittest)
     {
         return "/tmp/";
     }
-    else {
-        return  execute(["git", "rev-parse", "--show-toplevel"]).output.strip ~ "/";
+    else
+    {
+        return execute(["git", "rev-parse", "--show-toplevel"]).output.strip ~ "/";
     }
 }
 
 string _rootDir = "";
-string rootDir() {
+string rootDir()
+{
     return _rootDir == "" ? _rootDir = getTopLevel() : _rootDir;
 }
 
 @("rootDir")
-unittest {
+unittest
+{
     assert(rootDir() == getTopLevel());
 }
 
 string _resultDir = "";
-string resultDir() {
+string resultDir()
+{
     return _resultDir == "" ? _resultDir = rootDir() ~ ".result/" : _resultDir;
 }
 
 @("resultDir")
-unittest {
+unittest
+{
     assert(resultDir() == rootDir() ~ ".result/");
 }
 
 string _gcRootsDir = "";
-string gcRootsDir() {
+string gcRootsDir()
+{
     return _gcRootsDir == "" ? _gcRootsDir = resultDir() ~ "gc-roots/" : _gcRootsDir;
 }
 
 @("gcRootsDir")
-unittest {
+unittest
+{
     assert(gcRootsDir() == resultDir() ~ "gc-roots/");
 }
 
-void createResultDirs() {
+void createResultDirs()
+{
     mkdirRecurse(gcRootsDir);
 }
 
 @("createResultDirs")
-unittest {
+unittest
+{
     createResultDirs();
     assert(gcRootsDir.exists);
 

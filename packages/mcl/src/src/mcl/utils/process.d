@@ -1,11 +1,12 @@
 module mcl.utils.process;
 import mcl.utils.test;
 
-string execute(string[] args) {
+string execute(string[] args)
+{
     import std.exception : enforce;
     import std.format : format;
     import std.process : pipeProcess, wait, Redirect;
-    import std.logger: log, LogLevel;
+    import std.logger : log, LogLevel;
     import std.array : join;
     import std.conv : to;
 
@@ -24,6 +25,7 @@ string execute(string[] args) {
 unittest
 {
     import std.exception : assertThrown;
+
     assert(execute(["echo", "hello"]) == "hello");
     assert(execute(["true"]) == "");
     assertThrown(execute(["false"]), "Command `false` failed with status 1");
