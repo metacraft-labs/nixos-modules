@@ -1,7 +1,7 @@
 module mcl.utils.process;
 import mcl.utils.test;
 
-string execute(string[] args)
+string execute(string[] args, bool printCommand = true)
 {
     import std.exception : enforce;
     import std.format : format;
@@ -10,8 +10,10 @@ string execute(string[] args)
     import std.array : join;
     import std.conv : to;
 
-    LogLevel.info.log("$ %-(%s %)", args);
-
+    if (printCommand)
+    {
+        LogLevel.info.log("$ %-(%s %)", args);
+    }
     auto res = pipeProcess(args, Redirect.all);
     string output = res.stdout.byLine().join("\n").to!string;
     string err = res.stderr.byLine().join("\n").to!string;

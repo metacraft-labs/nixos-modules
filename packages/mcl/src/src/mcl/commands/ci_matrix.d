@@ -3,7 +3,7 @@ module mcl.commands.ci_matrix;
 import std.stdio : writeln, stderr, stdout;
 import std.traits : EnumMembers;
 import std.string : indexOf, splitLines;
-import std.algorithm : map, filter, reduce, chunkBy, find, any, sort, startsWith;
+import std.algorithm : map, filter, reduce, chunkBy, find, any, sort, startsWith, each;
 import std.file : write, readText;
 import std.range : array, front, join, split;
 import std.conv : to;
@@ -143,15 +143,16 @@ export void ci_matrix()
     params = parseEnv!Params;
 
     createResultDirs();
-    nixEvalForAllSystems().printTableForCacheStatus();
+    nixEvalForAllSystems().map!(checkPackage).array.printTableForCacheStatus();
 }
 
 export void print_table()
 {
     params = parseEnv!Params;
 
-    createResultDirs();
-    curlCheck();
+    Package[] precalcMatrix = getPrecalcMatrix();
+    auto checkedPackages = precalcMatrix.map!(checkPackage).array;
+    printTableForCacheStatus(checkedPackages);
 }
 
 struct Params
@@ -231,11 +232,12 @@ Package[] nixEvalJobs(SupportedSystem system, string cachixUrl)
                 cacheUrl: cachixUrl ~ "/" ~ json["outputs"]["out"].str.matchFirst(
                     "^/nix/store/(?P<hash>[^-]+)-")["hash"] ~ ".narinfo"
             };
+            pkg = pkg.checkPackage();
             result ~= pkg;
             auto outJson = JSONValue([
-                "attr": json["attr"],
-                "isCached": json["isCached"],
-                "out": json["outputs"]["out"]
+                "attr": pkg.name,
+                "isCached": pkg.isCached.to!string,
+                "out": pkg.output
             ]);
             stderr.writeln("\033[94m" ~ outJson.toString(JSONOptions.doNotEscapeSlashes) ~ "\033[0m");
         }
@@ -493,15 +495,31 @@ void printTableForCacheStatus(Package[] packages)
     saveGHCIComment(convertNixEvalToTableSummary(packages));
 }
 
-void curlCheck()
+Package checkPackage(Package pkg)
 {
-    string precalcMatrixStr = params.precalcMatrix == "" ? "{\"include\": []}"
-        : params.precalcMatrix;
+    string curlOutput = execute([
+        "curl", "--silent", "-H",
+        "Authorization: Bearer " ~ params.cachixAuthToken, "-I",
+        pkg.cacheUrl
+    ], false);
+    bool isAvailable = curlOutput
+        .split("\n")
+        .filter!(line => line.startsWith("HTTP"))
+        .map!(line => line.split(" ")[1])
+        .map!(code => code == "200")
+        .any;
+    pkg.isCached = isAvailable;
+    return pkg;
+}
+
+Package[] getPrecalcMatrix()
+{
+    auto precalcMatrixStr = params.precalcMatrix == "" ? "{\"include\": []}" : params.precalcMatrix;
     enforce!MissingEnvVarsException(
         params.precalcMatrix != "",
         "missing environment variables: %s".fmt("precalcMatrix")
     );
-    Package[] precalcMatrix = parseJSON(precalcMatrixStr)["include"].array.map!((pkg) {
+    return parseJSON(precalcMatrixStr)["include"].array.map!((pkg) {
         Package result = {
             name: pkg["name"].str,
             allowedToFail: pkg["allowedToFail"].boolean,
@@ -514,25 +532,4 @@ void curlCheck()
             return result;
         }).array;
 
-        auto checkedPackages = precalcMatrix.map!((pkg) {
-            bool isCached = pkg.isCached;
-            string cacheUrl = pkg.cacheUrl;
-            if (!isCached)
-            {
-                string curlOutput = execute([
-                    "curl", "--silent", "-H",
-                    "Authorization: Bearer " ~ params.cachixAuthToken, "-I",
-                    cacheUrl
-                ]);
-                bool isAvailable = curlOutput
-                .split("\n")
-                .filter!(line => line.startsWith("HTTP"))
-                .map!(line => line.split(" ")[1])
-                .map!(code => code == "200")
-                .any;
-                pkg.isCached = isAvailable;
-            }
-            return pkg;
-        }).array;
-        printTableForCacheStatus(checkedPackages);
     }
