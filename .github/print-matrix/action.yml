@@ -18,12 +18,11 @@ inputs:
   substituters:
     description: Substituters
     required: true
-  comment_matrix:
-    description: Whether to post a comment/upload the matrix
-    required: false
-    default: true
   precalc_matrix:
     description: Pre-calculated matrix
+    required: true
+  token:
+    description: GitHub token
     required: true
 
 outputs:
@@ -62,22 +61,21 @@ runs:
         PRECALC_MATRIX: ${{ inputs.precalc_matrix }}
       run: |
         nix run github:metacraft-labs/nixos-modules/feat/CD#mcl print_table
-
+        cat comment.md
         # echo "comment<<$EOF" >> $GITHUB_OUTPUT
         # cat comment.md >> $GITHUB_OUTPUT
         # echo $EOF >> $GITHUB_OUTPUT
         # cat $GITHUB_OUTPUT
 
     - name: Upload CI Matrix
-      if: ${{ inputs.comment_matrix == true }}
       uses: actions/upload-artifact@v4
       with:
         name: matrix-${{ inputs.is-initial == 'true' && 'pre' || 'post' }}.json
         path: matrix-${{ inputs.is-initial == 'true' && 'pre' || 'post' }}.json
 
     - name: Update GitHub Comment
-      if: ${{ inputs.comment_matrix == true }}
       uses: marocchino/sticky-pull-request-comment@v2.9.0
       with:
+        GITHUB_TOKEN: ${{ inputs.token }}
         recreate: true
         path: comment.md

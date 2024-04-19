@@ -92,16 +92,21 @@ jobs:
     name: Merge Matrix
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
+      fullMatrix: ${{ steps.matrix.outputs.fullMatrix }}
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/download-artifact@v3
       - run: |
           ls */matrix-pre.json
-          cat */matrix-pre.json
-          matrix="$(cat */matrix-pre.json | jq -cr '.include' | jq -s 'add' | jq -c '. | {include: .}')"
+          matrix="$(cat */matrix-pre.json | jq -cr '.include[]' | jq '[ select (.isCached == false) ]' | jq -s 'add' | jq -c  '. | {include: .}')"
+
+          if [[ "$matrix" == '{"include":null}' ]]; then
+            matrix='{"include": []}'
+          fi
+          fullMatrix="$(cat */matrix-pre.json | jq -cr '.include' | jq -s 'add' | jq -c '. | {include: .}')"
           echo $matrix
           echo "matrix=$matrix" >> $GITHUB_OUTPUT
+          echo "fullMatrix=$fullMatrix" >> $GITHUB_OUTPUT
         id: matrix
       - name: Post Comment
         id: print-matrix
@@ -112,14 +117,15 @@ jobs:
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
-          precalc_matrix: ${{ steps.matrix.outputs.matrix }}
+          precalc_matrix: ${{ steps.matrix.outputs.fullMatrix }}
+          token: ${{ secrets.GITHUB_TOKEN }}
   build:
     needs: slurp-matrix
-    if: needs.slurp-matrix.outputs.matrix != '' && needs.slurp-matrix.outputs.matrix != '{}' && needs.slurp-matrix.outputs.matrix != '{"include":[]}'
+    if: needs.slurp-matrix.outputs.matrix != '' && needs.slurp-matrix.outputs.matrix != '{}' && needs.slurp-matrix.outputs.matrix != '{"include":[] }'
 
     strategy:
       fail-fast: false
-      matrix: ${{fromJSON( needs.slurp-matrix.outputs.matrix )}}
+      matrix:  ${{fromJSON( needs.slurp-matrix.outputs.matrix )}}
 
     name: ${{ matrix.name }} | ${{ matrix.system }}
     runs-on: ${{ matrix.os }}
@@ -158,7 +164,8 @@ jobs:
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
-          precalc_matrix: ${{ needs.slurp-matrix.outputs.matrix }}
+          precalc_matrix: ${{ needs.slurp-matrix.outputs.fullMatrix }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: cachix/cachix-action@v14
         if: ${{inputs.do_deploy == 'true' && (github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) }}

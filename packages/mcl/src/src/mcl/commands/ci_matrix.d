@@ -335,7 +335,7 @@ unittest
 
 void saveCachixDeploySpec(Package[] packages)
 {
-    auto agents = packages.map!(pkg => JSONValue([
+    auto agents = packages.filter!(pkg => pkg.isCached == false).map!(pkg => JSONValue([
             "package": pkg.name,
             "out": pkg.output
         ])).array;
@@ -351,17 +351,14 @@ unittest
     createResultDirs();
     saveCachixDeploySpec(cast(Package[]) testPackageArray);
     JSONValue deploySpec = parseJSON((resultDir() ~ "/cachix-deploy-spec.json").readText);
-    assert(testPackageArray[0].name == deploySpec[0]["package"].str);
-    assert(testPackageArray[0].output == deploySpec[0]["out"].str);
-    assert(testPackageArray[1].name == deploySpec[1]["package"].str);
-    assert(testPackageArray[1].output == deploySpec[1]["out"].str);
+    assert(testPackageArray[1].name == deploySpec[0]["package"].str);
+    assert(testPackageArray[1].output == deploySpec[0]["out"].str);
 }
 
 void saveGHCIMatrix(Package[] packages)
 {
-    auto packagesToBuild = packages.filter!(pkg => !pkg.isCached).array;
     auto matrix = JSONValue([
-        "include": JSONValue(packagesToBuild.map!(pkg => pkg.toJSON()).array)
+        "include": JSONValue(packages.map!(pkg => pkg.toJSON()).array)
     ]);
     string resPath = rootDir() ~ (params.isInitial ? "matrix-pre.json" : "matrix-post.json");
     resPath.write(JSONValue(matrix).toString(JSONOptions.doNotEscapeSlashes));
@@ -376,7 +373,7 @@ unittest
     saveGHCIMatrix(cast(Package[]) testPackageArray);
     JSONValue matrix = parseJSON((rootDir() ~ (params.isInitial ? "matrix-pre.json"
             : "matrix-post.json")).readText);
-    assert(testPackageArray[1].name == matrix["include"][0]["name"].str); //testPackageArray[1] is not cached, so it should be in the matrix
+    assert(testPackageArray[0].name == matrix["include"][0]["name"].str);
 }
 
 void saveGHCIComment(SummaryTableEntry[] tableSummaryJSON)
