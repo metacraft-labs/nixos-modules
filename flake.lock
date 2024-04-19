@@ -215,15 +215,16 @@
         "nixpkgs": "nixpkgs"
       },
       "locked": {
-        "lastModified": 1717933964,
-        "narHash": "sha256-KE0E7qYe3q+LpVG+sHZQuwJEoRISZWdeh6UnmYSeTZA=",
+        "lastModified": 1713271057,
+        "narHash": "sha256-EiwuZrZHPw5f1AvJwl1NixemUxTWCQxv9qRLZ2T1UM4=",
         "owner": "PetarKirov",
         "repo": "dlang.nix",
-        "rev": "4de73647cb48b1a11792ac7b9cf75712e0d3b7ab",
+        "rev": "08a8fd15da4055f1c8102ede10699477b8ef079e",
         "type": "github"
       },
       "original": {
         "owner": "PetarKirov",
+        "ref": "feat/build-dub-package",
         "repo": "dlang.nix",
         "type": "github"
       }
