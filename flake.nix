@@ -197,7 +197,7 @@
     };
 
     dlang-nix = {
-      url = "github:PetarKirov/dlang.nix?branch=feat/build-dub-package&rev=dab4c199ad644dc23b0b9481e2e5a063e9492b84";
+      url = "github:PetarKirov/dlang.nix/feat/build-dub-package";
       inputs = {
         flake-compat.follows = "flake-compat";
         flake-parts.follows = "flake-parts";
