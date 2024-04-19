@@ -27,6 +27,7 @@ int main(string[] args)
 
                 writeln("Running ", __traits(identifier, cmd));
                 cmd();
+                writeln("Execution Succesfull");
                 return 0;
 
             }
