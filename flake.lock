@@ -209,22 +209,20 @@
         "flake-parts": [
           "flake-parts"
         ],
-        "git-hooks-nix": [
-          "git-hooks-nix"
-        ],
         "nixpkgs": "nixpkgs"
       },
       "locked": {
-        "lastModified": 1719262923,
-        "narHash": "sha256-Nokeoyi53KtEqf11PThOa1CbzRTX7laU34mMul+oveY=",
+        "lastModified": 1714055636,
+        "narHash": "sha256-8LCyIPAK4/4ge03ohCIWpoJrMGgoCaOriALzt7gPxHE=",
         "owner": "PetarKirov",
         "repo": "dlang.nix",
-        "rev": "1180bcda646b7db046dcaa2636291764607527a7",
+        "rev": "dab4c199ad644dc23b0b9481e2e5a063e9492b84",
         "type": "github"
       },
       "original": {
         "owner": "PetarKirov",
         "repo": "dlang.nix",
+        "rev": "dab4c199ad644dc23b0b9481e2e5a063e9492b84",
         "type": "github"
       }
     },
