@@ -44,7 +44,7 @@ ShardMatrix generateShardMatrix()
 {
     try
     {
-        const shardCount = nix.eval(".#legacyPackages.x86_64-linux.checks.shardCount", [
+        const shardCount = nix.eval(".#legacyPackages.x86_64-linux.shardCount", [
                 "--quiet"
             ]).matchFirst(regex(`\d+`))[0].to!int;
         return splitToShards(shardCount);
@@ -82,7 +82,7 @@ ShardMatrix splitToShards(int shardCount)
     const numShards = shardCount - 1;
     for (int i = 0; i <= numShards; i++)
     {
-        Shard shard = {"legacyPackages", "checks.shards." ~ i.to!string, i};
+        Shard shard = {"legacyPackages", "shards." ~ i.to!string, i};
         shards.include ~= shard;
     }
     return shards;
@@ -94,13 +94,13 @@ unittest
     auto shards = splitToShards(3);
     assert(shards.include.length == 3);
     assert(shards.include[0].prefix == "legacyPackages");
-    assert(shards.include[0].postfix == "checks.shards.0");
+    assert(shards.include[0].postfix == "shards.0");
     assert(shards.include[0].digit == 0);
     assert(shards.include[1].prefix == "legacyPackages");
-    assert(shards.include[1].postfix == "checks.shards.1");
+    assert(shards.include[1].postfix == "shards.1");
     assert(shards.include[1].digit == 1);
     assert(shards.include[2].prefix == "legacyPackages");
-    assert(shards.include[2].postfix == "checks.shards.2");
+    assert(shards.include[2].postfix == "shards.2");
     assert(shards.include[2].digit == 2);
 
 }
