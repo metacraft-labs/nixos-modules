@@ -19,6 +19,8 @@
     nixpkgs.follows = "nixos-2405";
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
 
+    nix-eval-jobs.url = "github:nix-community/nix-eval-jobs/v2.21.0";
+
     home-manager = {
       url = "github:nix-community/home-manager/release-24.05";
       inputs.nixpkgs.follows = "nixpkgs";
