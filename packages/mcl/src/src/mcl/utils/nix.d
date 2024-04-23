@@ -93,7 +93,7 @@ struct NixCommand
                 auto command = ["nix", commandName] ~ args ~ path;
             }
 
-            auto output = command.execute().strip();
+            auto output = command.execute(false).strip();
 
             static if (isJSON)
                 return parseJSON(output);

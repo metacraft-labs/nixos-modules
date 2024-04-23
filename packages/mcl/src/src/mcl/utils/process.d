@@ -1,7 +1,7 @@
 module mcl.utils.process;
 import mcl.utils.test;
 
-string execute(string[] args, bool printCommand = true)
+string execute(string[] args, bool printCommand = true, bool returnErr = false)
 {
     import std.exception : enforce;
     import std.format : format;
@@ -20,6 +20,10 @@ string execute(string[] args, bool printCommand = true)
 
     int status = wait(res.pid);
     enforce(status == 0, "Command `%s` failed with status %s, stderr: \n%s".format(args, status, err));
+    if (returnErr)
+    {
+        return err;
+    }
     return output;
 }
 
