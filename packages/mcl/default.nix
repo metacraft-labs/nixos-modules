@@ -6,7 +6,7 @@
   fetchgit,
   ...
 }: let
-  deps = with pkgs; [cachix git nix nix-eval-jobs curl];
+  deps = with pkgs; [cachix git nix nom nix-eval-jobs curl];
 in
   buildDubPackage rec {
     pname = "mcl";
