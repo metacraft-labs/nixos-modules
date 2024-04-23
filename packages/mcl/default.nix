@@ -1,12 +1,12 @@
 {
   lib,
   buildDubPackage,
-  unstablePkgs,
+  nix-eval-jobs,
   pkgs,
   fetchgit,
   ...
 }: let
-  deps = with pkgs; [cachix git nix unstablePkgs.nix-eval-jobs curl];
+  deps = with pkgs; [cachix git nix nix-eval-jobs curl];
 in
   buildDubPackage rec {
     pname = "mcl";
@@ -20,7 +20,7 @@ in
     buildInputs = deps;
     checkInputs = deps;
     postFixup = ''
-      wrapProgram $out/bin/${pname} --set PATH ${lib.makeBinPath deps}
+      wrapProgram $out/bin/${pname} --set PATH "${lib.makeBinPath deps}"
     '';
 
     dubTestFlags = ["--" "-e" "(nix\\.(build|run)\\!JSONValue)|(nix\\.(build|run))|fetchJson"];
