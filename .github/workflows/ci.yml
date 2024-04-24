@@ -148,7 +148,7 @@ jobs:
       - name: Build ${{ matrix.name }}
         run: |
           set -euo pipefail
-          nix run github:Mic92/nix-fast-build -- --debug --systems ${{ matrix.system }} --skip-cached --no-nom --flake '.#${{ matrix.attrPath }}' 3>&1 1>&2 2>&3 3>&- | grep --color=always -v "warning: Git tree" | grep --color=always -v "warning: unknown setting" | grep --color=always -v "error (ignored): error: SQLite database"
+          nix run github:metacraft-labs/nixos-modules/feat/CD#nix-fast-build -- --debug --systems ${{ matrix.system }} --skip-cached --no-nom --flake '.#${{ matrix.attrPath }}' 3>&1 1>&2 2>&3 3>&- | grep --color=always -v "warning: Git tree" | grep --color=always -v "warning: unknown setting" | grep --color=always -v "error (ignored): error: SQLite database"
   results:
     runs-on: ubuntu-latest
     name: Final Results
