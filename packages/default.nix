@@ -27,6 +27,7 @@
 
     packages =
       {
+        nix-fast-build = inputs'.nix-fast-build.packages.nix-fast-build;
         lido-withdrawals-automation = pkgs.callPackage ./lido-withdrawals-automation {};
         pyroscope = pkgs.callPackage ./pyroscope {};
         grafana-agent = import ./grafana-agent {inherit inputs';};
