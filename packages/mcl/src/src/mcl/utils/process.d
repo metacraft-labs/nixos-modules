@@ -1,7 +1,9 @@
 module mcl.utils.process;
 import mcl.utils.test;
+import std.process : ProcessPipes;
 
-string execute(string[] args, bool printCommand = true, bool returnErr = false)
+
+T execute(T = string)(string[] args, bool printCommand = true, bool returnErr = false) if (is(T == string) || is(T == ProcessPipes))
 {
     import std.exception : enforce;
     import std.format : format;
@@ -15,16 +17,23 @@ string execute(string[] args, bool printCommand = true, bool returnErr = false)
         LogLevel.info.log("$ %-(%s %)", args);
     }
     auto res = pipeProcess(args, Redirect.all);
-    string output = res.stdout.byLine().join("\n").to!string;
-    string err = res.stderr.byLine().join("\n").to!string;
-
-    int status = wait(res.pid);
-    enforce(status == 0, "Command `%s` failed with status %s, stderr: \n%s".format(args, status, err));
-    if (returnErr)
+    static if (is(T == ProcessPipes))
     {
-        return err;
+        return res;
     }
-    return output;
+    else if (is(T == string))
+    {
+        string output = res.stdout.byLine().join("\n").to!string;
+        string err = res.stderr.byLine().join("\n").to!string;
+
+        int status = wait(res.pid);
+        enforce(status == 0, "Command `%s` failed with status %s, stderr: \n%s".format(args, status, err));
+        if (returnErr)
+        {
+            return err;
+        }
+        return output;
+    }
 }
 
 @("execute")
