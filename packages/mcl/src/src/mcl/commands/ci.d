@@ -2,50 +2,79 @@ module mcl.commands.ci;
 
 import std.file : readText;
 import std.json : parseJSON,JSONValue;
-import std.stdio : writeln;
+import std.stdio : writeln,write;
+import std.algorithm : map;
+import std.array : array, join;
+import std.conv : to;
+import std.process : ProcessPipes;
 
 import mcl.utils.env : optional, parseEnv;
-import mcl.commands.ci_matrix: ci_matrix;
-import mcl.utils.path : rootDir;
+import mcl.commands.ci_matrix: nixEvalJobs, SupportedSystem, Params;
+import mcl.commands.shard_matrix: generateShardMatrix;
+import mcl.utils.path : rootDir, createResultDirs;
 import mcl.utils.process : execute;
 import mcl.utils.nix : nix;
+import mcl.utils.json : toJSON;
 
 Params params;
 
 export void ci()
 {
     params = parseEnv!Params;
-    ci_matrix();
 
-    string resPath = rootDir() ~ (params.isInitial ? "matrix-pre.json" : "matrix-post.json");
-    auto matrix = resPath.readText().parseJSON();
-    foreach (pkg; matrix["include"].array)
+    auto shardMatrix = generateShardMatrix();
+    foreach (shard; shardMatrix.include)
     {
-        if (pkg["isCached"].boolean)
-        {
-            writeln("Package ", pkg["name"].str, " is cached");
-        }
-        else
-        {
-            writeln("Package ", pkg["name"].str, " is not cached; building...");
-            auto path = (nix.build!JSONValue(".#" ~ pkg["attrPath"].str)).array[0]["outputs"]["out"].str;
-            execute(["cachix", "push", params.cachixCache, path], false, true).writeln;
-        }
-    }
-}
+        writeln("Shard ", shard.prefix ~ " ", shard.postfix ~ " ", shard.digit);
+        params.flakePre = shard.prefix;
+        params.flakePost = shard.postfix;
 
-struct Params
-{
-    @optional() string flakePre;
-    @optional() string flakePost;
-    @optional() string precalcMatrix;
-    @optional() int maxWorkers;
-    @optional() int maxMemory;
-    @optional() bool isInitial;
-    string cachixCache;
-    string cachixAuthToken;
+        if (params.flakePre == "")
+        {
+            params.flakePre = "checks";
+        }
+        if (params.flakePost != "")
+        {
+            params.flakePost = "." ~ params.flakePost;
+        }
+        string cachixUrl = "https://" ~ params.cachixCache ~ ".cachix.org";
+        version (AArch64) {
+            string arch = "aarch64";
+        }
+        version (X86_64) {
+            string arch = "x86_64";
+        }
 
-    void setup()
-    {
+        version (linux) {
+            string os = "linux";
+        }
+        version (OSX) {
+            string os = "darwin";
+        }
+
+        auto matrix = nixEvalJobs(params, (arch ~ "_" ~ os).to!(SupportedSystem), cachixUrl, false);
+        foreach (pkg; matrix)
+        {
+            if (pkg.isCached)
+            {
+                writeln("Package ", pkg.name, " is cached");
+            }
+            else
+            {
+                writeln("Package ", pkg.name, " is not cached; building...");
+                ProcessPipes res = execute!ProcessPipes(["nix", "build", "--json", ".#" ~ pkg.attrPath]);
+
+                foreach (line; res.stderr.byLine)
+                {
+                    "\r".write;
+                    line.write;
+                }
+                "".writeln;
+                auto json = parseJSON(res.stdout.byLine.join("\n").to!string);
+                auto path = json.array[0]["outputs"]["out"].str;
+                execute(["cachix", "push", params.cachixCache, path], false, true).writeln;
+            }
+        }
+
     }
 }

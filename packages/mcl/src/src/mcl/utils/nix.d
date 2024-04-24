@@ -8,6 +8,7 @@ import std.exception : enforce;
 import std.format : fmt = format;
 import std.string : lineSplitter, strip;
 import std.json : parseJSON, JSONValue;
+import std.stdio : writeln;
 
 import mcl.utils.process : execute;
 

@@ -143,7 +143,7 @@ export void ci_matrix()
     params = parseEnv!Params;
 
     createResultDirs();
-    nixEvalForAllSystems().map!(checkPackage).array.printTableForCacheStatus();
+    nixEvalForAllSystems().array.printTableForCacheStatus();
 }
 
 export void print_table()
@@ -197,7 +197,7 @@ static immutable string[] uselessWarnings =
         "this is likely due to the use of the legacy table type."
     ];
 
-Package[] nixEvalJobs(SupportedSystem system, string cachixUrl)
+Package[] nixEvalJobs(Params params, SupportedSystem system, string cachixUrl, bool doCheck = true)
 {
     string flakeAttr = params.flakePre ~ "." ~ system.enumToString() ~ params.flakePost;
     Package[] result = [];
@@ -233,7 +233,9 @@ Package[] nixEvalJobs(SupportedSystem system, string cachixUrl)
                 cacheUrl: cachixUrl ~ "/" ~ json["outputs"]["out"].str.matchFirst(
                     "^/nix/store/(?P<hash>[^-]+)-")["hash"] ~ ".narinfo"
             };
-            pkg = pkg.checkPackage();
+            if (doCheck) {
+                pkg = pkg.checkPackage();
+            }
             result ~= pkg;
             auto outJson = JSONValue([
                 "attr": pkg.name,
@@ -280,7 +282,7 @@ Package[] nixEvalForAllSystems()
     string cachixUrl = "https://" ~ params.cachixCache ~ ".cachix.org";
     SupportedSystem[] systems = [EnumMembers!SupportedSystem];
 
-    return systems.map!(system => nixEvalJobs(system, cachixUrl))
+    return systems.map!(system => nixEvalJobs(params, system, cachixUrl))
         .reduce!((a, b) => a ~ b)
         .array
         .sort!((a, b) => a.name < b.name)
