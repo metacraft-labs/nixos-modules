@@ -1,13 +1,13 @@
 module mcl.commands.shard_matrix;
 
-import std.file : append;
+import std.file : append, write;
 import std.conv : to, parse;
 import std.stdio : writeln;
 import std.string : strip;
 import std.regex : matchFirst, regex;
 
 import mcl.utils.nix : nix;
-import mcl.utils.path : createResultDirs, resultDir;
+import mcl.utils.path : createResultDirs, resultDir, rootDir;
 import mcl.utils.env : parseEnv, optional;
 import mcl.utils.json : toJSON;
 
@@ -107,7 +107,8 @@ unittest
 
 void saveShardMatrix(ShardMatrix matrix, Params params)
 {
-    const matrixJson = "gen_matrix=" ~ matrix.toJSON().toString();
+    const matrixString = matrix.toJSON().toString();
+    const matrixJson = "gen_matrix=" ~ matrixString;
     writeln(matrixJson);
     if (params.githubOutput != "")
     {
@@ -118,5 +119,6 @@ void saveShardMatrix(ShardMatrix matrix, Params params)
         createResultDirs();
         (resultDir() ~ "gh-output.env").append(matrixJson);
     }
+    (rootDir() ~ "shardMatrix.json").write(matrixString);
 
 }
