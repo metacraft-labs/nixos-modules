@@ -82,19 +82,17 @@
                   };
                   nix-file = mkOption {
                     default =
-                      if (pathIsRegularFile (config.encryptedSecretDir + "/${serviceName}/secrets.nix")) then
-                        config.encryptedSecretDir + "/${serviceName}/secrets.nix"
-                      else
-                        builtins.toFile "${serviceName}-secrets.nix" ''
-                          let
-                            hostKey = ["${sshKey}"];
-                            extraKeys = ["${concatStringsSep "\"\"" config.extraKeys}"];
-                          in {
-                            ${concatMapStringsSep "\n" (n: "\"${n}.age\".publicKeys = hostKey ++ extraKeys;") (
-                              builtins.attrNames config.secrets
-                            )}
-                          }
-                        '';
+
+                      builtins.toFile "${serviceName}-secrets.nix" ''
+                        let
+                          hostKey = ["${sshKey}"];
+                          extraKeys = ["${concatStringsSep "\"\"" config.extraKeys}"];
+                        in {
+                          ${concatMapStringsSep "\n" (n: "\"${n}.age\".publicKeys = hostKey ++ extraKeys;") (
+                            builtins.attrNames config.secrets
+                          )}
+                        }
+                      '';
                     type = types.path;
                   };
                 };
