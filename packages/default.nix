@@ -61,6 +61,7 @@
         }
         // optionalAttrs (system == "x86_64-linux" || system == "aarch64-darwin") {
           grafana-agent = import ./grafana-agent { inherit inputs'; };
+          secret = import ./secret { inherit inputs' pkgs; };
         }
         // optionalAttrs isLinux {
           folder-size-metrics = pkgs.callPackage ./folder-size-metrics { };
