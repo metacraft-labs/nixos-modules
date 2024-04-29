@@ -1,8 +1,8 @@
 module mcl.utils.json;
 import mcl.utils.test;
 import mcl.utils.string;
-import std.traits : isNumeric;
-import std.json : JSONValue;
+import std.json: JSONValue;
+import std.string: strip;
 
 JSONValue toJSON(T)(in T value)
 {
@@ -22,8 +22,12 @@ JSONValue toJSON(T)(in T value)
     else static if (is(T == struct))
     {
         JSONValue[string] result;
+        auto name = "";
         static foreach (idx, field; T.tupleof)
-            result[__traits(identifier, field)] = value.tupleof[idx].toJSON;
+        {
+            name = __traits(identifier, field).strip("_");
+            result[name] = value.tupleof[idx].toJSON();
+        }
         return JSONValue(result);
     }
     else
