@@ -1,6 +1,7 @@
 module mcl.utils.json;
 import mcl.utils.test;
 import mcl.utils.string;
+import std.traits: isNumeric, isArray, isSomeChar, ForeachType, isBoolean;
 import std.json: JSONValue;
 import std.string: strip;
 
@@ -10,7 +11,7 @@ JSONValue toJSON(T)(in T value)
     {
         return JSONValue(value.enumToString);
     }
-    else static if (is(T == bool) || is(T == string) || isNumeric!T)
+    else static if (is(T == bool) || is(T == string) || isSomeChar!T || isNumeric!T)
         return JSONValue(value);
     else static if (is(T == U[], U))
     {
