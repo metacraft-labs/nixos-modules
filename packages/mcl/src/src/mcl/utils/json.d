@@ -13,7 +13,10 @@ JSONValue toJSON(T)(in T value)
     }
     else static if (is(T == bool) || is(T == string) || isSomeChar!T || isNumeric!T)
         return JSONValue(value);
-    else static if (is(T == U[], U))
+    else static if ((isArray!T && isSomeChar!(ForeachType!T)) ) {
+        return JSONValue(value.idup[0..strlen(value.ptr)]);
+    }
+    else static if (isArray!T)
     {
         JSONValue[] result;
         foreach (elem; value)
