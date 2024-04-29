@@ -1,4 +1,5 @@
 import std.stdio : writefln, writeln;
+import std.array : replace;
 
 import cmds = mcl.commands;
 
@@ -8,6 +9,7 @@ alias supportedCommands = imported!`std.traits`.AliasSeq!(
     cmds.ci_matrix,
     cmds.print_table,
     cmds.shard_matrix,
+    cmds.host_info,
     cmds.ci
 );
 
