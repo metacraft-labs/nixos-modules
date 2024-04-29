@@ -1,11 +1,17 @@
 module mcl.utils.process;
 import mcl.utils.test;
 import std.process : ProcessPipes;
+import std.string : split, strip;
 import core.sys.posix.unistd : geteuid;
+import std.json : JSONValue, parseJSON;
 
 bool isRoot() => geteuid() == 0;
 
-T execute(T = string)(string[] args, bool printCommand = true, bool returnErr = false) if (is(T == string) || is(T == ProcessPipes))
+T execute(T = string)(string args, bool printCommand = true, bool returnErr = false) if (is(T == string) || is(T == ProcessPipes) || is(T == JSONValue))
+{
+    return execute!T(args.split(" "), printCommand, returnErr);
+}
+T execute(T = string)(string[] args, bool printCommand = true, bool returnErr = false) if (is(T == string) || is(T == ProcessPipes) || is(T == JSONValue))
 {
     import std.exception : enforce;
     import std.format : format;
@@ -23,18 +29,26 @@ T execute(T = string)(string[] args, bool printCommand = true, bool returnErr = 
     {
         return res;
     }
-    else if (is(T == string))
+    else
     {
-        string output = res.stdout.byLine().join("\n").to!string;
-        string err = res.stderr.byLine().join("\n").to!string;
+        string stdout = res.stdout.byLine().join("\n").to!string;
+        string stderr = res.stderr.byLine().join("\n").to!string;
+        string output = stdout;
 
         int status = wait(res.pid);
-        enforce(status == 0, "Command `%s` failed with status %s, stderr: \n%s".format(args, status, err));
+        enforce(status == 0, "Command `%s` failed with status %s, stderr: \n%s".format(args, status, stderr));
         if (returnErr)
         {
-            return err;
+            output = stderr;
         }
-        return output;
+
+        static if (is(T == string)) {
+            return output.strip;
+        }
+        else
+        {
+            return parseJSON(output.strip);
+        }
     }
 }
 
