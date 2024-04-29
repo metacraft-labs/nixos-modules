@@ -1,7 +1,9 @@
 module mcl.utils.process;
 import mcl.utils.test;
 import std.process : ProcessPipes;
+import core.sys.posix.unistd : geteuid;
 
+bool isRoot() => geteuid() == 0;
 
 T execute(T = string)(string[] args, bool printCommand = true, bool returnErr = false) if (is(T == string) || is(T == ProcessPipes))
 {
