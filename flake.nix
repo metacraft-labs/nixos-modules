@@ -134,7 +134,10 @@
     nixd = {
       url = "github:nix-community/nixd";
       inputs.flake-parts.follows = "flake-parts";
-      inputs.nixpkgs.follows = "nixpkgs";
+      # Please refrain from adding the following line:
+      # inputs.nixpkgs.follows = "nixpkgs";
+      #
+      # See: https://github.com/nix-community/nixd/blob/main/nixd/docs/editor-setup.md#installation---get-a-working-executable:~:text=do%20NOT%20override%20nixpkgs%20revision
     };
 
     validator-ejector = {
