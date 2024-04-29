@@ -3,9 +3,15 @@ import mcl.utils.test;
 import mcl.utils.string;
 import std.traits: isNumeric, isArray, isSomeChar, ForeachType, isBoolean;
 import std.json: JSONValue;
+import std.conv: to;
 import std.string: strip;
+import std.range: front;
+import std.stdio: writeln;
+import std.algorithm: map;
+import std.array: join, array;
+import core.stdc.string: strlen;
 
-JSONValue toJSON(T)(in T value)
+JSONValue toJSON(T)(in T value, bool simplify = false)
 {
     static if (is(T == enum))
     {
@@ -18,10 +24,20 @@ JSONValue toJSON(T)(in T value)
     }
     else static if (isArray!T)
     {
-        JSONValue[] result;
-        foreach (elem; value)
-            result ~= elem.toJSON;
-        return JSONValue(result);
+        if (simplify && value.length == 1)
+            return value.front.toJSON(simplify);
+        else if (simplify  && isBoolean!(ForeachType!T) ) {
+            static if (isBoolean!(ForeachType!T)) {
+                return JSONValue((value.map!(a => a ? '1' : '0').array).to!string);
+            }
+            else {assert(0);}
+        }
+        else {
+            JSONValue[] result;
+            foreach (elem; value)
+                result ~= elem.toJSON(simplify);
+            return JSONValue(result);
+        }
     }
     else static if (is(T == struct))
     {
@@ -30,7 +46,7 @@ JSONValue toJSON(T)(in T value)
         static foreach (idx, field; T.tupleof)
         {
             name = __traits(identifier, field).strip("_");
-            result[name] = value.tupleof[idx].toJSON();
+            result[name] = value.tupleof[idx].toJSON(simplify);
         }
         return JSONValue(result);
     }
@@ -46,7 +62,7 @@ version (unittest)
         b,
         c
     }
-
+            result[name] = value.tupleof[idx].toJSON(simplify);
     struct TestStruct
     {
         int a;
