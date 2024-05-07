@@ -8,8 +8,8 @@ import std.system;
 import std.stdio : writeln;
 import std.conv : to;
 import std.string : strip, indexOf;
-import std.array : split, join, array;
-import std.algorithm : map, filter, startsWith;
+import std.array : split, join, array, replace;
+import std.algorithm : map, filter, startsWith, joiner;
 import std.file : exists, write, readText;
 import std.json;
 
@@ -41,12 +41,16 @@ string[string] meminfo;
 string[string] getProcInfo(string fileOrData, bool awk = true)
 {
     string[string] r;
-    foreach (line; awk ? execute(["awk", "!$0{exit}1", fileOrData], false).split("\n") : fileOrData.split("\n")) {
-        if (line.indexOf(":") == -1 || line.strip == "edid-decode (hex):") {
+    foreach (line; awk ? execute(["awk", "!$0{exit}1", fileOrData], false).split(
+            "\n") : fileOrData.split("\n"))
+    {
+        if (line.indexOf(":") == -1 || line.strip == "edid-decode (hex):")
+        {
             continue;
         }
         auto parts = line.split(":");
-        if (parts.length >= 2 && parts[0].strip != "") {
+        if (parts.length >= 2 && parts[0].strip != "")
+        {
             r[parts[0].strip] = parts[1].strip;
         }
     }
@@ -64,7 +68,7 @@ export void host_info()
     info.softwareInfo.operatingSystemInfo = getOperatingSystemInfo();
 
     info.hardwareInfo.processorInfo = getProcessorInfo();
-    info.hardwareInfo.motherBoardInfo = getMotherBoardInfo();
+    info.hardwareInfo.motherboardInfo = getMotherboardInfo();
     info.hardwareInfo.memoryInfo = getMemoryInfo();
     info.hardwareInfo.storageInfo = getStorageInfo();
     info.hardwareInfo.displayInfo = getDisplayInfo();
@@ -88,7 +92,7 @@ struct SoftwareInfo
 struct HardwareInfo
 {
     ProcessorInfo processorInfo;
-    MotherBoardInfo motherBoardInfo;
+    MotherboardInfo motherboardInfo;
     MemoryInfo memoryInfo;
     StorageInfo storageInfo;
     DisplayInfo displayInfo;
@@ -104,7 +108,8 @@ struct ArchitectureInfo
     string flags;
 }
 
-ArchitectureInfo getArchitectureInfo() {
+ArchitectureInfo getArchitectureInfo()
+{
     ArchitectureInfo r;
     r.architecture = instructionSetArchitecture.to!string;
     r.byteOrder = endian.to!string;
@@ -115,48 +120,51 @@ ArchitectureInfo getArchitectureInfo() {
     return r;
 }
 
-string getOpMode() {
+string getOpMode()
+{
     int[] opMode = [];
-    switch (instructionSetArchitecture) {
-        case ISA.avr:
-            opMode = [8];
-            break;
-        case ISA.msp430:
-            opMode = [16];
-            break;
-        case ISA.x86_64:
-        case ISA.aarch64:
-        case ISA.ppc64:
-        case ISA.mips64:
-        case ISA.nvptx64:
-        case ISA.riscv64:
-        case ISA.sparc64:
-        case ISA.hppa64:
-            opMode = [32, 64];
-            break;
-        case ISA.x86:
-        case ISA.arm:
-        case ISA.ppc:
-        case ISA.mips32:
-        case ISA.nvptx:
-        case ISA.riscv32:
-        case ISA.sparc:
-        case ISA.s390:
-        case ISA.hppa:
-        case ISA.sh:
-        case ISA.webAssembly:
-            opMode = [32];
-            break;
-        case ISA.ia64:
-        case ISA.alpha:
-            opMode = [64];
-            break;
-        case ISA.systemZ:
-            opMode = [24, 31, 32, 64];
-            break;
-        case ISA.epiphany:
-        default:
-            throw new Exception("Unsupported architecture" ~ instructionSetArchitecture.to!string);
+    switch (instructionSetArchitecture)
+    {
+    case ISA.avr:
+        opMode = [8];
+        break;
+    case ISA.msp430:
+        opMode = [16];
+        break;
+    case ISA.x86_64:
+    case ISA.aarch64:
+    case ISA.ppc64:
+    case ISA.mips64:
+    case ISA.nvptx64:
+    case ISA.riscv64:
+    case ISA.sparc64:
+    case ISA.hppa64:
+        opMode = [32, 64];
+        break;
+    case ISA.x86:
+    case ISA.arm:
+    case ISA.ppc:
+    case ISA.mips32:
+    case ISA.nvptx:
+    case ISA.riscv32:
+    case ISA.sparc:
+    case ISA.s390:
+    case ISA.hppa:
+    case ISA.sh:
+    case ISA.webAssembly:
+        opMode = [32];
+        break;
+    case ISA.ia64:
+    case ISA.alpha:
+        opMode = [64];
+        break;
+    case ISA.systemZ:
+        opMode = [24, 31, 32, 64];
+        break;
+    case ISA.epiphany:
+    default:
+        throw new Exception(
+            "Unsupported architecture" ~ instructionSetArchitecture.to!string);
     }
     return opMode.map!(to!string).join("-bit, ") ~ "-bit";
 }
@@ -184,21 +192,23 @@ ProcessorInfo getProcessorInfo()
     r.threads = [cpuid.unified.threads()];
     r.architectureInfo = getArchitectureInfo();
 
-    if (isRoot) {
+    if (isRoot)
+    {
         auto dmi = execute("dmidecode -t 4", false).split("\n");
         r.voltage = dmi.getFromDmi("Voltage:").map!(a => a.split(" ")[0]).array.uniqIfSame[0];
-        r.frequency = dmi.getFromDmi("Current Speed:").map!(a => a.split(" ")[0].to!size_t).array.uniqIfSame;
-        r.maxFrequency = dmi.getFromDmi("Max Speed:").map!(a => a.split(" ")[0].to!size_t).array.uniqIfSame;
+        r.frequency = dmi.getFromDmi("Current Speed:")
+            .map!(a => a.split(" ")[0].to!size_t).array.uniqIfSame;
+        r.maxFrequency = dmi.getFromDmi("Max Speed:")
+            .map!(a => a.split(" ")[0].to!size_t).array.uniqIfSame;
         r.cpus = dmi.getFromDmi("Processor Information").length;
         r.cores = dmi.getFromDmi("Core Count").map!(a => a.to!size_t).array.uniqIfSame;
         r.threads = dmi.getFromDmi("Thread Count").map!(a => a.to!size_t).array.uniqIfSame;
     }
 
-
     return r;
 }
 
-struct MotherBoardInfo
+struct MotherboardInfo
 {
     string vendor;
     string model;
@@ -215,15 +225,16 @@ struct BiosInfo
     string vendor;
 }
 
-MotherBoardInfo getMotherBoardInfo()
+MotherboardInfo getMotherboardInfo()
 {
-    MotherBoardInfo r;
+    MotherboardInfo r;
 
-    r.vendor = execute("cat /sys/devices/virtual/dmi/id/board_vendor", false);
-    r.model = execute("cat /sys/devices/virtual/dmi/id/board_name", false);
-    r.version_ = execute("cat /sys/devices/virtual/dmi/id/board_version", false);
-    if (isRoot) {
-        r.serial = execute("cat /sys/devices/virtual/dmi/id/board_serial", false);
+    r.vendor = readText("/sys/devices/virtual/dmi/id/board_vendor");
+    r.model = readText("/sys/devices/virtual/dmi/id/board_name");
+    r.version_ = readText("/sys/devices/virtual/dmi/id/board_version");
+    if (isRoot)
+    {
+        r.serial = readText("/sys/devices/virtual/dmi/id/board_serial");
     }
 
     r.biosInfo = getBiosInfo();
@@ -231,12 +242,13 @@ MotherBoardInfo getMotherBoardInfo()
     return r;
 }
 
-BiosInfo getBiosInfo() {
+BiosInfo getBiosInfo()
+{
     BiosInfo r;
-    r.date = execute("cat /sys/devices/virtual/dmi/id/bios_date", false);
-    r.version_ = execute("cat /sys/devices/virtual/dmi/id/bios_version", false);
-    r.release = execute("cat /sys/devices/virtual/dmi/id/bios_release", false);
-    r.vendor = execute("cat /sys/devices/virtual/dmi/id/bios_vendor", false);
+    r.date = readText("/sys/devices/virtual/dmi/id/bios_date");
+    r.version_ = readText("/sys/devices/virtual/dmi/id/bios_version");
+    r.release = readText("/sys/devices/virtual/dmi/id/bios_release");
+    r.vendor = readText("/sys/devices/virtual/dmi/id/bios_vendor");
 
     return r;
 }
@@ -261,82 +273,116 @@ OperatingSystemInfo getOperatingSystemInfo()
     return r;
 }
 
-string getKernel() {
+string getKernel()
+{
     return execute("uname -s", false);
 };
 
-string getKernelVersion() {
+string getKernelVersion()
+{
     return execute("uname -r", false);
 }
 
-string getDistribution() {
+string getDistribution()
+{
     auto distribution = execute("uname -o", false);
-    if (exists("/etc/os-release")) {
-        foreach (line; execute(["awk", "-F", "=", "/^NAME=/ {print $2}", "/etc/os-release"], false).split("\n")) {
+    if (exists("/etc/os-release"))
+    {
+        foreach (line; execute([
+                "awk", "-F", "=", "/^NAME=/ {print $2}", "/etc/os-release"
+            ], false).split("\n"))
+        {
             distribution = line;
         }
     }
-    else if (distribution == "Darwin") {
+    else if (distribution == "Darwin")
+    {
         distribution = execute("sw_vers", false);
     }
-    else if (exists("/etc/lsb-release")) {
+    else if (exists("/etc/lsb-release"))
+    {
         distribution = execute("lsb_release -i", false);
     }
     return distribution;
 }
 
-string getDistributionVersion() {
+string getDistributionVersion()
+{
     auto distributionVersion = execute("uname -r", false);
-    if (exists("/etc/os-release")) {
-        foreach (line; execute(["awk", "-F", "=", "/^VERSION=/ {print $2}", "/etc/os-release"], false).split("\n")) {
+    if (exists("/etc/os-release"))
+    {
+        foreach (line; execute([
+                "awk", "-F", "=", "/^VERSION=/ {print $2}", "/etc/os-release"
+            ], false).split("\n"))
+        {
             distributionVersion = line.strip("\"");
         }
     }
-    else if (execute("uname -o") == "Darwin") {
-        distributionVersion = execute("sw_vers -productVersion", false) ~ " ( " ~ execute("sw_vers -buildVersion", false) ~ " )";
+    else if (execute("uname -o") == "Darwin")
+    {
+        distributionVersion = execute("sw_vers -productVersion", false) ~ " ( " ~ execute(
+            "sw_vers -buildVersion", false) ~ " )";
     }
-    else if (exists("/etc/lsb-release")) {
+    else if (exists("/etc/lsb-release"))
+    {
         distributionVersion = execute("lsb_release -r", false);
     }
     return distributionVersion;
 }
 
-struct MemoryInfo {
+struct MemoryInfo
+{
     string total;
     size_t count;
     size_t slots;
     string type = "ROOT PERMISSIONS REQUIRED";
     bool[] ecc;
     string speed = "ROOT PERMISSIONS REQUIRED";
+    string vendor = "ROOT PERMISSIONS REQUIRED";
+    string partNumber = "ROOT PERMISSIONS REQUIRED";
+    string serial = "ROOT PERMISSIONS REQUIRED";
 }
 
-string[] getFromDmi(string[] dmi, string key) {
-    return dmi.filter!(a => a.strip.startsWith(key)).map!(x => x.indexOf(":") != -1 ? x.split(":")[1].strip : x).filter!(a => a != "Unknown" && a != "No Module Installed" && a != "Not Provided" && a != "None").array;
+string[] getFromDmi(string[] dmi, string key)
+{
+    return dmi.filter!(a => a.strip.startsWith(key))
+        .map!(x => x.indexOf(":") != -1 ? x.split(":")[1].strip : x)
+        .filter!(a => a != "Unknown" && a != "No Module Installed" && a != "Not Provided" && a != "None")
+        .array;
 }
 
-MemoryInfo getMemoryInfo() {
+MemoryInfo getMemoryInfo()
+{
     MemoryInfo r;
     auto memTotal = (meminfo["MemTotal"].split(" ")[0].to!size_t) * 1024;
     r.total = memTotal.humanReadableSize;
-    if (isRoot) {
+    if (isRoot)
+    {
         string[] dmi = execute("dmidecode -t memory", false).split("\n");
         r.type = dmi.getFromDmi("Type:").uniqIfSame.join("/");
         r.count = dmi.getFromDmi("Type:").length;
-        r.slots = dmi.getFromDmi("Handle").filter!(a => a.indexOf("DMI type 17") != -1).array.length;
+        r.slots = dmi.getFromDmi("Handle")
+            .filter!(a => a.indexOf("DMI type 17") != -1).array.length;
         r.total ~= " (" ~ dmi.getFromDmi("Size:").map!(a => a.split(" ")[0]).join("/") ~ ")";
         auto totalWidth = dmi.getFromDmi("Total Width");
         auto dataWidth = dmi.getFromDmi("Data Width");
-        foreach (i, width; totalWidth) {
+        foreach (i, width; totalWidth)
+        {
             r.ecc ~= dataWidth[i] != width;
         }
         r.speed = dmi.getFromDmi("Speed:").uniqIfSame.join("/");
+        r.vendor = dmi.getFromDmi("Manufacturer:").uniqIfSame.join("/");
+        r.partNumber = dmi.getFromDmi("Part Number:").uniqIfSame.join("/");
+        r.serial = dmi.getFromDmi("Serial Number:").uniqIfSame.join("/");
+
     }
 
     return r;
 
 }
 
-struct Partition {
+struct Partition
+{
     string dev;
     string size;
     string type;
@@ -346,7 +392,8 @@ struct Partition {
     string id;
 }
 
-struct Device {
+struct Device
+{
     string dev;
     string uuid;
     string type;
@@ -361,18 +408,22 @@ struct Device {
 
 }
 
-struct StorageInfo {
+struct StorageInfo
+{
     string total;
     Device[] devices;
 }
 
-StorageInfo getStorageInfo() {
+StorageInfo getStorageInfo()
+{
     StorageInfo r;
-    auto lsblk = execute!JSONValue("lsblk --nodeps -o KNAME,ID,TYPE,SIZE,MODEL,SERIAL,VENDOR,STATE,PTTYPE,PTUUID -J", false);
+    auto lsblk = execute!JSONValue(
+        "lsblk --nodeps -o KNAME,ID,TYPE,SIZE,MODEL,SERIAL,VENDOR,STATE,PTTYPE,PTUUID -J", false);
     real total = 0;
     foreach (JSONValue dev; lsblk["blockdevices"].array)
     {
-        if (dev["id"].isNull) {
+        if (dev["id"].isNull)
+        {
             continue;
         }
         Device d;
@@ -387,37 +438,40 @@ StorageInfo getStorageInfo() {
         d.partitionTableType = dev["pttype"].str;
         d.partitionTableUUID = dev["ptuuid"].str;
 
-
-        switch (d.size[$-1]) {
-            case 'B':
-                total += d.size[0 .. $-1].to!real;
-                break;
-            case 'K':
-                total += d.size[0 .. $-1].to!real * 1024;
-                break;
-            case 'M':
-                total += d.size[0 .. $-1].to!real * 1024 * 1024;
-                break;
-            case 'G':
-                total += d.size[0 .. $-1].to!real * 1024 * 1024 * 1024;
-                break;
-            case 'T':
-                total += d.size[0 .. $-1].to!real * 1024 * 1024 * 1024 * 1024;
-                break;
-            default:
-                assert(0, "Unknown size unit" ~ d.size[$-1]);
+        switch (d.size[$ - 1])
+        {
+        case 'B':
+            total += d.size[0 .. $ - 1].to!real;
+            break;
+        case 'K':
+            total += d.size[0 .. $ - 1].to!real * 1024;
+            break;
+        case 'M':
+            total += d.size[0 .. $ - 1].to!real * 1024 * 1024;
+            break;
+        case 'G':
+            total += d.size[0 .. $ - 1].to!real * 1024 * 1024 * 1024;
+            break;
+        case 'T':
+            total += d.size[0 .. $ - 1].to!real * 1024 * 1024 * 1024 * 1024;
+            break;
+        default:
+            assert(0, "Unknown size unit" ~ d.size[$ - 1]);
         }
 
-        if (isRoot) {
-            auto partData = execute!JSONValue("lsblk -o KNAME,SIZE,PARTFLAGS,PARTLABEL,PARTN,PARTTYPE,PARTTYPENAME,PARTUUID,MOUNTPOINT,FSTYPE,LABEL -J /dev/" ~ d.dev, false)["blockdevices"].array;
+        if (isRoot)
+        {
+            auto partData = execute!JSONValue("lsblk -o KNAME,SIZE,PARTFLAGS,PARTLABEL,PARTN,PARTTYPE,PARTTYPENAME,PARTUUID,MOUNTPOINT,FSTYPE,LABEL -J /dev/" ~ d
+                    .dev, false)["blockdevices"].array;
             foreach (JSONValue part; partData.array)
             {
-                if (part["partuuid"].isNull) {
+                if (part["partuuid"].isNull)
+                {
                     continue;
                 }
                 Partition p;
                 p.dev = part["kname"].isNull ? "" : part["kname"].str;
-                p.fslabel = part["label"].isNull ? "" :  part["label"].str;
+                p.fslabel = part["label"].isNull ? "" : part["label"].str;
                 p.partlabel = part["partlabel"].isNull ? "" : part["partlabel"].str;
                 p.size = part["size"].isNull ? "" : part["size"].str;
                 p.type = part["fstype"].isNull ? "" : part["fstype"].str;
@@ -434,7 +488,8 @@ StorageInfo getStorageInfo() {
     return r;
 }
 
-struct Display {
+struct Display
+{
     string name;
     string vendor;
     string model;
@@ -448,26 +503,35 @@ struct Display {
     string manufactureDate;
 }
 
-struct DisplayInfo {
+struct DisplayInfo
+{
     Display[] displays;
     size_t count;
 }
 
-DisplayInfo getDisplayInfo() {
+DisplayInfo getDisplayInfo()
+{
     DisplayInfo r;
 
-    auto xrandr = execute!JSONValue("jc xrandr --properties")["screens"].array[0]["devices"].array;
-    foreach (JSONValue screen; xrandr) {
+    auto xrandr = execute!JSONValue("jc xrandr --properties", false)["screens"]
+        .array[0]["devices"].array;
+    foreach (JSONValue screen; xrandr)
+    {
         Display d;
 
         d.name = screen["device_name"].str;
         d.connected = screen["is_connected"].boolean;
         d.primary = screen["is_primary"].boolean;
-        d.resolution = screen["resolution_width"].integer.to!string ~ "x" ~ screen["resolution_height"].integer.to!string;
-        foreach (JSONValue mode; screen["modes"].array) {
-            foreach (JSONValue freq; mode["frequencies"].array) {
-                d.modes ~= mode["resolution_width"].integer.to!string ~ "x" ~ mode["resolution_height"].integer.to!string ~ "@" ~ freq["frequency"].floating.to!string ~ "Hz";
-                if (freq["is_current"].boolean) {
+        d.resolution = screen["resolution_width"].integer.to!string ~ "x" ~ screen["resolution_height"]
+            .integer.to!string;
+        foreach (JSONValue mode; screen["modes"].array)
+        {
+            foreach (JSONValue freq; mode["frequencies"].array)
+            {
+                d.modes ~= mode["resolution_width"].integer.to!string ~ "x" ~ mode["resolution_height"].integer
+                    .to!string ~ "@" ~ freq["frequency"].floating.to!string ~ "Hz";
+                if (freq["is_current"].boolean)
+                {
                     d.refreshRate = freq["frequency"].floating.to!string ~ "Hz";
                 }
             }
@@ -487,14 +551,16 @@ DisplayInfo getDisplayInfo() {
     return r;
 }
 
-struct GraphicsProcessorInfo {
+struct GraphicsProcessorInfo
+{
     string vendor;
     string model;
     string coreProfile;
     string vram;
 }
 
-GraphicsProcessorInfo getGraphicsProcessorInfo() {
+GraphicsProcessorInfo getGraphicsProcessorInfo()
+{
     GraphicsProcessorInfo r;
 
     auto glxinfo = getProcInfo(execute("glxinfo", false), false);

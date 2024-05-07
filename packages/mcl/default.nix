@@ -6,7 +6,7 @@
   fetchgit,
   ...
 }: let
-  deps = with pkgs; [cachix git nix nom nix-eval-jobs curl gawk dmidecode jc edid-decode];
+  deps = with pkgs; [cachix git nix nom nix-eval-jobs curl gawk dmidecode jc edid-decode coreutils-full util-linux xorg.xrandr glxinfo];
 in
   buildDubPackage rec {
     pname = "mcl";
