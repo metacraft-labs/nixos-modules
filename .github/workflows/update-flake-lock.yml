@@ -41,7 +41,6 @@ jobs:
         with:
           token: ${{ steps.generate-token.outputs.token }}
           title: 'Update Nix Flake lockfile'
-          commit-message: ${{ env.COMMIT_MSG }}
           body-path: commit_msg_body.txt
           branch: 'create-pull-request/update-flake-lockfile'
           delete-branch: true
