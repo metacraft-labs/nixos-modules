@@ -202,10 +202,7 @@
   in
     flake-parts.lib.mkFlake {inherit inputs;} {
       imports = [
-        ./modules/lido
-        ./modules/tailscale-autoconnect
-        ./modules/grafana-agent-flow
-        ./modules/pyroscope
+        ./modules
         ./packages
       ];
       systems = ["x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin"];
