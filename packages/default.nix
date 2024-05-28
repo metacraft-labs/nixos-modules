@@ -12,6 +12,7 @@
         pyroscope = pkgs.callPackage ./pyroscope {};
         grafana-agent = import ./grafana-agent {inherit inputs';};
         ci-matrix = pkgs.callPackage ./ci-matrix {};
+        secret = import ./secret {inherit inputs' pkgs;};
       }
       // pkgs.lib.optionalAttrs isLinux {
         inherit (inputs'.validator-ejector.packages) validator-ejector;
