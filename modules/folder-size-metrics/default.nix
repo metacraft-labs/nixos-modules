@@ -44,7 +44,7 @@
         path = [package];
 
         serviceConfig = {
-          ExecStart = "${package}";
+          ExecStart = "${lib.getExe package}";
         };
       };
     };
