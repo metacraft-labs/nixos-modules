@@ -13,14 +13,14 @@
   };
 
   inputs = {
-    nixos-2311.url = "github:NixOS/nixpkgs/nixos-23.11";
+    nixos-2405.url = "github:NixOS/nixpkgs/nixos-24.05";
 
-    nixpkgs.follows = "nixos-2311";
+    nixpkgs.follows = "nixos-2405";
 
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
 
     home-manager = {
-      url = "github:nix-community/home-manager/release-23.11";
+      url = "github:nix-community/home-manager/release-24.05";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
@@ -114,7 +114,7 @@
     nixos-images = {
       url = "github:nix-community/nixos-images";
       inputs = {
-        nixos-stable.follows = "nixos-2311";
+        nixos-stable.follows = "nixos-2405";
         nixos-unstable.follows = "nixpkgs-unstable";
       };
     };
