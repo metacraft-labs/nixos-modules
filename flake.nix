@@ -57,7 +57,6 @@
         nixpkgs.follows = "nixpkgs";
         nixpkgs-stable.follows = "nixpkgs";
         flake-compat.follows = "flake-compat";
-        flake-utils.follows = "flake-utils";
       };
     };
 
@@ -115,7 +114,7 @@
     nixos-images = {
       url = "github:nix-community/nixos-images";
       inputs = {
-        nixos-2311.follows = "nixos-2311";
+        nixos-stable.follows = "nixos-2311";
         nixos-unstable.follows = "nixpkgs-unstable";
       };
     };

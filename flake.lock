@@ -810,7 +810,9 @@
     },
     "nixos-images": {
       "inputs": {
-        "nixos-stable": "nixos-stable_2",
+        "nixos-stable": [
+          "nixos-2311"
+        ],
         "nixos-unstable": [
           "nixpkgs-unstable"
         ]
@@ -830,22 +832,6 @@
       }
     },
     "nixos-stable": {
-      "locked": {
-        "lastModified": 1717555607,
-        "narHash": "sha256-WZ1s48OODmRJ3DHC+I/DtM3tDRuRJlNqMvxvAPTD7ec=",
-        "owner": "NixOS",
-        "repo": "nixpkgs",
-        "rev": "0b8e7a1ae5a94da2e1ee3f3030a32020f6254105",
-        "type": "github"
-      },
-      "original": {
-        "owner": "NixOS",
-        "ref": "nixos-24.05",
-        "repo": "nixpkgs",
-        "type": "github"
-      }
-    },
-    "nixos-stable_2": {
       "locked": {
         "lastModified": 1717555607,
         "narHash": "sha256-WZ1s48OODmRJ3DHC+I/DtM3tDRuRJlNqMvxvAPTD7ec=",
