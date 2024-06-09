@@ -51,8 +51,8 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    pre-commit-hooks = {
-      url = "github:cachix/pre-commit-hooks.nix";
+    git-hooks-nix = {
+      url = "github:cachix/git-hooks.nix";
       inputs = {
         nixpkgs.follows = "nixpkgs";
         nixpkgs-stable.follows = "nixpkgs";
@@ -96,7 +96,7 @@
       inputs = {
         cachix.follows = "cachix";
         nixpkgs.follows = "nixpkgs";
-        pre-commit-hooks.follows = "pre-commit-hooks";
+        pre-commit-hooks.follows = "git-hooks-nix";
         flake-compat.follows = "flake-compat";
       };
     };
@@ -107,7 +107,7 @@
         flake-compat.follows = "flake-compat";
         devenv.follows = "devenv";
         nixpkgs.follows = "nixpkgs-unstable";
-        pre-commit-hooks.follows = "pre-commit-hooks";
+        pre-commit-hooks.follows = "git-hooks-nix";
       };
     };
 
