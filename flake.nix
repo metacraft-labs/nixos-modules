@@ -53,72 +53,90 @@
 
     pre-commit-hooks = {
       url = "github:cachix/pre-commit-hooks.nix";
-      inputs.nixpkgs.follows = "nixpkgs";
-      inputs.nixpkgs-stable.follows = "nixpkgs";
-      inputs.flake-compat.follows = "flake-compat";
-      inputs.flake-utils.follows = "flake-utils";
+      inputs = {
+        nixpkgs.follows = "nixpkgs";
+        nixpkgs-stable.follows = "nixpkgs";
+        flake-compat.follows = "flake-compat";
+        flake-utils.follows = "flake-utils";
+      };
     };
 
     hercules-ci-effects = {
       url = "github:hercules-ci/hercules-ci-effects";
-      inputs.nixpkgs.follows = "nixpkgs";
-      inputs.flake-parts.follows = "flake-parts";
+      inputs = {
+        nixpkgs.follows = "nixpkgs";
+        flake-parts.follows = "flake-parts";
+      };
     };
 
     ethereum-nix = {
       url = "github:metacraft-labs/ethereum.nix";
-      inputs.nixpkgs.follows = "nixpkgs";
-      inputs.nixpkgs-unstable.follows = "nixpkgs-unstable";
-      inputs.flake-parts.follows = "flake-parts";
-      inputs.flake-utils.follows = "flake-utils";
-      inputs.systems.follows = "systems";
-      inputs.flake-compat.follows = "flake-compat";
-      inputs.treefmt-nix.follows = "treefmt-nix";
+      inputs = {
+        nixpkgs.follows = "nixpkgs";
+        nixpkgs-unstable.follows = "nixpkgs-unstable";
+        flake-parts.follows = "flake-parts";
+        flake-utils.follows = "flake-utils";
+        systems.follows = "systems";
+        flake-compat.follows = "flake-compat";
+        treefmt-nix.follows = "treefmt-nix";
+      };
     };
 
     agenix = {
       url = "github:ryantm/agenix";
-      inputs.nixpkgs.follows = "nixpkgs";
-      inputs.systems.follows = "systems";
-      inputs.darwin.follows = "nix-darwin";
-      inputs.home-manager.follows = "home-manager";
+      inputs = {
+        nixpkgs.follows = "nixpkgs";
+        systems.follows = "systems";
+        darwin.follows = "nix-darwin";
+        home-manager.follows = "home-manager";
+      };
     };
 
     devenv = {
       url = "github:cachix/devenv";
-      inputs.cachix.follows = "cachix";
-      inputs.nixpkgs.follows = "nixpkgs";
-      inputs.pre-commit-hooks.follows = "pre-commit-hooks";
-      inputs.flake-compat.follows = "flake-compat";
+      inputs = {
+        cachix.follows = "cachix";
+        nixpkgs.follows = "nixpkgs";
+        pre-commit-hooks.follows = "pre-commit-hooks";
+        flake-compat.follows = "flake-compat";
+      };
     };
 
     cachix = {
       url = "github:cachix/cachix";
-      inputs.flake-compat.follows = "flake-compat";
-      inputs.devenv.follows = "devenv";
-      inputs.nixpkgs.follows = "nixpkgs-unstable";
-      inputs.pre-commit-hooks.follows = "pre-commit-hooks";
+      inputs = {
+        flake-compat.follows = "flake-compat";
+        devenv.follows = "devenv";
+        nixpkgs.follows = "nixpkgs-unstable";
+        pre-commit-hooks.follows = "pre-commit-hooks";
+      };
     };
 
     nixos-images = {
       url = "github:nix-community/nixos-images";
-      inputs.nixos-2311.follows = "nixos-2311";
-      inputs.nixos-unstable.follows = "nixpkgs-unstable";
+      inputs = {
+        nixos-2311.follows = "nixos-2311";
+        nixos-unstable.follows = "nixpkgs-unstable";
+      };
     };
 
     nixos-anywhere = {
       url = "github:numtide/nixos-anywhere";
-      inputs.nixpkgs.follows = "nixpkgs";
-      inputs.nixos-images.follows = "nixos-images";
-      inputs.flake-parts.follows = "flake-parts";
-      inputs.disko.follows = "disko";
-      inputs.treefmt-nix.follows = "treefmt-nix";
+      inputs = {
+        nixpkgs.follows = "nixpkgs";
+        nixos-images.follows = "nixos-images";
+        flake-parts.follows = "flake-parts";
+        disko.follows = "disko";
+        treefmt-nix.follows = "treefmt-nix";
+      };
     };
 
     nix2container = {
       url = "github:nlewo/nix2container";
-      inputs.nixpkgs.follows = "nixpkgs";
-      inputs.flake-utils.follows = "flake-utils";
+      inputs = {
+        nixpkgs.follows = "nixpkgs";
+        flake-utils.follows = "flake-utils";
+      };
     };
 
     disko = {
@@ -147,20 +165,26 @@
 
     terranix = {
       url = "github:terranix/terranix";
-      inputs.nixpkgs.follows = "nixpkgs";
-      inputs.flake-utils.follows = "flake-utils";
+      inputs = {
+        nixpkgs.follows = "nixpkgs";
+        flake-utils.follows = "flake-utils";
+      };
     };
 
     vscode-server = {
       url = "github:nix-community/nixos-vscode-server?rev=7e581626a07486b1779ef02320e7e310feb11611";
-      inputs.nixpkgs.follows = "nixpkgs";
-      inputs.flake-utils.follows = "flake-utils";
+      inputs = {
+        nixpkgs.follows = "nixpkgs";
+        flake-utils.follows = "flake-utils";
+      };
     };
 
     microvm = {
       url = "github:astro/microvm.nix";
-      inputs.nixpkgs.follows = "nixpkgs";
-      inputs.flake-utils.follows = "flake-utils";
+      inputs = {
+        nixpkgs.follows = "nixpkgs";
+        flake-utils.follows = "flake-utils";
+      };
     };
 
     fenix = {
