@@ -17,6 +17,8 @@
 
     nixpkgs.follows = "nixos-2405";
 
+    nixpkgs-2311.url = "github:NixOS/nixpkgs/nixos-23.11";
+
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
 
     home-manager = {
@@ -165,7 +167,7 @@
     terranix = {
       url = "github:terranix/terranix";
       inputs = {
-        nixpkgs.follows = "nixpkgs";
+        nixpkgs.follows = "nixpkgs-2311";
         flake-utils.follows = "flake-utils";
       };
     };
