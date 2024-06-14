@@ -1,4 +1,4 @@
-import std.stdio : writefln, writeln;
+import std.stdio : writefln, writeln, stderr;
 import std.array : replace;
 
 import cmds = mcl.commands;
@@ -28,16 +28,16 @@ int main(string[] args)
     case __traits(identifier, cmd):
             {
 
-                writeln("Running ", __traits(identifier, cmd));
+                stderr.writeln("Running ", __traits(identifier, cmd));
                 cmd();
-                writeln("Execution Succesfull");
+                stderr.writeln("Execution Succesfull");
                 return 0;
 
             }
     }
     catch (Exception e)
     {
-        writefln("Error: %s", e.msg);
+        writefln("Error: %s", e);
         return 1;
     }
 
