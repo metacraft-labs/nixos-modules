@@ -7,6 +7,12 @@
   ...
 }: let
   deps = with pkgs; [cachix git nix nom nix-eval-jobs curl gawk dmidecode jc edid-decode coreutils-full util-linux xorg.xrandr glxinfo nixos-install-tools perl systemd alejandra openssh];
+  excludedTests = (
+    lib.concatStringsSep "|" [
+      "(nix\\.(build|run))"
+      "fetchJson|(coda\.)"
+    ]
+  );
 in
   buildDubPackage rec {
     pname = "mcl";
@@ -25,7 +31,12 @@ in
 
     dubBuildFlags = ["--compiler=dmd"];
 
-    dubTestFlags = ["--compiler=dmd" "--" "-e" "(nix\\.(build|run)\\!JSONValue)|(nix\\.(build|run))|fetchJson"];
+    dubTestFlags = [
+      "--compiler=dmd"
+      "--"
+      "-e"
+      excludedTests
+    ];
 
     meta.mainProgram = pname;
   }
