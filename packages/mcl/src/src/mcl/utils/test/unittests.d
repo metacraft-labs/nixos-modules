@@ -1,4 +1,4 @@
-module mcl.utils.test;
+module packages.mcl.src.src.mcl.utils.test.unittests;
 import std.logger;
 
 shared static this()
