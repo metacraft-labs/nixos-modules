@@ -1,15 +1,94 @@
 module mcl.utils.json;
 import mcl.utils.test;
 import mcl.utils.string;
-import std.traits: isNumeric, isArray, isSomeChar, ForeachType, isBoolean;
-import std.json: JSONValue;
+import std.traits: isNumeric, isArray, isSomeChar, ForeachType, isBoolean, isAssociativeArray;
+import std.json: JSONValue, JSONOptions, JSONType;
 import std.conv: to;
 import std.string: strip;
 import std.range: front;
 import std.stdio: writeln;
 import std.algorithm: map;
-import std.array: join, array;
+import std.array: join, array, replace, split;
+import std.datetime: SysTime;
+import std.sumtype: SumType, isSumType;
 import core.stdc.string: strlen;
+
+bool tryDeserializeJson(T)(in JSONValue value, out T result)
+{
+    try {
+        result = value.fromJSON!T;
+        return true;
+    } catch (Exception e) {
+        return false;
+    }
+}
+
+T fromJSON(T)(in JSONValue value) {
+    if (value.isNull) {
+        return T.init;
+    }
+    static if (is(T == JSONValue)) {
+        return value;
+    }
+    else static if (is(T == bool) || is(T == string) || isSomeChar!T || isNumeric!T || is(T == enum)) {
+        return value.toString(JSONOptions.doNotEscapeSlashes).strip("\"").to!T;
+    }
+    else static if (isSumType!T) {
+        static foreach (SumTypeVariant; T.Types)
+        {{
+            SumTypeVariant result;
+            if (tryDeserializeJson!SumTypeVariant(value, result)) {
+                return T(result);
+            }
+        }}
+
+        throw new Exception("Failed to deserialize JSON value");
+    }
+    else static if (isArray!T) {
+        static if ( isBoolean!(ForeachType!T)) {
+            if (value.type == JSONType.string && isBoolean!(ForeachType!T)) {
+                return value.str.map!(a => a == '1').array;
+            }
+        }
+
+        if (value.type != JSONType.array) {
+            return [value.fromJSON!(ForeachType!T)];
+        }
+
+        return value.array.map!(a => a.fromJSON!(ForeachType!T)).array;
+    }
+    else static if (is(T == SysTime)) {
+        return SysTime.fromISOExtString(value.toString(JSONOptions.doNotEscapeSlashes).strip("\""));
+    }
+    else static if (is(T == struct)) {
+        T result;
+        static foreach (idx, field; T.tupleof) {
+            if ((__traits(identifier, field).replace("_", "") in value.object) && !value[__traits(identifier, field).replace("_", "")].isNull) {
+                result.tupleof[idx] = value[__traits(identifier, field).replace("_", "")].fromJSON!(typeof(field));
+            }
+        }
+        return result;
+    }
+    else static if (isAssociativeArray!T) {
+        T result;
+        foreach (key, val; value.object) {
+            if (key in result) {
+                result[key] = val.fromJSON!(typeof(result[key]));
+            }
+        }
+        return result;
+    }
+    else {
+        static assert(false, "Unsupported type: `", T,  "` ", isSumType!T);
+    }
+
+}
+
+@("fromJSON")
+unittest {
+    auto x = fromJSON!(SumType!(int, string))(JSONValue("1"));
+    auto y = fromJSON!(SumType!(int, string))(JSONValue(1));
+}
 
 JSONValue toJSON(T)(in T value, bool simplify = false)
 {
@@ -20,7 +99,7 @@ JSONValue toJSON(T)(in T value, bool simplify = false)
     else static if (is(T == bool) || is(T == string) || isSomeChar!T || isNumeric!T)
         return JSONValue(value);
     else static if ((isArray!T && isSomeChar!(ForeachType!T)) ) {
-        return JSONValue(value.idup[0..strlen(value.ptr)]);
+        return JSONValue(value.idup[0..(strlen(value.ptr)-1)]);
     }
     else static if (isArray!T)
     {
@@ -39,6 +118,9 @@ JSONValue toJSON(T)(in T value, bool simplify = false)
             return JSONValue(result);
         }
     }
+    else static if (is(T == SysTime)) {
+        return JSONValue(value.toISOExtString());
+    }
     else static if (is(T == struct))
     {
         JSONValue[string] result;
@@ -51,7 +133,7 @@ JSONValue toJSON(T)(in T value, bool simplify = false)
         return JSONValue(result);
     }
     else
-        static assert(false, "Unsupported type: `" ~ T ~ "`");
+        static assert(false, "Unsupported type: `" ~ __traits(identifier, T) ~ "`");
 }
 
 version(unittest)
