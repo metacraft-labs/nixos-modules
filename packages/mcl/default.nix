@@ -29,7 +29,7 @@ in
       wrapProgram $out/bin/${pname} --set PATH "${lib.makeBinPath deps}"
     '';
 
-    dubBuildFlags = ["--compiler=dmd"];
+    dubBuildFlags = ["--compiler=dmd" "-b" "debug"];
 
     dubTestFlags = [
       "--compiler=dmd"
