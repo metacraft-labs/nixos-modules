@@ -13,12 +13,10 @@
   };
 
   inputs = {
+    nixos-2311.url = "github:NixOS/nixpkgs/nixos-23.11";
     nixos-2405.url = "github:NixOS/nixpkgs/nixos-24.05";
 
     nixpkgs.follows = "nixos-2405";
-
-    nixpkgs-2311.url = "github:NixOS/nixpkgs/nixos-23.11";
-
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
 
     home-manager = {
@@ -73,7 +71,7 @@
     ethereum-nix = {
       url = "github:metacraft-labs/ethereum.nix";
       inputs = {
-        nixpkgs.follows = "nixpkgs";
+        nixpkgs.follows = "nixos-2311";
         nixpkgs-unstable.follows = "nixpkgs-unstable";
         flake-parts.follows = "flake-parts";
         flake-utils.follows = "flake-utils";
@@ -167,7 +165,7 @@
     terranix = {
       url = "github:terranix/terranix";
       inputs = {
-        nixpkgs.follows = "nixpkgs-2311";
+        nixpkgs.follows = "nixos-2311";
         flake-utils.follows = "flake-utils";
       };
     };

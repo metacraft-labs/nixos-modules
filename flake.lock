@@ -244,7 +244,7 @@
         "foundry-nix": "foundry-nix",
         "lib-extras": "lib-extras",
         "nixpkgs": [
-          "nixpkgs"
+          "nixos-2311"
         ],
         "nixpkgs-unstable": [
           "nixpkgs-unstable"
@@ -736,6 +736,22 @@
         "type": "github"
       }
     },
+    "nixos-2311": {
+      "locked": {
+        "lastModified": 1718229064,
+        "narHash": "sha256-ZFav8A9zPNfjZg/wrxh1uZeMJHELRfRgFP+meq01XYk=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "5c2ec3a5c2ee9909904f860dadc19bc12cd9cc44",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-23.11",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
     "nixos-2405": {
       "locked": {
         "lastModified": 1718208800,
@@ -836,22 +852,6 @@
       "original": {
         "owner": "NixOS",
         "ref": "nixos-unstable",
-        "repo": "nixpkgs",
-        "type": "github"
-      }
-    },
-    "nixpkgs-2311": {
-      "locked": {
-        "lastModified": 1718229064,
-        "narHash": "sha256-ZFav8A9zPNfjZg/wrxh1uZeMJHELRfRgFP+meq01XYk=",
-        "owner": "NixOS",
-        "repo": "nixpkgs",
-        "rev": "5c2ec3a5c2ee9909904f860dadc19bc12cd9cc44",
-        "type": "github"
-      },
-      "original": {
-        "owner": "NixOS",
-        "ref": "nixos-23.11",
         "repo": "nixpkgs",
         "type": "github"
       }
@@ -960,13 +960,13 @@
         "nix-fast-build": "nix-fast-build",
         "nix2container": "nix2container",
         "nixd": "nixd",
+        "nixos-2311": "nixos-2311",
         "nixos-2405": "nixos-2405",
         "nixos-anywhere": "nixos-anywhere",
         "nixos-images": "nixos-images",
         "nixpkgs": [
           "nixos-2405"
         ],
-        "nixpkgs-2311": "nixpkgs-2311",
         "nixpkgs-unstable": "nixpkgs-unstable",
         "systems": "systems",
         "terranix": "terranix",
@@ -1031,7 +1031,7 @@
           "flake-utils"
         ],
         "nixpkgs": [
-          "nixpkgs-2311"
+          "nixos-2311"
         ],
         "terranix-examples": "terranix-examples"
       },
