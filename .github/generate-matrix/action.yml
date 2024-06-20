@@ -41,6 +41,7 @@ runs:
   steps:
     - name: Install Nix
       uses: cachix/install-nix-action@v27
+      if: ${{ runner.environment == 'github-hosted' }}
       with:
         extra_nix_config: |
           accept-flake-config = true
