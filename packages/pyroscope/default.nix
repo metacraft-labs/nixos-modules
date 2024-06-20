@@ -15,7 +15,7 @@ buildGoModule rec {
     hash = "sha256-ffTxbwHXbqanHRLpUcFC9oZH92lj0b9U31zGAe6tJAw=";
   };
 
-  vendorHash = "sha256-iQpxA0aEpTH5oKuFZ6iKOPvpJPyHliQY5uJZuYfOwno=";
+  vendorHash = "sha256-6pkQDN2Kib3cMHm6KSn7ummSooBmag0DOhHR3aWLQcE=";
   proxyVendor = true;
   # preConfigure = ''
   #   export GOWORK=off
