@@ -1,27 +1,33 @@
 name: "CI"
 
 on:
+  # Allow this workflow to be reused by other workflows:
+  workflow_call:
+    inputs:
+      do_deploy:
+        description: "Deploy to cachix"
+        type: "boolean"
+        default: false
+        required: false
+
+  # Allow this workflow to be triggered manually:
   workflow_dispatch:
     inputs:
       do_deploy:
         description: "Deploy to cachix"
-        required: false
-        default: false
         type: "boolean"
+        default: false
+        required: false
+
+  # Allow this workflow to be triggered in merge
   merge_group:
+
   push:
     branches:
       - main
   pull_request:
     branches:
       - main
-  workflow_call:
-    inputs:
-      do_deploy:
-        description: "Deploy to cachix"
-        required: false
-        default: false
-        type: "boolean"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.repository }}-${{ github.event.pull_request.number || github.ref }}
@@ -46,6 +52,7 @@ jobs:
           nix run github:metacraft-labs/nixos-modules/feat/CD#mcl shard_matrix
     outputs:
       gen_matrix: ${{ steps.generate-matrix.outputs.gen_matrix }}
+
   generate-matrix:
     needs: generate-matrix-matrix
     runs-on: ubuntu-latest
@@ -68,7 +75,7 @@ jobs:
 
       - name: Generate CI Matrix
         id: generate-matrix
-        uses:  metacraft-labs/nixos-modules/.github/generate-matrix@feat/CD
+        uses: metacraft-labs/nixos-modules/.github/generate-matrix@feat/CD
         with:
           is-initial: 'true'
           cachix-cache: ${{ vars.CACHIX_CACHE }}
@@ -110,7 +117,7 @@ jobs:
         id: matrix
       - name: Post Comment
         id: print-matrix
-        uses:  metacraft-labs/nixos-modules/.github/print-matrix@feat/CD
+        uses: metacraft-labs/nixos-modules/.github/print-matrix@feat/CD
         with:
           is-initial: 'true'
           cachix-cache: ${{ vars.CACHIX_CACHE }}
@@ -119,6 +126,7 @@ jobs:
           substituters: ${{ vars.SUBSTITUTERS }}
           precalc_matrix: ${{ steps.matrix.outputs.fullMatrix }}
           token: ${{ secrets.GITHUB_TOKEN }}
+
   build:
     needs: slurp-matrix
     if: needs.slurp-matrix.outputs.matrix != '' && needs.slurp-matrix.outputs.matrix != '{}' && needs.slurp-matrix.outputs.matrix != '{"include":[] }'
@@ -149,6 +157,7 @@ jobs:
         run: |
           set -euo pipefail
           nix run github:metacraft-labs/nixos-modules/feat/CD#nix-fast-build -- --debug --systems ${{ matrix.system }} --skip-cached --no-nom --flake '.#${{ matrix.attrPath }}' 3>&1 1>&2 2>&3 3>&- | grep --color=always -v "warning: Git tree" | grep --color=always -v "warning: unknown setting" | grep --color=always -v "error (ignored): error: SQLite database"
+
   results:
     runs-on: ubuntu-latest
     name: Final Results
@@ -157,7 +166,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Post Comment
-        uses:  metacraft-labs/nixos-modules/.github/print-matrix@feat/CD
+        uses: metacraft-labs/nixos-modules/.github/print-matrix@feat/CD
         with:
           is-initial: 'false'
           cachix-cache: ${{ vars.CACHIX_CACHE }}

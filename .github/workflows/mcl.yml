@@ -35,6 +35,4 @@ jobs:
           extraPullNames: ${{ vars.EXTRA_CACHIX_CACHES }}
 
       - name: Build and test MCL
-        run: |
-          set -euo pipefail
-          nix build .#mcl
+        run: nix build .#mcl

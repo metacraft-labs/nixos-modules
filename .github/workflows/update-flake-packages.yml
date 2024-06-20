@@ -1,8 +1,13 @@
 name: "Update Flake Packages ❄️"
 
 on:
-  workflow_dispatch:
+  # Allow this workflow to be reused by other workflows:
   workflow_call:
+
+  # Allow this workflow to be triggered manually:
+  workflow_dispatch:
+
+  # Run everyday at 00:00:
   schedule:
     - cron: "0 0 * * *" # https://crontab.guru/#0_0_*_*_*
 
