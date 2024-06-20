@@ -1,5 +1,5 @@
 name: Evaluate CI Matrix
-description: Evaluate all packages, check cache status generate CI matrix and publish comment with the summary
+description: Evaluate all packages, check cache status generate CI matrix
 
 inputs:
   is-initial:
@@ -26,10 +26,6 @@ inputs:
     description: Postfix for the flake to evaluate
     required: false
     default: ""
-  comment_matrix:
-    description: Whether to post a comment/upload the matrix
-    required: false
-    default: true
 
 outputs:
   matrix:
