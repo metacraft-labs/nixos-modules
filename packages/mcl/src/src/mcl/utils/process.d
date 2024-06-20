@@ -24,6 +24,7 @@ T execute(T = string)(string[] args, bool printCommand = true, bool returnErr = 
     import std.array : join;
     import std.algorithm : map;
     import std.conv : to;
+    import std.stdio : writeln;
 
     auto cmd = args.map!escapeShellCommand.join(" ");
 
