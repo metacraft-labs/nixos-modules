@@ -9,7 +9,7 @@ import std.stdio : writeln;
 import std.conv : to;
 import std.string : strip, indexOf, isNumeric;
 import std.array : split, join, array, replace;
-import std.algorithm : map, filter, startsWith, joiner, any, sum;
+import std.algorithm : map, filter, startsWith, joiner, any, sum, find;
 import std.file : exists, write, readText, readLink, dirEntries, SpanMode;
 import std.path : baseName;
 import std.json;
@@ -22,6 +22,7 @@ import mcl.utils.process : execute, isRoot;
 import mcl.utils.number : humanReadableSize;
 import mcl.utils.array : uniqIfSame;
 import mcl.utils.nix : Literal;
+import mcl.utils.coda;
 
 // enum InfoFormat
 // {
@@ -34,10 +35,12 @@ struct Params
 {
     // @optional()
     // InfoFormat format = InfoFormat.JSON;
+    @optional() string codaApiToken;
     void setup()
     {
     }
 }
+Params params;
 
 string[string] cpuinfo;
 
@@ -64,7 +67,7 @@ string[string] getProcInfo(string fileOrData, bool file = true)
 
 export void host_info()
 {
-    const params = parseEnv!Params;
+    params = parseEnv!Params;
 
     Info info = getInfo();
 
@@ -79,6 +82,8 @@ Info getInfo()
     meminfo = getProcInfo("/proc/meminfo");
 
     Info info;
+    info.softwareInfo.hostid = execute("hostid", false);
+    info.softwareInfo.hostname = execute("cat /etc/hostname", false);
     info.softwareInfo.operatingSystemInfo = getOperatingSystemInfo();
     info.softwareInfo.opensshInfo = getOpenSSHInfo();
     info.softwareInfo.machineConfigInfo = getMachineConfigInfo();
@@ -90,8 +95,90 @@ Info getInfo()
     info.hardwareInfo.displayInfo = getDisplayInfo();
     info.hardwareInfo.graphicsProcessorInfo = getGraphicsProcessorInfo();
 
+    if (params.codaApiToken) {
+        auto docId = "0rz18jyJ1M";
+        auto hostTableId = "grid-b3MAjem325";
+        auto cpuTableId = "grid-mCI3x3nEIE";
+        auto memoryTableId = "grid-o7o2PeB4rz";
+        auto motherboardTableId = "grid-270PlzmA8K";
+        auto gpuTableId = "grid-ho6EPztvni";
+        auto storageTableId = "grid-JvXFbttMNz";
+        auto osTableId = "grid-ora7n98-ls";
+        auto coda = CodaApiClient(params.codaApiToken);
+
+        auto hostValues = RowValues([
+            CodaCell("Host Name", info.softwareInfo.hostname),
+            CodaCell("Host ID", info.softwareInfo.hostid),
+            CodaCell("OpenSSH Public Key", info.softwareInfo.opensshInfo.publicKey),
+            CodaCell("JSON", info.toJSON(true).toPrettyString(JSONOptions.doNotEscapeSlashes))
+        ]);
+
+        coda.updateOrInsertRow(docId, hostTableId, hostValues);
+
+        auto cpuValues = RowValues([
+            CodaCell("Host Name", info.softwareInfo.hostname),
+            CodaCell("Vendor", info.hardwareInfo.processorInfo.vendor),
+            CodaCell("Model", info.hardwareInfo.processorInfo.model),
+            CodaCell("Architecture", info.hardwareInfo.processorInfo.architectureInfo.architecture),
+            CodaCell("Flags", info.hardwareInfo.processorInfo.architectureInfo.flags),
+        ]);
+        coda.updateOrInsertRow(docId, cpuTableId, cpuValues);
+
+        auto memoryValues = RowValues([
+            CodaCell("Host Name", info.softwareInfo.hostname),
+            CodaCell("Vendor", info.hardwareInfo.memoryInfo.vendor),
+            CodaCell("Part Number", info.hardwareInfo.memoryInfo.partNumber),
+            CodaCell("Serial", info.hardwareInfo.memoryInfo.serial),
+            CodaCell("Generation", info.hardwareInfo.memoryInfo.type),
+            CodaCell("Slots", info.hardwareInfo.memoryInfo.slots == 0 ? "Soldered" : info.hardwareInfo.memoryInfo.count.to!string ~ "/" ~ info.hardwareInfo.memoryInfo.slots.to!string),
+            CodaCell("Total", info.hardwareInfo.memoryInfo.total),
+            CodaCell("Speed", info.hardwareInfo.memoryInfo.speed),
+        ]);
+        coda.updateOrInsertRow(docId, memoryTableId, memoryValues);
+
+        auto motherboardValues = RowValues([
+            CodaCell("Host Name", info.softwareInfo.hostname),
+            CodaCell("Vendor", info.hardwareInfo.motherboardInfo.vendor),
+            CodaCell("Model", info.hardwareInfo.motherboardInfo.model),
+            CodaCell("Revision", info.hardwareInfo.motherboardInfo.version_),
+            CodaCell("Serial", info.hardwareInfo.motherboardInfo.serial),
+            CodaCell("BIOS Vendor", info.hardwareInfo.motherboardInfo.biosInfo.vendor),
+            CodaCell("BIOS Version", info.hardwareInfo.motherboardInfo.biosInfo.version_),
+            CodaCell("BIOS Release", info.hardwareInfo.motherboardInfo.biosInfo.release),
+            CodaCell("BIOS Date", info.hardwareInfo.motherboardInfo.biosInfo.date)
+        ]);
+        coda.updateOrInsertRow(docId, motherboardTableId, motherboardValues);
+
+        auto gpuValues = RowValues([
+            CodaCell("Host Name", info.softwareInfo.hostname),
+            CodaCell("Vendor", info.hardwareInfo.graphicsProcessorInfo.vendor),
+            CodaCell("Model", info.hardwareInfo.graphicsProcessorInfo.model),
+            CodaCell("VRam", info.hardwareInfo.graphicsProcessorInfo.vram)
+        ]);
+        coda.updateOrInsertRow(docId, gpuTableId, gpuValues);
+
+        auto osValues = RowValues([
+            CodaCell("Host Name", info.softwareInfo.hostname),
+            CodaCell("Distribution", info.softwareInfo.operatingSystemInfo.distribution),
+            CodaCell("Distribution Version", info.softwareInfo.operatingSystemInfo.distributionVersion),
+            CodaCell("Kernel", info.softwareInfo.operatingSystemInfo.kernel),
+            CodaCell("Kernel Version", info.softwareInfo.operatingSystemInfo.kernelVersion)
+        ]);
+        coda.updateOrInsertRow(docId, osTableId, osValues);
+
+        auto storageValues = RowValues([
+            CodaCell("Host Name", info.softwareInfo.hostname),
+            CodaCell("Count", info.hardwareInfo.storageInfo.devices.length.to!string),
+            CodaCell("Total", info.hardwareInfo.storageInfo.total),
+            CodaCell("JSON", info.hardwareInfo.storageInfo.toJSON(true).toPrettyString(JSONOptions.doNotEscapeSlashes))
+        ]);
+        coda.updateOrInsertRow(docId, storageTableId, storageValues);
+    }
+
     return info;
 }
+
+
 
 struct Info
 {
@@ -101,6 +188,8 @@ struct Info
 
 struct SoftwareInfo
 {
+    string hostname;
+    string hostid;
     OperatingSystemInfo operatingSystemInfo;
     OpenSSHInfo opensshInfo;
     MachineConfigInfo machineConfigInfo;
@@ -308,7 +397,7 @@ string getDistribution()
     if (exists("/etc/os-release"))
     {
         foreach (line; execute([
-                "awk", "-F", "=", "/^NAME=/ {print $2}", "/etc/os-release"
+                "awk", "-F", "=", "'/^NAME=/ {print $2}'", "/etc/os-release"
             ], false).split("\n"))
         {
             distribution = line;
@@ -331,7 +420,7 @@ string getDistributionVersion()
     if (exists("/etc/os-release"))
     {
         foreach (line; execute([
-                "awk", "-F", "=", "/^VERSION=/ {print $2}", "/etc/os-release"
+                "awk", "-F", "=", "'/^VERSION=/ {print $2}'", "/etc/os-release"
             ], false).split("\n"))
         {
             distributionVersion = line.strip("\"");
