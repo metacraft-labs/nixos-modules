@@ -38,13 +38,15 @@ jobs:
     name: Generate Matrix of Matrices
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
       - name: Install Nix
-        uses: cachix/install-nix-action@v27
-        if: ${{ runner.environment == 'github-hosted' }}
+        uses: metacraft-labs/nixos-modules/.github/install-nix@feat/CD
         with:
-          extra_nix_config: accept-flake-config = true
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+
+      - uses: actions/checkout@v4
 
       - name: Generate Matrix for Matrix
         id: generate-matrix
