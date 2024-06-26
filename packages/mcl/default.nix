@@ -7,7 +7,9 @@
   ...
 }:
 let
+  inherit (pkgs.hostPlatform) isLinux isx86;
   deps =
+    with pkgs;
     [
       nix
       nix-eval-jobs
@@ -15,18 +17,25 @@ let
     ++ (with pkgs; [
       gitMinimal
       gawk
-      dmidecode
       jc
       edid-decode
       coreutils-full
       util-linux
       xorg.xrandr
-      glxinfo
+      perl
+      alejandra
+      openssh
       cachix
-    ]);
+    ])
+    ++ lib.optionals (isLinux && isx86) [
+      dmidecode
+      glxinfo
+      nixos-install-tools
+      systemd
+    ];
   excludedTests = (
     lib.concatStringsSep "|" [
-      "(nix\\.(build|run))"
+      "(nix\\.(build|run|eval))"
       "fetchJson|(coda\.)"
       "checkPackage"
       "generateShardMatrix"
@@ -56,13 +65,11 @@ buildDubPackage rec {
   '';
 
   dubBuildFlags = [
-    "--compiler=dmd"
     "-b"
     "debug"
   ];
 
   dubTestFlags = [
-    "--compiler=dmd"
     "--"
     "-e"
     excludedTests
