@@ -1,10 +1,14 @@
-{lib,  ...}: {
+{
+  lib,
+  inputs,
+  ...
+}: {
   perSystem = {
     inputs',
     pkgs,
     ...
   }: let
-    inherit (pkgs.hostPlatform) isLinux isx86;
+    inherit (pkgs.hostPlatform) isLinux isDarwin isx86;
     unstablePkgs = inputs'.nixpkgs-unstable.legacyPackages;
   in rec {
     legacyPackages = {
@@ -36,10 +40,10 @@
         inherit (inputs'.validator-ejector.packages) validator-ejector;
         folder-size-metrics = pkgs.callPackage ./folder-size-metrics {};
       }
-      // pkgs.lib.optionalAttrs (isLinux && isx86) rec {
+      // pkgs.lib.optionalAttrs ((isLinux && isx86) || isDarwin) rec {
         mcl = pkgs.callPackage ./mcl {
           buildDubPackage = inputs'.dlang-nix.legacyPackages.buildDubPackage.override {
-            ldc = inputs'.dlang-nix.packages."ldc-binary-1_34_0";
+            dCompiler = inputs'.dlang-nix.packages."ldc-binary-1_38_0";
           };
           nix-eval-jobs = inputs'.nix-eval-jobs.packages.nix-eval-jobs;
         };

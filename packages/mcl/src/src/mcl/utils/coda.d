@@ -31,7 +31,7 @@ import std.traits : isArray;
 import mcl.utils.json : toJSON, fromJSON;
 import std.process : environment;
 import std.stdio : writeln, writefln;
-import std.algorithm : map, filter;
+import std.algorithm : map, filter, find;
 import std.exception : assertThrown;
 import std.sumtype : SumType;
 import core.thread;
@@ -527,6 +527,16 @@ struct CodaApiClient
         coda.deleteRow("dEJJPwdxcw", tables[0].id, resp[0]);
     }
 
+    void updateOrInsertRow(string docId, string tableId, RowValues values) {
+        auto table = listRows(docId, tableId);
+        auto rows = find!(row => row.name == values.cells[0].value)(table);
+        if (rows.length > 0) {
+            updateRow(docId, tableId, rows[0].id, values);
+        }
+        else {
+            insertRows(docId, tableId, [values]);
+        }
+    }
     struct PushButtonResponse {
         string requestId;
         string rowId;

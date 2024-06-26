@@ -6,30 +6,29 @@
   fetchgit,
   ...
 }: let
-  deps = with pkgs; [
-    cachix
-    git
-    nix
-    nom
-    nix-eval-jobs
-    curl
-    gawk
-    dmidecode
-    jc
-    edid-decode
-    coreutils-full
-    util-linux
-    xorg.xrandr
-    glxinfo
-    nixos-install-tools
-    perl
-    systemd
-    alejandra
-    openssh
-  ];
+  inherit (pkgs.hostPlatform) isLinux isx86;
+  deps = with pkgs;
+    [
+      cachix
+      git
+      nix
+      nom
+      nix-eval-jobs
+      curl
+      gawk
+      jc
+      edid-decode
+      coreutils-full
+      util-linux
+      xorg.xrandr
+      perl
+      alejandra
+      openssh
+    ]
+    ++ lib.optionals (isLinux && isx86) [dmidecode glxinfo nixos-install-tools systemd];
   excludedTests = (
     lib.concatStringsSep "|" [
-      "(nix\\.(build|run))"
+      "(nix\\.(build|run|eval))"
       "fetchJson|(coda\.)"
     ]
   );
@@ -52,10 +51,9 @@ in
       wrapProgram $out/bin/${pname} --set PATH "${lib.makeBinPath deps}"
     '';
 
-    dubBuildFlags = ["--compiler=dmd" "-b" "debug"];
+    dubBuildFlags = ["-b" "debug"];
 
     dubTestFlags = [
-      "--compiler=dmd"
       "--"
       "-e"
       excludedTests

@@ -19,6 +19,7 @@ T execute(T = string)(string[] args, bool printCommand = true, bool returnErr = 
     import std.logger : logf, LogLevel;
     import std.array : join;
     import std.conv : to;
+    import std.stdio : writeln;
 
     if (printCommand)
     {
