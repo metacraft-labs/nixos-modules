@@ -5,12 +5,12 @@ import mcl.utils.env : parseEnv;
 import mcl.utils.process : execute;
 import mcl.utils.path : rootDir;
 import mcl.utils.log : prompt;
-import std.array : split, array, replace;
-import std.algorithm : map, startsWith, sort, uniq;
+import std.array : split, array, replace, join;
+import std.algorithm : map, startsWith, sort, uniq, filter;
 import std.path : stripExtension;
 import std.regex : regex, replaceAll, replaceFirst;
 import std.conv : to;
-import std.string : startsWith;
+import std.string : startsWith, strip;
 
 
 string[] modifiedFiles = [];
@@ -31,7 +31,9 @@ void initGitStatus()
     auto status = execute("git status --porcelain", false).split("\n");
     if (status.length)
     {
-        modifiedFiles = status.filter!(a => !a.strip.startsWith("D") && !a.strip.startsWith("??")).array.map!(a => stripExtension(a.split(" ")[$-1])).array;
+        modifiedFiles = status
+        .filter!(a => !a.strip.startsWith("D") && !a.strip.startsWith("??")).array
+        .map!(a => stripExtension(a.strip[2..$])).array;
     }
 }
 
@@ -55,7 +57,7 @@ string guessType()
             }
             else if (file == ".gitignore")
             {
-                return "config"
+                return "config";
             }
         }
     }
@@ -69,7 +71,6 @@ string guessScope()
         .replaceAll(regex(r"mcl/mcl/", "g"), "mcl/")
         .replaceAll(regex(r"mcl/commands/", "g"), "mcl/")
         .replaceAll(regex(r"(docs.*/)?(pages/)?docs/", "g"), "docs/")
-        .replaceAll(regex(r"docs.*/(.*)?/docs/", "g"), "docs/")
         .replaceFirst(regex(r"^docs/", "g"), "")
         .replaceFirst(regex(r"/(default|main|index|start|app|init|__init__|entry)$","g"), "")
     ).array.sort.uniq;
