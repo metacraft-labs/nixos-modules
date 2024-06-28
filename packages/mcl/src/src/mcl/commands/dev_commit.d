@@ -10,6 +10,7 @@ import std.algorithm : map, startsWith, sort, uniq;
 import std.path : stripExtension;
 import std.regex : regex, replaceAll, replaceFirst;
 import std.conv : to;
+import std.string : startsWith;
 
 
 string[] modifiedFiles = [];
@@ -30,7 +31,7 @@ void initGitStatus()
     auto status = execute("git status --porcelain", false).split("\n");
     if (status.length)
     {
-        modifiedFiles = status.map!(a => stripExtension(a.split(" ")[$-1])).array;
+        modifiedFiles = status.filter!(a => !a.strip.startsWith("D") && !a.strip.startsWith("??")).array.map!(a => stripExtension(a.split(" ")[$-1])).array;
     }
 }
 
@@ -40,7 +41,7 @@ string guessType()
     {
         foreach (string file; modifiedFiles)
         {
-            if (file.startsWith("docs/"))
+            if (file.startsWith("docs"))
             {
                 return "docs";
             }
@@ -51,6 +52,10 @@ string guessType()
             else if (file.startsWith(".gitlab/"))
             {
                 return "ci";
+            }
+            else if (file == ".gitignore")
+            {
+                return "config"
             }
         }
     }
@@ -63,6 +68,9 @@ string guessScope()
         .replaceAll(regex(r"(src|packages|pkg|apps|libs)/","g"), "")
         .replaceAll(regex(r"mcl/mcl/", "g"), "mcl/")
         .replaceAll(regex(r"mcl/commands/", "g"), "mcl/")
+        .replaceAll(regex(r"(docs.*/)?(pages/)?docs/", "g"), "docs/")
+        .replaceAll(regex(r"docs.*/(.*)?/docs/", "g"), "docs/")
+        .replaceFirst(regex(r"^docs/", "g"), "")
         .replaceFirst(regex(r"/(default|main|index|start|app|init|__init__|entry)$","g"), "")
     ).array.sort.uniq;
     writeln(files);
