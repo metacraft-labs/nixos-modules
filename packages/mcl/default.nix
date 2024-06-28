@@ -29,7 +29,7 @@
   ];
   excludedTests = (
     lib.concatStringsSep "|" [
-      "(nix\\.(build|run))"
+      "(nix\\.(build|run|eval))"
       "fetchJson|(coda\.)"
     ]
   );

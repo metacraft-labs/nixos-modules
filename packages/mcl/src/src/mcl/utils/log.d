@@ -2,7 +2,7 @@ module mcl.utils.log;
 
 T prompt(T)(string message, T[] options = [], string input = "unfilled")
 {
-    import std.stdio : write, writeln, readln;
+    import std.stdio : write, writeln, readln, stdin;
     import std.string : strip;
     import std.algorithm : canFind, map;
     import std.conv : to;
