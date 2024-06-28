@@ -37,7 +37,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build and test the `mcl` command
-        run: nix develop -c sh -c "dub test --root packages/mcl -- -e 'fetchJson|(coda\.)|nix.run|nix.build'"
+        run: nix develop -c sh -c "dub test --root packages/mcl --compiler ldc2 -- -e 'fetchJson|(coda\.)|nix.run|nix.build'"
 
   ci:
     uses: ./.github/workflows/reusable-flake-checks-ci-matrix.yml

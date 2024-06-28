@@ -41,11 +41,13 @@
             ]
             ++ pkgs.lib.optionals (pkgs.stdenv.system == "x86_64-linux") [
               inputs'.dlang-nix.packages.dmd
+              inputs'.dlang-nix.packages."ldc-binary-1_38_0"
             ];
 
           shellHook =
             ''
               export REPO_ROOT="$PWD"
+              export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${pkgs.curl.out}/lib"
               figlet -t "Metacraft Nixos Modules"
             ''
             + config.pre-commit.installationScript;
