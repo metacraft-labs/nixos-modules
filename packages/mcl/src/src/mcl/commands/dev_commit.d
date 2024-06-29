@@ -10,7 +10,7 @@ import std.algorithm : map, startsWith, sort, uniq, filter;
 import std.path : stripExtension;
 import std.regex : regex, replaceAll, replaceFirst;
 import std.conv : to;
-import std.string : startsWith, strip;
+import std.string : startsWith, strip, indexOf;
 
 
 string[] modifiedFiles = [];
@@ -74,8 +74,15 @@ string guessScope()
         .replaceFirst(regex(r"^docs/", "g"), "")
         .replaceFirst(regex(r"/(default|main|index|start|app|init|__init__|entry)$","g"), "")
     ).array.sort.uniq;
-    writeln(files);
     return files.to!string;
+}
+
+string[] getAuthors()
+{
+    auto authors = execute("git shortlog -sne", false).split("\n");
+    return authors
+        .map!(a => a.strip.split("\t")[1].strip).array
+        .filter!(a => a.indexOf("[bot]") == -1 && a.indexOf("dependabot") == -1 && a.indexOf("actions-bot") == -1).array;
 }
 
 export void dev_commit()
@@ -85,6 +92,14 @@ export void dev_commit()
     const params = parseEnv!Params;
     CommitType type = prompt!CommitType("Commit type (suggestion: " ~ guessType ~ "): ");
     string scope_ = prompt!string("Scope (suggestion: "~ guessScope ~"): ");
+    bool isBreaking = prompt!bool("Breaking change: ");
+    string description = prompt!string("Description: ");
+    bool isIssue = prompt!bool("Does this commit relate to an existing issue: ");
+    if (isIssue)
+    {
+        int issue = prompt!int("Issue number: ");
+    }
+    string[] coAuthors = prompt!string("Co-authors (comma separated): ", getAuthors).split(",").map!(a => a.strip).array;
 
 }
 
