@@ -1,10 +1,11 @@
-{lib,  ...}: {
+{lib, ...}: {
   perSystem = {
     inputs',
     pkgs,
     ...
   }: let
     inherit (pkgs.hostPlatform) isLinux isx86;
+    unstablePkgs = inputs'.nixpkgs-unstable.legacyPackages;
   in rec {
     legacyPackages = {
       inputs = {
@@ -29,16 +30,18 @@
         lido-withdrawals-automation = pkgs.callPackage ./lido-withdrawals-automation {};
         pyroscope = pkgs.callPackage ./pyroscope {};
         grafana-agent = import ./grafana-agent {inherit inputs';};
-        ci-matrix = pkgs.callPackage ./ci-matrix {};
-        folder-size-metrics = pkgs.callPackage ./folder-size-metrics {};
       }
       // pkgs.lib.optionalAttrs isLinux {
         inherit (inputs'.validator-ejector.packages) validator-ejector;
+        folder-size-metrics = pkgs.callPackage ./folder-size-metrics {};
       }
-      // pkgs.lib.optionalAttrs (isLinux && isx86) {
+      // pkgs.lib.optionalAttrs (isLinux && isx86) rec {
+        nix-fast-build = inputs'.nix-fast-build.packages.nix-fast-build;
         mcl = pkgs.callPackage ./mcl {
-          inherit (inputs'.dlang-nix.packages) dub;
-          dcompiler = inputs'.dlang-nix.packages.ldc;
+          buildDubPackage = inputs'.dlang-nix.legacyPackages.buildDubPackage.override {
+            ldc = inputs'.dlang-nix.packages."ldc-binary-1_34_0";
+          };
+          nix-eval-jobs = inputs'.nix-eval-jobs.packages.nix-eval-jobs;
         };
       };
     checks = packages;

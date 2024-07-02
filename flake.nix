@@ -19,6 +19,8 @@
     nixpkgs.follows = "nixos-2405";
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
 
+    nix-eval-jobs.url = "github:nix-community/nix-eval-jobs/v2.21.0";
+
     home-manager = {
       url = "github:nix-community/home-manager/release-24.05";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -197,11 +199,10 @@
     };
 
     dlang-nix = {
-      url = "github:PetarKirov/dlang.nix";
+      url = "github:PetarKirov/dlang.nix?branch=feat/build-dub-package&rev=dab4c199ad644dc23b0b9481e2e5a063e9492b84";
       inputs = {
         flake-compat.follows = "flake-compat";
         flake-parts.follows = "flake-parts";
-        git-hooks-nix.follows = "git-hooks-nix";
       };
     };
 

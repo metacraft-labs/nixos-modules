@@ -1,25 +1,65 @@
 {
   lib,
-  stdenv,
-  dub,
-  dcompiler,
+  buildDubPackage,
+  nix-eval-jobs,
+  pkgs,
+  fetchgit,
   ...
-}:
-stdenv.mkDerivation (finalAttrs: {
-  pname = "mcl";
-  version = "0.0.1";
-  src = lib.fileset.toSource {
-    root = ./.;
-    fileset = lib.fileset.fileFilter (file: builtins.any file.hasExt ["d" "sdl" "json"]) ./.;
-  };
+}: let
+  deps = with pkgs; [
+    cachix
+    git
+    nix
+    nom
+    nix-eval-jobs
+    curl
+    gawk
+    dmidecode
+    jc
+    edid-decode
+    coreutils-full
+    util-linux
+    xorg.xrandr
+    glxinfo
+    nixos-install-tools
+    perl
+    systemd
+    alejandra
+    openssh
+  ];
+  excludedTests = (
+    lib.concatStringsSep "|" [
+      "(nix\\.(build|run))"
+      "fetchJson|(coda\.)"
+    ]
+  );
+in
+  buildDubPackage rec {
+    pname = "mcl";
+    version = "unstable";
+    src = lib.fileset.toSource {
+      root = ./.;
+      fileset =
+        lib.fileset.fileFilter
+        (file: builtins.any file.hasExt ["d" "sdl" "json" "nix"])
+        ./.;
+    };
 
-  nativeBuildInputs = [dub dcompiler];
+    nativeBuildInputs = [pkgs.makeWrapper] ++ deps;
+    buildInputs = deps;
+    checkInputs = deps;
+    postFixup = ''
+      wrapProgram $out/bin/${pname} --set PATH "${lib.makeBinPath deps}"
+    '';
 
-  buildPhase = "dub build";
-  checkPhase = "dub test";
-  installPhase = ''
-    install -D -m755 ./build/${finalAttrs.pname} $out/bin/${finalAttrs.pname}
-  '';
+    dubBuildFlags = ["--compiler=dmd" "-b" "debug"];
 
-  meta.mainProgram = finalAttrs.pname;
-})
+    dubTestFlags = [
+      "--compiler=dmd"
+      "--"
+      "-e"
+      excludedTests
+    ];
+
+    meta.mainProgram = pname;
+  }

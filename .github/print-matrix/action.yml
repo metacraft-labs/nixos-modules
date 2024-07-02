@@ -1,0 +1,70 @@
+name: Evaluate CI Matrix
+description: Evaluate all packages, check cache status generate CI matrix and publish comment with the summary
+
+inputs:
+  is-initial:
+    description: Is this the start of the CI workflow, or the end
+    default: 'true'
+    required: true
+  cachix-cache:
+    description: The name of the cachix cache to use
+    required: true
+  cachix-auth-token:
+    description: Cachix auth token
+    required: true
+  trusted-public-keys:
+    description: Trusted public keys
+    required: true
+  substituters:
+    description: Substituters
+    required: true
+  precalc_matrix:
+    description: Pre-calculated matrix
+    required: true
+  token:
+    description: GitHub token
+    required: true
+
+outputs:
+  matrix:
+    description: 'Generated Matrix'
+    value: ${{ steps.print-matrix.outputs.matrix }}
+  comment:
+    description: 'Comment'
+    value: ${{ steps.print-matrix.outputs.comment }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install Nix
+      uses: metacraft-labs/nixos-modules/.github/install-nix@feat/CD
+      with:
+        cachix-cache: ${{ inputs.CACHIX_CACHE }}
+        cachix-auth-token: ${{ inputs.CACHIX_AUTH_TOKEN }}
+        trusted-public-keys: ${{ inputs.TRUSTED_PUBLIC_KEYS }}
+        substituters: ${{ inputs.SUBSTITUTERS }}
+
+    - name: Print CI Matrix
+      id: print-matrix
+      shell: bash
+      env:
+        IS_INITIAL: ${{ inputs.is-initial }}
+        CACHIX_CACHE: ${{ inputs.cachix-cache }}
+        CACHIX_AUTH_TOKEN: ${{ inputs.cachix-auth-token }}
+        PRECALC_MATRIX: ${{ inputs.precalc_matrix }}
+      run: |
+        nix run github:metacraft-labs/nixos-modules/feat/CD#mcl print_table
+        cat comment.md
+
+    - name: Upload CI Matrix
+      uses: actions/upload-artifact@v4
+      with:
+        name: matrix-${{ inputs.is-initial == 'true' && 'pre' || 'post' }}.json
+        path: matrix-${{ inputs.is-initial == 'true' && 'pre' || 'post' }}.json
+
+    - name: Update GitHub Comment
+      uses: marocchino/sticky-pull-request-comment@v2.9.0
+      with:
+        GITHUB_TOKEN: ${{ inputs.token }}
+        recreate: true
+        path: comment.md

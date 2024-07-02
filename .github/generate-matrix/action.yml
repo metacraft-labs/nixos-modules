@@ -1,5 +1,5 @@
 name: Evaluate CI Matrix
-description: Evaluate all packages, check cache status generate CI matrix and publish comment with the summary
+description: Evaluate all packages, check cache status generate CI matrix
 
 inputs:
   is-initial:
@@ -12,21 +12,37 @@ inputs:
   cachix-auth-token:
     description: Cachix auth token
     required: true
+  trusted-public-keys:
+    description: Trusted public keys
+    required: true
+  substituters:
+    description: Substituters
+    required: true
+  flake_pre:
+    description: Prefix for the flake to evaluate
+    required: false
+    default: ""
+  flake_post:
+    description: Postfix for the flake to evaluate
+    required: false
+    default: ""
+
 outputs:
   matrix:
     description: 'Generated Matrix'
     value: ${{ steps.generate-matrix.outputs.matrix }}
-  comment:
-    description: 'Comment'
-    value: ${{ steps.generate-matrix.outputs.comment }}
 
 runs:
   using: "composite"
   steps:
     - name: Install Nix
-      uses: cachix/install-nix-action@v25
+      uses: metacraft-labs/nixos-modules/.github/install-nix@feat/CD
       with:
-        extra_nix_config: accept-flake-config = true
+        cachix-cache: ${{ inputs.cachix-cache }}
+        cachix-auth-token: ${{ inputs.cachix-auth-token }}
+        trusted-public-keys: ${{ inputs.trusted-public-keys }}
+        substituters: ${{ inputs.substituters }}
+
     - name: Generate CI Matrix
       id: generate-matrix
       shell: bash
@@ -34,15 +50,6 @@ runs:
         IS_INITIAL: ${{ inputs.is-initial }}
         CACHIX_CACHE: ${{ inputs.cachix-cache }}
         CACHIX_AUTH_TOKEN: ${{ inputs.cachix-auth-token }}
-      run: nix run github:metacraft-labs/nixos-modules/main#ci-matrix
-
-    - name: Upload CI Matrix
-      uses: actions/upload-artifact@v4
-      with:
-        name: matrix-${{ inputs.is-initial == 'true' && 'pre' || 'post' }}.json
-        path: matrix-${{ inputs.is-initial == 'true' && 'pre' || 'post' }}.json
-
-    - name: Update GitHub Comment
-      uses: marocchino/sticky-pull-request-comment@v2.9.0
-      with:
-        path: comment.md
+        FLAKE_PRE: ${{ inputs.flake_pre }}
+        FLAKE_POST: ${{ inputs.flake_post }}
+      run: nix run github:metacraft-labs/nixos-modules/feat/CD#mcl ci_matrix
