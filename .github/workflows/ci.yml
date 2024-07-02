@@ -98,14 +98,16 @@ jobs:
   slurp-matrix:
     runs-on:  self-hosted
     needs: generate-matrix
-    name: Merge Matrix
+    name: Merge matrices
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
       fullMatrix: ${{ steps.matrix.outputs.fullMatrix }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
-      - run: |
+      - name: Merge matrices
+        run: |
+          export PATH="$PATH:$(nix build --print-out-paths 'nixpkgs#jq^bin')/bin"
           ls */matrix-pre.json
           matrix="$(cat */matrix-pre.json | jq -cr '.include[]' | jq '[ select (.isCached == false) ]' | jq -s 'add' | jq -c  '. | {include: .}')"
 
