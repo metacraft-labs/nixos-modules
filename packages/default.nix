@@ -1,4 +1,4 @@
-{lib,  ...}: {
+{lib, ...}: {
   perSystem = {
     inputs',
     pkgs,
@@ -27,7 +27,6 @@
 
     packages =
       {
-        nix-fast-build = inputs'.nix-fast-build.packages.nix-fast-build;
         lido-withdrawals-automation = pkgs.callPackage ./lido-withdrawals-automation {};
         pyroscope = pkgs.callPackage ./pyroscope {};
         grafana-agent = import ./grafana-agent {inherit inputs';};
@@ -37,6 +36,7 @@
         folder-size-metrics = pkgs.callPackage ./folder-size-metrics {};
       }
       // pkgs.lib.optionalAttrs (isLinux && isx86) rec {
+        nix-fast-build = inputs'.nix-fast-build.packages.nix-fast-build;
         mcl = pkgs.callPackage ./mcl {
           buildDubPackage = inputs'.dlang-nix.legacyPackages.buildDubPackage.override {
             ldc = inputs'.dlang-nix.packages."ldc-binary-1_34_0";
