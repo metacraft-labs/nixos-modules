@@ -36,7 +36,7 @@ concurrency:
 jobs:
   generate-matrix-matrix:
     name: Generate Matrix of Matrices
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - name: Install Nix
         uses: metacraft-labs/nixos-modules/.github/install-nix@main
@@ -57,7 +57,7 @@ jobs:
 
   generate-matrix:
     needs: generate-matrix-matrix
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     strategy:
       matrix: ${{fromJSON(needs.generate-matrix-matrix.outputs.gen_matrix)}}
 
@@ -96,7 +96,7 @@ jobs:
       comment: ${{ steps.generate-matrix.outputs.comment }}
 
   slurp-matrix:
-    runs-on:  ubuntu-latest
+    runs-on:  self-hosted
     needs: generate-matrix
     name: Merge Matrix
     outputs:
@@ -161,7 +161,7 @@ jobs:
           nix run github:metacraft-labs/nixos-modules#nix-fast-build -- --debug --systems ${{ matrix.system }} --skip-cached --no-nom --flake '.#${{ matrix.attrPath }}' 3>&1 1>&2 2>&3 3>&- | grep --color=always -v "warning: Git tree" | grep --color=always -v "warning: unknown setting" | grep --color=always -v "error (ignored): error: SQLite database"
 
   results:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     name: Final Results
     needs: [build, slurp-matrix]
     steps:
