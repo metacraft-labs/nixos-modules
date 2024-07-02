@@ -39,7 +39,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Install Nix
-        uses: metacraft-labs/nixos-modules/.github/install-nix@feat/CD
+        uses: metacraft-labs/nixos-modules/.github/install-nix@main
         with:
           cachix-cache: ${{ vars.CACHIX_CACHE }}
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
@@ -51,7 +51,7 @@ jobs:
       - name: Generate Matrix for Matrix
         id: generate-matrix
         run: |
-          nix run github:metacraft-labs/nixos-modules/feat/CD#mcl shard_matrix
+          nix run github:metacraft-labs/nixos-modules#mcl shard_matrix
     outputs:
       gen_matrix: ${{ steps.generate-matrix.outputs.gen_matrix }}
 
@@ -77,7 +77,7 @@ jobs:
 
       - name: Generate CI Matrix
         id: generate-matrix
-        uses: metacraft-labs/nixos-modules/.github/generate-matrix@feat/CD
+        uses: metacraft-labs/nixos-modules/.github/generate-matrix@main
         with:
           is-initial: 'true'
           cachix-cache: ${{ vars.CACHIX_CACHE }}
@@ -119,7 +119,7 @@ jobs:
         id: matrix
       - name: Post Comment
         id: print-matrix
-        uses: metacraft-labs/nixos-modules/.github/print-matrix@feat/CD
+        uses: metacraft-labs/nixos-modules/.github/print-matrix@main
         with:
           is-initial: 'true'
           cachix-cache: ${{ vars.CACHIX_CACHE }}
@@ -158,7 +158,7 @@ jobs:
       - name: Build ${{ matrix.name }}
         run: |
           set -euo pipefail
-          nix run github:metacraft-labs/nixos-modules/feat/CD#nix-fast-build -- --debug --systems ${{ matrix.system }} --skip-cached --no-nom --flake '.#${{ matrix.attrPath }}' 3>&1 1>&2 2>&3 3>&- | grep --color=always -v "warning: Git tree" | grep --color=always -v "warning: unknown setting" | grep --color=always -v "error (ignored): error: SQLite database"
+          nix run github:metacraft-labs/nixos-modules#nix-fast-build -- --debug --systems ${{ matrix.system }} --skip-cached --no-nom --flake '.#${{ matrix.attrPath }}' 3>&1 1>&2 2>&3 3>&- | grep --color=always -v "warning: Git tree" | grep --color=always -v "warning: unknown setting" | grep --color=always -v "error (ignored): error: SQLite database"
 
   results:
     runs-on: ubuntu-latest
@@ -168,7 +168,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Post Comment
-        uses: metacraft-labs/nixos-modules/.github/print-matrix@feat/CD
+        uses: metacraft-labs/nixos-modules/.github/print-matrix@main
         with:
           is-initial: 'false'
           cachix-cache: ${{ vars.CACHIX_CACHE }}
@@ -188,7 +188,7 @@ jobs:
         if: ${{inputs.do_deploy == 'true' && (github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) }}
         env:
           CACHIX_ACTIVATE_TOKEN: "${{ secrets.CACHIX_ACTIVATE_TOKEN }}"
-        run: nix run github:metacraft-labs/nixos-modules/feat/CD#mcl deploy_spec
+        run: nix run github:metacraft-labs/nixos-modules#mcl deploy_spec
 
       - run: exit 1
         if: >-

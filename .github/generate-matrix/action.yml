@@ -36,7 +36,7 @@ runs:
   using: "composite"
   steps:
     - name: Install Nix
-      uses: metacraft-labs/nixos-modules/.github/install-nix@feat/CD
+      uses: metacraft-labs/nixos-modules/.github/install-nix@main
       with:
         cachix-cache: ${{ inputs.cachix-cache }}
         cachix-auth-token: ${{ inputs.cachix-auth-token }}
@@ -52,4 +52,4 @@ runs:
         CACHIX_AUTH_TOKEN: ${{ inputs.cachix-auth-token }}
         FLAKE_PRE: ${{ inputs.flake_pre }}
         FLAKE_POST: ${{ inputs.flake_post }}
-      run: nix run github:metacraft-labs/nixos-modules/feat/CD#mcl ci_matrix
+      run: nix run github:metacraft-labs/nixos-modules#mcl ci_matrix
