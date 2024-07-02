@@ -86,7 +86,7 @@ jobs:
           substituters: ${{ vars.SUBSTITUTERS }}
           flake_pre: ${{ matrix.prefix }}
           flake_post: ${{ matrix.postfix }}
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
             name: ${{ hashFiles('matrix-pre.json') || 'none' }}
             path: matrix-pre.json
@@ -104,7 +104,7 @@ jobs:
       fullMatrix: ${{ steps.matrix.outputs.fullMatrix }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4
       - run: |
           ls */matrix-pre.json
           matrix="$(cat */matrix-pre.json | jq -cr '.include[]' | jq '[ select (.isCached == false) ]' | jq -s 'add' | jq -c  '. | {include: .}')"
