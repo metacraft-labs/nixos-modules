@@ -23,25 +23,44 @@
         terranix = inputs'.terranix.packages;
         treefmt-nix = inputs'.treefmt-nix.packages;
       };
+
+      rustToolchain = with inputs'.fenix.packages;
+      with latest;
+        combine [
+          cargo
+          clippy
+          rust-analyzer
+          rust-src
+          rustc
+          rustfmt
+          targets.wasm32-wasi.latest.rust-std
+        ];
     };
 
     packages =
       {
+        inherit (legacyPackages) rustToolchain;
         lido-withdrawals-automation = pkgs.callPackage ./lido-withdrawals-automation {};
         pyroscope = pkgs.callPackage ./pyroscope {};
         grafana-agent = import ./grafana-agent {inherit inputs';};
+        inherit (legacyPackages.inputs.ethereum-nix) geth nimbus-eth2;
+        inherit (legacyPackages.inputs.dlang-nix) dub ldc;
+        nix-fast-build = inputs'.nix-fast-build.packages.nix-fast-build;
       }
       // pkgs.lib.optionalAttrs isLinux {
         inherit (inputs'.validator-ejector.packages) validator-ejector;
         folder-size-metrics = pkgs.callPackage ./folder-size-metrics {};
       }
       // pkgs.lib.optionalAttrs (isLinux && isx86) rec {
-        nix-fast-build = inputs'.nix-fast-build.packages.nix-fast-build;
         mcl = pkgs.callPackage ./mcl {
           buildDubPackage = inputs'.dlang-nix.legacyPackages.buildDubPackage.override {
             ldc = inputs'.dlang-nix.packages."ldc-binary-1_34_0";
           };
         };
+
+        inherit (legacyPackages.inputs.terranix) terranix;
+        inherit (legacyPackages.inputs.dlang-nix) dcd dscanner serve-d dmd;
+        inherit (legacyPackages.inputs.ethereum-nix) mev-boost nethermind web3signer foundry;
       };
     checks = packages;
   };
