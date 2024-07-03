@@ -1,7 +1,6 @@
 {
   lib,
   buildDubPackage,
-  nix-eval-jobs,
   pkgs,
   fetchgit,
   ...

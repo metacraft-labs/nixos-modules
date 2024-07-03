@@ -41,7 +41,6 @@
           buildDubPackage = inputs'.dlang-nix.legacyPackages.buildDubPackage.override {
             ldc = inputs'.dlang-nix.packages."ldc-binary-1_34_0";
           };
-          nix-eval-jobs = inputs'.nix-eval-jobs.packages.nix-eval-jobs;
         };
       };
     checks = packages;
