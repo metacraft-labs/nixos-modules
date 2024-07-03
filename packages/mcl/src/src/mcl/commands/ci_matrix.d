@@ -23,6 +23,7 @@ import mcl.utils.process : execute;
 enum GitHubOS
 {
     @StringRepresentation("ubuntu-latest") ubuntuLatest,
+    @StringRepresentation("self-hosted") selfHosted,
 
     @StringRepresentation("macos-14") macos14
 }
@@ -40,12 +41,14 @@ GitHubOS getGHOS(string os)
 {
     switch (os)
     {
+    case "self-hoster":
+        return GitHubOS.selfHosted;
     case "ubuntu-latest":
         return GitHubOS.ubuntuLatest;
     case "macos-14":
         return GitHubOS.macos14;
     default:
-        return GitHubOS.ubuntuLatest;
+        return GitHubOS.selfHosted;
     }
 }
 
@@ -54,7 +57,7 @@ unittest
 {
     assert(getGHOS("ubuntu-latest") == GitHubOS.ubuntuLatest);
     assert(getGHOS("macos-14") == GitHubOS.macos14);
-    assert(getGHOS("crazyos-inator-2000") == GitHubOS.ubuntuLatest);
+    assert(getGHOS("crazyos-inator-2000") == GitHubOS.selfHosted);
 }
 
 SupportedSystem getSystem(string system)
@@ -174,13 +177,13 @@ struct Params
 
 GitHubOS systemToGHPlatform(SupportedSystem os)
 {
-    return os == SupportedSystem.x86_64_linux ? GitHubOS.ubuntuLatest : GitHubOS.macos14;
+    return os == SupportedSystem.x86_64_linux ? GitHubOS.selfHosted : GitHubOS.macos14;
 }
 
 @("systemToGHPlatform")
 unittest
 {
-    assert(systemToGHPlatform(SupportedSystem.x86_64_linux) == GitHubOS.ubuntuLatest);
+    assert(systemToGHPlatform(SupportedSystem.x86_64_linux) == GitHubOS.selfHosted);
     assert(systemToGHPlatform(SupportedSystem.x86_64_darwin) == GitHubOS.macos14);
     assert(systemToGHPlatform(SupportedSystem.aarch64_darwin) == GitHubOS.macos14);
 }
