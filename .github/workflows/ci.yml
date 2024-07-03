@@ -51,7 +51,12 @@ jobs:
       - name: Generate Matrix for Matrix
         id: generate-matrix
         run: |
-          nix run github:metacraft-labs/nixos-modules#mcl shard_matrix
+          if [ "${{ github.repository }}" != "metacraft-labs/nixos-modules" ]; then
+            nix run github:metacraft-labs/nixos-modules#mcl shard_matrix
+          else
+            nix run .#mcl shard_matrix
+          fi
+
     outputs:
       gen_matrix: ${{ steps.generate-matrix.outputs.gen_matrix }}
 

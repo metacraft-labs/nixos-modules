@@ -52,4 +52,9 @@ runs:
         CACHIX_AUTH_TOKEN: ${{ inputs.cachix-auth-token }}
         FLAKE_PRE: ${{ inputs.flake_pre }}
         FLAKE_POST: ${{ inputs.flake_post }}
-      run: nix run github:metacraft-labs/nixos-modules#mcl ci_matrix
+      run: |
+        if [ "${{ github.repository }}" != "metacraft-labs/nixos-modules" ]; then
+          nix run github:metacraft-labs/nixos-modules#mcl ci_matrix
+        else
+          nix run .#mcl ci_matrix
+        fi
