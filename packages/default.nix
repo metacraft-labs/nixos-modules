@@ -51,13 +51,14 @@
         inherit (inputs'.validator-ejector.packages) validator-ejector;
         folder-size-metrics = pkgs.callPackage ./folder-size-metrics {};
       }
-      // pkgs.lib.optionalAttrs (isLinux && isx86) rec {
-        mcl = pkgs.callPackage ./mcl {
-          buildDubPackage = inputs'.dlang-nix.legacyPackages.buildDubPackage.override {
-            ldc = inputs'.dlang-nix.packages."ldc-binary-1_34_0";
-          };
+      // pkgs.lib.optionalAttrs (isLinux && isx86)
+      pkgs.callPackage
+      ./mcl {
+        buildDubPackage = inputs'.dlang-nix.legacyPackages.buildDubPackage.override {
+          ldc = inputs'.dlang-nix.packages."ldc-binary-1_34_0";
         };
-
+      }
+      // pkgs.lib.optionalAttrs (isLinux && isx86) rec {
         inherit (legacyPackages.inputs.terranix) terranix;
         inherit (legacyPackages.inputs.dlang-nix) dcd dscanner serve-d dmd;
         inherit (legacyPackages.inputs.ethereum-nix) mev-boost nethermind web3signer foundry;

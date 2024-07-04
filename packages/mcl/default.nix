@@ -3,6 +3,7 @@
   buildDubPackage,
   pkgs,
   fetchgit,
+  buildEnv,
   ...
 }: let
   deps = with pkgs; [
@@ -12,28 +13,31 @@
     nom
     nix-eval-jobs
     curl
-    gawk
-    dmidecode
-    jc
-    edid-decode
-    coreutils-full
-    util-linux
-    xorg.xrandr
-    glxinfo
-    nixos-install-tools
-    perl
-    systemd
-    alejandra
-    openssh
   ];
+  fullDeps = with pkgs;
+    [
+      gawk
+      dmidecode
+      jc
+      edid-decode
+      coreutils-full
+      util-linux
+      xorg.xrandr
+      glxinfo
+      nixos-install-tools
+      perl
+      systemd
+      alejandra
+      openssh
+    ]
+    ++ deps;
   excludedTests = (
     lib.concatStringsSep "|" [
       "(nix\\.(build|run))"
       "fetchJson|(coda\.)"
     ]
   );
-in
-  buildDubPackage rec {
+  mclBase = buildDubPackage rec {
     pname = "mcl";
     version = "unstable";
     src = lib.fileset.toSource {
@@ -47,9 +51,6 @@ in
     nativeBuildInputs = [pkgs.makeWrapper] ++ deps;
     buildInputs = deps;
     checkInputs = deps;
-    postFixup = ''
-      wrapProgram $out/bin/${pname} --set PATH "${lib.makeBinPath deps}"
-    '';
 
     dubBuildFlags = ["--compiler=dmd" "-b" "debug"];
 
@@ -60,5 +61,22 @@ in
       excludedTests
     ];
 
-    meta.mainProgram = pname;
-  }
+    meta.mainProgram = "mcl";
+  };
+
+  mclBuild = mclName: mclDeps:
+    buildEnv rec {
+      name = "${mclBase.pname}-mclName-${mclBase.version}";
+      paths = [mclBase];
+      pathsToLink = ["/" "/bin"];
+      postBuild = ''
+        wrapProgram $out/bin/mcl --set PATH "${lib.makeBinPath mclDeps}"
+      '';
+      nativeBuildInputs = [pkgs.makeWrapper];
+      inherit (mclBase) meta;
+    };
+in rec {
+  mclFull = mclBuild "full" fullDeps;
+  mclMin = mclBuild "min" deps;
+  mcl = mclMin;
+}
