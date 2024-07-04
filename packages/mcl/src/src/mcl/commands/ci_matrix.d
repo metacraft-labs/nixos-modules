@@ -217,7 +217,11 @@ Package[] nixEvalJobs(Params params, SupportedSystem system, string cachixUrl, b
     {
         if (line.indexOf("error:") != -1)
         {
-            stderr.writeln(line);
+            auto err = line.split("\\n");
+            foreach (e; err)
+            {
+                stderr.writeln(e);
+            }
             pipes.pid.kill();
             wait(pipes.pid);
             exit_code = 1;
@@ -256,7 +260,11 @@ Package[] nixEvalJobs(Params params, SupportedSystem system, string cachixUrl, b
         }
         else if (line.indexOf("error:") != -1)
         {
-            stderr.writeln(line);
+            auto err = line.split("\\n");
+            foreach (e; err)
+            {
+                stderr.writeln(e);
+            }
             pipes.pid.kill();
             wait(pipes.pid);
             exit_code = 1;
