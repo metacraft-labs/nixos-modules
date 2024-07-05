@@ -39,7 +39,6 @@
 
     packages =
       {
-        inherit (legacyPackages) rustToolchain;
         lido-withdrawals-automation = pkgs.callPackage ./lido-withdrawals-automation {};
         pyroscope = pkgs.callPackage ./pyroscope {};
         grafana-agent = import ./grafana-agent {inherit inputs';};
