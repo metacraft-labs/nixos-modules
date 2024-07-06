@@ -3,12 +3,22 @@ description "Swiss-knife for managing NixOS deployments"
 authors "Metacraft Labs"
 copyright "Copyright © 2024, Metacraft Labs"
 license "MIT"
-dependency "mir-cpuid" version="~>1.2.11"
-dependency "silly" version="~>1.1.1"
 targetPath "build"
+buildRequirements "allowWarnings"
+
+buildType "unittest" {
+    buildOptions "unittests" "debugInfo"
+}
+
+buildType "unittest-debug" {
+    buildOptions "unittests" "debugMode" "debugInfo"
+}
+
 dflags "-preview=shortenedMethods"
 dflags "-defaultlib=libphobos2.so" platform="dmd"
 lflags "-fuse-ld=gold" platform="dmd"
-buildRequirements "allowWarnings"
 dflags "-mcpu=generic" platform="ldc"
 dflags "-mcpu=baseline" platform="dmd"
+
+dependency "mir-cpuid" version="~>1.2.11"
+dependency "silly" version="~>1.1.1"
