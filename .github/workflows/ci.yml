@@ -178,6 +178,10 @@ jobs:
         run: |
           nix build -L --no-link --keep-going --show-trace '.#${{ matrix.attrPath }}'
 
+      - name: Push to Cachix ${{ matrix.name }}
+        run: |
+          cachix push ${{ vars.CACHIX_CACHE }} ${{ matrix.output }}
+
   results:
     runs-on: self-hosted
     name: Final Results
