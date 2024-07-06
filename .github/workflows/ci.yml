@@ -34,6 +34,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  post-initial-comment:
+    runs-on: self-hosted
+    steps:
+      - name: 'Post initial package status comment'
+        uses: marocchino/sticky-pull-request-comment@v2.9.0
+        with:
+          recreate: true
+          message: |
+            Thanks for your Pull Request!
+
+            This comment will be updated automatically with the status of each package.
+
   generate-matrix-matrix:
     name: Generate Matrix of Matrices
     runs-on: self-hosted
@@ -56,7 +68,6 @@ jobs:
           else
             nix run .#mcl shard_matrix
           fi
-
     outputs:
       gen_matrix: ${{ steps.generate-matrix.outputs.gen_matrix }}
 
@@ -65,21 +76,9 @@ jobs:
     runs-on: self-hosted
     strategy:
       matrix: ${{fromJSON(needs.generate-matrix-matrix.outputs.gen_matrix)}}
-
     name: Generate Matrix ${{ matrix.digit != -1 && matrix.digit || '' }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: 'Post initial package status comment'
-        if: ${{ matrix.digit < 1 }}
-        uses: marocchino/sticky-pull-request-comment@v2.9.0
-        with:
-          recreate: true
-          message: |
-            Thanks for your Pull Request!
-
-            This comment will be updated automatically with the status of each package.
-
       - name: Generate CI Matrix
         id: generate-matrix
         uses: metacraft-labs/nixos-modules/.github/generate-matrix@main
