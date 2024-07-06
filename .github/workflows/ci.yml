@@ -1,12 +1,12 @@
-name: "CI"
+name: 'CI'
 
 on:
   # Allow this workflow to be reused by other workflows:
   workflow_call:
     inputs:
       do_deploy:
-        description: "Deploy to cachix"
-        type: "boolean"
+        description: 'Deploy to cachix'
+        type: 'boolean'
         default: false
         required: false
 
@@ -14,8 +14,8 @@ on:
   workflow_dispatch:
     inputs:
       do_deploy:
-        description: "Deploy to cachix"
-        type: "boolean"
+        description: 'Deploy to cachix'
+        type: 'boolean'
         default: false
         required: false
 
@@ -106,13 +106,13 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-            name: matrix-pre${{ matrix.digit != -1 && format('-{0}', matrix.digit) || '' }}
-            path: matrix-pre.json
+          name: matrix-pre${{ matrix.digit != -1 && format('-{0}', matrix.digit) || '' }}
+          path: matrix-pre.json
     outputs:
       matrix: ${{ steps.generate-matrix.outputs.matrix }}
 
   slurp-matrix:
-    runs-on:  self-hosted
+    runs-on: self-hosted
     needs: generate-matrix
     name: Merge matrices
     outputs:
@@ -123,17 +123,33 @@ jobs:
       - uses: actions/download-artifact@v4
       - name: Merge matrices
         run: |
-          export PATH="$PATH:$(nix build --print-out-paths 'nixpkgs#jq^bin')/bin"
+          PATH="$(nix build --print-out-paths 'nixpkgs#jq^bin')/bin:$PATH"
+          export PATH
+
           ls */matrix-pre.json
           matrix="$(cat */matrix-pre.json | jq -cr '.include[]' | jq '[ select (.isCached == false) ]' | jq -s 'add' | jq -c  '. | {include: .}')"
 
-          if [[ "$matrix" == '{"include":null}' ]]; then
-            matrix='{"include": []}'
+          if [[ "$matrix" == '' ]] || [[ "$matrix" == '{}' ]] || [[ "$matrix" == '{"include":null}' ]] || [[ "$matrix" == '{"include":[]}' ]]; then
+            matrix='{"include":[]}'
           fi
+
+          echo "---"
+          echo "Matrix:"
+          echo "$matrix" | jq
+          echo "---"
+          echo
+          echo
+
           fullMatrix="$(cat */matrix-pre.json | jq -cr '.include' | jq -s 'add' | jq -c '. | {include: .}')"
-          echo $matrix
+
+          echo "---"
+          echo "Full Matrix:"
+          echo "$fullMatrix" | jq
+          echo "---"
+
           echo "matrix=$matrix" >> $GITHUB_OUTPUT
           echo "fullMatrix=$fullMatrix" >> $GITHUB_OUTPUT
+
         id: matrix
       - name: Post Comment
         id: print-matrix
@@ -149,11 +165,11 @@ jobs:
 
   build:
     needs: slurp-matrix
-    if: needs.slurp-matrix.outputs.matrix != '' && needs.slurp-matrix.outputs.matrix != '{}' && needs.slurp-matrix.outputs.matrix != '{"include":[] }'
+    if: needs.slurp-matrix.outputs.matrix != '{"include":[]}'
 
     strategy:
       fail-fast: false
-      matrix:  ${{fromJSON( needs.slurp-matrix.outputs.matrix )}}
+      matrix: ${{fromJSON( needs.slurp-matrix.outputs.matrix )}}
 
     name: ${{ matrix.name }} | ${{ matrix.system }}
     runs-on: ${{ matrix.os }}
@@ -209,7 +225,7 @@ jobs:
       - name: Deploy
         if: ${{inputs.do_deploy == 'true' && (github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) }}
         env:
-          CACHIX_ACTIVATE_TOKEN: "${{ secrets.CACHIX_ACTIVATE_TOKEN }}"
+          CACHIX_ACTIVATE_TOKEN: '${{ secrets.CACHIX_ACTIVATE_TOKEN }}'
         run: nix run --accept-flake-config github:metacraft-labs/nixos-modules#mcl deploy_spec
 
       - run: exit 1
