@@ -167,3 +167,64 @@ unittest
 
     static assert(getMaxEnumMemberNameLength!EnumLen == 4);
 }
+
+struct MaxWidth
+{
+    ushort value;
+}
+
+void writeRecordAsTable(bool ansiColors = true, T, Writer)(in T obj, auto ref Writer w)
+{
+    import std.format : formattedWrite;
+    import std.traits : hasUDA, getUDAs;
+
+    const gray = ansiColors ? "\x1b[90m" : "";
+    const bold = ansiColors ? "\x1b[1m" : "";
+    const normal = ansiColors ? "\x1b[0m" : "";
+
+    w.formattedWrite("│");
+    static foreach (idx, field; T.tupleof)
+    {{
+        // If the field is an enum, get the maximum length of the enum member names
+        static if (is(typeof(field) == enum))
+            const width = getMaxEnumMemberNameLength!(typeof(field));
+
+        // If the field is a bool, set the width to "false".length
+        else static if (is(typeof(field) : bool))
+            const width = 5;
+
+        // If the field has a UDA MaxWidth, set the width to the value of the UDA
+        else static if (hasUDA!(field, MaxWidth))
+            const width = getUDAs!(field, MaxWidth)[0].value;
+
+        else
+            const width = 0;
+
+        w.formattedWrite(
+            " %s%s%s: %s%*-s%s │",
+            gray, __traits(identifier, field), normal,
+            bold, width, obj.tupleof[idx], normal
+        );
+    }}
+    w.formattedWrite("\n");
+}
+
+@("writeRecordAsTable")
+unittest
+{
+    import std.array : appender;
+
+    struct TestStruct
+    {
+        int num;
+        @MaxWidth(4) int otherNum;
+        bool bool1;
+        bool bool2;
+        @MaxWidth(10) string someString;
+    }
+
+    const t = TestStruct(1, 20, true, false, "test");
+    auto result = appender!string;
+    t.writeRecordAsTable!false(result);
+    assert(result.data == "│ num: 1 │ otherNum: 20   │ bool1: true  │ bool2: false │ someString: test       │\n");
+}
