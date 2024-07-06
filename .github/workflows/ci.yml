@@ -137,7 +137,7 @@ jobs:
         id: matrix
       - name: Post Comment
         id: print-matrix
-        uses: metacraft-labs/nixos-modules/.github/print-matrix@main
+        uses: ./.github/print-matrix
         with:
           is-initial: 'true'
           cachix-cache: ${{ vars.CACHIX_CACHE }}
@@ -190,7 +190,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Post Comment
-        uses: metacraft-labs/nixos-modules/.github/print-matrix@main
+        uses: ./.github/print-matrix
         with:
           is-initial: 'false'
           cachix-cache: ${{ vars.CACHIX_CACHE }}
