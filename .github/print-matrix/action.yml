@@ -54,9 +54,9 @@ runs:
         PRECALC_MATRIX: ${{ inputs.precalc_matrix }}
       run: |
         if [ "${{ github.repository }}" != "metacraft-labs/nixos-modules" ]; then
-          nix run github:metacraft-labs/nixos-modules#mcl print_table
+          nix run --accept-flake-config github:metacraft-labs/nixos-modules#mcl print_table
         else
-          nix run .#mcl print_table
+          nix run --accept-flake-config .#mcl print_table
         fi
         cat comment.md
 

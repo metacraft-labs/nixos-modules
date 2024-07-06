@@ -64,9 +64,9 @@ jobs:
         id: generate-matrix
         run: |
           if [ "${{ github.repository }}" != "metacraft-labs/nixos-modules" ]; then
-            nix run github:metacraft-labs/nixos-modules#mcl shard_matrix
+            nix run --accept-flake-config github:metacraft-labs/nixos-modules#mcl shard_matrix
           else
-            nix run .#mcl shard_matrix
+            nix run --accept-flake-config .#mcl shard_matrix
           fi
     outputs:
       gen_matrix: ${{ steps.generate-matrix.outputs.gen_matrix }}
@@ -99,9 +99,9 @@ jobs:
           FLAKE_POST: ${{ matrix.postfix }}
         run: |
           if [ "${{ github.repository }}" != "metacraft-labs/nixos-modules" ]; then
-            nix run github:metacraft-labs/nixos-modules#mcl ci_matrix
+            nix run --accept-flake-config github:metacraft-labs/nixos-modules#mcl ci_matrix
           else
-            nix run .#mcl ci_matrix
+            nix run --accept-flake-config .#mcl ci_matrix
           fi
 
       - uses: actions/upload-artifact@v4
@@ -176,7 +176,8 @@ jobs:
 
       - name: Build ${{ matrix.name }}
         run: |
-          nix build -L --no-link --keep-going --show-trace '.#${{ matrix.attrPath }}'
+          nix build -L --no-link --keep-going --show-trace \
+            '.#${{ matrix.attrPath }}'
 
       - name: Push to Cachix ${{ matrix.name }}
         run: |
@@ -210,7 +211,7 @@ jobs:
         if: ${{inputs.do_deploy == 'true' && (github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) }}
         env:
           CACHIX_ACTIVATE_TOKEN: "${{ secrets.CACHIX_ACTIVATE_TOKEN }}"
-        run: nix run github:metacraft-labs/nixos-modules#mcl deploy_spec
+        run: nix run --accept-flake-config github:metacraft-labs/nixos-modules#mcl deploy_spec
 
       - run: exit 1
         if: >-
