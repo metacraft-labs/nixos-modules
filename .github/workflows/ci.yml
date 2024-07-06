@@ -122,18 +122,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
       - name: Merge matrices
-        run: |
-          export PATH="$PATH:$(nix build --print-out-paths 'nixpkgs#jq^bin')/bin"
-          ls */matrix-pre.json
-          matrix="$(cat */matrix-pre.json | jq -cr '.include[]' | jq '[ select (.isCached == false) ]' | jq -s 'add' | jq -c  '. | {include: .}')"
-
-          if [[ "$matrix" == '{"include":null}' ]]; then
-            matrix='{"include": []}'
-          fi
-          fullMatrix="$(cat */matrix-pre.json | jq -cr '.include' | jq -s 'add' | jq -c '. | {include: .}')"
-          echo $matrix
-          echo "matrix=$matrix" >> $GITHUB_OUTPUT
-          echo "fullMatrix=$fullMatrix" >> $GITHUB_OUTPUT
+        run: ./scripts/merge-matrices.sh
         id: matrix
       - name: Post Comment
         id: print-matrix
