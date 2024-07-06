@@ -15,7 +15,7 @@ import std.exception : enforce;
 import std.format : fmt = format;
 
 import mcl.utils.env : optional, MissingEnvVarsException, parseEnv;
-import mcl.utils.string : enumToString, StringRepresentation;
+import mcl.utils.string : enumToString, StringRepresentation, MaxWidth, writeRecordAsTable;
 import mcl.utils.json : toJSON;
 import mcl.utils.path : rootDir, resultDir, gcRootsDir, createResultDirs;
 import mcl.utils.process : execute;
@@ -240,12 +240,20 @@ Package[] nixEvalJobs(Params params, SupportedSystem system, string cachixUrl, b
                 pkg = pkg.checkPackage();
             }
             result ~= pkg;
-            auto outJson = JSONValue([
-                "attr": pkg.name,
-                "isCached": pkg.isCached.to!string,
-                "out": pkg.output
-            ]);
-            stderr.writeln("\033[94m" ~ outJson.toString(JSONOptions.doNotEscapeSlashes) ~ "\033[0m");
+
+            struct Output {
+                bool isCached;
+                GitHubOS os;
+                @MaxWidth(50) string attr;
+                @MaxWidth(80) string output;
+            }
+
+            Output(
+                isCached: pkg.isCached,
+                os: pkg.os,
+                attr: pkg.attrPath,
+                output: pkg.output
+            ).writeRecordAsTable(stderr.lockingTextWriter);
         }
     }
     foreach (line; pipes.stderr.byLine)
