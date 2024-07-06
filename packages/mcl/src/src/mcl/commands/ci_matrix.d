@@ -192,6 +192,9 @@ static immutable string[] uselessWarnings =
     ["allowed-users", "trusted-users", "bash-prompt-prefix"].map!(
         setting => "warning: unknown setting '" ~ setting ~ "'").array ~
     [
+        "warning: ignoring untrusted flake configuration setting 'extra-substituters'.",
+        "warning: ignoring untrusted flake configuration setting 'extra-trusted-public-keys'.",
+        "Pass '--accept-flake-config' to trust it",
         "SQLite database",
         "trace: warning: The legacy table is outdated and should not be used. We recommend using the gpt type instead.",
         "Please note that certain features, such as the test framework, may not function properly with the legacy table type.",
