@@ -1,5 +1,7 @@
 import std.stdio : writefln, writeln, stderr;
 import std.array : replace;
+import std.getopt : getopt;
+import std.logger : info, errorf;
 
 import cmds = mcl.commands;
 
@@ -19,29 +21,39 @@ int main(string[] args)
     if (args.length < 2)
         return wrongUsage("no command selected");
 
-    try
-        switch (args[1])
+    string command = args[1];
+    bool quiet = false;
+    args.getopt("q|quiet", &quiet);
+
+    if (quiet) disableLogging();
+
+    try switch (args[1])
     {
-    default:
-        return wrongUsage("unknown command: `" ~ args[1] ~ "`");
+        default:
+            return wrongUsage("unknown command: `" ~ args[1] ~ "`");
 
         static foreach (cmd; supportedCommands)
-    case __traits(identifier, cmd):
-            {
+        case __traits(identifier, cmd):
+        {
 
-                stderr.writeln("Running ", __traits(identifier, cmd));
-                cmd();
-                stderr.writeln("Execution Succesfull");
-                return 0;
+            info("Running ", __traits(identifier, cmd));
+            cmd();
+            info("Execution Succesfull");
+            return 0;
 
-            }
+        }
     }
     catch (Exception e)
     {
-        writefln("Error: %s", e);
+        errorf("Error: %s", e);
         return 1;
     }
+}
 
+void disableLogging()
+{
+    import std.logger : sharedLog, LogLevel, NullLogger;
+    sharedLog = cast(shared)new NullLogger(LogLevel.all);
 }
 
 int wrongUsage(string error)
