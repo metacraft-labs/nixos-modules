@@ -60,12 +60,6 @@ runs:
         fi
         cat comment.md
 
-    - name: Upload CI Matrix
-      uses: actions/upload-artifact@v4
-      with:
-        name: matrix-${{ inputs.is-initial == 'true' && 'pre' || 'post' }}.json
-        path: matrix-${{ inputs.is-initial == 'true' && 'pre' || 'post' }}.json
-
     - name: Update GitHub Comment
       uses: marocchino/sticky-pull-request-comment@v2.9.0
       with:

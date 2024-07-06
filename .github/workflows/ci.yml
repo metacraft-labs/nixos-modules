@@ -106,9 +106,8 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-            name: ${{ hashFiles('matrix-pre.json') || 'none' }}
+            name: matrix-pre${{ matrix.digit != -1 && format('-{0}', matrix.digit) || '' }}
             path: matrix-pre.json
-            if-no-files-found: warn
     outputs:
       matrix: ${{ steps.generate-matrix.outputs.matrix }}
 
