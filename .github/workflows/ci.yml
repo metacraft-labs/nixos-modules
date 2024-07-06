@@ -78,18 +78,32 @@ jobs:
       matrix: ${{fromJSON(needs.generate-matrix-matrix.outputs.gen_matrix)}}
     name: Generate Matrix ${{ matrix.digit != -1 && matrix.digit || '' }}
     steps:
-      - uses: actions/checkout@v4
-      - name: Generate CI Matrix
-        id: generate-matrix
-        uses: metacraft-labs/nixos-modules/.github/generate-matrix@main
+      - name: Install Nix
+        uses: metacraft-labs/nixos-modules/.github/install-nix@main
         with:
-          is-initial: 'true'
           cachix-cache: ${{ vars.CACHIX_CACHE }}
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
-          flake_pre: ${{ matrix.prefix }}
-          flake_post: ${{ matrix.postfix }}
+
+      - uses: actions/checkout@v4
+
+      - name: Generate CI Matrix
+        id: generate-matrix
+        shell: bash
+        env:
+          IS_INITIAL: 'true'
+          CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          FLAKE_PRE: ${{ matrix.prefix }}
+          FLAKE_POST: ${{ matrix.postfix }}
+        run: |
+          if [ "${{ github.repository }}" != "metacraft-labs/nixos-modules" ]; then
+            nix run github:metacraft-labs/nixos-modules#mcl ci_matrix
+          else
+            nix run .#mcl ci_matrix
+          fi
+
       - uses: actions/upload-artifact@v4
         with:
             name: ${{ hashFiles('matrix-pre.json') || 'none' }}
@@ -97,7 +111,6 @@ jobs:
             if-no-files-found: warn
     outputs:
       matrix: ${{ steps.generate-matrix.outputs.matrix }}
-      comment: ${{ steps.generate-matrix.outputs.comment }}
 
   slurp-matrix:
     runs-on:  self-hosted
