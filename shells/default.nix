@@ -11,7 +11,7 @@
     '';
   };
 in
-  pkgs.mkShellNoCC {
+  pkgs.mkShell {
     packages = with pkgs; [
       inputs'.agenix.packages.agenix
       inputs'.nixos-anywhere.packages.nixos-anywhere
