@@ -1,4 +1,5 @@
 module mcl.utils.string;
+
 import mcl.utils.test;
 import std.conv : to;
 import std.exception : assertThrown;
@@ -89,31 +90,28 @@ struct StringRepresentation
     string repr;
 }
 
-string enumToString(T)(in T value) if (is(T == enum))
+string enumToString(E)(in E value) if (is(E == enum))
 {
     import std.traits : EnumMembers, hasUDA, getUDAs;
-    import std.logger : LogLevel, log;
 
-    switch (value)
+    final switch (value)
     {
-        static foreach (enumMember; EnumMembers!T)
+        static foreach (enumMember; EnumMembers!E)
         {
-    case enumMember:
+            case enumMember:
             {
                 static if (!hasUDA!(enumMember, StringRepresentation))
                 {
-                    LogLevel.info.log(
-                        "Enum doesn't have StringRepresentation: `" ~ enumMember.to!string ~ "`");
+                    debug pragma(msg,
+                        "Enum memer doesn't have StringRepresentation: ",
+                        enumMember
+                    );
                     return enumMember.to!string;
                 }
                 else
-                {
                     return getUDAs!(enumMember, StringRepresentation)[0].repr;
-                }
             }
         }
-    default:
-        assert(0, "Not supported case: " ~ value.to!string);
     }
 }
 
@@ -122,24 +120,23 @@ unittest
 {
     enum TestEnum
     {
-        a,
-        b,
-        c
+        a1,
+        b2,
+        c3
     }
+
+    assert(enumToString(TestEnum.a1) == "a1");
+    assert(enumToString(TestEnum.b2) == "b2");
+    assert(enumToString(TestEnum.c3) == "c3");
 
     enum TestEnumWithRepr
     {
-        @StringRepresentation("a") a,
-        @StringRepresentation("b") b,
-        @StringRepresentation("c") c
+        @StringRepresentation("field1") a,
+        @StringRepresentation("field_2") b,
+        @StringRepresentation("field-3") c
     }
 
-    //Not necessary to test this case, because it is covered by the static assert
-    // assertThrown(enumToString(TestEnum.a), "Unsupported enum member: `TestEnum.a`");
-    // assertThrown(enumToString(TestEnum.b), "Unsupported enum member: `TestEnum.b`");
-    // assertThrown(enumToString(TestEnum.c), "Unsupported enum member: `TestEnum.c`");
-
-    assert(enumToString(TestEnumWithRepr.a) == "a");
-    assert(enumToString(TestEnumWithRepr.b) == "b");
-    assert(enumToString(TestEnumWithRepr.c) == "c");
+    assert(enumToString(TestEnumWithRepr.a) == "field1");
+    assert(enumToString(TestEnumWithRepr.b) == "field_2");
+    assert(enumToString(TestEnumWithRepr.c) == "field-3");
 }
