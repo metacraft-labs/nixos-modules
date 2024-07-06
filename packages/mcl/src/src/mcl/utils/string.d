@@ -140,3 +140,30 @@ unittest
     assert(enumToString(TestEnumWithRepr.b) == "field_2");
     assert(enumToString(TestEnumWithRepr.c) == "field-3");
 }
+
+enum size_t getMaxEnumMemberNameLength(E) = ()
+{
+    import std.traits : EnumMembers;
+
+    size_t max = 0;
+    foreach (member; [EnumMembers!E])
+    {
+        const name = member.enumToString();
+        max = name.length > max ? name.length : max;
+    }
+
+    return max;
+}();
+
+@("getMaxEnumMemberNameLength")
+unittest
+{
+    enum EnumLen
+    {
+        @StringRepresentation("a1") a,
+        @StringRepresentation("b12") b,
+        @StringRepresentation("c123") c
+    }
+
+    static assert(getMaxEnumMemberNameLength!EnumLen == 4);
+}
