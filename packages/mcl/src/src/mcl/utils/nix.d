@@ -286,12 +286,13 @@ unittest
 @("nix.eval!JSONValue")
 unittest
 {
-    import std.file : readText;
-    import std.path : absolutePath, dirName;
     import std.json : parseJSON;
+    import std.file : getcwd, readText;
+    import std.path : buildPath, setExtension, dirName;
 
-    auto p = __FILE__.absolutePath.dirName;
+    auto inputFile = __FILE_FULL_PATH__.dirName.buildPath("test/eval.nix");
+    auto expectedOutputFile = inputFile.setExtension("json");
 
-    auto result = nix().eval!JSONValue(p ~ "/test/eval.nix", ["--file"]);
-    assert(result == ((p ~ "/test/eval.json").readText.parseJSON));
+    auto output = nix().eval!JSONValue(inputFile, ["--file"]);
+    assert(output == expectedOutputFile.readText.parseJSON);
 }
