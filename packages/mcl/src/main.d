@@ -13,7 +13,8 @@ alias supportedCommands = imported!`std.traits`.AliasSeq!(
     cmds.shard_matrix,
     cmds.host_info,
     cmds.ci,
-    cmds.machine_create
+    cmds.machine_create,
+    cmds.list_hosts,
 );
 
 int main(string[] args)
