@@ -51,12 +51,15 @@
         folder-size-metrics = pkgs.callPackage ./folder-size-metrics {};
       }
       // pkgs.lib.optionalAttrs (isLinux && isx86)
-      pkgs.callPackage
-      ./mcl {
-        buildDubPackage = inputs'.dlang-nix.legacyPackages.buildDubPackage.override {
-          ldc = inputs'.dlang-nix.packages."ldc-binary-1_34_0";
-        };
-      }
+      (import
+        ./mcl {
+          buildDubPackage = inputs'.dlang-nix.legacyPackages.buildDubPackage.override {
+            ldc = inputs'.dlang-nix.packages."ldc-binary-1_34_0";
+          };
+          inherit pkgs;
+          lib = pkgs.lib;
+          inherit (pkgs) fetchgit buildEnv;
+        })
       // pkgs.lib.optionalAttrs (isLinux && isx86) rec {
         inherit (legacyPackages.inputs.terranix) terranix;
         inherit (legacyPackages.inputs.dlang-nix) dcd dscanner serve-d dmd;
