@@ -4,8 +4,9 @@
     pkgs,
     ...
   }: let
-    inherit (pkgs.hostPlatform) isLinux isx86;
-    unstablePkgs = inputs'.nixpkgs-unstable.legacyPackages;
+    inherit (lib) optionalAttrs;
+    inherit (pkgs) system;
+    inherit (pkgs.hostPlatform) isLinux;
   in rec {
     legacyPackages = {
       inputs = {
@@ -39,19 +40,22 @@
 
     packages =
       {
-        inherit (legacyPackages) rustToolchain;
         lido-withdrawals-automation = pkgs.callPackage ./lido-withdrawals-automation {};
         pyroscope = pkgs.callPackage ./pyroscope {};
-        grafana-agent = import ./grafana-agent {inherit inputs';};
+
+        inherit (legacyPackages) rustToolchain;
         inherit (legacyPackages.inputs.ethereum-nix) geth;
         inherit (legacyPackages.inputs.dlang-nix) dub;
-        nix-fast-build = inputs'.nix-fast-build.packages.nix-fast-build;
+        inherit (inputs'.nix-fast-build.packages) nix-fast-build;
       }
-      // pkgs.lib.optionalAttrs isLinux {
+      // optionalAttrs (system == "x86_64-linux" || system == "aarch64-darwin") {
+        grafana-agent = import ./grafana-agent {inherit inputs';};
+      }
+      // optionalAttrs isLinux {
         inherit (inputs'.validator-ejector.packages) validator-ejector;
         folder-size-metrics = pkgs.callPackage ./folder-size-metrics {};
       }
-      // pkgs.lib.optionalAttrs (isLinux && isx86) rec {
+      // optionalAttrs (system == "x86_64-linux") {
         mcl = pkgs.callPackage ./mcl {
           buildDubPackage = inputs'.dlang-nix.legacyPackages.buildDubPackage.override {
             ldc = inputs'.dlang-nix.packages."ldc-binary-1_34_0";
