@@ -62,6 +62,12 @@
           };
         };
 
+        random-alerts = pkgs.callPackage ./random-alerts {
+          buildDubPackage = inputs'.dlang-nix.legacyPackages.buildDubPackage.override {
+            ldc = inputs'.dlang-nix.packages."ldc-binary-1_34_0";
+          };
+        };
+
         inherit (legacyPackages.inputs.terranix) terranix;
         inherit (legacyPackages.inputs.dlang-nix) dcd dscanner serve-d dmd ldc;
         inherit (legacyPackages.inputs.ethereum-nix) mev-boost nethermind web3signer foundry nimbus-eth2;

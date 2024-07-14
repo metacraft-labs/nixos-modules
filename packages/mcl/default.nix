@@ -53,12 +53,5 @@ in
 
     dubBuildFlags = ["--compiler=dmd" "-b" "debug"];
 
-    dubTestFlags = [
-      "--compiler=dmd"
-      "--"
-      "-e"
-      excludedTests
-    ];
-
     meta.mainProgram = pname;
   }

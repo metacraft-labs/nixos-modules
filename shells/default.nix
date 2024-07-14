@@ -26,6 +26,8 @@ in
       inputs'.dlang-nix.packages.dmd
       inputs'.dlang-nix.packages.dub
       act
+      openssl
+      pkg-config
     ];
 
     shellHook = ''

@@ -1,0 +1,3 @@
+name "random_alerts"
+dependency "prometheus" version="~>0.2.1"
+dependency "prometheus:vibe" version="~>0.2.1"
