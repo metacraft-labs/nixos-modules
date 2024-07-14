@@ -57,6 +57,7 @@
         {
           lido-withdrawals-automation = pkgs.callPackage ./lido-withdrawals-automation { };
           pyroscope = pkgs.callPackage ./pyroscope { };
+          random-alerts = pkgs.callPackage ./random-alerts { };
         }
         // optionalAttrs (system == "x86_64-linux" || system == "aarch64-darwin") {
           grafana-agent = import ./grafana-agent { inherit inputs'; };
