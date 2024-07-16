@@ -230,10 +230,15 @@
       ];
       systems = ["x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin"];
       perSystem = {
+        system,
         pkgs,
         inputs',
         ...
       }: {
+        _module.args.pkgs = import nixpkgs {
+          inherit system;
+          config.allowUnfree = true;
+        };
         devShells.default = import ./shells/default.nix {inherit pkgs flake inputs';};
         devShells.ci = import ./shells/ci.nix {inherit pkgs;};
       };
