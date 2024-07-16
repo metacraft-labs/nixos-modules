@@ -30,6 +30,7 @@
     lib.concatStringsSep "|" [
       "(nix\\.(build|run))"
       "fetchJson|(coda\.)"
+      "checkPackage"
     ]
   );
 in

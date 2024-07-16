@@ -511,19 +511,45 @@ void printTableForCacheStatus(Package[] packages)
 
 Package checkPackage(Package pkg)
 {
-    string curlOutput = execute([
-        "curl", "--silent", "-H",
-        "Authorization: Bearer " ~ params.cachixAuthToken, "-I",
-        pkg.cacheUrl
-    ], false);
-    bool isAvailable = curlOutput
-        .split("\n")
-        .filter!(line => line.startsWith("HTTP"))
-        .map!(line => line.split(" ")[1])
-        .map!(code => code == "200")
-        .any;
-    pkg.isCached = isAvailable;
+    import std.algorithm : canFind;
+    import std.string : lineSplitter;
+    import std.net.curl : HTTP, httpGet = get, HTTPStatusException;
+
+    auto http = HTTP();
+    http.addRequestHeader("Authorization", "Bearer " ~ params.cachixAuthToken);
+
+    try
+    {
+        pkg.isCached = httpGet(pkg.cacheUrl, http)
+            .lineSplitter
+            .canFind("StorePath: " ~ pkg.output);
+    }
+    catch (HTTPStatusException e)
+    {
+        pkg.isCached = false;
+    }
+
     return pkg;
+}
+
+@("checkPackage")
+unittest
+{
+    const nixosCacheEndpoint = "https://cache.nixos.org/";
+    const storePathHash = "mdb034kf7sq6g03ric56jxr4a7043l41";
+    const storePath = "/nix/store/" ~ storePathHash ~ "-hello-2.12.1";
+
+    auto testPackage = Package(
+        output: storePath,
+        cacheUrl: nixosCacheEndpoint ~ storePathHash ~ ".narinfo",
+    );
+
+    assert(!testPackage.isCached);
+    assert(checkPackage(testPackage).isCached);
+
+    testPackage.cacheUrl = nixosCacheEndpoint ~ "nonexistent.narinfo";
+
+    assert(!checkPackage(testPackage).isCached);
 }
 
 Package[] getPrecalcMatrix()
