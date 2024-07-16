@@ -44,12 +44,12 @@
         pyroscope = pkgs.callPackage ./pyroscope {};
 
         inherit (legacyPackages) rustToolchain;
-        inherit (legacyPackages.inputs.ethereum-nix) geth;
         inherit (legacyPackages.inputs.dlang-nix) dub;
         inherit (inputs'.nix-fast-build.packages) nix-fast-build;
       }
       // optionalAttrs (system == "x86_64-linux" || system == "aarch64-darwin") {
         grafana-agent = import ./grafana-agent {inherit inputs';};
+        inherit (legacyPackages.inputs.ethereum-nix) geth;
       }
       // optionalAttrs isLinux {
         inherit (inputs'.validator-ejector.packages) validator-ejector;
