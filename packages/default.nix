@@ -62,6 +62,7 @@
           };
         };
 
+        inherit (pkgs) terraform;
         inherit (legacyPackages.inputs.terranix) terranix;
         inherit (legacyPackages.inputs.dlang-nix) dcd dscanner serve-d dmd ldc;
         inherit (legacyPackages.inputs.ethereum-nix) mev-boost nethermind web3signer foundry nimbus-eth2;
