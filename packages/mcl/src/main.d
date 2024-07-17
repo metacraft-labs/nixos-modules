@@ -13,7 +13,8 @@ alias supportedCommands = imported!`std.traits`.AliasSeq!(
     cmds.shard_matrix,
     cmds.host_info,
     cmds.ci,
-    cmds.machine_create
+    cmds.machine_create,
+    cmds.coda
 );
 
 int main(string[] args)
@@ -40,7 +41,6 @@ int main(string[] args)
             cmd();
             info("Execution Succesfull");
             return 0;
-
         }
     }
     catch (Exception e)
