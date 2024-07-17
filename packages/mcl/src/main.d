@@ -1,7 +1,7 @@
 import std.stdio : writefln, writeln, stderr;
 import std.array : replace;
 import std.getopt : getopt;
-import std.logger : info, errorf;
+import std.logger : info, errorf, LogLevel;
 
 import cmds = mcl.commands;
 
@@ -22,10 +22,10 @@ int main(string[] args)
         return wrongUsage("no command selected");
 
     string command = args[1];
-    bool quiet = false;
-    args.getopt("q|quiet", &quiet);
+    LogLevel logLevel = LogLevel.info;
+    args.getopt("log-level", &logLevel);
 
-    if (quiet) disableLogging();
+    setLogLevel(logLevel);
 
     try switch (args[1])
     {
@@ -50,10 +50,11 @@ int main(string[] args)
     }
 }
 
-void disableLogging()
+void setLogLevel(LogLevel l)
 {
-    import std.logger : sharedLog, LogLevel, NullLogger;
-    sharedLog = cast(shared)new NullLogger(LogLevel.all);
+    import std.logger : globalLogLevel, sharedLog;
+    globalLogLevel = l;
+    (cast()sharedLog()).logLevel = l;
 }
 
 int wrongUsage(string error)
