@@ -13,6 +13,7 @@ import core.cpuid : threadsPerCPU;
 import std.process : pipeProcess, wait, Redirect, kill;
 import std.exception : enforce;
 import std.format : fmt = format;
+import std.logger : tracef;
 
 import mcl.utils.env : optional, MissingEnvVarsException, parseEnv;
 import mcl.utils.string : enumToString, StringRepresentation, MaxWidth, writeRecordAsTable;
@@ -210,12 +211,17 @@ Package[] nixEvalJobs(Params params, SupportedSystem system, string cachixUrl, b
 
     int maxMemoryMB = getAvailableMemoryMB();
     int maxWorkers = getNixEvalWorkerCount();
-    auto pipes = pipeProcess([
+
+    const args = [
         "nix-eval-jobs", "--quiet", "--option", "warn-dirty", "false",
         "--check-cache-status", "--gc-roots-dir", gcRootsDir, "--workers",
         maxWorkers.to!string, "--max-memory-size", maxMemoryMB.to!string,
         "--flake", rootDir ~ "#" ~ flakeAttr
-    ], Redirect.stdout | Redirect.stderr);
+    ];
+
+    tracef("%-(%s %)", args);
+
+    auto pipes = pipeProcess(args, Redirect.stdout | Redirect.stderr);
     foreach (line; pipes.stdout.byLine)
     {
         if (line.indexOf("error:") != -1)
