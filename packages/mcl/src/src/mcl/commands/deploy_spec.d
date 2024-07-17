@@ -1,27 +1,25 @@
 module mcl.commands.deploy_spec;
 
-import std.stdio : writeln;
-import mcl.utils.env : parseEnv;
-import mcl.utils.process : execute;
-import mcl.utils.path : rootDir;
+import std.logger : warningf;
+import std.file : exists;
+import std.path : buildPath;
+
+import mcl.utils.process : spawnProcessInline;
+import mcl.utils.path : resultDir;
+
+import mcl.commands.ci_matrix : ci_matrix;
 
 export void deploy_spec()
 {
-    const params = parseEnv!Params;
+    auto deploySpecFile = resultDir.buildPath("cachix-deploy-spec.json");
 
-    writeln(execute([
-            "cachix", "deploy", "activate", rootDir ~ "cachix-deploy-spec.json",
-            "--async"
-        ]));
-
-}
-
-struct Params
-{
-    string cachixAuthToken;
-    string cachixCache;
-
-    void setup()
+    if (!deploySpecFile.exists)
     {
+        warningf("'%s' file not found - building...", deploySpecFile);
+        ci_matrix();
     }
+
+    spawnProcessInline([
+        "cachix", "deploy", "activate", deploySpecFile
+    ]);
 }
