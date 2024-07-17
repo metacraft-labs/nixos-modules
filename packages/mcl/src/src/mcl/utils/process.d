@@ -61,3 +61,19 @@ unittest
     assert(execute(["true"]) == "");
     // assertThrown(execute(["false"]), "Command `false` failed with status 1");
 }
+
+void spawnProcessInline(string[] args)
+{
+    import std.logger : tracef;
+    import std.exception : enforce;
+    import std.process : spawnProcess, wait;
+
+    const bold = "\033[1m";
+    const normal = "\033[0m";
+
+
+    tracef("$ %s%-(%s %)%s", bold, args, normal);
+
+    auto pid = spawnProcess(args);
+    enforce(wait(pid) == 0, "Process failed.");
+}
