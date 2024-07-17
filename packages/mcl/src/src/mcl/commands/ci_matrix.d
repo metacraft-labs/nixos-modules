@@ -150,14 +150,33 @@ export void ci_matrix()
     nixEvalForAllSystems().array.printTableForCacheStatus();
 }
 
+Package[] checkCacheStatus(Package[] packages)
+{
+    import std.array : appender;
+    import std.parallelism : parallel;
+
+    foreach (ref pkg; packages.parallel)
+    {
+        pkg = checkPackage(pkg);
+        struct Output { string isCached, name, storePath; }
+        auto res = appender!string;
+        writeRecordAsTable(
+            Output(pkg.isCached ? "✅" : "❌", pkg.name, pkg.output),
+            res
+        );
+        tracef("%s", res.data[0..$-1]);
+    }
+    return packages;
+}
+
 export void print_table()
 {
     params = parseEnv!Params;
-
     createResultDirs();
-    Package[] precalcMatrix = getPrecalcMatrix();
-    auto checkedPackages = precalcMatrix.map!(checkPackage).array;
-    printTableForCacheStatus(checkedPackages);
+
+    getPrecalcMatrix()
+        .checkCacheStatus()
+        .printTableForCacheStatus();
 }
 
 struct Params
