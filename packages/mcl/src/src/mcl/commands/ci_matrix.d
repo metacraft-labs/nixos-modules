@@ -13,7 +13,7 @@ import core.cpuid : threadsPerCPU;
 import std.process : pipeProcess, wait, Redirect, kill;
 import std.exception : enforce;
 import std.format : fmt = format;
-import std.logger : tracef;
+import std.logger : tracef, infof;
 
 import mcl.utils.env : optional, MissingEnvVarsException, parseEnv;
 import mcl.utils.string : enumToString, StringRepresentation, MaxWidth, writeRecordAsTable;
@@ -419,6 +419,8 @@ unittest
 
 void saveGHCIComment(SummaryTableEntry[] tableSummaryJSON)
 {
+    import std.path : buildPath, absolutePath;
+
     string comment = "Thanks for your Pull Request!";
     comment ~= "\n\nBelow you will find a summary of the cachix status of each package, for each supported platform.";
     comment ~= "\n\n| package | `x86_64-linux` | `x86_64-darwin` | `aarch64-darwin` |";
@@ -426,7 +428,10 @@ void saveGHCIComment(SummaryTableEntry[] tableSummaryJSON)
     comment ~= tableSummaryJSON.map!(
         pkg => "\n| " ~ pkg.name ~ " | " ~ pkg.x86_64.linux ~ " | " ~ pkg.x86_64.darwin ~ " | " ~ pkg.aarch64.darwin ~ " |")
         .join("");
-    (rootDir() ~ "comment.md").write(comment);
+
+    auto outputPath = rootDir().buildPath("comment.md").absolutePath;
+    write(outputPath, comment);
+    infof("Wrote GitHub comment file to '%s'", outputPath);
 }
 
 @("saveGHCIComment")
