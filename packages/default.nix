@@ -10,8 +10,13 @@
   in rec {
     legacyPackages = {
       inputs = {
+        nixpkgs = rec {
+          inherit (pkgs) cachix;
+          nix = pkgs.nixVersions.nix_2_22;
+          nix-eval-jobs = pkgs.nix-eval-jobs.override {inherit nix;};
+          nix-fast-build = pkgs.nix-fast-build.override {inherit nix-eval-jobs;};
+        };
         agenix = inputs'.agenix.packages;
-        cachix = inputs'.cachix.packages;
         devenv = inputs'.devenv.packages;
         disko = inputs'.disko.packages;
         dlang-nix = inputs'.dlang-nix.packages;
@@ -45,7 +50,7 @@
 
         inherit (legacyPackages) rustToolchain;
         inherit (legacyPackages.inputs.dlang-nix) dub;
-        inherit (inputs'.nix-fast-build.packages) nix-fast-build;
+        inherit (legacyPackages.inputs.nixpkgs) cachix nix nix-eval-jobs nix-fast-build;
       }
       // optionalAttrs (system == "x86_64-linux" || system == "aarch64-darwin") {
         grafana-agent = import ./grafana-agent {inherit inputs';};
@@ -60,6 +65,7 @@
           buildDubPackage = inputs'.dlang-nix.legacyPackages.buildDubPackage.override {
             ldc = inputs'.dlang-nix.packages."ldc-binary-1_34_0";
           };
+          inherit (legacyPackages.inputs.nixpkgs) cachix nix nix-eval-jobs;
         };
 
         inherit (pkgs) terraform;

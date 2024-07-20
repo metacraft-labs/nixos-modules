@@ -2,30 +2,35 @@
   lib,
   buildDubPackage,
   pkgs,
-  fetchgit,
+  cachix,
+  nix,
+  nix-eval-jobs,
   ...
 }: let
-  deps = with pkgs; [
-    cachix
-    git
-    nix
-    nom
-    nix-eval-jobs
-    curl
-    gawk
-    dmidecode
-    jc
-    edid-decode
-    coreutils-full
-    util-linux
-    xorg.xrandr
-    glxinfo
-    nixos-install-tools
-    perl
-    systemd
-    alejandra
-    openssh
-  ];
+  deps =
+    [
+      cachix
+      nix
+      nix-eval-jobs
+    ]
+    ++ (with pkgs; [
+      git
+      nom
+      curl
+      gawk
+      dmidecode
+      jc
+      edid-decode
+      coreutils-full
+      util-linux
+      xorg.xrandr
+      glxinfo
+      nixos-install-tools
+      perl
+      systemd
+      alejandra
+      openssh
+    ]);
   excludedTests = (
     lib.concatStringsSep "|" [
       "(nix\\.(build|run))"
@@ -46,8 +51,7 @@ in
     };
 
     nativeBuildInputs = [pkgs.makeWrapper] ++ deps;
-    buildInputs = deps;
-    checkInputs = deps;
+
     postFixup = ''
       wrapProgram $out/bin/${pname} --set PATH "${lib.makeBinPath deps}"
     '';
