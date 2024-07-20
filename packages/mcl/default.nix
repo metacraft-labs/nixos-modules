@@ -2,21 +2,17 @@
   lib,
   buildDubPackage,
   pkgs,
-  cachix,
   nix,
   nix-eval-jobs,
   ...
 }: let
   deps =
     [
-      cachix
       nix
       nix-eval-jobs
     ]
     ++ (with pkgs; [
-      git
-      nom
-      curl
+      gitMinimal
       gawk
       dmidecode
       jc
@@ -25,11 +21,6 @@
       util-linux
       xorg.xrandr
       glxinfo
-      nixos-install-tools
-      perl
-      systemd
-      alejandra
-      openssh
     ]);
   excludedTests = (
     lib.concatStringsSep "|" [
