@@ -22,6 +22,15 @@ T[] uniqIfSame(T)(T[] arr)
 
 }
 
+@("uniqIfSame")
+unittest
+{
+    assert(uniqIfSame([1, 1, 1, 1]) == [1]);
+    assert(uniqIfSame([1, 2, 3, 4]) == [1, 2, 3, 4]);
+    assert(uniqIfSame(["a", "a", "a", "a"]) == ["a"]);
+    assert(uniqIfSame(["a", "b", "c", "d"]) == ["a", "b", "c", "d"]);
+}
+
 T uniqArrays(T)(T s)
 {
     static if (isSomeString!T)
@@ -44,4 +53,21 @@ T uniqArrays(T)(T s)
     {
         return s;
     }
+}
+
+@("uniqArrays")
+unittest
+{
+    assert(uniqArrays([1, 2, 3, 4, 1, 2, 3, 4]) == [1, 2, 3, 4]);
+    assert(uniqArrays("aabbccdd") == "aabbccdd");
+    assert(uniqArrays(5) == 5);
+    struct TestStruct
+    {
+        int[] a;
+        string b;
+    }
+
+    assert(uniqArrays(TestStruct([1, 2, 3, 4, 1, 2, 3, 4], "aabbccdd")) == TestStruct([
+            1, 2, 3, 4
+        ], "aabbccdd"));
 }
