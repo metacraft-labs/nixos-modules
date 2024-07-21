@@ -47,10 +47,7 @@ unittest
     assert(gcRootsDir == resultDir.buildNormalizedPath("gc-roots"));
 }
 
-void createResultDirs()
-{
-    mkdirRecurse(gcRootsDir);
-}
+void createResultDirs() => mkdirRecurse(gcRootsDir);
 
 @("createResultDirs")
 unittest

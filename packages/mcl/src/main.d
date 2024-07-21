@@ -41,7 +41,6 @@ int main(string[] args)
                 cmd();
                 info("Execution Succesfull");
                 return 0;
-
             }
     }
     catch (Exception e)

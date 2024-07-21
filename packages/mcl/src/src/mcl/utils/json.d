@@ -13,6 +13,16 @@ import std.datetime : SysTime;
 import std.sumtype : SumType, isSumType;
 import core.stdc.string : strlen;
 
+string getStrOrDefault(JSONValue value, string defaultValue = "")
+{
+    return value.isNull ? defaultValue : value.str;
+}
+
+string jsonValueToString(in JSONValue value)
+{
+    return value.toString(JSONOptions.doNotEscapeSlashes).strip("\"");
+}
+
 bool tryDeserializeJson(T)(in JSONValue value, out T result)
 {
     try
@@ -28,57 +38,50 @@ bool tryDeserializeJson(T)(in JSONValue value, out T result)
 
 T fromJSON(T)(in JSONValue value)
 {
+    T result;
     if (value.isNull)
-    {
-        return T.init;
-    }
+        result = T.init;
+
     static if (is(T == JSONValue))
-    {
-        return value;
-    }
+        result = value;
     else static if (is(T == bool) || is(T == string) || isSomeChar!T || isNumeric!T || is(T == enum))
-    {
-        return value.toString(JSONOptions.doNotEscapeSlashes).strip("\"").to!T;
-    }
+        result = jsonValueToString(value).to!T;
     else static if (isSumType!T)
     {
+        bool sumTypeDecoded = false;
         static foreach (SumTypeVariant; T.Types)
         {
             {
-                SumTypeVariant result;
-                if (tryDeserializeJson!SumTypeVariant(value, result))
+                SumTypeVariant sumTypeResult;
+                if (tryDeserializeJson!SumTypeVariant(value, sumTypeResult))
                 {
-                    return T(result);
+                    sumTypeDecoded = true;
+                    result = sumTypeResult;
                 }
             }
         }
-
-        throw new Exception("Failed to deserialize JSON value");
+        if (!sumTypeDecoded)
+            throw new Exception("Failed to deserialize JSON value");
     }
     else static if (isArray!T)
     {
         static if (isBoolean!(ForeachType!T))
         {
             if (value.type == JSONType.string && isBoolean!(ForeachType!T))
-            {
-                return value.str.map!(a => a == '1').array;
-            }
+                result = value.str.map!(a => a == '1').array;
         }
-
         if (value.type != JSONType.array)
-        {
-            return [value.fromJSON!(ForeachType!T)];
-        }
+            result = [value.fromJSON!(ForeachType!T)];
+        else
+            result = value.array.map!(a => a.fromJSON!(ForeachType!T)).array;
 
-        return value.array.map!(a => a.fromJSON!(ForeachType!T)).array;
     }
     else static if (is(T == SysTime))
     {
-        return SysTime.fromISOExtString(value.toString(JSONOptions.doNotEscapeSlashes).strip("\""));
+        result = SysTime.fromISOExtString(jsonValueToString(value));
     }
     else static if (is(T == struct))
     {
-        T result;
         static foreach (idx, field; T.tupleof)
         {
             if ((__traits(identifier, field).replace("_", "") in value.object) && !value[__traits(identifier, field)
@@ -88,24 +91,18 @@ T fromJSON(T)(in JSONValue value)
                     .replace("_", "")].fromJSON!(typeof(field));
             }
         }
-        return result;
     }
     else static if (isAssociativeArray!T)
     {
-        T result;
         foreach (key, val; value.object)
         {
             if (key in result)
-            {
                 result[key] = val.fromJSON!(typeof(result[key]));
-            }
         }
-        return result;
     }
     else
-    {
         static assert(false, "Unsupported type: `", T, "` ", isSumType!T);
-    }
+    return result;
 
 }
 
@@ -118,56 +115,50 @@ unittest
 
 JSONValue toJSON(T)(in T value, bool simplify = false)
 {
+    JSONValue result;
     static if (is(T == enum))
-    {
-        return JSONValue(value.enumToString);
-    }
+        result = JSONValue(value.enumToString);
     else static if (is(T == bool) || is(T == string) || isSomeChar!T || isNumeric!T)
-        return JSONValue(value);
+        result = JSONValue(value);
     else static if ((isArray!T && isSomeChar!(ForeachType!T)))
-    {
-        return JSONValue(value.idup[0 .. (strlen(value.ptr) - 1)]);
-    }
+        result = JSONValue(value.idup[0 .. (strlen(value.ptr) - 1)]);
     else static if (isArray!T)
     {
         if (simplify && value.length == 1)
-            return value.front.toJSON(simplify);
+            result = value.front.toJSON(simplify);
         else if (simplify && isBoolean!(ForeachType!T))
         {
             static if (isBoolean!(ForeachType!T))
-            {
-                return JSONValue((value.map!(a => a ? '1' : '0').array).to!string);
-            }
+                result = JSONValue((value.map!(a => a ? '1' : '0').array).to!string);
             else
-            {
                 assert(0);
-            }
         }
         else
         {
-            JSONValue[] result;
+            JSONValue[] arrayResult;
             foreach (elem; value)
-                result ~= elem.toJSON(simplify);
-            return JSONValue(result);
+                arrayResult ~= elem.toJSON(simplify);
+            result = JSONValue(arrayResult);
         }
     }
     else static if (is(T == SysTime))
-    {
-        return JSONValue(value.toISOExtString());
-    }
+        result = JSONValue(value.toISOExtString());
     else static if (is(T == struct))
     {
-        JSONValue[string] result;
+        JSONValue[string] structResult;
         auto name = "";
         static foreach (idx, field; T.tupleof)
         {
             name = __traits(identifier, field).strip("_");
-            result[name] = value.tupleof[idx].toJSON(simplify);
+            structResult[name] = value.tupleof[idx].toJSON(simplify);
         }
-        return JSONValue(result);
+        result = JSONValue(structResult);
     }
     else
         static assert(false, "Unsupported type: `" ~ __traits(identifier, T) ~ "`");
+
+    return result;
+
 }
 
 version (unittest)
