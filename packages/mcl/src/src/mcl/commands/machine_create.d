@@ -75,113 +75,116 @@ User getUser(string userName)
     return user;
 }
 
+void writeFile(string filePath, string fileContent, string[] command = [])
+{
+    mkdirRecurse(filePath.dirName);
+    std.file.write(format("%s/%s", filePath), fileContent);
+    if (command.length > 0)
+    {
+        execute(command, false);
+    }
+}
+
 void createUserDir(User user)
 {
-    mkdirRecurse("users/" ~ user.userName);
-    string userNix = user.toNix;
-    std.file.write("users/" ~ user.userName ~ "/user-info.nix", userNix);
-    execute(["alejandra", "users/" ~ user.userName ~ "/user-info.nix"], false);
-    string gitConfig = generateGitConfig(user);
-    std.file.write("users/" ~ user.userName ~ "/.gitconfig", gitConfig);
+    string userDir = format("users/%s/", user.userName);
+    string userInfoNix = format("%s/user-info.nix", userDir);
+    string userGitConfig = format("%s/.gitconfig", userDir);
+    writeFile(userInfoNix, user.toNix, ["alejandra", userInfoNix]);
+    writeFile(userGitConfig, generateGitConfig(user));
 
-    mkdirRecurse("users/" ~ user.userName ~ "/home-desktop");
-    string homeDesktop = generateHomeDesktop();
-    std.file.write("users/" ~ user.userName ~ "/home-desktop/default.nix", homeDesktop);
-    execute(["alejandra", "users/" ~ user.userName ~ "/home-desktop/default.nix"], false);
-    mkdirRecurse("users/" ~ user.userName ~ "/home-server");
-    string homeServer = generateHomeServer();
-    std.file.write("users/" ~ user.userName ~ "/home-server/default.nix", homeServer);
-    execute(["alejandra", "users/" ~ user.userName ~ "/home-server/default.nix"], false);
+    string homeDesktopDir = format("%s/home-desktop/", userDir);
+    string homeDesktopNix = format("%s/default.nix", homeDesktopDir);
+    writeFile(homeDesktopNix, generateHomeDesktop(), [
+            "alejandra", homeDesktopNix
+        ]);
+
+    string homeServerDir = format("%s/home-server/", userDir);
+    string homeServerNix = format("%s/default.nix", homeServerDir);
+    writeFile(homeServerNix, generateHomeServer(), ["alejandra", homeServerNix]);
 }
 
 string generateHomeServer()
 {
-    string homeServer = "{pkgs, ...}: {\n";
-    homeServer ~= "  home.packages = with pkgs; [\n";
-    homeServer ~= "  ];\n";
-    homeServer ~= "}\n";
+    string homeServer = "{pkgs, ...}: {\n
+        home.packages = with pkgs; [\n
+        ];\n
+    }\n";
     return homeServer;
 }
 
 string generateHomeDesktop()
 {
-    string homeDesktop = "{pkgs, ...}: {\n";
-    homeDesktop ~= "  imports = [\n";
-    homeDesktop ~= "    ../home-server\n";
-    homeDesktop ~= "  ];\n";
-    homeDesktop ~= "  home.packages = with pkgs; [\n";
-    homeDesktop ~= "  ];\n";
-    homeDesktop ~= "}\n";
+    string homeDesktop = "{pkgs, ...}: {\n
+        imports = [\n
+            ../home-server\n
+        ];\n
+        home.packages = with pkgs; [\n
+        ];\n
+    }\n";
     return homeDesktop;
 }
 
 string generateGitConfig(User user)
 {
-    string gitConfig = "[user]\n";
-    gitConfig ~= "  email = " ~ (user.emailInfo.workEmail != "" ? user.emailInfo.workEmail
-            : user.emailInfo.personalEmail) ~ "\n";
-    gitConfig ~= "  name = " ~ user.userInfo.description ~ "\n";
-    gitConfig ~= "[fetch]\n";
-    gitConfig ~= "  prune = true\n";
-    gitConfig ~= "[rebase]\n";
-    gitConfig ~= "  updateRefs = true\n";
-    gitConfig ~= "[pull]\n";
-    gitConfig ~= "  ff = true\n";
-    gitConfig ~= "  rebase = false\n";
-    gitConfig ~= "[merge]\n";
-    gitConfig ~= "  ff = only\n";
-    gitConfig ~= "[core]\n";
-    gitConfig ~= "  editor = nvim\n";
-    gitConfig ~= "[include]\n";
-    gitConfig ~= "  path = git/aliases.gitconfig\n";
-    gitConfig ~= "  path = git/delta.gitconfig\n";
-    gitConfig ~= "[difftool \"diffpdf\"]\n";
-    gitConfig ~= "  cmd = diffpdf \\\"$LOCAL\\\" \\\"$REMOTE\\\"\n";
-    gitConfig ~= "[difftool \"nvimdiff\"]\n";
-    gitConfig ~= "  cmd = nvim -d \\\"$LOCAL\\\" \\\"$REMOTE\\\"\n";
-    gitConfig ~= "[diff]\n";
-    gitConfig ~= "  colorMoved = dimmed-zebra\n";
+    string gitConfig = format("[user]\n
+        email = %s\n
+            name = %s\n
+        [fetch]\n
+            prune = true\n
+        [rebase]\n
+            updateRefs = true\n
+        [pull]\n
+            ff = true\n
+            rebase = false\n
+        [merge]\n
+            ff = only\n
+        [core]\n
+            editor = nvim\n
+        [include]\n
+            path = git/aliases.gitconfig\n
+            path = git/delta.gitconfig\n
+        [difftool \"diffpdf\"]\n
+            cmd = diffpdf \\\"$LOCAL\\\" \\\"$REMOTE\\\"\n
+        [difftool \"nvimdiff\"]\n
+            cmd = nvim -d \\\"$LOCAL\\\" \\\"$REMOTE\\\"\n
+        [diff]\n
+            colorMoved = dimmed-zebra\n", (user.emailInfo.workEmail != "" ? user.emailInfo.workEmail
+            : user.emailInfo.personalEmail), user.userInfo.description);
     return gitConfig;
 
 }
 
 void checkifNixosMachineConfigRepo()
 {
+    static immutable string repoUrl = "metacraft-labs/nixos-machine-config";
     if (execute(["git", "config", "--get", "remote.origin.url"], false)
-        .indexOf("metacraft-labs/nixos-machine-config") == -1)
+        .indexOf(repoUrl) == -1)
     {
-        assert(0, "This is not the repo metacraft-labs/nixos-machine-config");
+        assert(0, format("This is not the repo %s", repoUrl));
     }
+}
+
+string[] getGroupsFromFile(DirEntry input)
+{
+    string name = input.name ~ "/user-info.nix";
+    if (!std.file.exists(name))
+        return ["metacraft"];
+    auto userInfoFile = nix.eval!JSONValue(name, ["--file"]);
+    if ("userInfo" !in userInfoFile || userInfoFile["userInfo"].isNull
+        || "extraGroups" !in userInfoFile["userInfo"] || userInfoFile["userInfo"]["extraGroups"]
+        .isNull)
+        return ["metacraft"];
+    return userInfoFile["userInfo"]["extraGroups"].array.map!(a => a.str).array;
 }
 
 string[] getGroups()
 {
-    string[] groups = dirEntries("users", SpanMode.shallow).map!(a => a.name ~ "/user-info.nix")
-        .array
-        .map!((a) {
-            if (!std.file.exists(a))
-            {
-                return JSONValue(["metacraft"]).array;
-            }
-            auto userInfoFile = nix.eval!JSONValue(a, ["--file"]);
-            if ("userInfo" !in userInfoFile || userInfoFile["userInfo"].isNull)
-            {
-                return JSONValue(["metacraft"]).array;
-            }
-            if ("extraGroups" !in userInfoFile["userInfo"] || userInfoFile["userInfo"]["extraGroups"]
-            .isNull)
-            {
-                return JSONValue(["metacraft"]).array;
-            }
-            return userInfoFile["userInfo"]["extraGroups"].array;
-        })
-        .array
+    string[] groups = dirEntries("users", SpanMode.shallow)
+        .map!getGroupsFromFile
         .joiner
         .array
-        .map!(a => a.str)
-        .array
         .sort
-        .array
         .uniq
         .array;
     return groups;
@@ -189,7 +192,6 @@ string[] getGroups()
 
 User createUser()
 {
-
     auto createUser = params.createUser || prompt!bool("Create new user");
     if (!createUser)
     {
@@ -198,21 +200,19 @@ User createUser()
             : prompt!string("Select an existing username", existingUsers);
         return getUser(userName);
     }
-    else
-    {
-        User user;
-        user.userName = params.userName != "" ? params.userName
-            : prompt!string("Enter the new username");
-        user.userInfo.description = params.description != "" ? params.description
-            : prompt!string("Enter the user's description/full name");
-        user.userInfo.isNormalUser = params.isNormalUser || prompt!bool(
-            "Is this a normal or root user");
-        user.userInfo.extraGroups = (params.extraGroups != "" ? params.extraGroups
-                : prompt!string("Enter the user's extra groups (comma delimited)", getGroups())).split(",")
-            .map!(strip).array;
-        createUserDir(user);
-        return user;
-    }
+
+    User user;
+    user.userName = params.userName != "" ? params.userName
+        : prompt!string("Enter the new username");
+    user.userInfo.description = params.description != "" ? params.description
+        : prompt!string("Enter the user's description/full name");
+    user.userInfo.isNormalUser = params.isNormalUser || prompt!bool(
+        "Is this a normal or root user");
+    user.userInfo.extraGroups = (params.extraGroups != "" ? params.extraGroups
+            : prompt!string("Enter the user's extra groups (comma delimited)", getGroups())).split(",")
+        .map!(strip).array;
+    createUserDir(user);
+    return user;
 }
 
 struct MachineConfiguration
@@ -253,15 +253,8 @@ struct MachineConfiguration
     MachineUserInfo users;
 }
 
-void createMachine(MachineType machineType, string machineName, User user)
+MachineConfiguration getMachineConfiguration(User user, Info info)
 {
-    auto infoJSON = execute([
-        "ssh", params.sshPath,
-        "sudo nix --experimental-features \\'nix-command flakes\\' --refresh --accept-flake-config run github:metacraft-labs/nixos-modules/feat/machine_create#mcl host_info"
-    ], false, false);
-    auto infoJSONParsed = infoJSON.parseJSON;
-    Info info = infoJSONParsed.fromJSON!Info;
-
     MachineConfiguration machineConfiguration;
     machineConfiguration.users.users[user.userName] = MachineConfiguration
         .MachineUserInfo.UserData([user.userName] ~ "wheel");
@@ -269,12 +262,32 @@ void createMachine(MachineType machineType, string machineName, User user)
     machineConfiguration.networking.hostId = executeShell(
         "tr -dc 0-9a-f < /dev/urandom | head -c 8").output;
     machineConfiguration.mcl.host_info.sshKey = info.softwareInfo.opensshInfo.publicKey;
+    return machineConfiguration;
+}
+
+void saveMachineConfiguration(MachineType machineType, string machineName, Info info, User user)
+{
+    MachineConfiguration machineConfiguration = getMachineConfiguration(user, info);
     string machineNix = machineConfiguration.toNix(["config", "dots"])
         .replace("host_info", "host-info");
-    mkdirRecurse("machines/" ~ machineType.to!string ~ "/" ~ machineName);
-    std.file.write("machines/" ~ machineType.to!string ~ "/" ~ machineName ~ "/" ~ "configuration.nix", machineNix);
-    // writeln(info.toJSON(true).toPrettyString());
+    string filePath = format("machines/%s/%s/configuration.nix", machineType.to!string, machineName);
+    writeFile(filePath, machineNix, ["alejandra", filePath]);
 
+}
+
+Info getInfoOverSSH()
+{
+    auto infoJSON = execute([
+        "ssh", params.sshPath,
+        "sudo nix --experimental-features \\'nix-command flakes\\' --refresh --accept-flake-config run github:metacraft-labs/nixos-modules/feat/machine_create#mcl host_info"
+    ], false, false);
+    auto infoJSONParsed = infoJSON.parseJSON;
+    Info info = infoJSONParsed.fromJSON!Info;
+    return info;
+}
+
+HardwareConfiguration initHardwareConfiguration(Info info)
+{
     HardwareConfiguration hardwareConfiguration;
     hardwareConfiguration.hardware.cpu["intel"] = HardwareConfiguration.Hardware.Cpu();
 
@@ -318,7 +331,11 @@ void createMachine(MachineType machineType, string machineName, User user)
     hardwareConfiguration.boot.initrd.availableKernelModules ~= [
         "nvme", "xhci_pci", "usbhid", "usb_storage", "sd_mod"
     ];
+    return hardwareConfiguration;
+}
 
+void initHardwareConfigurationDisko(HardwareConfiguration hardwareConfiguration, Info info)
+{
     // Disks
     hardwareConfiguration.disko.DISKO.makeZfsPartitions.swapSizeGB = (
         info.hardwareInfo.memoryInfo.totalGB.to!double * 1.5).to!int;
@@ -336,9 +353,10 @@ void createMachine(MachineType machineType, string machineName, User user)
         .map!(a => "/dev/disk/by-id/nvme-" ~ a)
         .array;
     hardwareConfiguration.disko.DISKO.makeZfsPartitions.disks = disks;
+}
 
-    hardwareConfiguration = hardwareConfiguration.uniqArrays;
-
+void processHardwareConfigNix(HardwareConfiguration hardwareConfiguration, MachineType machineType, string machineName)
+{
     string hardwareNix = hardwareConfiguration.toNix([
         "config", "lib", "pkgs", "modulesPath", "dirs", "dots"
     ])
@@ -346,15 +364,23 @@ void createMachine(MachineType machineType, string machineName, User user)
         .replace("makeZfsPartitions = ", "makeZfsPartitions ")
         .replace("SYSTEMDBOOT", "systemd-boot")
         .replace("mcl.host-info.sshKey", "# mcl.host-info.sshKey");
-    std.file.write("machines/" ~ machineType.to!string ~ "/" ~ machineName ~ "/" ~ "hw-config.nix", hardwareNix);
-    execute([
-        "alejandra",
-        "machines/" ~ machineType.to!string ~ "/" ~ machineName ~ "/" ~ "configuration.nix"
-    ], false);
-    execute([
-        "alejandra",
-        "machines/" ~ machineType.to!string ~ "/" ~ machineName ~ "/" ~ "hw-config..nix"
-    ], false);
+    string filePath = format("machines/%s/%s/hw-config.nix", machineType.to!string, machineName);
+    writeFile(filePath, hardwareNix, ["alejandra", filePath]);
+}
+
+void createMachine(MachineType machineType, string machineName, User user)
+{
+    Info info = getInfoOverSSH();
+
+    saveMachineConfiguration(machineType, machineName, info, user);
+
+    HardwareConfiguration hardwareConfiguration = initHardwareConfiguration(info);
+
+    initHardwareConfigurationDisko(hardwareConfiguration, info);
+
+    hardwareConfiguration = hardwareConfiguration.uniqArrays;
+
+    processHardwareConfigNix(hardwareConfiguration, machineType, machineName);
 }
 
 struct HardwareConfiguration

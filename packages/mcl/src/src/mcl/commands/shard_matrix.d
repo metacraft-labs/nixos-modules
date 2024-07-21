@@ -149,9 +149,7 @@ void saveShardMatrix(ShardMatrix matrix, Params params)
     infof("Shard matrix: %s", matrixJson.toPrettyString);
     const envLine = "gen_matrix=" ~ matrixString;
     if (params.githubOutput != "")
-    {
         params.githubOutput.append(envLine);
-    }
     else
     {
         createResultDirs();

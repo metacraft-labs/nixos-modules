@@ -690,40 +690,32 @@ struct CodaApiClient
         http.addRequestHeader("Content-Type", "application/json");
         http.addRequestHeader("Authorization", "Bearer " ~ this.apiToken);
 
+        JSONValue ret = parseJSON("{}");
+        auto reqBody = req.toString(JSONOptions.doNotEscapeSlashes);
+        reqBody = (reqBody == "null") ? "" : reqBody;
+
         static if (method == HTTP.Method.get)
         {
             auto resp = httpGet(baseEndpoint ~ endpoint, http);
-            return parseJSON(resp);
+            ret = parseJSON(resp);
         }
         else static if (method == HTTP.Method.post)
         {
-            auto reqBody = req.toString(JSONOptions.doNotEscapeSlashes);
-            reqBody = (reqBody == "null") ? "" : reqBody;
             auto resp = httpPost(baseEndpoint ~ endpoint, reqBody, http);
-            return parseJSON(resp);
+            ret = parseJSON(resp);
         }
         else static if (method == HTTP.Method.put)
         {
-            auto reqBody = req.toString(JSONOptions.doNotEscapeSlashes);
-            reqBody = (reqBody == "null") ? "" : reqBody;
             auto resp = httpPut(baseEndpoint ~ endpoint, reqBody, http);
-            return parseJSON(resp);
+            ret = parseJSON(resp);
         }
         else static if (method == HTTP.Method.del)
-        {
-            auto reqBody = req.toString(JSONOptions.doNotEscapeSlashes);
-            reqBody = (reqBody == "null") ? "" : reqBody;
             httpDelete(baseEndpoint ~ endpoint, http);
-            return parseJSON("{}");
-        }
         else static if (method == HTTP.Method.patch)
-        {
-            auto reqBody = req.toString(JSONOptions.doNotEscapeSlashes);
-            reqBody = (reqBody == "null") ? "" : reqBody;
             httpPatch(baseEndpoint ~ endpoint, reqBody, http);
-            return parseJSON("{}");
-        }
         else
             static assert(0, "Please implement " ~ method);
+
+        return ret;
     }
 }

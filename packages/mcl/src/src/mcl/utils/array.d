@@ -8,17 +8,11 @@ import std.stdio : writeln;
 T[] uniqIfSame(T)(T[] arr)
 {
     if (arr.length == 0)
-    {
         return arr;
-    }
     else if (arr.all!(a => a == arr[0]))
-    {
         return [arr[0]];
-    }
     else
-    {
         return arr;
-    }
 
 }
 
@@ -33,26 +27,13 @@ unittest
 
 T uniqArrays(T)(T s)
 {
-    static if (isSomeString!T)
-    {
-        return s;
-    }
-    else static if (isArray!T)
-    {
-        return s.sort.uniq.array.to!T;
-    }
+    static if (isArray!T && !isSomeString!T)
+        s = s.sort.uniq.array.to!T;
     else static if (is(T == struct))
-    {
         static foreach (idx, field; T.tupleof)
-        {
             s.tupleof[idx] = s.tupleof[idx].uniqArrays;
-        }
-        return s;
-    }
-    else
-    {
-        return s;
-    }
+
+    return s;
 }
 
 @("uniqArrays")

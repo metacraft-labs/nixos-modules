@@ -12,7 +12,7 @@ import std.regex : matchFirst;
 import core.cpuid : threadsPerCPU;
 import std.path : buildPath;
 import std.process : pipeProcess, wait, Redirect, kill;
-import std.exception : enforce;
+import std.exception : enforce, assumeUnique;
 import std.format : fmt = format;
 import std.logger : tracef, infof, errorf, warningf;
 
@@ -26,6 +26,7 @@ import mcl.utils.nix : nix;
 enum GitHubOS
 {
     @StringRepresentation("ubuntu-latest") ubuntuLatest,
+
     @StringRepresentation("self-hosted") selfHosted,
 
     @StringRepresentation("macos-14") macos14
@@ -40,19 +41,26 @@ enum SupportedSystem
     @StringRepresentation("aarch64-darwin") aarch64_darwin
 }
 
+immutable GitHubOS[string] osMap;
+
+shared static this()
+{
+    import std.exception : assumeUnique;
+    import std.conv : to;
+
+    GitHubOS[string] temp = [
+        "ubuntu-latest": GitHubOS.ubuntuLatest,
+        "self-hosted": GitHubOS.selfHosted,
+        "macos-14": GitHubOS.macos14
+    ];
+    temp.rehash;
+
+    osMap = assumeUnique(temp);
+}
+
 GitHubOS getGHOS(string os)
 {
-    switch (os)
-    {
-    case "self-hosted":
-        return GitHubOS.selfHosted;
-    case "ubuntu-latest":
-        return GitHubOS.ubuntuLatest;
-    case "macos-14":
-        return GitHubOS.macos14;
-    default:
-        return GitHubOS.selfHosted;
-    }
+    return os in osMap ? osMap[os] : GitHubOS.selfHosted;
 }
 
 @("getGHOS")
@@ -63,19 +71,26 @@ unittest
     assert(getGHOS("crazyos-inator-2000") == GitHubOS.selfHosted);
 }
 
+immutable SupportedSystem[string] systemMap;
+
+shared static this()
+{
+    import std.exception : assumeUnique;
+    import std.conv : to;
+
+    SupportedSystem[string] temp = [
+        "x86_64-linux": SupportedSystem.x86_64_linux,
+        "x86_64-darwin": SupportedSystem.x86_64_darwin,
+        "aarch64-darwin": SupportedSystem.aarch64_darwin
+    ];
+    temp.rehash;
+
+    systemMap = assumeUnique(temp);
+}
+
 SupportedSystem getSystem(string system)
 {
-    switch (system)
-    {
-    case "x86_64-linux":
-        return SupportedSystem.x86_64_linux;
-    case "x86_64-darwin":
-        return SupportedSystem.x86_64_darwin;
-    case "aarch64-darwin":
-        return SupportedSystem.aarch64_darwin;
-    default:
-        return SupportedSystem.x86_64_linux;
-    }
+    return system in systemMap ? systemMap[system] : SupportedSystem.x86_64_linux;
 }
 
 @("getSystem")
@@ -132,16 +147,27 @@ struct SummaryTableEntry
     SummaryTableEntry_aarch64 aarch64;
 }
 
+enum Status : string
+{
+    cached = "✅ cached",
+    notSupported = "🚫 not supported",
+    building = "⏳ building...",
+    buildFailed = "❌ build failed"
+}
+
 version (unittest)
 {
     static immutable SummaryTableEntry[] testSummaryTableEntryArray = [
-        SummaryTableEntry("testPackage", SummaryTableEntry_x86_64("✅ cached", "✅ cached"), SummaryTableEntry_aarch64("🚫 not supported")),
-        SummaryTableEntry("testPackage2", SummaryTableEntry_x86_64("⏳ building...", "❌ build failed"), SummaryTableEntry_aarch64(
-                "⏳ building..."))
+        SummaryTableEntry("testPackage",
+            SummaryTableEntry_x86_64(Status.cached, Status.cached),
+            SummaryTableEntry_aarch64(Status.notSupported)),
+        SummaryTableEntry("testPackage2",
+            SummaryTableEntry_x86_64(Status.building, Status.buildFailed),
+            SummaryTableEntry_aarch64(Status.building))
     ];
 }
 
-immutable Params params;
+Params params;
 
 version (unittest) {} else
 shared static this()
@@ -217,10 +243,8 @@ struct Params
     }
 }
 
-GitHubOS systemToGHPlatform(SupportedSystem os)
-{
-    return os == SupportedSystem.x86_64_linux ? GitHubOS.selfHosted : GitHubOS.macos14;
-}
+GitHubOS systemToGHPlatform(SupportedSystem os) =>
+    os == SupportedSystem.x86_64_linux ? GitHubOS.selfHosted : GitHubOS.macos14;
 
 @("systemToGHPlatform")
 unittest
@@ -361,13 +385,13 @@ Package[] nixEvalJobs(string flakeAttrPrefix, string cachixUrl, bool doCheck = t
             @MaxWidth(80) string output;
         }
 
-        Output(
+        Output output = {
             isCached: pkg.isCached,
             os: pkg.os,
             attr: pkg.attrPath,
             output: pkg.output
-        ).writeRecordAsTable(stderr.lockingTextWriter);
-
+        };
+        output.writeRecordAsTable(stderr.lockingTextWriter);
         return errorsReported;
     })(false);
 
@@ -418,41 +442,39 @@ Package[] nixEvalForAllSystems()
         .array;
 }
 
+static const MAX_WORKERS = 8;
+
 int getNixEvalWorkerCount()
 {
-    return params.maxWorkers == 0 ? (threadsPerCPU() < 8 ? threadsPerCPU() : 8) : params.maxWorkers;
+    return params.maxWorkers == 0 ? (threadsPerCPU() < MAX_WORKERS ? threadsPerCPU() : MAX_WORKERS)
+        : params.maxWorkers;
 }
 
 @("getNixEvalWorkerCount")
 unittest
 {
-    assert(getNixEvalWorkerCount() == (threadsPerCPU() < 8 ? threadsPerCPU() : 8));
+    assert(getNixEvalWorkerCount() == (threadsPerCPU() < MAX_WORKERS ? threadsPerCPU() : MAX_WORKERS));
+}
+
+string[] meminfo;
+
+int getMemoryStat(string statName, string excludeName = "EXCLUDE")
+{
+    return meminfo
+        .find!(a => a.indexOf(statName) != -1 && a.indexOf(excludeName) == -1)
+        .front
+        .split[1].to!int;
 }
 
 int getAvailableMemoryMB()
 {
+    meminfo = "/proc/meminfo".readText
+        .splitLines;
 
-    // free="$(< /proc/meminfo grep MemFree | tr -s ' ' | cut -d ' ' -f 2)"
-    int free = "/proc/meminfo".readText
-        .splitLines
-        .find!(a => a.indexOf("MemFree") != -1)
-        .front
-        .split[1].to!int;
-    int cached = "/proc/meminfo".readText
-        .splitLines
-        .find!(a => a.indexOf("Cached") != -1 && a.indexOf("SwapCached") == -1)
-        .front
-        .split[1].to!int;
-    int buffers = "/proc/meminfo".readText
-        .splitLines
-        .find!(a => a.indexOf("Buffers") != -1)
-        .front
-        .split[1].to!int;
-    int shmem = "/proc/meminfo".readText
-        .splitLines
-        .find!(a => a.indexOf("Shmem:") != -1)
-        .front
-        .split[1].to!int;
+    int free = getMemoryStat("MemFree");
+    int cached = getMemoryStat("Cached", "SwapCached");
+    int buffers = getMemoryStat("Buffers");
+    int shmem = getMemoryStat("Shmem:");
     int maxMemoryMB = params.maxMemory == 0 ? ((free + cached + buffers + shmem) / 1024)
         : params.maxMemory;
     return maxMemoryMB;
@@ -461,7 +483,13 @@ int getAvailableMemoryMB()
 @("getAvailableMemoryMB")
 unittest
 {
+    // Test when params.maxMemory is 0
+    params.maxMemory = 0;
     assert(getAvailableMemoryMB() > 0);
+
+    // Test when params.maxMemory is not 0
+    params.maxMemory = 1024;
+    assert(getAvailableMemoryMB() == 1024);
 }
 
 void saveCachixDeploySpec(Package[] packages)
@@ -490,9 +518,19 @@ unittest
 
 void saveGHCIMatrix(Package[] packages)
 {
-    auto matrix = JSONValue([
+    auto matrix = createMatrix(packages);
+    writeMatrix(matrix);
+}
+
+JSONValue createMatrix(Package[] packages)
+{
+    return JSONValue([
         "include": JSONValue(packages.map!(pkg => pkg.toJSON()).array)
     ]);
+}
+
+void writeMatrix(JSONValue matrix)
+{
     string resPath = rootDir.buildPath(params.isInitial ? "matrix-pre.json" : "matrix-post.json");
     resPath.write(JSONValue(matrix).toString(JSONOptions.doNotEscapeSlashes));
 }
@@ -508,13 +546,20 @@ unittest
         .buildPath(params.isInitial ? "matrix-pre.json" : "matrix-post.json")
         .readText
         .parseJSON;
-    assert(testPackageArray[0].name == matrix["include"][0]["name"].str);
+    foreach (i, pkg; testPackageArray)
+    {
+        assert(pkg.name == matrix["include"][i]["name"].str);
+    }
 }
 
 void saveGHCIComment(SummaryTableEntry[] tableSummaryJSON)
 {
-    import std.path : buildNormalizedPath, absolutePath;
+    string comment = createComment(tableSummaryJSON);
+    writeComment(comment);
+}
 
+string createComment(SummaryTableEntry[] tableSummaryJSON)
+{
     string comment = "Thanks for your Pull Request!";
     comment ~= "\n\nBelow you will find a summary of the cachix status of each package, for each supported platform.";
     comment ~= "\n\n| package | `x86_64-linux` | `x86_64-darwin` | `aarch64-darwin` |";
@@ -522,6 +567,12 @@ void saveGHCIComment(SummaryTableEntry[] tableSummaryJSON)
     comment ~= tableSummaryJSON.map!(
         pkg => "\n| " ~ pkg.name ~ " | " ~ pkg.x86_64.linux ~ " | " ~ pkg.x86_64.darwin ~ " | " ~ pkg.aarch64.darwin ~ " |")
         .join("");
+    return comment;
+}
+
+void writeComment(string comment)
+{
+    import std.path : buildNormalizedPath, absolutePath;
 
     auto outputPath = rootDir.buildNormalizedPath("comment.md");
     write(outputPath, comment);
@@ -551,20 +602,20 @@ string getStatus(JSONValue pkg, string key, bool isInitial)
     {
         if (pkg[key]["isCached"].boolean)
         {
-            return "[✅ cached](" ~ pkg[key]["cacheUrl"].str ~ ")";
+            return "[" ~ Status.cached ~ "](" ~ pkg[key]["cacheUrl"].str ~ ")";
         }
         else if (isInitial)
         {
-            return "⏳ building...";
+            return Status.building;
         }
         else
         {
-            return "❌ build failed";
+            return Status.buildFailed;
         }
     }
     else
     {
-        return "🚫 not supported";
+        return Status.notSupported;
     }
 }
 
@@ -573,31 +624,30 @@ SummaryTableEntry[] convertNixEvalToTableSummary(
     bool isInitial
 )
 {
-
-    SummaryTableEntry[] tableSummary = packages
+    return packages
         .chunkBy!((a, b) => a.name == b.name)
-        .map!((group) {
-            JSONValue pkg;
-            string name = group.array.front.name;
-            pkg["name"] = JSONValue(name);
-            foreach (item; group)
-            {
-                pkg[item.system.to!string] = item.toJSON();
-            }
-            SummaryTableEntry entry = {
-                name, {
-                    getStatus(pkg, "x86_64_linux", isInitial),
-                    getStatus(pkg, "x86_64_darwin", isInitial)
-                }, {
-                    getStatus(pkg, "aarch64_darwin", isInitial)
-                }
-            };
-            return entry;
-        })
+        .map!(group => createSummaryTableEntry(group.array, isInitial))
         .array
         .sort!((a, b) => a.name < b.name)
         .release;
-    return tableSummary;
+}
+
+SummaryTableEntry createSummaryTableEntry(const(Package)[] group, bool isInitial)
+{
+    JSONValue pkg;
+    string name = group.front.name;
+    pkg["name"] = JSONValue(name);
+    foreach (item; group)
+        pkg[item.system.to!string] = item.toJSON();
+    SummaryTableEntry entry = {
+        name, {
+            getStatus(pkg, "x86_64_linux", isInitial),
+            getStatus(pkg, "x86_64_darwin", isInitial)
+        }, {
+            getStatus(pkg, "aarch64_darwin", isInitial)
+        }
+    };
+    return entry;
 }
 
 @("convertNixEvalToTableSummary/getStatus")
@@ -608,27 +658,26 @@ unittest
         isInitial: false
     );
     assert(tableSummary[0].name == testPackageArray[0].name);
-    assert(tableSummary[0].x86_64.linux == "[✅ cached](https://testPackage.com)");
-    assert(tableSummary[0].x86_64.darwin == "🚫 not supported");
-    assert(tableSummary[0].aarch64.darwin == "🚫 not supported");
+    assert(tableSummary[0].x86_64.linux == "[" ~ Status.cached ~ "](https://testPackage.com)");
+    assert(tableSummary[0].x86_64.darwin == Status.notSupported);
+    assert(tableSummary[0].aarch64.darwin == Status.notSupported);
     assert(tableSummary[1].name == testPackageArray[1].name);
-    assert(tableSummary[1].x86_64.linux == "🚫 not supported");
-    assert(tableSummary[1].x86_64.darwin == "🚫 not supported");
-    assert(tableSummary[1].aarch64.darwin == "❌ build failed");
+    assert(tableSummary[1].x86_64.linux == Status.notSupported);
+    assert(tableSummary[1].x86_64.darwin == Status.notSupported);
+    assert(tableSummary[1].aarch64.darwin == Status.buildFailed);
 
     tableSummary = convertNixEvalToTableSummary(
         testPackageArray,
         isInitial: true
     );
     assert(tableSummary[0].name == testPackageArray[0].name);
-    assert(tableSummary[0].x86_64.linux == "[✅ cached](https://testPackage.com)");
-    assert(tableSummary[0].x86_64.darwin == "🚫 not supported");
-    assert(tableSummary[0].aarch64.darwin == "🚫 not supported");
+    assert(tableSummary[0].x86_64.linux == "[" ~ Status.cached ~ "](https://testPackage.com)");
+    assert(tableSummary[0].x86_64.darwin == Status.notSupported);
+    assert(tableSummary[0].aarch64.darwin == Status.notSupported);
     assert(tableSummary[1].name == testPackageArray[1].name);
-    assert(tableSummary[1].x86_64.linux == "🚫 not supported");
-    assert(tableSummary[1].x86_64.darwin == "🚫 not supported");
-    assert(tableSummary[1].aarch64.darwin == "⏳ building...");
-
+    assert(tableSummary[1].x86_64.linux == Status.notSupported);
+    assert(tableSummary[1].x86_64.darwin == Status.notSupported);
+    assert(tableSummary[1].aarch64.darwin == Status.building);
 }
 
 void printTableForCacheStatus(Package[] packages)
@@ -645,7 +694,7 @@ Package checkPackage(Package pkg)
 {
     import std.algorithm : canFind;
     import std.string : lineSplitter;
-    import std.net.curl : HTTP, httpGet = get, HTTPStatusException;
+    import std.net.curl : HTTP, httpGet = get, HTTPStatusException, CurlException;
 
     auto http = HTTP();
     http.addRequestHeader("Authorization", "Bearer " ~ params.cachixAuthToken);
@@ -663,6 +712,11 @@ Package checkPackage(Package pkg)
         else
             throw e;
     }
+    catch (CurlException e)
+    {
+        // Handle network errors
+        pkg.isCached = false;
+    }
 
     return pkg;
 }
@@ -674,11 +728,10 @@ unittest
     const storePathHash = "mdb034kf7sq6g03ric56jxr4a7043l41";
     const storePath = "/nix/store/" ~ storePathHash ~ "-hello-2.12.1";
 
-    auto testPackage = Package(
-output : storePath,
-cacheUrl:
-        nixosCacheEndpoint ~ storePathHash ~ ".narinfo",
-    );
+    Package testPackage = {
+        output: storePath,
+        cacheUrl: nixosCacheEndpoint ~ storePathHash ~ ".narinfo",
+    };
 
     assert(!testPackage.isCached);
     assert(checkPackage(testPackage).isCached);
@@ -704,8 +757,26 @@ Package[] getPrecalcMatrix()
             isCached: pkg["isCached"].boolean,
             os: getGHOS(pkg["os"].str),
             system: getSystem(pkg["system"].str),
-            output: pkg["output"].str};
-            return result;
-        }).array;
+            output: pkg["output"].str
+        };
+        return result;
+    }).array;
 
-    }
+}
+
+@("getPrecalcMatrix")
+unittest
+{
+    string precalcMatrixStr = "{\"include\": [{\"name\": \"test\", \"allowedToFail\": false, \"attrPath\": \"test\", \"cacheUrl\": \"url\", \"isCached\": true, \"os\": \"linux\", \"system\": \"x86_64-linux\", \"output\": \"output\"}]}";
+    params.precalcMatrix = precalcMatrixStr;
+    auto packages = getPrecalcMatrix();
+    assert(packages.length == 1);
+    assert(packages[0].name == "test");
+    assert(!packages[0].allowedToFail);
+    assert(packages[0].attrPath == "test");
+    assert(packages[0].cacheUrl == "url");
+    assert(packages[0].isCached);
+    assert(packages[0].os == GitHubOS.selfHosted);
+    assert(packages[0].system == SupportedSystem.x86_64_linux);
+    assert(packages[0].output == "output");
+}
