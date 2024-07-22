@@ -1,16 +1,21 @@
 module mcl.commands.shard_matrix;
 
-import std.path : buildPath;
-import std.file : append, write;
+
+import std.algorithm : map;
+import std.array : array;
 import std.conv : to, parse;
+import std.file : append, write;
+import std.logger : errorf, infof;
+import std.path : buildPath;
+import std.range : iota;
+import std.regex : matchFirst, regex;
 import std.stdio : writeln;
 import std.string : strip;
-import std.regex : matchFirst, regex;
 
-import mcl.utils.nix : nix;
-import mcl.utils.path : createResultDirs, resultDir, rootDir;
 import mcl.utils.env : parseEnv, optional;
 import mcl.utils.json : toJSON;
+import mcl.utils.nix : nix;
+import mcl.utils.path : createResultDirs, resultDir, rootDir;
 
 export void shard_matrix()
 {
@@ -45,9 +50,12 @@ ShardMatrix generateShardMatrix()
 {
     try
     {
-        const shardCount = nix.eval(".#legacyPackages.x86_64-linux.shardCount", [
-                "--quiet"
-            ]).matchFirst(regex(`\d+`))[0].to!int;
+        const shardCount = nix.eval(".#legacyPackages.x86_64-linux.shardCount")
+            .strip()
+            .to!int;
+
+        infof("shardCount: %s", shardCount);
+
         return splitToShards(shardCount);
     }
     catch (Exception e)
@@ -57,8 +65,8 @@ ShardMatrix generateShardMatrix()
         }
         else
         {
-            writeln("Error: ", e.msg);
-            writeln("No shards found, exiting");
+            errorf("Error: %s", e.msg);
+            errorf("No shards found, exiting");
         }
         return ShardMatrix([Shard("", "", -1)]);
     }
@@ -80,12 +88,11 @@ unittest
 ShardMatrix splitToShards(int shardCount)
 {
     ShardMatrix shards;
-    const numShards = shardCount - 1;
-    for (int i = 0; i <= numShards; i++)
-    {
-        Shard shard = {"legacyPackages", "shards." ~ i.to!string, i};
-        shards.include ~= shard;
-    }
+    shards.include = shardCount
+        .iota
+        .map!(i => Shard("legacyPackages", "shards." ~ i.to!string, i))
+        .array;
+
     return shards;
 }
 
@@ -108,17 +115,18 @@ unittest
 
 void saveShardMatrix(ShardMatrix matrix, Params params)
 {
-    const matrixString = matrix.toJSON().toString();
-    const matrixJson = "gen_matrix=" ~ matrixString;
-    writeln(matrixJson);
+    const matrixJson = matrix.toJSON();
+    const matrixString = matrixJson.toString();
+    infof("Shard matrix: %s", matrixJson.toPrettyString);
+    const envLine = "gen_matrix=" ~ matrixString;
     if (params.githubOutput != "")
     {
-        params.githubOutput.append(matrixJson);
+        params.githubOutput.append(envLine);
     }
     else
     {
         createResultDirs();
-        resultDir.buildPath("gh-output.env").append(matrixJson);
+        resultDir.buildPath("gh-output.env").append(envLine);
     }
     rootDir.buildPath("shardMatrix.json").write(matrixString);
 
