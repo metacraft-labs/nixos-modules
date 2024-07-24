@@ -7,14 +7,13 @@ import std.file : mkdirRecurse, rmdir, exists;
 
 string getTopLevel()
 {
-    version (unittest)
-    {
-        return "/tmp/";
-    }
-    else
-    {
-        return execute(["git", "rev-parse", "--show-toplevel"]).output.strip ~ "/";
-    }
+    import std.process : environment;
+    import mcl.utils.user_info : isNixbld;
+
+    if (isNixbld)
+        return environment["NIX_BUILD_TOP"];
+
+    return execute(["git", "rev-parse", "--show-toplevel"]).output.strip ~ "/";
 }
 
 string _rootDir = "";
