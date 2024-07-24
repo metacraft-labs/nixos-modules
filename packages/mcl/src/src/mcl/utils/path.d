@@ -4,6 +4,16 @@ import mcl.utils.test;
 import std.process : execute;
 import std.string : strip;
 import std.file : mkdirRecurse, rmdir, exists;
+import std.path : buildPath;
+
+immutable string rootDir, resultDir, gcRootsDir;
+
+shared static this()
+{
+    rootDir = getTopLevel();
+    resultDir = rootDir.buildPath(".result");
+    gcRootsDir = resultDir.buildPath("gc-roots");
+}
 
 string getTopLevel()
 {
@@ -13,43 +23,25 @@ string getTopLevel()
     if (isNixbld)
         return environment["NIX_BUILD_TOP"];
 
-    return execute(["git", "rev-parse", "--show-toplevel"]).output.strip ~ "/";
-}
-
-string _rootDir = "";
-string rootDir()
-{
-    return _rootDir == "" ? _rootDir = getTopLevel() : _rootDir;
+    return execute(["git", "rev-parse", "--show-toplevel"]).output.strip;
 }
 
 @("rootDir")
 unittest
 {
-    assert(rootDir() == getTopLevel());
-}
-
-string _resultDir = "";
-string resultDir()
-{
-    return _resultDir == "" ? _resultDir = rootDir() ~ ".result/" : _resultDir;
+    assert(rootDir == getTopLevel());
 }
 
 @("resultDir")
 unittest
 {
-    assert(resultDir() == rootDir() ~ ".result/");
-}
-
-string _gcRootsDir = "";
-string gcRootsDir()
-{
-    return _gcRootsDir == "" ? _gcRootsDir = resultDir() ~ "gc-roots/" : _gcRootsDir;
+    assert(resultDir == rootDir.buildPath(".result"));
 }
 
 @("gcRootsDir")
 unittest
 {
-    assert(gcRootsDir() == resultDir() ~ "gc-roots/");
+    assert(gcRootsDir == resultDir.buildPath("gc-roots"));
 }
 
 void createResultDirs()
