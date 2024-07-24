@@ -46,43 +46,67 @@ struct ShardMatrix
     Shard[] include;
 }
 
-ShardMatrix generateShardMatrix()
+ShardMatrix generateShardMatrix(string flakeRef = ".")
 {
-    try
-    {
-        const shardCount = nix.eval(".#legacyPackages.x86_64-linux.shardCount")
-            .strip()
-            .to!int;
+    import std.path : isValidPath, absolutePath, buildNormalizedPath;
 
-        infof("shardCount: %s", shardCount);
-
-        return splitToShards(shardCount);
+    if (flakeRef.isValidPath) {
+        flakeRef = flakeRef.absolutePath.buildNormalizedPath;
     }
-    catch (Exception e)
+
+    const shardCountOutput = nix.eval("", [
+        "--impure",
+        "--expr",
+        `(builtins.getFlake "` ~ flakeRef ~ `").outputs.legacyPackages.x86_64-linux.mcl.matrix.shardCount or 0`
+    ]);
+
+    infof("shardCount: '%s'", shardCountOutput);
+
+    const shardCount = shardCountOutput
+        .strip()
+        .to!uint;
+
+    if (shardCount == 0)
     {
-        version (unittest)
-        {
-        }
-        else
-        {
-            errorf("Error: %s", e.msg);
-            errorf("No shards found, exiting");
-        }
+        errorf("No shards found, exiting");
         return ShardMatrix([Shard("", "", -1)]);
     }
 
+    return splitToShards(shardCount);
 }
 
-@("generateShardMatrix")
+@("generateShardMatrix.ok")
 unittest
 {
-    auto shards = generateShardMatrix();
-    //this repo doesn't include shards, so we should get the error message
+    version (none)
+    {
+        // See: https://github.com/metacraft-labs/nixos-modules/blob/b70f5bf556a0afc25d45ff5abd9d4eeae58d2647/flake.nix
+        auto flakeRef = "github:metacraft-labs/nixos-modules?rev=b70f5bf556a0afc25d45ff5abd9d4eeae58d2647";
+    }
+    else
+    {
+        import mcl.utils.path : rootDir;
+        auto flakeRef = rootDir.buildPath("packages/mcl/src/src/mcl/utils/test/nix/shard-matrix-ok");
+    }
+
+    auto shards = generateShardMatrix(flakeRef);
+    assert(shards.include.length == 11);
+    assert(shards.include[0].prefix == "legacyPackages");
+    assert(shards.include[0].postfix == "shards.0");
+    assert(shards.include[0].digit == 0);
+}
+
+@("generateShardMatrix.fail")
+unittest
+{
+    import mcl.utils.path : rootDir;
+    auto flakeRef = rootDir.buildPath("packages/mcl/src/src/mcl/utils/test/nix/shard-matrix-no-shards");
+
+    auto shards = generateShardMatrix(flakeRef);
     assert(shards.include.length == 1);
     assert(shards.include[0].prefix == "");
     assert(shards.include[0].postfix == "");
     assert(shards.include[0].digit == -1);
-
 }
 
 ShardMatrix splitToShards(int shardCount)

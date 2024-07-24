@@ -27,6 +27,7 @@
       "(nix\\.(build|run))"
       "fetchJson|(coda\.)"
       "checkPackage"
+      "generateShardMatrix"
     ]
   );
 in
