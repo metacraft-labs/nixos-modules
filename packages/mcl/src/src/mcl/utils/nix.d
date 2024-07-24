@@ -256,7 +256,7 @@ unittest
     auto p = __FILE__.absolutePath.dirName;
 
     string output = nix().run(p ~ "/test/test.nix", [ "--file"]);
-    assert(output == "Hello World");
+    assert(output == "Hello World", "Expected 'Hello World', got: " ~ output);
 }
 
 @("nix.build!JSONValue")
@@ -266,10 +266,13 @@ unittest
     import std.range : front;
 
     import std.path : absolutePath, dirName;
+    import std.json : JSONType;
 
     auto p = __FILE__.absolutePath.dirName;
 
-    JSONValue output = nix().build!JSONValue(p ~ "/test/test.nix", ["--file"]).array.front;
+    JSONValue output = nix().build!JSONValue(p ~ "/test/test.nix", ["--file"]);
+    assert(output.type == JSONType.array, "Expected an array, got: " ~ output.type.to!string);
+    output = output.array.front;
     assert(execute([output["outputs"]["out"].str ~ "/bin/helloWorld"]).strip == "Hello World");
 }
 
