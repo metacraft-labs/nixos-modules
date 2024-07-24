@@ -15,16 +15,19 @@ T execute(T = string)(string[] args, bool printCommand = true, bool returnErr = 
 {
     import std.exception : enforce;
     import std.format : format;
-    import std.process : pipeShell, wait, Redirect;
+    import std.process : pipeShell, wait, Redirect, escapeShellCommand;
     import std.logger : logf, LogLevel;
     import std.array : join;
+    import std.algorithm : map;
     import std.conv : to;
+
+    auto cmd = args.map!escapeShellCommand.join(" ");
 
     if (printCommand)
     {
-        LogLevel.info.logf("$ %-(%s %)", args);
+        LogLevel.info.logf("\n$ `%s`", cmd);
     }
-    auto res = pipeShell(args.join(" "), Redirect.all);
+    auto res = pipeShell(cmd, Redirect.all);
     static if (is(T == ProcessPipes))
     {
         return res;

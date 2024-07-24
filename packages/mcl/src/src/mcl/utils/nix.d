@@ -75,28 +75,18 @@ struct NixCommand
                 "`" ~ commandName ~ "` is not a valid Nix command."
             );
 
-            enum isJSON = is(T == JSONValue);
 
-            version (unittest)
-            {
-                auto command = [
-                    "nix", "--experimental-features", "\'nix-command flakes\'",
-                    commandName,
-                    (isJSON ? "--json" : "")
-                ] ~ args ~ path;
-            }
-            else
-            {
-                if (isJSON)
-                {
-                    args = "--json" ~ args;
-                }
-                auto command = ["nix", commandName] ~ args ~ path;
-            }
+            static if (is(T == JSONValue))
+                args = ["--json"] ~ args;
 
-            auto output = command.execute(false).strip();
+            auto command = [
+                "nix", "--experimental-features", "nix-command flakes",
+                commandName,
+            ] ~ args ~ path;
 
-            static if (isJSON)
+            auto output = command.execute(true).strip();
+
+            static if (is(T == JSONValue))
                 return parseJSON(output);
             else
                 return output;
