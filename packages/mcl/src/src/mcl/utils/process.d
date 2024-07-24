@@ -7,6 +7,8 @@ import std.json : JSONValue, parseJSON;
 
 bool isRoot() => geteuid() == 0;
 
+string bold(string s) => "\033[1m" ~ s ~ "\033[0m";
+
 T execute(T = string)(string args, bool printCommand = true, bool returnErr = false) if (is(T == string) || is(T == ProcessPipes) || is(T == JSONValue))
 {
     return execute!T(args.split(" "), printCommand, returnErr);
@@ -16,7 +18,7 @@ T execute(T = string)(string[] args, bool printCommand = true, bool returnErr = 
     import std.exception : enforce;
     import std.format : format;
     import std.process : pipeShell, wait, Redirect, escapeShellCommand;
-    import std.logger : logf, LogLevel;
+    import std.logger : infof, logf, LogLevel;
     import std.array : join;
     import std.algorithm : map;
     import std.conv : to;
@@ -40,6 +42,14 @@ T execute(T = string)(string[] args, bool printCommand = true, bool returnErr = 
 
         int status = wait(res.pid);
         // enforce(status == 0, "Command `%s` failed with status %s, stderr: \n%s".format(args, status, stderr));
+
+        infof("
+        ---
+        $ `%s`
+        stdout: `%s`
+        stderr: `%s`
+        ---", cmd.bold, stdout.bold, stderr.bold);
+
         if (returnErr)
         {
             output = stderr;
