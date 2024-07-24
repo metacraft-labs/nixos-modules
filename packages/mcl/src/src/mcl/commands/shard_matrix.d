@@ -1,5 +1,6 @@
 module mcl.commands.shard_matrix;
 
+import std.path : buildPath;
 import std.file : append, write;
 import std.conv : to, parse;
 import std.stdio : writeln;
@@ -117,8 +118,8 @@ void saveShardMatrix(ShardMatrix matrix, Params params)
     else
     {
         createResultDirs();
-        (resultDir() ~ "gh-output.env").append(matrixJson);
+        resultDir.buildPath("gh-output.env").append(matrixJson);
     }
-    (rootDir() ~ "shardMatrix.json").write(matrixString);
+    rootDir.buildPath("shardMatrix.json").write(matrixString);
 
 }

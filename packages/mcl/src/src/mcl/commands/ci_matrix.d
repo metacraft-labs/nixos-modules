@@ -10,6 +10,7 @@ import std.conv : to;
 import std.json : JSONValue, parseJSON, JSONOptions;
 import std.regex : matchFirst;
 import core.cpuid : threadsPerCPU;
+import std.path : buildPath;
 import std.process : pipeProcess, wait, Redirect, kill;
 import std.exception : enforce;
 import std.format : fmt = format;
@@ -380,7 +381,7 @@ void saveCachixDeploySpec(Package[] packages)
             "package": pkg.name,
             "out": pkg.output
         ])).array;
-    auto resPath = resultDir() ~ "/cachix-deploy-spec.json";
+    auto resPath = resultDir.buildPath("cachix-deploy-spec.json");
     resPath.write(JSONValue(agents).toString(JSONOptions.doNotEscapeSlashes));
 }
 
@@ -391,7 +392,7 @@ unittest
 
     createResultDirs();
     saveCachixDeploySpec(cast(Package[]) testPackageArray);
-    JSONValue deploySpec = parseJSON((resultDir() ~ "/cachix-deploy-spec.json").readText);
+    JSONValue deploySpec = parseJSON(resultDir.buildPath("cachix-deploy-spec.json").readText);
     assert(testPackageArray[1].name == deploySpec[0]["package"].str);
     assert(testPackageArray[1].output == deploySpec[0]["out"].str);
 }
@@ -401,7 +402,7 @@ void saveGHCIMatrix(Package[] packages)
     auto matrix = JSONValue([
         "include": JSONValue(packages.map!(pkg => pkg.toJSON()).array)
     ]);
-    string resPath = rootDir() ~ (params.isInitial ? "matrix-pre.json" : "matrix-post.json");
+    string resPath = rootDir.buildPath(params.isInitial ? "matrix-pre.json" : "matrix-post.json");
     resPath.write(JSONValue(matrix).toString(JSONOptions.doNotEscapeSlashes));
 }
 
@@ -412,8 +413,10 @@ unittest
 
     createResultDirs();
     saveGHCIMatrix(cast(Package[]) testPackageArray);
-    JSONValue matrix = parseJSON((rootDir() ~ (params.isInitial ? "matrix-pre.json"
-            : "matrix-post.json")).readText);
+    JSONValue matrix = rootDir
+        .buildPath(params.isInitial ? "matrix-pre.json" : "matrix-post.json")
+        .readText
+        .parseJSON;
     assert(testPackageArray[0].name == matrix["include"][0]["name"].str);
 }
 
@@ -429,7 +432,7 @@ void saveGHCIComment(SummaryTableEntry[] tableSummaryJSON)
         pkg => "\n| " ~ pkg.name ~ " | " ~ pkg.x86_64.linux ~ " | " ~ pkg.x86_64.darwin ~ " | " ~ pkg.aarch64.darwin ~ " |")
         .join("");
 
-    auto outputPath = rootDir().buildPath("comment.md").absolutePath;
+    auto outputPath = rootDir.buildPath("comment.md").absolutePath;
     write(outputPath, comment);
     infof("Wrote GitHub comment file to '%s'", outputPath);
 }
@@ -441,7 +444,7 @@ unittest
 
     createResultDirs();
     saveGHCIComment(cast(SummaryTableEntry[]) testSummaryTableEntryArray);
-    string comment = (rootDir() ~ "comment.md").readText;
+    string comment = rootDir.buildPath("comment.md").readText;
     foreach (pkg; testSummaryTableEntryArray)
     {
         assert(comment.indexOf(pkg.name) != -1);
