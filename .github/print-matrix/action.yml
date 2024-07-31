@@ -21,8 +21,8 @@ inputs:
   precalc_matrix:
     description: Pre-calculated matrix
     required: true
-  token:
-    description: GitHub token
+  pr-comment-github-token:
+    description: GitHub token used to post the PR comment
     required: true
 
 outputs:
@@ -63,6 +63,6 @@ runs:
     - name: Update GitHub Comment
       uses: marocchino/sticky-pull-request-comment@v2.9.0
       with:
-        GITHUB_TOKEN: ${{ inputs.token }}
+        GITHUB_TOKEN: ${{ inputs.pr-comment-github-token }}
         recreate: true
         path: comment.md
