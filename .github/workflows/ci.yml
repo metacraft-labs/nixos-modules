@@ -161,7 +161,7 @@ jobs:
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
           precalc_matrix: ${{ steps.matrix.outputs.fullMatrix }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+          pr-comment-github-token: ${{ secrets.GITHUB_TOKEN }}
 
   build:
     needs: slurp-matrix
@@ -213,7 +213,7 @@ jobs:
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
           precalc_matrix: ${{ needs.slurp-matrix.outputs.fullMatrix }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+          pr-comment-github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - run: exit 1
         if: >-
