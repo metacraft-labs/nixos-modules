@@ -16,6 +16,10 @@ inputs:
     description: Substituters
     required: false
     default: ''
+  nix-github-token:
+    description: GitHub token to add as access-token in nix.conf
+    default: ''
+    required: false
 
 runs:
   using: "composite"
@@ -25,6 +29,7 @@ runs:
       if: ${{ runner.environment == 'github-hosted' }}
       with:
         extra_nix_config: |
+          ${{ inputs.nix-github-token != '' && format('access-tokens = github.com={0}', inputs.nix-github-token) || '' }}
           accept-flake-config = true
           allow-import-from-derivation = true
           substituters = https://cache.nixos.org ${{inputs.substituters}}

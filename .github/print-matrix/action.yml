@@ -24,6 +24,10 @@ inputs:
   pr-comment-github-token:
     description: GitHub token used to post the PR comment
     required: true
+  nix-github-token:
+    description: GitHub token to add as access-token in nix.conf
+    default: ''
+    required: false
 
 outputs:
   matrix:
@@ -43,6 +47,7 @@ runs:
         cachix-auth-token: ${{ inputs.CACHIX_AUTH_TOKEN }}
         trusted-public-keys: ${{ inputs.TRUSTED_PUBLIC_KEYS }}
         substituters: ${{ inputs.SUBSTITUTERS }}
+        nix-github-token: ${{ inputs.nix-github-token }}
 
     - name: Print CI Matrix
       id: print-matrix
