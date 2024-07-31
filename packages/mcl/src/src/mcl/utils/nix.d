@@ -261,6 +261,12 @@ string toNix(T)(in T value, string[] inputs = [], bool topLevel = true, int dept
 @("toNix")
 unittest
 {
+    void assertToNix(T)(T input, string expected)
+    {
+        auto actual = toNix(input);
+        assert(actual == expected, fmt("For input '%s', expected '%s', but got '%s'", input, expected, actual));
+    }
+
     struct TestStruct
     {
         int a;
@@ -268,10 +274,10 @@ unittest
         bool c;
     }
 
-    assert(toNix(TestStruct(1, "hello", true)) == "{\n\ta = 1;\n\tb = \"hello\";\n\tc = true;\n}");
-    assert(toNix(true) == "true");
-    assert(toNix("hello") == "\"hello\"");
-    assert(toNix(1) == "1");
+    assertToNix(TestStruct(1, "hello", true), "{\n\ta = 1;\n\tb = \"hello\";\n\tc = true;\n}");
+    assertToNix(true, "true");
+    assertToNix("hello", "\"hello\"");
+    assertToNix(1, "1");
 
     struct TestStruct2
     {
@@ -279,7 +285,7 @@ unittest
         TestStruct b;
     }
 
-    assert(toNix(TestStruct2(1, TestStruct(2, "hello", false))) == "{\n\ta = 1;\n\tb = {\n\t\ta = 2;\n\t\tb = \"hello\";\n\t\tc = false;\n\t};\n}");
+    assertToNix(TestStruct2(1, TestStruct(2, "hello", false)), "{\n\ta = 1;\n\tb = {\n\t\ta = 2;\n\t\tb = \"hello\";\n\t\tc = false;\n\t};\n}");
 }
 
 @("nix.run")
@@ -293,7 +299,7 @@ unittest
     auto p = __FILE__.absolutePath.dirName;
 
     string output = nix().run(p ~ "/test/test.nix", ["--file"]);
-    assert(output == "Hello World", "Expected 'Hello World', got: " ~ output);
+    assert(output == "Hello World", "Expected 'Hello World', but got '" ~ output ~ "'");
 }
 
 @("nix.build!JSONValue")
@@ -310,7 +316,9 @@ unittest
     JSONValue output = nix().build!JSONValue(p ~ "/test/test.nix", ["--file"]);
     assert(output.type == JSONType.array, "Expected an array, got: " ~ output.type.to!string);
     output = output.array.front;
-    assert(execute([output["outputs"]["out"].str ~ "/bin/helloWorld"]).strip == "Hello World");
+    auto actual = execute([output["outputs"]["out"].str ~ "/bin/helloWorld"]).strip;
+    auto expected = "Hello World";
+    assert(actual == expected, fmt("Expected %s, but got %s", expected, actual));
 }
 
 @("nix.eval!JSONValue")
@@ -324,5 +332,6 @@ unittest
     auto expectedOutputFile = inputFile.setExtension("json");
 
     auto output = nix().eval!JSONValue(inputFile, ["--file"]);
-    assert(output == expectedOutputFile.readText.parseJSON);
+    assert(output == expectedOutputFile.readText.parseJSON, "Expected " ~ expectedOutputFile.readText ~ ", but got " ~ output
+            .toString());
 }
