@@ -63,12 +63,18 @@ GitHubOS getGHOS(string os)
     return os in osMap ? osMap[os] : GitHubOS.selfHosted;
 }
 
+void assertGHOS(string input, GitHubOS expected)
+{
+    auto actual = getGHOS(input);
+    assert(actual == expected, fmt("getGHOS(\"%s\") should return %s, but returned %s", input, expected, actual));
+}
+
 @("getGHOS")
 unittest
 {
-    assert(getGHOS("ubuntu-latest") == GitHubOS.ubuntuLatest);
-    assert(getGHOS("macos-14") == GitHubOS.macos14);
-    assert(getGHOS("crazyos-inator-2000") == GitHubOS.selfHosted);
+    assertGHOS("ubuntu-latest", GitHubOS.ubuntuLatest);
+    assertGHOS("macos-14", GitHubOS.macos14);
+    assertGHOS("crazyos-inator-2000", GitHubOS.selfHosted);
 }
 
 immutable SupportedSystem[string] systemMap;
@@ -93,13 +99,19 @@ SupportedSystem getSystem(string system)
     return system in systemMap ? systemMap[system] : SupportedSystem.x86_64_linux;
 }
 
+void assertSystem(string input, SupportedSystem expected)
+{
+    auto actual = getSystem(input);
+    assert(actual == expected, fmt("getSystem(\"%s\") should return %s, but returned %s", input, expected, actual));
+}
+
 @("getSystem")
 unittest
 {
-    assert(getSystem("x86_64-linux") == SupportedSystem.x86_64_linux);
-    assert(getSystem("x86_64-darwin") == SupportedSystem.x86_64_darwin);
-    assert(getSystem("aarch64-darwin") == SupportedSystem.aarch64_darwin);
-    assert(getSystem("bender-bending-rodriguez-os") == SupportedSystem.x86_64_linux);
+    assertSystem("x86_64-linux", SupportedSystem.x86_64_linux);
+    assertSystem("x86_64-darwin", SupportedSystem.x86_64_darwin);
+    assertSystem("aarch64-darwin", SupportedSystem.aarch64_darwin);
+    assertSystem("bender-bending-rodriguez-os", SupportedSystem.x86_64_linux);
 }
 
 struct Package
@@ -246,12 +258,18 @@ struct Params
 GitHubOS systemToGHPlatform(SupportedSystem os) =>
     os == SupportedSystem.x86_64_linux ? GitHubOS.selfHosted : GitHubOS.macos14;
 
+void assertGHPlatform(SupportedSystem system, GitHubOS expected)
+{
+    auto actual = systemToGHPlatform(system);
+    assert(actual == expected, fmt("`systemToGHPlatform(%s)` should return `%s`, but returned `%s`", system, expected, actual));
+}
+
 @("systemToGHPlatform")
 unittest
 {
-    assert(systemToGHPlatform(SupportedSystem.x86_64_linux) == GitHubOS.selfHosted);
-    assert(systemToGHPlatform(SupportedSystem.x86_64_darwin) == GitHubOS.macos14);
-    assert(systemToGHPlatform(SupportedSystem.aarch64_darwin) == GitHubOS.macos14);
+    assertGHPlatform(SupportedSystem.x86_64_linux, GitHubOS.selfHosted);
+    assertGHPlatform(SupportedSystem.x86_64_darwin, GitHubOS.macos14);
+    assertGHPlatform(SupportedSystem.aarch64_darwin, GitHubOS.macos14);
 }
 
 static immutable string[] uselessWarnings =
@@ -453,7 +471,9 @@ int getNixEvalWorkerCount()
 @("getNixEvalWorkerCount")
 unittest
 {
-    assert(getNixEvalWorkerCount() == (threadsPerCPU() < MAX_WORKERS ? threadsPerCPU() : MAX_WORKERS));
+    auto actual = getNixEvalWorkerCount();
+    assert(actual == (threadsPerCPU() < MAX_WORKERS ? threadsPerCPU() : MAX_WORKERS),
+        "getNixEvalWorkerCount() should return the number of threads per CPU if it is less than MAX_WORKERS, otherwise it should return MAX_WORKERS, but returned %s".fmt(actual));
 }
 
 string[] meminfo;
@@ -485,11 +505,13 @@ unittest
 {
     // Test when params.maxMemory is 0
     params.maxMemory = 0;
-    assert(getAvailableMemoryMB() > 0);
+    auto actual = getAvailableMemoryMB();
+    assert(actual > 0, "getAvailableMemoryMB() should return a value greater than 0, but returned %s".fmt(actual));
 
     // Test when params.maxMemory is not 0
     params.maxMemory = 1024;
-    assert(getAvailableMemoryMB() == 1024);
+    actual = getAvailableMemoryMB();
+    assert(actual == 1024, "getAvailableMemoryMB() should return 1024, but returned %s".fmt(actual));
 }
 
 void saveCachixDeploySpec(Package[] packages)
@@ -512,8 +534,14 @@ unittest
     createResultDirs();
     saveCachixDeploySpec(cast(Package[]) testPackageArray);
     JSONValue deploySpec = parseJSON(resultDir.buildPath("cachix-deploy-spec.json").readText);
-    assert(testPackageArray[1].name == deploySpec[0]["package"].str);
-    assert(testPackageArray[1].output == deploySpec[0]["out"].str);
+    string testPackageName = testPackageArray[1].name;
+    string deploySpecName = deploySpec[0]["package"].str;
+    string testPackageOutput = testPackageArray[1].output;
+    string deploySpecOutput = deploySpec[0]["out"].str;
+    assert(testPackageName == deploySpecName,
+        "The name of the package should be %s, but was %s".fmt(testPackageName, deploySpecName));
+    assert(testPackageOutput == deploySpecOutput,
+        "The output of the package should be %s, but was %s".fmt(testPackageOutput, deploySpecOutput));
 }
 
 void saveGHCIMatrix(Package[] packages)
@@ -548,7 +576,10 @@ unittest
         .parseJSON;
     foreach (i, pkg; testPackageArray)
     {
-        assert(pkg.name == matrix["include"][i]["name"].str);
+        string pkgName = pkg.name;
+        string matrixName = matrix["include"][i]["name"].str;
+        assert(pkgName == matrixName,
+            "The name of the package should be %s, but was %s".fmt(pkgName, matrixName));
     }
 }
 
@@ -589,10 +620,14 @@ unittest
     string comment = rootDir.buildPath("comment.md").readText;
     foreach (pkg; testSummaryTableEntryArray)
     {
-        assert(comment.indexOf(pkg.name) != -1);
-        assert(comment.indexOf(pkg.x86_64.linux) != -1);
-        assert(comment.indexOf(pkg.x86_64.darwin) != -1);
-        assert(comment.indexOf(pkg.aarch64.darwin) != -1);
+        assert(comment.indexOf(pkg.name) != -1,
+            "The comment should contain the package name %s, the comment is:\n%s".fmt(pkg.name, comment));
+        assert(comment.indexOf(pkg.x86_64.linux) != -1,
+            "The comment should contain the x86_64 linux status %s, the comment is:\n%s".fmt(pkg.x86_64.linux, comment));
+        assert(comment.indexOf(pkg.x86_64.darwin) != -1,
+            "The comment should contain the x86_64 darwin status %s, the comment is:\n%s".fmt(pkg.x86_64.darwin, comment));
+        assert(comment.indexOf(pkg.aarch64.darwin) != -1,
+            "The comment should contain the aarch64 darwin status %s, the comment is:\n%s".fmt(pkg.aarch64.darwin, comment));
     }
 }
 
@@ -650,6 +685,23 @@ SummaryTableEntry createSummaryTableEntry(const(Package)[] group, bool isInitial
     return entry;
 }
 
+void assertNixTable(SummaryTableEntry[] tableSummary, immutable(Package[]) testPackageArray, int index,
+    string expectedLinuxStatus = "[" ~ Status.cached ~ "](https://testPackage.com)", string expectedDarwinStatus = Status.notSupported, string expectedAarch64Status = Status.notSupported)
+{
+    string actualName = tableSummary[index].name;
+    string expectedName = testPackageArray[index].name;
+    assert(actualName == expectedName, fmt("Expected name to be %s, but got %s", expectedName, actualName));
+
+    string actualLinuxStatus = tableSummary[index].x86_64.linux;
+    assert(actualLinuxStatus == expectedLinuxStatus, fmt("Expected Linux status to be %s, but got %s", expectedLinuxStatus, actualLinuxStatus));
+
+    string actualDarwinStatus = tableSummary[index].x86_64.darwin;
+    assert(actualDarwinStatus == expectedDarwinStatus, fmt("Expected Darwin status to be %s, but got %s", expectedDarwinStatus, actualDarwinStatus));
+
+    string actualAarch64Status = tableSummary[index].aarch64.darwin;
+    assert(actualAarch64Status == expectedAarch64Status, fmt("Expected Aarch64 Darwin status to be %s, but got %s", expectedAarch64Status, actualAarch64Status));
+}
+
 @("convertNixEvalToTableSummary/getStatus")
 unittest
 {
@@ -657,27 +709,15 @@ unittest
         testPackageArray,
         isInitial: false
     );
-    assert(tableSummary[0].name == testPackageArray[0].name);
-    assert(tableSummary[0].x86_64.linux == "[" ~ Status.cached ~ "](https://testPackage.com)");
-    assert(tableSummary[0].x86_64.darwin == Status.notSupported);
-    assert(tableSummary[0].aarch64.darwin == Status.notSupported);
-    assert(tableSummary[1].name == testPackageArray[1].name);
-    assert(tableSummary[1].x86_64.linux == Status.notSupported);
-    assert(tableSummary[1].x86_64.darwin == Status.notSupported);
-    assert(tableSummary[1].aarch64.darwin == Status.buildFailed);
+    assertNixTable(tableSummary, testPackageArray, 0);
+    assertNixTable(tableSummary, testPackageArray, 1, Status.notSupported, Status.notSupported, Status.buildFailed);
 
     tableSummary = convertNixEvalToTableSummary(
         testPackageArray,
         isInitial: true
     );
-    assert(tableSummary[0].name == testPackageArray[0].name);
-    assert(tableSummary[0].x86_64.linux == "[" ~ Status.cached ~ "](https://testPackage.com)");
-    assert(tableSummary[0].x86_64.darwin == Status.notSupported);
-    assert(tableSummary[0].aarch64.darwin == Status.notSupported);
-    assert(tableSummary[1].name == testPackageArray[1].name);
-    assert(tableSummary[1].x86_64.linux == Status.notSupported);
-    assert(tableSummary[1].x86_64.darwin == Status.notSupported);
-    assert(tableSummary[1].aarch64.darwin == Status.building);
+    assertNixTable(tableSummary, testPackageArray, 0);
+    assertNixTable(tableSummary, testPackageArray, 1, Status.notSupported, Status.notSupported, Status.building);
 }
 
 void printTableForCacheStatus(Package[] packages)
@@ -733,12 +773,11 @@ unittest
         cacheUrl: nixosCacheEndpoint ~ storePathHash ~ ".narinfo",
     };
 
-    assert(!testPackage.isCached);
-    assert(checkPackage(testPackage).isCached);
+    assert(checkPackage(testPackage).isCached, "Package %s should be cached".fmt(testPackage.cacheUrl));
 
     testPackage.cacheUrl = nixosCacheEndpoint ~ "nonexistent.narinfo";
 
-    assert(!checkPackage(testPackage).isCached);
+    assert(!checkPackage(testPackage).isCached, "Package %s should not be cached".fmt(testPackage.cacheUrl));
 }
 
 Package[] getPrecalcMatrix()
@@ -770,13 +809,23 @@ unittest
     string precalcMatrixStr = "{\"include\": [{\"name\": \"test\", \"allowedToFail\": false, \"attrPath\": \"test\", \"cacheUrl\": \"url\", \"isCached\": true, \"os\": \"linux\", \"system\": \"x86_64-linux\", \"output\": \"output\"}]}";
     params.precalcMatrix = precalcMatrixStr;
     auto packages = getPrecalcMatrix();
+    Package testPackage = {
+        name: "test",
+        allowedToFail: false,
+        attrPath: "test",
+        cacheUrl: "url",
+        isCached: true,
+        os: GitHubOS.selfHosted,
+        system: SupportedSystem.x86_64_linux,
+        output: "output"
+    };
     assert(packages.length == 1);
-    assert(packages[0].name == "test");
-    assert(!packages[0].allowedToFail);
-    assert(packages[0].attrPath == "test");
-    assert(packages[0].cacheUrl == "url");
+    assert(packages[0].name == testPackage.name, "Expected %s, got %s".fmt(testPackage.name, packages[0].name));
+    assert(!packages[0].allowedToFail, "Expected %s, got %s".fmt(testPackage.allowedToFail, packages[0].allowedToFail));
+    assert(packages[0].attrPath == testPackage.attrPath, "Expected %s, got %s".fmt(testPackage.attrPath, packages[0].attrPath));
+    assert(packages[0].cacheUrl == testPackage.cacheUrl, "Expected %s, got %s".fmt(testPackage.cacheUrl, packages[0].cacheUrl));
     assert(packages[0].isCached);
-    assert(packages[0].os == GitHubOS.selfHosted);
-    assert(packages[0].system == SupportedSystem.x86_64_linux);
-    assert(packages[0].output == "output");
+    assert(packages[0].os == testPackage.os, "Expected %s, got %s".fmt(testPackage.os, packages[0].os));
+    assert(packages[0].system == testPackage.system, "Expected %s, got %s".fmt(testPackage.system, packages[0].system));
+    assert(packages[0].output == testPackage.output, "Expected %s, got %s".fmt(testPackage.output, packages[0].output));
 }

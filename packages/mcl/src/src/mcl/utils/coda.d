@@ -112,7 +112,7 @@ struct CodaApiClient
         auto apiToken = environment.get("CODA_API_TOKEN");
         auto coda = CodaApiClient(apiToken);
         auto resp = coda.getDocument("6vM0kjfQP6");
-        assert(resp.id == "6vM0kjfQP6");
+        assert(resp.id == "6vM0kjfQP6", "Expected document ID to be 6vM0kjfQP6, but got %s".format(resp.id));
     }
 
     Document[] listDocuments()
@@ -127,7 +127,7 @@ struct CodaApiClient
         auto apiToken = environment.get("CODA_API_TOKEN");
         auto coda = CodaApiClient(apiToken);
         auto resp = coda.listDocuments();
-        assert(resp.length > 0);
+        assert(resp.length > 0, "Expected at least one document, but got 0");
     }
 
     struct InitialPage
@@ -189,9 +189,9 @@ struct CodaApiClient
             InitialPage.PageContent("canvas",
                 InitialPage.PageContent.CanvasContent("html", "<p><b>This</b> is rich text</p>")));
         auto resp = coda.createDocument("Test Document", "", "Europe/Sofia", "", initialPage);
-        assert(resp.name == "Test Document");
+        assert(resp.name == "Test Document", "Expected document name to be \"Test Document\", but got %s".format(resp.name));
         coda.deleteDocument(resp.id);
-        assertThrown!(HTTPStatusException)(coda.getDocument(resp.id));
+        assertThrown!(HTTPStatusException)(coda.getDocument(resp.id), "Expected coda.getDocument to throw an exception, but it didn't");
     }
 
     Document patchDocument(string documentId, string title = "", string iconName = "")
@@ -217,7 +217,7 @@ struct CodaApiClient
         auto resp = coda.createDocument("Test Document", "", "Europe/Sofia", "", initialPage);
         coda.patchDocument(resp.id, "Patched Document", "");
         auto patched = coda.getDocument(resp.id);
-        assert(patched.name == "Patched Document");
+        assert(patched.name == "Patched Document", "Expected document name to be \"Patched Document\", but got %s".format(patched.name));
         coda.deleteDocument(patched.id);
     }
 
@@ -301,7 +301,7 @@ struct CodaApiClient
         auto apiToken = environment.get("CODA_API_TOKEN");
         auto coda = CodaApiClient(apiToken);
         auto resp = coda.listTables("6vM0kjfQP6");
-        assert(resp.length > 0);
+        assert(resp.length > 0, "Expected at least one table, but got 0");
     }
 
     Table getTable(string documentId, string tableId)
@@ -317,7 +317,7 @@ struct CodaApiClient
         auto coda = CodaApiClient(apiToken);
         auto tables = coda.listTables("6vM0kjfQP6");
         auto resp = coda.getTable("6vM0kjfQP6", tables[0].id);
-        assert(resp.id == tables[0].id);
+        assert(resp.id == tables[0].id, "Expected table ID to be %s, but got %s".format(tables[0].id, resp.id));
     }
 
     struct Column
@@ -376,7 +376,7 @@ struct CodaApiClient
         auto coda = CodaApiClient(apiToken);
         auto tables = coda.listTables("6vM0kjfQP6");
         auto resp = coda.listColumns("6vM0kjfQP6", tables[0].id);
-        assert(resp.length > 0);
+        assert(resp.length > 0, "Expected at least one column, but got 0");
     }
 
     Column getColumn(string documentId, string tableId, string columnId)
@@ -393,7 +393,7 @@ struct CodaApiClient
         auto tables = coda.listTables("6vM0kjfQP6");
         auto columns = coda.listColumns("6vM0kjfQP6", tables[0].id);
         auto resp = coda.getColumn("6vM0kjfQP6", tables[0].id, columns[0].id);
-        assert(resp.id == columns[0].id);
+        assert(resp.id == columns[0].id, "Expected column ID to be %s, but got %s".format(columns[0].id, resp.id));
     }
 
     alias RowValue = SumType!(string, int, bool, string[], int[], bool[]);
@@ -443,7 +443,7 @@ struct CodaApiClient
         auto coda = CodaApiClient(apiToken);
         auto tables = coda.listTables("6vM0kjfQP6");
         auto resp = coda.listRows("6vM0kjfQP6", tables[0].id);
-        assert(resp.length > 0);
+        assert(resp.length > 0, "Expected at least one row, but got 0");
     }
 
     struct InsertRowsReturn
@@ -496,9 +496,9 @@ struct CodaApiClient
                 ])
         ];
         auto resp = coda.insertRows("dEJJPwdxcw", tables[0].id, rows);
-        assert(resp.length > 0);
+        assert(resp.length > 0, "Expected at least one row after inserting rows, but got 0");
         coda.deleteRow("dEJJPwdxcw", tables[0].id, resp[0]);
-        assertThrown!(HTTPStatusException)(coda.getRow("dEJJPwdxcw", tables[0].id, resp[0]));
+        assertThrown!(HTTPStatusException)(coda.getRow("dEJJPwdxcw", tables[0].id, resp[0]), "Expected coda.getRow to throw an exception, but it didn't");
     }
 
     Row getRow(string documentId, string tableId, string rowId)
@@ -515,7 +515,7 @@ struct CodaApiClient
         auto tables = coda.listTables("dEJJPwdxcw");
         auto rows = coda.listRows("dEJJPwdxcw", tables[0].id);
         auto resp = coda.getRow("dEJJPwdxcw", tables[0].id, rows[0].id);
-        assert(resp.id == rows[0].id);
+        assert(resp.id == rows[0].id, "Expected row ID to be %s, but got %s".format(rows[0].id, resp.id));
     }
 
     struct UpdateRowReturn
@@ -552,7 +552,7 @@ struct CodaApiClient
 
         auto updated = coda.updateRow("dEJJPwdxcw", tables[0].id, resp[0], newRow);
 
-        assert(updated == resp[0]);
+        assert(updated == resp[0], "Expected updated row ID to be %s, but got %s".format(resp[0], updated));
         coda.deleteRow("dEJJPwdxcw", tables[0].id, resp[0]);
     }
 
@@ -592,8 +592,8 @@ struct CodaApiClient
         auto buttonColumn = "c-9MA3HmNByK";
         auto rowId = "i-HV8Hsf2O8H";
         auto buttonResp = coda.pushButton("dEJJPwdxcw", tables[0].id, rowId, buttonColumn);
-        assert(buttonResp.rowId == rowId);
-        assert(buttonResp.columnId == buttonColumn);
+        assert(buttonResp.rowId == rowId, "Expected row ID to be %s, but got %s".format(rowId, buttonResp.rowId));
+        assert(buttonResp.columnId == buttonColumn, "Expected column ID to be %s, but got %s".format(buttonColumn, buttonResp.columnId));
     }
 
     struct Category
@@ -613,7 +613,7 @@ struct CodaApiClient
         auto apiToken = environment.get("CODA_API_TOKEN");
         auto coda = CodaApiClient(apiToken);
         auto resp = coda.listCategories();
-        assert(resp.length > 0);
+        assert(resp.length > 0, "Expected at least one category, but got 0");
     }
 
     void triggerAutomation(string documentId, string automationId, JSONValue req)

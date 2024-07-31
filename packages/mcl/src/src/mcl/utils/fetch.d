@@ -2,6 +2,7 @@ module mcl.utils.fetch;
 import mcl.utils.test;
 
 import std.json : JSONValue;
+import std.format : fmt = format;
 
 JSONValue fetchJson(string url, string authToken = "")
 {
@@ -25,7 +26,12 @@ JSONValue fetchJson(string url, string authToken = "")
 unittest
 {
     auto json = fetchJson("https://v2.jokeapi.dev/joke/Programming?type=single&idRange=40");
-    assert(json["category"].str == "Programming");
-    assert(json["type"].str == "single");
-    assert(json["joke"].str == "Debugging: Removing the needles from the haystack.");
+    string actualCategory = json["category"].str;
+    assert(actualCategory == "Programming", "Expected category to be 'Programming', but got '%s'".fmt(actualCategory));
+
+    string actualType = json["type"].str;
+    assert(actualType == "single", "Expected type to be 'single', but got '%s'".fmt(actualType));
+
+    string actualJoke = json["joke"].str;
+    assert(actualJoke == "Debugging: Removing the needles from the haystack.", "Expected joke to be 'Debugging: Removing the needles from the haystack.', but got '%s'".fmt(actualJoke));
 }

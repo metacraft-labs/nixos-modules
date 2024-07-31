@@ -11,6 +11,7 @@ import std.algorithm: map;
 import std.array: join, array, replace, split;
 import std.datetime: SysTime;
 import std.sumtype: SumType, isSumType;
+import std.format: format;
 import core.stdc.string: strlen;
 
 string getStrOrDefault(JSONValue value, string defaultValue = "")
@@ -287,40 +288,53 @@ version (unittest)
 @("toJSON")
 unittest
 {
-    assert(1.toJSON == JSONValue(1));
-    assert(true.toJSON == JSONValue(true));
-    assert("test".toJSON == JSONValue("test"));
-    assert([1, 2, 3].toJSON == JSONValue([1, 2, 3]));
-    assert(["a", "b", "c"].toJSON == JSONValue(["a", "b", "c"]));
-    assert([TestEnum.a, TestEnum.b, TestEnum.c].toJSON == JSONValue(
+    void assertEqual(JSONValue actual, JSONValue expected) {
+        assert(actual == expected, format("Expected %s, but got %s", expected, actual));
+    }
+
+    assertEqual(1.toJSON, JSONValue(1));
+    assertEqual(true.toJSON, JSONValue(true));
+    assertEqual("test".toJSON, JSONValue("test"));
+    assertEqual([1, 2, 3].toJSON, JSONValue([1, 2, 3]));
+    assertEqual(["a", "b", "c"].toJSON, JSONValue(["a", "b", "c"]));
+    assertEqual([TestEnum.a, TestEnum.b, TestEnum.c].toJSON, JSONValue(
             ["supercalifragilisticexpialidocious", "b", "c"]));
+
     TestStruct testStruct = {1, "test", true};
-    assert(testStruct.toJSON == JSONValue([
+    auto actual = testStruct.toJSON;
+    auto expected = JSONValue([
+        "a": JSONValue(1),
+        "b": JSONValue("test"),
+        "c": JSONValue(true)
+    ]);
+    assertEqual(actual, expected);
+
+    TestStruct2 testStruct2 = {1, testStruct};
+    actual = testStruct2.toJSON;
+    expected = JSONValue([
+        "a": JSONValue(1),
+        "b": JSONValue([
             "a": JSONValue(1),
             "b": JSONValue("test"),
             "c": JSONValue(true)
-        ]));
-    TestStruct2 testStruct2 = {1, testStruct};
-    assert(testStruct2.toJSON == JSONValue([
+        ])
+    ]);
+    assertEqual(actual, expected);
+
+    TestStruct3 testStruct3 = {1, testStruct2};
+    actual = testStruct3.toJSON;
+    expected = JSONValue([
+        "a": JSONValue(1),
+        "b": JSONValue([
             "a": JSONValue(1),
             "b": JSONValue([
                 "a": JSONValue(1),
                 "b": JSONValue("test"),
                 "c": JSONValue(true)
             ])
-        ]));
-    TestStruct3 testStruct3 = {1, testStruct2};
-    assert(testStruct3.toJSON == JSONValue([
-            "a": JSONValue(1),
-            "b": JSONValue([
-                "a": JSONValue(1),
-                "b": JSONValue([
-                    "a": JSONValue(1),
-                    "b": JSONValue("test"),
-                    "c": JSONValue(true)
-                ])
-            ])
-        ]));
+        ])
+    ]);
+    assertEqual(actual, expected);
 }
 
 T tryGet(T)(lazy T value, string errorMsg, string file = __FILE__, size_t line = __LINE__)
