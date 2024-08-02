@@ -1,18 +1,17 @@
 module mcl.utils.path;
-import mcl.utils.test;
 
 import std.process : execute;
 import std.string : strip;
 import std.file : mkdirRecurse, rmdir, exists;
-import std.path : buildPath;
+import std.path : buildNormalizedPath, absolutePath;
 
 immutable string rootDir, resultDir, gcRootsDir;
 
 shared static this()
 {
     rootDir = getTopLevel();
-    resultDir = rootDir.buildPath(".result");
-    gcRootsDir = resultDir.buildPath("gc-roots");
+    resultDir = rootDir.buildNormalizedPath(".result");
+    gcRootsDir = resultDir.buildNormalizedPath("gc-roots");
 }
 
 string getTopLevel()
@@ -23,7 +22,11 @@ string getTopLevel()
     if (isNixbld)
         return environment["NIX_BUILD_TOP"];
 
-    return execute(["git", "rev-parse", "--show-toplevel"]).output.strip;
+    auto res = execute(["git", "rev-parse", "--show-toplevel"]);
+    if (res.status != 0)
+        return ".".absolutePath.buildNormalizedPath;
+
+    return res.output.strip;
 }
 
 @("rootDir")
@@ -35,13 +38,13 @@ unittest
 @("resultDir")
 unittest
 {
-    assert(resultDir == rootDir.buildPath(".result"));
+    assert(resultDir == rootDir.buildNormalizedPath(".result"));
 }
 
 @("gcRootsDir")
 unittest
 {
-    assert(gcRootsDir == resultDir.buildPath("gc-roots"));
+    assert(gcRootsDir == resultDir.buildNormalizedPath("gc-roots"));
 }
 
 void createResultDirs()
