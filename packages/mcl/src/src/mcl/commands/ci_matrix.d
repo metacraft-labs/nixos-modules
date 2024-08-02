@@ -422,7 +422,7 @@ unittest
 
 void saveGHCIComment(SummaryTableEntry[] tableSummaryJSON)
 {
-    import std.path : buildPath, absolutePath;
+    import std.path : buildNormalizedPath, absolutePath;
 
     string comment = "Thanks for your Pull Request!";
     comment ~= "\n\nBelow you will find a summary of the cachix status of each package, for each supported platform.";
@@ -432,7 +432,7 @@ void saveGHCIComment(SummaryTableEntry[] tableSummaryJSON)
         pkg => "\n| " ~ pkg.name ~ " | " ~ pkg.x86_64.linux ~ " | " ~ pkg.x86_64.darwin ~ " | " ~ pkg.aarch64.darwin ~ " |")
         .join("");
 
-    auto outputPath = rootDir.buildPath("comment.md").absolutePath;
+    auto outputPath = rootDir.buildNormalizedPath("comment.md");
     write(outputPath, comment);
     infof("Wrote GitHub comment file to '%s'", outputPath);
 }
