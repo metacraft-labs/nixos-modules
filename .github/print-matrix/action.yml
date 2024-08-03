@@ -57,13 +57,8 @@ runs:
         CACHIX_CACHE: ${{ inputs.cachix-cache }}
         CACHIX_AUTH_TOKEN: ${{ inputs.cachix-auth-token }}
         PRECALC_MATRIX: ${{ inputs.precalc_matrix }}
-      run: |
-        if [ "${{ github.repository }}" != "metacraft-labs/nixos-modules" ]; then
-          nix run --accept-flake-config github:metacraft-labs/nixos-modules#mcl print_table
-        else
-          nix run --accept-flake-config .#mcl print_table
-        fi
-        cat comment.md
+        MCL_BRANCH: ${{ github.repository == 'metacraft-labs/nixos-modules' && github.sha || 'main' }}
+      run: nix run --accept-flake-config github:metacraft-labs/nixos-modules/${{ env.MCL_BRANCH }}#mcl print_table
 
     - name: Update GitHub Comment
       uses: marocchino/sticky-pull-request-comment@v2.9.0
