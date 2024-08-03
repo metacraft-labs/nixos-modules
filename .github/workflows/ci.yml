@@ -67,12 +67,9 @@ jobs:
 
       - name: Generate Matrix for Matrix
         id: generate-matrix
-        run: |
-          if [ "${{ github.repository }}" != "metacraft-labs/nixos-modules" ]; then
-            nix run --accept-flake-config github:metacraft-labs/nixos-modules#mcl shard_matrix
-          else
-            nix run --accept-flake-config .#mcl shard_matrix
-          fi
+        env:
+          MCL_BRANCH: ${{ github.repository == 'metacraft-labs/nixos-modules' && github.sha || 'main' }}
+        run: nix run --accept-flake-config github:metacraft-labs/nixos-modules/${{ env.MCL_BRANCH }}#mcl shard_matrix
     outputs:
       gen_matrix: ${{ steps.generate-matrix.outputs.gen_matrix }}
 
@@ -103,12 +100,8 @@ jobs:
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
           FLAKE_PRE: ${{ matrix.prefix }}
           FLAKE_POST: ${{ matrix.postfix }}
-        run: |
-          if [ "${{ github.repository }}" != "metacraft-labs/nixos-modules" ]; then
-            nix run --accept-flake-config github:metacraft-labs/nixos-modules#mcl ci_matrix
-          else
-            nix run --accept-flake-config .#mcl ci_matrix
-          fi
+          MCL_BRANCH: ${{ github.repository == 'metacraft-labs/nixos-modules' && github.sha || 'main' }}
+        run: nix run --accept-flake-config github:metacraft-labs/nixos-modules/${{ env.MCL_BRANCH }}#mcl ci_matrix
 
       - uses: actions/upload-artifact@v4
         with:
@@ -244,4 +237,5 @@ jobs:
           CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
           CACHIX_ACTIVATE_TOKEN: '${{ secrets.CACHIX_ACTIVATE_TOKEN }}'
-        run: nix run --accept-flake-config github:metacraft-labs/nixos-modules#mcl deploy_spec
+          MCL_BRANCH: ${{ github.repository == 'metacraft-labs/nixos-modules' && github.sha || 'main' }}
+        run: nix run --accept-flake-config github:metacraft-labs/nixos-modules/${{ env.MCL_BRANCH }}#mcl deploy_spec
