@@ -129,8 +129,11 @@ jobs:
       - uses: actions/download-artifact@v4
       - name: Merge matrices
         run: |
-          PATH="$(nix build --print-out-paths 'nixpkgs#jq^bin')/bin:$PATH"
-          export PATH
+          # Check if jq is installed
+          if ! command -v jq &> /dev/null; then
+            PATH="$(nix build --print-out-paths 'nixpkgs#jq^bin')/bin:$PATH"
+            export PATH
+          fi
 
           ls */matrix-pre.json
           matrix="$(cat */matrix-pre.json | jq -cr '.include[]' | jq '[ select (.isCached == false) ]' | jq -s 'add' | jq -c  '. | {include: .}')"
