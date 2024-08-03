@@ -118,7 +118,6 @@ jobs:
       matrix: ${{ steps.matrix.outputs.matrix }}
       fullMatrix: ${{ steps.matrix.outputs.fullMatrix }}
     steps:
-      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
       - name: Merge matrices
         run: |
