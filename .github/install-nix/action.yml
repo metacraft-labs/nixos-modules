@@ -27,20 +27,19 @@ runs:
     - name: Install Nix
       uses: cachix/install-nix-action@v27
       if: ${{ runner.environment == 'github-hosted' }}
-      with:
-        extra_nix_config: |
-          ${{ inputs.nix-github-token != '' && format('access-tokens = github.com={0}', inputs.nix-github-token) || '' }}
-          accept-flake-config = true
-          allow-import-from-derivation = true
-          substituters = https://cache.nixos.org ${{inputs.substituters}}
-          trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= ${{inputs.trusted-public-keys}}
-          netrc-file = $HOME/.config/nix/netrc
 
     - name: Configure Nix
-      if: ${{ runner.environment == 'github-hosted' }}
       shell: bash
       run: |
         mkdir -p $HOME/.config/nix
         {
           echo "machine ${{inputs.cachix-cache}}.cachix.org password ${{inputs.cachix-auth-token}}"
         } >> $HOME/.config/nix/netrc
+        {
+          echo "${{ inputs.nix-github-token != '' && format('access-tokens = github.com={0}', inputs.nix-github-token) || '' }}
+          accept-flake-config = true
+          allow-import-from-derivation = true
+          substituters = https://cache.nixos.org ${{inputs.substituters}}
+          trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= ${{inputs.trusted-public-keys}}
+          netrc-file = $HOME/.config/nix/netrc"
+        } > $HOME/.config/nix/nix.conf

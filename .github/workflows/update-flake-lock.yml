@@ -3,6 +3,10 @@ name: "Update Nix Flake lockfile"
 on:
   # Allow this workflow to be reused by other workflows:
   workflow_call:
+    secrets:
+      nix-github-token:
+        description: GitHub token to add as access-token in nix.conf
+        required: false
 
   # Allow this workflow to be triggered manually:
   workflow_dispatch:
@@ -21,8 +25,16 @@ jobs:
       - name: Install Nix
         uses: cachix/install-nix-action@v27
         if: ${{ runner.environment == 'github-hosted' }}
-        with:
-          extra_nix_config: accept-flake-config = true
+
+      - name: Configure Nix
+        shell: bash
+        run: |
+          mkdir -p $HOME/.config/nix
+          {
+            echo "${{ secrets.nix-github-token != '' && format('access-tokens = github.com={0}', secrets.nix-github-token) || '' }}
+            accept-flake-config = true"
+          } > $HOME/.config/nix/nix.conf
+
 
       - name: Run `nix flake update`
         id: update-lockfile
