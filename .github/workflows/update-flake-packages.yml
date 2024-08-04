@@ -7,6 +7,12 @@ on:
       nix-github-token:
         description: GitHub token to add as access-token in nix.conf
         required: false
+      APP_ID:
+        description: ID of the GitHub App used for opening pull requests.
+        required: true
+      APP_PRIVATE_KEY:
+        description: Private key of the GitHub App used for opening pull requests.
+        required: true
 
   # Allow this workflow to be triggered manually:
   workflow_dispatch:
@@ -17,7 +23,7 @@ on:
 
 jobs:
   updateFlakePackages:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
