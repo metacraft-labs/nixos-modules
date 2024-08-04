@@ -4,7 +4,7 @@ on:
   # Allow this workflow to be reused by other workflows:
   workflow_call:
     secrets:
-      nix-github-token:
+      NIX_GITHUB_TOKEN:
         description: GitHub token to add as access-token in nix.conf
         required: false
 
@@ -31,7 +31,7 @@ jobs:
         run: |
           mkdir -p $HOME/.config/nix
           {
-            echo "${{ secrets.nix-github-token != '' && format('access-tokens = github.com={0}', secrets.nix-github-token) || '' }}
+            echo "${{ secrets.NIX_GITHUB_TOKEN != '' && format('access-tokens = github.com={0}', secrets.NIX_GITHUB_TOKEN) || '' }}
             accept-flake-config = true
             allow-import-from-derivation = true"
           } > $HOME/.config/nix/nix.conf
