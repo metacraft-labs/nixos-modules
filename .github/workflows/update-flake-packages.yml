@@ -7,6 +7,9 @@ on:
       NIX_GITHUB_TOKEN:
         description: GitHub token to add as access-token in nix.conf
         required: false
+      CACHIX_AUTH_TOKEN:
+        description: 'Cachix auth token'
+        required: true
       CREATE_PR_APP_ID:
         description: ID of the GitHub App used for opening pull requests.
         required: true
@@ -29,17 +32,13 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Nix
-        uses: cachix/install-nix-action@v27
-        if: ${{ runner.environment == 'github-hosted' }}
-
-      - name: Configure Nix
-        shell: bash
-        run: |
-          mkdir -p $HOME/.config/nix
-          cat << EOF > "$HOME/.config/nix/nix.conf"
-            ${{ secrets.NIX_GITHUB_TOKEN != '' && format('access-tokens = github.com={0}', secrets.NIX_GITHUB_TOKEN) || '' }}
-            allow-import-from-derivation = true
-          EOF
+        uses: metacraft-labs/nixos-modules/.github/install-nix@main
+        with:
+          nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
 
       - uses: tibdex/github-app-token@v2.1.0
         id: generate-token
