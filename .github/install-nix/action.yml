@@ -28,6 +28,11 @@ runs:
       uses: cachix/install-nix-action@v27
       if: ${{ runner.environment == 'github-hosted' }}
 
+    - name: Install Cachix
+      if: ${{ runner.environment == 'github-hosted' }}
+      shell: bash
+      run: nix profile install nixpkgs#cachix
+
     - name: Configure Nix
       shell: bash
       run: |
