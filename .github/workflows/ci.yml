@@ -10,6 +10,12 @@ on:
         default: false
         required: false
     secrets:
+      CACHIX_AUTH_TOKEN:
+        description: 'Cachix auth token'
+        required: true
+      CACHIX_ACTIVATE_TOKEN:
+        description: 'Cachix activate token'
+        required: false
       nix-github-token:
         description: GitHub token to add as access-token in nix.conf
         required: false
@@ -181,22 +187,13 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Nix
-        uses: cachix/install-nix-action@V27
-
-      - name: Configure Nix
-        shell: bash
-        run: |
-          mkdir -p $HOME/.config/nix
-          {
-            echo "${{ inputs.nix-github-token != '' && format('access-tokens = github.com={0}', inputs.nix-github-token) || '' }}
-            accept-flake-config = true"
-          } > $HOME/.config/nix/nix.conf
-
-      - uses: cachix/cachix-action@v15
+        uses: metacraft-labs/nixos-modules/.github/install-nix@main
         with:
-          name: ${{ vars.CACHIX_CACHE }}
-          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          extraPullNames: ${{ vars.EXTRA_CACHIX_CACHES }}
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+          nix-github-token: ${{ secrets.nix-github-token }}
 
       - name: Build ${{ matrix.name }}
         run: |
@@ -230,12 +227,6 @@ jobs:
           needs.slurp-matrix.outputs.matrix != '{"include":[]}'
             && contains(needs.*.result, 'failure')
             || contains(needs.*.result, 'cancelled')
-
-      - uses: cachix/cachix-action@v15
-        if: inputs.do_deploy
-        with:
-          name: ${{ vars.CACHIX_CACHE }}
-          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
       - name: Deploy
         if: inputs.do_deploy
