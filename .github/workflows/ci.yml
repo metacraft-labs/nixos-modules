@@ -10,7 +10,7 @@ on:
         default: false
         required: false
     secrets:
-      nix-github-token:
+      NIX_GITHUB_TOKEN:
         description: GitHub token to add as access-token in nix.conf
         required: false
 
@@ -61,7 +61,7 @@ jobs:
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
-          nix-github-token: ${{ secrets.nix-github-token }}
+          nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
 
       - uses: actions/checkout@v4
 
@@ -87,7 +87,7 @@ jobs:
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
-          nix-github-token: ${{ secrets.nix-github-token }}
+          nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
 
       - uses: actions/checkout@v4
 
@@ -163,7 +163,7 @@ jobs:
           substituters: ${{ vars.SUBSTITUTERS }}
           precalc_matrix: ${{ steps.matrix.outputs.fullMatrix }}
           pr-comment-github-token: ${{ secrets.GITHUB_TOKEN }}
-          nix-github-token: ${{ secrets.nix-github-token }}
+          nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
 
   build:
     needs: slurp-matrix
@@ -223,7 +223,7 @@ jobs:
           substituters: ${{ vars.SUBSTITUTERS }}
           precalc_matrix: ${{ needs.slurp-matrix.outputs.fullMatrix }}
           pr-comment-github-token: ${{ secrets.GITHUB_TOKEN }}
-          nix-github-token: ${{ secrets.nix-github-token }}
+          nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
 
       - run: exit 1
         if: >-
