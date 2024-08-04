@@ -36,11 +36,10 @@ jobs:
         shell: bash
         run: |
           mkdir -p $HOME/.config/nix
-          {
-            echo "${{ secrets.NIX_GITHUB_TOKEN != '' && format('access-tokens = github.com={0}', secrets.NIX_GITHUB_TOKEN) || '' }}
-            accept-flake-config = true
-            allow-import-from-derivation = true"
-          } > $HOME/.config/nix/nix.conf
+          cat << EOF > "$HOME/.config/nix/nix.conf"
+            ${{ secrets.NIX_GITHUB_TOKEN != '' && format('access-tokens = github.com={0}', secrets.NIX_GITHUB_TOKEN) || '' }}
+            allow-import-from-derivation = true
+          EOF
 
       - uses: tibdex/github-app-token@v2.1.0
         id: generate-token
