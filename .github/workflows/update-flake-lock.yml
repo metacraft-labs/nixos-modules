@@ -36,11 +36,10 @@ jobs:
         shell: bash
         run: |
           mkdir -p $HOME/.config/nix
-          {
-            echo "${{ secrets.nix-github-token != '' && format('access-tokens = github.com={0}', secrets.nix-github-token) || '' }}
-            accept-flake-config = true"
-          } > $HOME/.config/nix/nix.conf
-
+          cat << EOF > "$HOME/.config/nix/nix.conf"
+            ${{ secrets.nix-github-token != '' && format('access-tokens = github.com={0}', secrets.nix-github-token) || '' }}
+            allow-import-from-derivation = true
+          EOF
 
       - name: Run `nix flake update`
         id: update-lockfile
