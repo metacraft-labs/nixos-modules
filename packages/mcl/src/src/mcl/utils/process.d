@@ -11,11 +11,14 @@ import std.json : JSONValue, parseJSON;
 
 bool isRoot() => geteuid() == 0;
 
-T execute(T = string)(string args, bool printCommand = true, bool returnErr = false) if (is(T == string) || is(T == ProcessPipes) || is(T == JSONValue))
+T execute(T = string)(string args, bool printCommand = true, bool returnErr = false)
+        if (is(T == string) || is(T == ProcessPipes) || is(T == JSONValue))
 {
     return execute!T(args.split(" "), printCommand, returnErr);
 }
-T execute(T = string)(string[] args, bool printCommand = true, bool returnErr = false) if (is(T == string) || is(T == ProcessPipes) || is(T == JSONValue))
+
+T execute(T = string)(string[] args, bool printCommand = true, bool returnErr = false)
+        if (is(T == string) || is(T == ProcessPipes) || is(T == JSONValue))
 {
     import std.exception : enforce;
     import std.format : format;
@@ -70,7 +73,8 @@ T execute(T = string)(string[] args, bool printCommand = true, bool returnErr = 
             output = stderr;
         }
 
-        static if (is(T == string)) {
+        static if (is(T == string))
+        {
             return output.strip;
         }
         else
@@ -98,7 +102,6 @@ void spawnProcessInline(string[] args)
 
     const bold = "\033[1m";
     const normal = "\033[0m";
-
 
     tracef("$ %s%-(%s %)%s", bold, args, normal);
 

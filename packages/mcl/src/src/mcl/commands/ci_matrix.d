@@ -175,13 +175,17 @@ Package[] checkCacheStatus(Package[] packages)
     foreach (ref pkg; packages.parallel)
     {
         pkg = checkPackage(pkg);
-        struct Output { string isCached, name, storePath; }
+        struct Output
+        {
+            string isCached, name, storePath;
+        }
+
         auto res = appender!string;
         writeRecordAsTable(
             Output(pkg.isCached ? "✅" : "❌", pkg.name, pkg.output),
             res
         );
-        tracef("%s", res.data[0..$-1]);
+        tracef("%s", res.data[0 .. $ - 1]);
     }
     return packages;
 }
@@ -462,10 +466,12 @@ unittest
 
 void saveCachixDeploySpec(Package[] packages)
 {
-    auto agents = packages.filter!(pkg => pkg.isCached == false).map!(pkg => JSONValue([
-            "package": pkg.name,
-            "out": pkg.output
-        ])).array;
+    auto agents = packages.filter!(pkg => pkg.isCached == false)
+        .map!(pkg => JSONValue([
+                    "package": pkg.name,
+                    "out": pkg.output
+                ]))
+        .array;
     auto resPath = resultDir.buildPath("cachix-deploy-spec.json");
     resPath.write(JSONValue(agents).toString(JSONOptions.doNotEscapeSlashes));
 }
@@ -669,8 +675,9 @@ unittest
     const storePath = "/nix/store/" ~ storePathHash ~ "-hello-2.12.1";
 
     auto testPackage = Package(
-        output: storePath,
-        cacheUrl: nixosCacheEndpoint ~ storePathHash ~ ".narinfo",
+output : storePath,
+cacheUrl:
+        nixosCacheEndpoint ~ storePathHash ~ ".narinfo",
     );
 
     assert(!testPackage.isCached);

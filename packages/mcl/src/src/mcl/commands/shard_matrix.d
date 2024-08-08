@@ -1,6 +1,5 @@
 module mcl.commands.shard_matrix;
 
-
 import std.algorithm : map;
 import std.array : array;
 import std.conv : to, parse;
@@ -51,15 +50,16 @@ ShardMatrix generateShardMatrix(string flakeRef = ".")
 {
     import std.path : isValidPath, absolutePath, buildNormalizedPath;
 
-    if (flakeRef.isValidPath) {
+    if (flakeRef.isValidPath)
+    {
         flakeRef = flakeRef.absolutePath.buildNormalizedPath;
     }
 
     const shardCountOutput = nix.eval("", [
-        "--impure",
-        "--expr",
-        `(builtins.getFlake "` ~ flakeRef ~ `").outputs.legacyPackages.x86_64-linux.mcl.matrix.shardCount or 0`
-    ]);
+            "--impure",
+            "--expr",
+            `(builtins.getFlake "` ~ flakeRef ~ `").outputs.legacyPackages.x86_64-linux.mcl.matrix.shardCount or 0`
+        ]);
 
     infof("shardCount: '%s'", shardCountOutput);
 
@@ -87,7 +87,9 @@ unittest
     else
     {
         import mcl.utils.path : rootDir;
-        auto flakeRef = rootDir.buildPath("packages/mcl/src/src/mcl/utils/test/nix/shard-matrix-ok");
+
+        auto flakeRef = rootDir.buildPath(
+            "packages/mcl/src/src/mcl/utils/test/nix/shard-matrix-ok");
     }
 
     auto shards = generateShardMatrix(flakeRef);
@@ -101,7 +103,9 @@ unittest
 unittest
 {
     import mcl.utils.path : rootDir;
-    auto flakeRef = rootDir.buildPath("packages/mcl/src/src/mcl/utils/test/nix/shard-matrix-no-shards");
+
+    auto flakeRef = rootDir.buildPath(
+        "packages/mcl/src/src/mcl/utils/test/nix/shard-matrix-no-shards");
 
     auto shards = generateShardMatrix(flakeRef);
     assert(shards.include.length == 1);

@@ -11,29 +11,37 @@ T[] uniqIfSame(T)(T[] arr)
     {
         return arr;
     }
-    else if (arr.all!(a => a == arr[0])) {
+    else if (arr.all!(a => a == arr[0]))
+    {
         return [arr[0]];
     }
-    else {
+    else
+    {
         return arr;
     }
 
 }
 
-T uniqArrays(T)(T s){
-    static if (isSomeString!T){
+T uniqArrays(T)(T s)
+{
+    static if (isSomeString!T)
+    {
         return s;
     }
-    else static if (isArray!T){
+    else static if (isArray!T)
+    {
         return s.sort.uniq.array.to!T;
     }
-    else static if (is(T == struct)){
-        static foreach (idx, field; T.tupleof){
+    else static if (is(T == struct))
+    {
+        static foreach (idx, field; T.tupleof)
+        {
             s.tupleof[idx] = s.tupleof[idx].uniqArrays;
         }
         return s;
     }
-    else{
+    else
+    {
         return s;
     }
 }

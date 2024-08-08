@@ -1,8 +1,8 @@
 module mcl.commands.ci;
 
 import std.file : readText;
-import std.json : parseJSON,JSONValue;
-import std.stdio : writeln,write;
+import std.json : parseJSON, JSONValue;
+import std.stdio : writeln, write;
 import std.algorithm : map;
 import std.array : array, join;
 import std.conv : to;
@@ -38,17 +38,21 @@ export void ci()
             params.flakePost = "." ~ params.flakePost;
         }
         string cachixUrl = "https://" ~ params.cachixCache ~ ".cachix.org";
-        version (AArch64) {
+        version (AArch64)
+        {
             string arch = "aarch64";
         }
-        version (X86_64) {
+        version (X86_64)
+        {
             string arch = "x86_64";
         }
 
-        version (linux) {
+        version (linux)
+        {
             string os = "linux";
         }
-        version (OSX) {
+        version (OSX)
+        {
             string os = "darwin";
         }
 
@@ -64,7 +68,9 @@ export void ci()
             else
             {
                 writeln("Package ", pkg.name, " is not cached; building...");
-                ProcessPipes res = execute!ProcessPipes(["nix", "build", "--json", ".#" ~ pkg.attrPath]);
+                ProcessPipes res = execute!ProcessPipes([
+                    "nix", "build", "--json", ".#" ~ pkg.attrPath
+                ]);
 
                 foreach (line; res.stderr.byLine)
                 {

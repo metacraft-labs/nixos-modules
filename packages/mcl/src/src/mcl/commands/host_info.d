@@ -14,7 +14,7 @@ import std.file : exists, write, readText, readLink, dirEntries, SpanMode;
 import std.path : baseName;
 import std.json;
 import std.process : ProcessPipes, environment;
-import core.stdc.string: strlen;
+import core.stdc.string : strlen;
 
 import mcl.utils.env : parseEnv, optional;
 import mcl.utils.json : toJSON;
@@ -50,7 +50,8 @@ string[string] getProcInfo(string fileOrData, bool file = true)
 {
     string[string] r;
     foreach (line; file ? fileOrData.readText().split(
-            "\n").map!(strip).array : fileOrData.split("\n").map!(strip).array)
+            "\n").map!(strip).array
+        : fileOrData.split("\n").map!(strip).array)
     {
         if (line.indexOf(":") == -1 || line.strip == "edid-decode (hex):")
         {
@@ -292,7 +293,7 @@ ProcessorInfo getProcessorInfo()
     r.vendor = cpuid.x86_any.vendor;
     char[48] modelCharArr;
     cpuid.x86_any.brand(modelCharArr);
-    r.model = modelCharArr.idup[0..(strlen(modelCharArr.ptr)-1)];
+    r.model = modelCharArr.idup[0 .. (strlen(modelCharArr.ptr) - 1)];
     r.cpus = cpuid.unified.cpus();
     r.cores = [r.cpus * cpuid.unified.cores()];
     r.threads = [cpuid.unified.threads()];
@@ -471,8 +472,15 @@ MemoryInfo getMemoryInfo()
         r.count = dmi.getFromDmi("Type:").length;
         r.slots = dmi.getFromDmi("Memory Device")
             .filter!(a => a.indexOf("DMI type 17") != -1).array.length;
-        r.totalGB = dmi.getFromDmi("Size:").map!(a => a.split(" ")[0]).array.filter!(isNumeric).array.map!(to!int).array.sum();
-        r.total =r.totalGB.to!string ~ " GB (" ~ dmi.getFromDmi("Size:").map!(a => a.split(" ")[0]).join("/") ~ ")";
+        r.totalGB = dmi.getFromDmi("Size:").map!(a => a.split(" ")[0])
+            .array
+            .filter!(isNumeric)
+            .array
+            .map!(to!int)
+            .array
+            .sum();
+        r.total = r.totalGB.to!string ~ " GB (" ~ dmi.getFromDmi("Size:")
+            .map!(a => a.split(" ")[0]).join("/") ~ ")";
         auto totalWidth = dmi.getFromDmi("Total Width");
         auto dataWidth = dmi.getFromDmi("Data Width");
         foreach (i, width; totalWidth)
@@ -657,7 +665,8 @@ DisplayInfo getDisplayInfo()
                     d.model = ("Model" in edidData) ? edidData["Model"] : "Unknown";
                     d.serial = ("Serial Number" in edidData) ? edidData["Serial Number"] : "Unknown";
                     d.manufactureDate = ("Made in" in edidData) ? edidData["Made in"] : "Unknown";
-                    d.size = ("Maximum image size" in edidData) ? edidData["Maximum image size"] : "Unknown";
+                    d.size = ("Maximum image size" in edidData) ? edidData["Maximum image size"]
+                        : "Unknown";
                 }
 
                 r.displays ~= d;
@@ -683,11 +692,14 @@ struct GraphicsProcessorInfo
 GraphicsProcessorInfo getGraphicsProcessorInfo()
 {
     GraphicsProcessorInfo r;
-    if ("DISPLAY" !in environment) return r;
-    try {
+    if ("DISPLAY" !in environment)
+        return r;
+    try
+    {
         auto glxinfo = getProcInfo(execute("glxinfo", false), false);
         r.vendor = ("OpenGL vendor string" in glxinfo) ? glxinfo["OpenGL vendor string"] : "Unknown";
-        r.model = ("OpenGL renderer string" in glxinfo) ? glxinfo["OpenGL renderer string"] : "Unknown";
+        r.model = ("OpenGL renderer string" in glxinfo) ? glxinfo["OpenGL renderer string"]
+            : "Unknown";
         r.coreProfile = ("OpenGL core profile version string" in glxinfo) ? glxinfo["OpenGL core profile version string"] : "Unknown";
         r.vram = ("Video memory" in glxinfo) ? glxinfo["Video memory"] : "Unknown";
     }
@@ -727,7 +739,6 @@ struct MachineConfigInfo
 MachineConfigInfo getMachineConfigInfo()
 {
     MachineConfigInfo r;
-
 
     // PCI devices
     foreach (path; dirEntries("/sys/bus/pci/devices", SpanMode.shallow).map!(a => a.name).array)
@@ -838,10 +849,10 @@ MachineConfigInfo getMachineConfigInfo()
         }
 
         if (_module != "" &&
-        // Mass-storage controller. Definitely important.
-        _class.startsWith("0x08") ||
-        // Keyboard. Needed if we want to use the keyboard when things go wrong in the initrd.
-        (subClass.startsWith("0x03") || protocol.startsWith("0x01")))
+            // Mass-storage controller. Definitely important.
+            _class.startsWith("0x08") ||
+            // Keyboard. Needed if we want to use the keyboard when things go wrong in the initrd.
+            (subClass.startsWith("0x03") || protocol.startsWith("0x01")))
         {
             r.availableKernelModules ~= _module;
         }
@@ -849,20 +860,27 @@ MachineConfigInfo getMachineConfigInfo()
 
     // Block and MMC devices
     foreach (path; (
-        (exists("/sys/class/block") ? dirEntries("/sys/class/block", SpanMode.shallow).array : []) ~
-        (exists("/sys/class/mmc_host") ? dirEntries("/sys/class/mmc_host", SpanMode.shallow).array : []))
+            (exists("/sys/class/block") ? dirEntries("/sys/class/block", SpanMode.shallow)
+            .array : []) ~
+            (exists("/sys/class/mmc_host") ? dirEntries("/sys/class/mmc_host", SpanMode.shallow).array
+            : []))
         .map!(a => a.name).array)
     {
-        if (exists(path ~ "/device/driver/module")) {
+        if (exists(path ~ "/device/driver/module"))
+        {
             string _module = readLink(path ~ "/device/driver/module").baseName;
             r.availableKernelModules ~= _module;
         }
     }
     // Bcache
-    auto bcacheDevices = dirEntries("/dev", SpanMode.shallow).map!(a => a.name).array.filter!(a => a.startsWith("bcache")).array;
+    auto bcacheDevices = dirEntries("/dev", SpanMode.shallow).map!(a => a.name)
+        .array
+        .filter!(a => a.startsWith("bcache"))
+        .array;
     bcacheDevices = bcacheDevices.filter!(device => device.indexOf("dev/bcachefs") == -1).array;
 
-    if (bcacheDevices.length > 0) {
+    if (bcacheDevices.length > 0)
+    {
         r.availableKernelModules ~= "bcache";
     }
     //Prevent unbootable systems if LVM snapshots are present at boot time.
@@ -872,27 +890,29 @@ MachineConfigInfo getMachineConfigInfo()
     }
     // Check if we're in a VirtualBox guest. If so, enable the guest additions.
     auto virt = execute!ProcessPipes("systemd-detect-virt", false).stdout.readln.strip;
-    switch (virt) {
-        case "oracle":
-            r.literalAttrs ~= Literal("virtualisation.virtualbox.guest.enable = true;");
-            break;
-        case "parallels":
-            r.literalAttrs ~= Literal("hardware.parallels.enable = true;");
-            r.literalAttrs ~= Literal("nixpkgs.config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) [ \"prl-tools\" ];");
-            break;
-        case "qemu":
-        case "kvm":
-        case "bochs":
-            r.imports ~= Literal("(modulesPath + \"/profiles/qemu-guest.nix\")");
-            break;
-        case "microsoft":
-            r.literalAttrs ~= Literal("virtualization.hypervGuest.enable = true;");
-            break;
-        case "systemd-nspawn":
-            r.literalAttrs ~= Literal("boot.isContainer;");
-            break;
-        default:
-            break;
+    switch (virt)
+    {
+    case "oracle":
+        r.literalAttrs ~= Literal("virtualisation.virtualbox.guest.enable = true;");
+        break;
+    case "parallels":
+        r.literalAttrs ~= Literal("hardware.parallels.enable = true;");
+        r.literalAttrs ~= Literal(
+            "nixpkgs.config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) [ \"prl-tools\" ];");
+        break;
+    case "qemu":
+    case "kvm":
+    case "bochs":
+        r.imports ~= Literal("(modulesPath + \"/profiles/qemu-guest.nix\")");
+        break;
+    case "microsoft":
+        r.literalAttrs ~= Literal("virtualization.hypervGuest.enable = true;");
+        break;
+    case "systemd-nspawn":
+        r.literalAttrs ~= Literal("boot.isContainer;");
+        break;
+    default:
+        break;
     }
 
     return r;
