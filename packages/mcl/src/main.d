@@ -27,21 +27,22 @@ int main(string[] args)
 
     setLogLevel(logLevel);
 
-    try switch (args[1])
+    try
+        switch (args[1])
     {
-        default:
-            return wrongUsage("unknown command: `" ~ args[1] ~ "`");
+    default:
+        return wrongUsage("unknown command: `" ~ args[1] ~ "`");
 
         static foreach (cmd; supportedCommands)
-        case __traits(identifier, cmd):
-        {
+    case __traits(identifier, cmd):
+            {
 
-            info("Running ", __traits(identifier, cmd));
-            cmd();
-            info("Execution Succesfull");
-            return 0;
+                info("Running ", __traits(identifier, cmd));
+                cmd();
+                info("Execution Succesfull");
+                return 0;
 
-        }
+            }
     }
     catch (Exception e)
     {
@@ -53,8 +54,9 @@ int main(string[] args)
 void setLogLevel(LogLevel l)
 {
     import std.logger : globalLogLevel, sharedLog;
+
     globalLogLevel = l;
-    (cast()sharedLog()).logLevel = l;
+    (cast() sharedLog()).logLevel = l;
 }
 
 int wrongUsage(string error)

@@ -1,16 +1,16 @@
 module mcl.commands.ci;
 
 import std.file : readText;
-import std.json : parseJSON,JSONValue;
-import std.stdio : writeln,write;
+import std.json : parseJSON, JSONValue;
+import std.stdio : writeln, write;
 import std.algorithm : map;
 import std.array : array, join;
 import std.conv : to;
 import std.process : ProcessPipes;
 
 import mcl.utils.env : optional, parseEnv;
-import mcl.commands.ci_matrix: nixEvalJobs, SupportedSystem, Params;
-import mcl.commands.shard_matrix: generateShardMatrix;
+import mcl.commands.ci_matrix : nixEvalJobs, SupportedSystem, Params;
+import mcl.commands.shard_matrix : generateShardMatrix;
 import mcl.utils.path : rootDir, createResultDirs;
 import mcl.utils.process : execute;
 import mcl.utils.nix : nix;
@@ -38,17 +38,21 @@ export void ci()
             params.flakePost = "." ~ params.flakePost;
         }
         string cachixUrl = "https://" ~ params.cachixCache ~ ".cachix.org";
-        version (AArch64) {
+        version (AArch64)
+        {
             string arch = "aarch64";
         }
-        version (X86_64) {
+        version (X86_64)
+        {
             string arch = "x86_64";
         }
 
-        version (linux) {
+        version (linux)
+        {
             string os = "linux";
         }
-        version (OSX) {
+        version (OSX)
+        {
             string os = "darwin";
         }
 
@@ -62,7 +66,9 @@ export void ci()
             else
             {
                 writeln("Package ", pkg.name, " is not cached; building...");
-                ProcessPipes res = execute!ProcessPipes(["nix", "build", "--json", ".#" ~ pkg.attrPath]);
+                ProcessPipes res = execute!ProcessPipes([
+                    "nix", "build", "--json", ".#" ~ pkg.attrPath
+                ]);
 
                 foreach (line; res.stderr.byLine)
                 {

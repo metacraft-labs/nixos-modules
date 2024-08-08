@@ -98,7 +98,7 @@ string enumToString(E)(in E value) if (is(E == enum))
     {
         static foreach (enumMember; EnumMembers!E)
         {
-            case enumMember:
+    case enumMember:
             {
                 static if (!hasUDA!(enumMember, StringRepresentation))
                 {
@@ -141,8 +141,7 @@ unittest
     assert(enumToString(TestEnumWithRepr.c) == "field-3");
 }
 
-enum size_t getMaxEnumMemberNameLength(E) = ()
-{
+enum size_t getMaxEnumMemberNameLength(E) = () {
     import std.traits : EnumMembers;
 
     size_t max = 0;
@@ -184,28 +183,30 @@ void writeRecordAsTable(bool ansiColors = true, T, Writer)(in T obj, auto ref Wr
 
     w.formattedWrite("│");
     static foreach (idx, field; T.tupleof)
-    {{
-        // If the field is an enum, get the maximum length of the enum member names
-        static if (is(typeof(field) == enum))
-            const width = getMaxEnumMemberNameLength!(typeof(field));
+    {
+        {
+            // If the field is an enum, get the maximum length of the enum member names
+            static if (is(typeof(field) == enum))
+                const width = getMaxEnumMemberNameLength!(typeof(field));
 
-        // If the field is a bool, set the width to "false".length
-        else static if (is(typeof(field) : bool))
-            const width = 5;
+            // If the field is a bool, set the width to "false".length
+            else static if (is(typeof(field) : bool))
+                const width = 5;
 
-        // If the field has a UDA MaxWidth, set the width to the value of the UDA
-        else static if (hasUDA!(field, MaxWidth))
-            const width = getUDAs!(field, MaxWidth)[0].value;
+            // If the field has a UDA MaxWidth, set the width to the value of the UDA
+            else static if (hasUDA!(field, MaxWidth))
+                const width = getUDAs!(field, MaxWidth)[0].value;
 
-        else
-            const width = 0;
+            else
+                const width = 0;
 
-        w.formattedWrite(
-            " %s%s%s: %s%*-s%s │",
-            gray, __traits(identifier, field), normal,
-            bold, width, obj.tupleof[idx], normal
-        );
-    }}
+            w.formattedWrite(
+                " %s%s%s: %s%*-s%s │",
+                gray, __traits(identifier, field), normal,
+                bold, width, obj.tupleof[idx], normal
+            );
+        }
+    }
     w.formattedWrite("\n");
 }
 
@@ -226,5 +227,6 @@ unittest
     const t = TestStruct(1, 20, true, false, "test");
     auto result = appender!string;
     t.writeRecordAsTable!false(result);
-    assert(result.data == "│ num: 1 │ otherNum: 20   │ bool1: true  │ bool2: false │ someString: test       │\n");
+    assert(
+        result.data == "│ num: 1 │ otherNum: 20   │ bool1: true  │ bool2: false │ someString: test       │\n");
 }

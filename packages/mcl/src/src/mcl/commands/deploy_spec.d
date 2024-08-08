@@ -26,8 +26,8 @@ export void deploy_spec()
     }
 
     spawnProcessInline([
-        "cachix", "deploy", "activate", deploySpecFile
-    ]);
+            "cachix", "deploy", "activate", deploySpecFile
+        ]);
 }
 
 void createMachineDeploySpec()
@@ -47,8 +47,8 @@ void createMachineDeploySpec()
 
     auto result = [
         "agents": packages
-            .map!(pkg => tuple(pkg.name, pkg.output))
-            .assocArray
+        .map!(pkg => tuple(pkg.name, pkg.output))
+        .assocArray
     ].JSONValue;
 
     writeFile(deploySpecFile, result.toString());
