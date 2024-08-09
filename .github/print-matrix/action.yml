@@ -43,10 +43,10 @@ runs:
     - name: Install Nix
       uses: metacraft-labs/nixos-modules/.github/install-nix@main
       with:
-        cachix-cache: ${{ inputs.CACHIX_CACHE }}
-        cachix-auth-token: ${{ inputs.CACHIX_AUTH_TOKEN }}
-        trusted-public-keys: ${{ inputs.TRUSTED_PUBLIC_KEYS }}
-        substituters: ${{ inputs.SUBSTITUTERS }}
+        cachix-cache: ${{ inputs.cachix-cache }}
+        cachix-auth-token: ${{ inputs.cachix-auth-token }}
+        trusted-public-keys: ${{ inputs.trusted-public-keys }}
+        substituters: ${{ inputs.substituters }}
         nix-github-token: ${{ inputs.nix-github-token }}
 
     - name: Print CI Matrix
