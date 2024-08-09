@@ -28,11 +28,6 @@ runs:
       uses: cachix/install-nix-action@v27
       if: ${{ runner.environment == 'github-hosted' }}
 
-    - name: Install Cachix
-      if: ${{ runner.environment == 'github-hosted' }}
-      shell: bash
-      run: nix profile install nixpkgs#cachix
-
     - name: Configure Nix
       shell: bash
       run: |
@@ -49,3 +44,8 @@ runs:
         cat << EOF > "$HOME/.config/nix/netrc"
           machine ${{inputs.cachix-cache}}.cachix.org password ${{inputs.cachix-auth-token}}
         EOF
+
+    - uses: cachix/cachix-action@v15
+      with:
+        name: ${{ inputs.cachix-cache }}
+        authToken: ${{ inputs.cachix-auth-token }}
