@@ -151,6 +151,18 @@ export void ci_matrix()
     nixEvalForAllSystems().array.printTableForCacheStatus();
 }
 
+string flakeAttr(string prefix, SupportedSystem system, string postfix)
+{
+    postfix = postfix == "" ? "" : "." ~ postfix;
+    return "%s.%s%s".fmt(prefix, system.enumToString, postfix);
+}
+
+string flakeAttr(string prefix, string arch, string os, string postfix)
+{
+    postfix = postfix == "" ? "" : "." ~ postfix;
+    return "%s.%s-%s%s".fmt(prefix, arch, os, postfix);
+}
+
 Package[] checkCacheStatus(Package[] packages)
 {
     import std.array : appender;
@@ -224,9 +236,8 @@ static immutable string[] uselessWarnings =
         "this is likely due to the use of the legacy table type."
     ];
 
-Package[] nixEvalJobs(Params params, SupportedSystem system, string cachixUrl, bool doCheck = true)
+Package[] nixEvalJobs(string flakeAttrPrefix, string cachixUrl, bool doCheck = true)
 {
-    string flakeAttr = params.flakePre ~ "." ~ system.enumToString() ~ params.flakePost;
     Package[] result = [];
 
     int maxMemoryMB = getAvailableMemoryMB();
@@ -236,7 +247,7 @@ Package[] nixEvalJobs(Params params, SupportedSystem system, string cachixUrl, b
         "nix-eval-jobs", "--quiet", "--option", "warn-dirty", "false",
         "--check-cache-status", "--gc-roots-dir", gcRootsDir, "--workers",
         maxWorkers.to!string, "--max-memory-size", maxMemoryMB.to!string,
-        "--flake", rootDir ~ "#" ~ flakeAttr
+        "--flake", rootDir ~ "#" ~ flakeAttrPrefix
     ];
 
     tracef("%-(%s %)", args);
@@ -257,7 +268,7 @@ Package[] nixEvalJobs(Params params, SupportedSystem system, string cachixUrl, b
             Package pkg = {
                 name: json["attr"].str,
                 allowedToFail: false,
-                attrPath: params.flakePre ~ "." ~ json["system"].str ~ params.flakePost ~ "." ~ json["attr"].str,
+                attrPath: flakeAttrPrefix ~ "." ~ json["attr"].str,
                 isCached: json["isCached"].boolean,
                 system: getSystem(json["system"].str),
                 os: systemToGHPlatform(getSystem(json["system"].str)),
@@ -312,17 +323,15 @@ Package[] nixEvalJobs(Params params, SupportedSystem system, string cachixUrl, b
 Package[] nixEvalForAllSystems()
 {
     if (params.flakePre == "")
-    {
         params.flakePre = "checks";
-    }
-    if (params.flakePost != "")
-    {
-        params.flakePost = "." ~ params.flakePost;
-    }
+
     string cachixUrl = "https://" ~ params.cachixCache ~ ".cachix.org";
     SupportedSystem[] systems = [EnumMembers!SupportedSystem];
 
-    return systems.map!(system => nixEvalJobs(params, system, cachixUrl))
+    return systems.map!(system =>
+            flakeAttr(params.flakePre, system, params.flakePost)
+                .nixEvalJobs(cachixUrl)
+        )
         .reduce!((a, b) => a ~ b)
         .array
         .sort!((a, b) => a.name < b.name)
