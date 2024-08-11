@@ -95,6 +95,7 @@ struct Package
     bool isCached;
     GitHubOS os;
     SupportedSystem system;
+    string derivation;
     string output;
 }
 
@@ -236,6 +237,69 @@ static immutable string[] uselessWarnings =
         "this is likely due to the use of the legacy table type."
     ];
 
+Package packageFromNixEvalJobsJson(
+    JSONValue json,
+    string flakeAttrPrefix,
+    string binaryCacheHttpEndpoint = "https://cache.nixos.org"
+)
+{
+    return Package(
+        name: json["attr"].str,
+        allowedToFail: false,
+        attrPath: flakeAttrPrefix ~ "." ~ json["attr"].str,
+        isCached: json["isCached"].boolean,
+        system: getSystem(json["system"].str),
+        os: systemToGHPlatform(getSystem(json["system"].str)),
+        derivation: json["drvPath"].str,
+        output: json["outputs"]["out"].str,
+        cacheUrl: binaryCacheHttpEndpoint ~ "/" ~ json["outputs"]["out"].str.matchFirst(
+            "^/nix/store/(?P<hash>[^-]+)-")["hash"] ~ ".narinfo"
+    );
+}
+
+@("packageFromNixEvalJobsJson")
+unittest
+{
+    {
+        auto testJSON = `{
+          "attr": "home/bean-desktop",
+          "attrPath": [ "home/bean-desktop" ],
+          "cacheStatus": "notBuilt",
+          "drvPath": "/nix/store/jp7qgm9mgikksypzljrbhmxa31xmmq1x-home-manager-generation.drv",
+          "inputDrvs": {
+            "/nix/store/0hkqmn0z40yx89kd5wgfjxzqckvjkiw3-home-manager-files.drv": [ "out" ],
+            "/nix/store/0khqc4m8jrv5gkg2jwf5xz46bkmz2qxl-dconf-keys.json.drv": [ "out" ],
+            "/nix/store/5rydfkrpd5vdpz4qxsypivxwy9y6z8gl-bash-5.2p26.drv": [ "out" ],
+            "/nix/store/7vgw0fqilqwa9l26arqpym1l4iisgff1-stdenv-linux.drv": [ "out" ],
+            "/nix/store/96ji6f4cijfc23jz98x45xm1dvzz5hq8-activation-script.drv": [ "out" ],
+            "/nix/store/m60vlf9j0g8y82avg5x90nbg554wshva-home-manager-path.drv": [ "out" ]
+          },
+          "isCached": false,
+          "name": "home-manager-generation",
+          "outputs": {
+            "out": "/nix/store/30qrziyj0vbg6n43bbh08ql0xbnsy76d-home-manager-generation"
+          },
+          "system": "x86_64-linux"
+        }`.parseJSON;
+
+        auto testPackage = testJSON.packageFromNixEvalJobsJson(
+            "legacyPackages.x86_64-linux.mcl.matrix.shards.0",
+            "https://binary-cache.internal"
+        );
+        assert(testPackage == Package(
+            name: "home/bean-desktop",
+            allowedToFail: false,
+            attrPath: "legacyPackages.x86_64-linux.mcl.matrix.shards.0.home/bean-desktop",
+            isCached: false,
+            system: SupportedSystem.x86_64_linux,
+            os: GitHubOS.selfHosted,
+            derivation: "/nix/store/jp7qgm9mgikksypzljrbhmxa31xmmq1x-home-manager-generation.drv",
+            output: "/nix/store/30qrziyj0vbg6n43bbh08ql0xbnsy76d-home-manager-generation",
+            cacheUrl: "https://binary-cache.internal/30qrziyj0vbg6n43bbh08ql0xbnsy76d.narinfo"
+        ));
+    }
+}
+
 Package[] nixEvalJobs(string flakeAttrPrefix, string cachixUrl, bool doCheck = true)
 {
     Package[] result = [];
@@ -264,21 +328,11 @@ Package[] nixEvalJobs(string flakeAttrPrefix, string cachixUrl, bool doCheck = t
         }
         else if (line.indexOf("{") != -1)
         {
-            auto json = parseJSON(line);
-            Package pkg = {
-                name: json["attr"].str,
-                allowedToFail: false,
-                attrPath: flakeAttrPrefix ~ "." ~ json["attr"].str,
-                isCached: json["isCached"].boolean,
-                system: getSystem(json["system"].str),
-                os: systemToGHPlatform(getSystem(json["system"].str)),
-                output: json["outputs"]["out"].str,
-                cacheUrl: cachixUrl ~ "/" ~ json["outputs"]["out"].str.matchFirst(
-                    "^/nix/store/(?P<hash>[^-]+)-")["hash"] ~ ".narinfo"
-            };
-            if (doCheck) {
-                pkg = pkg.checkPackage();
-            }
+            Package pkg = line.parseJSON
+                .packageFromNixEvalJobsJson(flakeAttrPrefix, cachixUrl);
+
+            if (doCheck) pkg = pkg.checkPackage();
+
             result ~= pkg;
 
             struct Output {
