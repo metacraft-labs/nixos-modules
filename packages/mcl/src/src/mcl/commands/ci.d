@@ -9,7 +9,7 @@ import std.conv : to;
 import std.process : ProcessPipes;
 
 import mcl.utils.env : optional, parseEnv;
-import mcl.commands.ci_matrix: nixEvalJobs, SupportedSystem, Params;
+import mcl.commands.ci_matrix: nixEvalJobs, SupportedSystem, Params, flakeAttr;
 import mcl.commands.shard_matrix: generateShardMatrix;
 import mcl.utils.path : rootDir, createResultDirs;
 import mcl.utils.process : execute;
@@ -52,7 +52,9 @@ export void ci()
             string os = "darwin";
         }
 
-        auto matrix = nixEvalJobs(params, (arch ~ "_" ~ os).to!(SupportedSystem), cachixUrl, false);
+        auto matrix = flakeAttr(params.flakePre, arch, os, params.flakePost)
+            .nixEvalJobs(cachixUrl, false);
+
         foreach (pkg; matrix)
         {
             if (pkg.isCached)

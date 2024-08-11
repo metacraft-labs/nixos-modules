@@ -8,7 +8,7 @@ import mcl.utils.process : spawnProcessInline;
 import mcl.utils.path : resultDir;
 import mcl.utils.env : parseEnv;
 
-import mcl.commands.ci_matrix : ci_matrix, Params, nixEvalJobs, SupportedSystem;
+import mcl.commands.ci_matrix : flakeAttr, Params, nixEvalJobs, SupportedSystem;
 
 shared string deploySpecFile;
 
@@ -39,11 +39,11 @@ void createMachineDeploySpec()
     import std.file : writeFile = write;
 
     auto params = parseEnv!Params;
-    params.flakePre = "legacyPackages";
-    params.flakePost = ".bareMetalMachines";
 
     string cachixUrl = "https://" ~ params.cachixCache ~ ".cachix.org";
-    auto packages = nixEvalJobs(params, SupportedSystem.x86_64_linux, cachixUrl);
+
+    auto packages = flakeAttr("legacyPackages", SupportedSystem.x86_64_linux, "bareMetalMachines")
+        .nixEvalJobs(cachixUrl);
 
     auto result = [
         "agents": packages
