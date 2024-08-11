@@ -107,7 +107,7 @@
         flake-compat.follows = "flake-compat";
         devenv.follows = "devenv";
         nixpkgs.follows = "nixpkgs-unstable";
-        pre-commit-hooks.follows = "git-hooks-nix";
+        git-hooks.follows = "git-hooks-nix";
       };
     };
 
