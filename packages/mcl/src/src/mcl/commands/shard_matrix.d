@@ -5,6 +5,7 @@ import std.algorithm : map;
 import std.array : array;
 import std.conv : to, parse;
 import std.file : append, write;
+import std.format : fmt = format;
 import std.logger : errorf, infof;
 import std.path : buildPath;
 import std.range : iota;
@@ -92,7 +93,7 @@ unittest
     auto shards = generateShardMatrix(flakeRef);
     assert(shards.include.length == 11);
     assert(shards.include[0].prefix == "legacyPackages");
-    assert(shards.include[0].postfix == "shards.0");
+    assert(shards.include[0].postfix == "mcl.matrix.shards.0");
     assert(shards.include[0].digit == 0);
 }
 
@@ -114,7 +115,7 @@ ShardMatrix splitToShards(int shardCount)
     ShardMatrix shards;
     shards.include = shardCount
         .iota
-        .map!(i => Shard("legacyPackages", "shards." ~ i.to!string, i))
+        .map!(i => Shard("legacyPackages", "mcl.matrix.shards.%s".fmt(i), i))
         .array;
 
     return shards;
@@ -126,13 +127,13 @@ unittest
     auto shards = splitToShards(3);
     assert(shards.include.length == 3);
     assert(shards.include[0].prefix == "legacyPackages");
-    assert(shards.include[0].postfix == "shards.0");
+    assert(shards.include[0].postfix == "mcl.matrix.shards.0");
     assert(shards.include[0].digit == 0);
     assert(shards.include[1].prefix == "legacyPackages");
-    assert(shards.include[1].postfix == "shards.1");
+    assert(shards.include[1].postfix == "mcl.matrix.shards.1");
     assert(shards.include[1].digit == 1);
     assert(shards.include[2].prefix == "legacyPackages");
-    assert(shards.include[2].postfix == "shards.2");
+    assert(shards.include[2].postfix == "mcl.matrix.shards.2");
     assert(shards.include[2].digit == 2);
 
 }
