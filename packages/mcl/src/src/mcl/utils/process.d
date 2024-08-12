@@ -18,7 +18,7 @@ T execute(T = string)(string[] args, bool printCommand = true, bool returnErr = 
     import std.exception : enforce;
     import std.format : format;
     import std.process : pipeShell, wait, Redirect, escapeShellCommand;
-    import std.logger : infof, logf, LogLevel;
+    import std.logger : tracef, errorf, infof;
     import std.array : join;
     import std.algorithm : map;
     import std.conv : to;
@@ -27,7 +27,7 @@ T execute(T = string)(string[] args, bool printCommand = true, bool returnErr = 
 
     if (printCommand)
     {
-        LogLevel.info.logf("\n$ `%s`", cmd);
+        infof("\n$ `%s`", cmd.bold);
     }
     auto res = pipeShell(cmd, Redirect.all);
     static if (is(T == ProcessPipes))
@@ -41,14 +41,26 @@ T execute(T = string)(string[] args, bool printCommand = true, bool returnErr = 
         string output = stdout;
 
         int status = wait(res.pid);
-        // enforce(status == 0, "Command `%s` failed with status %s, stderr: \n%s".format(args, status, stderr));
 
-        infof("
-        ---
-        $ `%s`
-        stdout: `%s`
-        stderr: `%s`
-        ---", cmd.bold, stdout.bold, stderr.bold);
+        if (status != 0)
+        {
+            errorf("Command failed:
+            ---
+            $ `%s`
+            stdout: `%s`
+            stderr: `%s`
+            ---", cmd.bold, stdout.bold, stderr.bold);
+        }
+        else
+        {
+            tracef("
+            ---
+            $ `%s`
+            stdout: `%s`
+            stderr: `%s`
+            ---", cmd.bold, stdout.bold, stderr.bold);
+        }
+
 
         if (returnErr)
         {
