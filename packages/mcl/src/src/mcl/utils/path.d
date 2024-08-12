@@ -3,6 +3,7 @@ module mcl.utils.path;
 import std.process : execute;
 import std.string : strip;
 import std.file : mkdirRecurse, rmdir, exists;
+import std.format : format;
 import std.path : buildNormalizedPath, absolutePath;
 
 immutable string rootDir, resultDir, gcRootsDir;
@@ -32,33 +33,32 @@ string getTopLevel()
 @("rootDir")
 unittest
 {
-    assert(rootDir == getTopLevel());
+    assert(rootDir == getTopLevel, "Expected rootDir to return %s, got %s".format(getTopLevel(), rootDir));
 }
 
 @("resultDir")
 unittest
 {
-    assert(resultDir == rootDir.buildNormalizedPath(".result"));
+    auto expected = rootDir.buildNormalizedPath(".result");
+    assert(resultDir == expected, "Expected resultDir to return %s, got %s".format(expected, resultDir));
 }
 
 @("gcRootsDir")
 unittest
 {
-    assert(gcRootsDir == resultDir.buildNormalizedPath("gc-roots"));
+    auto expected = resultDir.buildNormalizedPath("gc-roots/");
+    assert(gcRootsDir == expected, "Expected gcRootsDir to return %s, got %s".format(expected, gcRootsDir));
 }
 
-void createResultDirs()
-{
-    mkdirRecurse(gcRootsDir);
-}
+void createResultDirs() => mkdirRecurse(gcRootsDir);
 
 @("createResultDirs")
 unittest
 {
     createResultDirs();
-    assert(gcRootsDir.exists);
+    assert(gcRootsDir.exists, "Expected gcRootsDir to exist, but it doesn't");
 
     // rmdir(gcRootsDir());
     // rmdir(resultDir());
-    // assert(!gcRootsDir.exists);
+    // assert(!gcRootsDir.exists, "Expected gcRootsDir to not exist, but it does");
 }
