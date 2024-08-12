@@ -85,14 +85,10 @@
             ExecStart = lib.getExe (pkgs.writeShellApplication {
               name = "repl";
               text = ''
-                export KEYMANAGER_TOKEN_FILE=$CREDENTIALS_DIRECTORY/keymanager-token-file
                 ${lib.getExe package}
               '';
             });
           }
-          (lib.mkIf (cfg.args.keymanager-token-file != null) {
-            LoadCredential = ["keymanager-token-file:${cfg.args.keymanager-token-file}"];
-          })
         ];
       };
     };
