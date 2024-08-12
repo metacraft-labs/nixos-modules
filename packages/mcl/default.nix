@@ -21,6 +21,7 @@
       util-linux
       xorg.xrandr
       glxinfo
+      cachix
     ]);
   excludedTests = (
     lib.concatStringsSep "|" [
