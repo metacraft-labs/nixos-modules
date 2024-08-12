@@ -6,7 +6,7 @@ import std.array : array;
 import std.conv : to, parse;
 import std.file : append, write;
 import std.format : fmt = format;
-import std.logger : errorf, infof;
+import std.logger : warningf, infof;
 import std.path : buildPath;
 import std.range : iota;
 import std.regex : matchFirst, regex;
@@ -69,7 +69,7 @@ ShardMatrix generateShardMatrix(string flakeRef = ".")
 
     if (shardCount == 0)
     {
-        errorf("No shards found, exiting");
+        warningf("No shards found, exiting");
         return ShardMatrix([Shard("", "", -1)]);
     }
 
