@@ -195,20 +195,14 @@
     };
 
     config = {
-      systemd.services.lido-validator-ejector = lib.mkIf cfg.enable {
-        description = "Lido Validator Ejector";
-
-        wantedBy = ["multi-user.target"];
-
-        environment = toEnvVariables cfg.args;
-
-        path = [package];
-
-        serviceConfig = {
-          Group = "lido";
-          ExecStart = "${lib.getExe package}";
-
-          WorkingDirectory = "${package}/libexec/validator-ejector";
+      virtualisation.oci-containers = lib.mkIf cfg.enable {
+        containers.lido-validator-ejector = {
+          image = "lidofinance/validator-ejector:1.6.0";
+          environment = toEnvVariables cfg.args;
+          extraOptions = [
+            "--network=host"
+          ];
+          volumes = ["/ethereum/lido/withdrawal-automation:/ethereum/lido/withdrawal-automation"];
         };
       };
     };
