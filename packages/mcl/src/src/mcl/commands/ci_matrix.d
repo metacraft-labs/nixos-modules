@@ -14,7 +14,7 @@ import std.path : buildPath;
 import std.process : pipeProcess, wait, Redirect, kill;
 import std.exception : enforce;
 import std.format : fmt = format;
-import std.logger : tracef, infof;
+import std.logger : tracef, infof, errorf;
 
 import mcl.utils.env : optional, MissingEnvVarsException, parseEnv;
 import mcl.utils.string : enumToString, StringRepresentation, MaxWidth, writeRecordAsTable;
@@ -140,8 +140,6 @@ version (unittest)
                 "⏳ building..."))
     ];
 }
-
-int exit_code = 0;
 
 Params params;
 
@@ -318,60 +316,61 @@ Package[] nixEvalJobs(string flakeAttrPrefix, string cachixUrl, bool doCheck = t
     tracef("%-(%s %)", args);
 
     auto pipes = pipeProcess(args, Redirect.stdout | Redirect.stderr);
+
+    void logError(string errorMsg)
+    {
+        errorf("Command `%s` failed with error:\n---\n%s\n---",
+            args, errorMsg);
+    }
+
     foreach (line; pipes.stdout.byLine)
     {
-        if (line.indexOf("error:") != -1)
+        if (line.indexOf("{") == -1)
         {
-            stderr.writeln(line);
-            pipes.pid.kill();
-            wait(pipes.pid);
-            exit_code = 1;
+            errorf("Expected JSON object on stdout from nix-eval-jobs, got: `%s`", line);
+            continue;
         }
-        else if (line.indexOf("{") != -1)
+
+        auto json = parseJSON(line);
+
+        if (auto err = "error" in json)
         {
-            Package pkg = line.parseJSON
-                .packageFromNixEvalJobsJson(flakeAttrPrefix, cachixUrl);
-
-            if (doCheck) pkg = pkg.checkPackage();
-
-            result ~= pkg;
-
-            struct Output {
-                bool isCached;
-                GitHubOS os;
-                @MaxWidth(50) string attr;
-                @MaxWidth(80) string output;
-            }
-
-            Output(
-                isCached: pkg.isCached,
-                os: pkg.os,
-                attr: pkg.attrPath,
-                output: pkg.output
-            ).writeRecordAsTable(stderr.lockingTextWriter);
+            logError((*err).str);
+            continue; // drain the output
         }
+
+        Package pkg = json.packageFromNixEvalJobsJson(
+            flakeAttrPrefix, cachixUrl);
+
+        if (doCheck)pkg = pkg.checkPackage();
+
+        result ~= pkg;
+
+        struct Output {
+            bool isCached;
+            GitHubOS os;
+            @MaxWidth(50) string attr;
+            @MaxWidth(80) string output;
+        }
+
+        Output(
+            isCached: pkg.isCached,
+            os: pkg.os,
+            attr: pkg.attrPath,
+            output: pkg.output
+        ).writeRecordAsTable(stderr.lockingTextWriter);
     }
     foreach (line; pipes.stderr.byLine)
     {
         if (uselessWarnings.map!((warning) => line.indexOf(warning) != -1).any)
-        {
             continue;
-        }
-        else if (line.indexOf("error:") != -1)
-        {
-            stderr.writeln(line);
-            pipes.pid.kill();
-            wait(pipes.pid);
-            exit_code = 1;
-            return result;
-        }
-        else
-        {
-            stderr.writeln(line);
-        }
+
+        logError(line.idup);
     }
 
-    wait(pipes.pid);
+    int status = wait(pipes.pid);
+    enforce(status == 0, "Command `%s` failed with status %s".fmt(args, status));
+
     return result;
 }
 
