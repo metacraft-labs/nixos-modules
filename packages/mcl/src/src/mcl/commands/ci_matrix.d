@@ -21,6 +21,7 @@ import mcl.utils.string : enumToString, StringRepresentation, MaxWidth, writeRec
 import mcl.utils.json : toJSON;
 import mcl.utils.path : rootDir, resultDir, gcRootsDir, createResultDirs;
 import mcl.utils.process : execute;
+import mcl.utils.nix : nix;
 
 enum GitHubOS
 {
@@ -374,13 +375,32 @@ Package[] nixEvalJobs(string flakeAttrPrefix, string cachixUrl, bool doCheck = t
     return result;
 }
 
+SupportedSystem[] getSupportedSystems(string flakeRef = ".")
+{
+    import std.path : isValidPath, absolutePath, buildNormalizedPath;
+
+    if (flakeRef.isValidPath) {
+        flakeRef = flakeRef.absolutePath.buildNormalizedPath;
+    }
+
+    const json = nix.eval!JSONValue("", [
+        "--impure",
+        "--expr",
+        `builtins.attrNames (builtins.getFlake "` ~ flakeRef ~ `").outputs.legacyPackages`
+    ]);
+
+    return json.array.map!(system => getSystem(system.str)).array;
+}
+
 Package[] nixEvalForAllSystems()
 {
     if (params.flakePre == "")
         params.flakePre = "checks";
 
-    string cachixUrl = "https://" ~ params.cachixCache ~ ".cachix.org";
-    SupportedSystem[] systems = [EnumMembers!SupportedSystem];
+    const cachixUrl = "https://" ~ params.cachixCache ~ ".cachix.org";
+    const systems = getSupportedSystems();
+
+    infof("Evaluating flake for: %s", systems);
 
     return systems.map!(system =>
             flakeAttr(params.flakePre, system, params.flakePost)
