@@ -1,13 +1,15 @@
 module mcl.utils.process;
+
 import mcl.utils.test;
+
+import mcl.utils.tui : bold;
+
 import std.process : ProcessPipes;
 import std.string : split, strip;
 import core.sys.posix.unistd : geteuid;
 import std.json : JSONValue, parseJSON;
 
 bool isRoot() => geteuid() == 0;
-
-string bold(string s) => "\033[1m" ~ s ~ "\033[0m";
 
 T execute(T = string)(string args, bool printCommand = true, bool returnErr = false) if (is(T == string) || is(T == ProcessPipes) || is(T == JSONValue))
 {
