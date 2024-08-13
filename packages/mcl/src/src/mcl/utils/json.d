@@ -132,6 +132,15 @@ JSONValue toJSON(T)(in T value, bool simplify = false)
         }
         return JSONValue(result);
     }
+    else static if (is(T == K[V], K, V))
+    {
+        JSONValue[string] result;
+        foreach (key, field; value)
+        {
+            result[key] = field.toJSON(simplify);
+        }
+        return JSONValue(result);
+    }
     else
         static assert(false, "Unsupported type: `" ~ __traits(identifier, T) ~ "`");
 }
