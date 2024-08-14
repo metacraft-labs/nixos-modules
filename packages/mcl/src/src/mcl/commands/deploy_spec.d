@@ -14,13 +14,13 @@ import mcl.utils.cachix : cachixNixStoreUrl, DeploySpec, createMachineDeploySpec
 import mcl.utils.tui : bold;
 import mcl.utils.json : toJSON, fromJSON;
 
-import mcl.commands.ci_matrix : flakeAttr, Params, nixEvalJobs, SupportedSystem;
+import mcl.commands.ci_matrix : flakeAttr, params, Params, nixEvalJobs, SupportedSystem;
 
 export void deploy_spec()
 {
     const deploySpecFile = resultDir.buildPath("cachix-deploy-spec.json");
 
-    auto params = parseEnv!Params;
+    params = parseEnv!Params;
 
     if (!exists(deploySpecFile))
     {
