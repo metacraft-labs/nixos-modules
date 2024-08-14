@@ -1,7 +1,10 @@
 import std.stdio : writefln, writeln, stderr;
 import std.array : replace;
 import std.getopt : getopt;
-import std.logger : info, errorf, LogLevel;
+import std.logger : infof, errorf, LogLevel;
+
+import mcl.utils.path : rootDir;
+import mcl.utils.tui : bold;
 
 import cmds = mcl.commands;
 
@@ -21,31 +24,32 @@ int main(string[] args)
     if (args.length < 2)
         return wrongUsage("no command selected");
 
-    string command = args[1];
+    string cmd = args[1];
     LogLevel logLevel = LogLevel.info;
     args.getopt("log-level", &logLevel);
 
     setLogLevel(logLevel);
 
-    try switch (args[1])
+    infof("Git root: '%s'", rootDir.bold);
+
+    try switch (cmd)
     {
         default:
-            return wrongUsage("unknown command: `" ~ args[1] ~ "`");
+            return wrongUsage("unknown command: `" ~ cmd ~ "`");
 
-        static foreach (cmd; supportedCommands)
-        case __traits(identifier, cmd):
-        {
+        static foreach (command; supportedCommands)
+            case __traits(identifier, command):
+            {
 
-            info("Running ", __traits(identifier, cmd));
-            cmd();
-            info("Execution Succesfull");
-            return 0;
-
-        }
+                infof("Running %s task", cmd.bold);
+                command();
+                infof("Execution Succesfull");
+                return 0;
+            }
     }
     catch (Exception e)
     {
-        errorf("Error: %s", e);
+        errorf("Task %s failed. Error:\n%s", cmd.bold, e);
         return 1;
     }
 }
