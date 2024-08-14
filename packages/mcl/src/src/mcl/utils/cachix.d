@@ -35,6 +35,15 @@ unittest
 struct DeploySpec
 {
     string[string] agents;
+
+    void toString(W)(auto ref W writer) const
+    {
+        import std.range : byPair;
+        import std.format : formattedWrite;
+        writer.formattedWrite("DeploySpec(\n  agents: [\n");
+        writer.formattedWrite("    %(%(%s: %s%)\n    %)", agents.byPair);
+        writer.formattedWrite("  ]\n)");
+    }
 }
 
 DeploySpec createMachineDeploySpec(Package[] packages) =>
