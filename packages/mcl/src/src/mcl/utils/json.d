@@ -84,10 +84,11 @@ T fromJSON(T)(in JSONValue value) {
 
 }
 
-@("fromJSON")
+@("fromJSON.SumType")
 unittest {
-    auto x = fromJSON!(SumType!(int, string))(JSONValue("1"));
-    auto y = fromJSON!(SumType!(int, string))(JSONValue(1));
+    alias NumOrString = SumType!(int, string);
+    assert(42.JSONValue.fromJSON!NumOrString == NumOrString(42));
+    assert("test".JSONValue.fromJSON!NumOrString == NumOrString("test"));
 }
 
 JSONValue toJSON(T)(in T value, bool simplify = false)
