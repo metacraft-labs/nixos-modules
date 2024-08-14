@@ -141,12 +141,16 @@ version (unittest)
     ];
 }
 
-Params params;
+immutable Params params;
+
+version (unittest) {} else
+shared static this()
+{
+    params = parseEnv!Params;
+}
 
 export void ci_matrix()
 {
-    params = parseEnv!Params;
-
     createResultDirs();
     nixEvalForAllSystems().array.printTableForCacheStatus();
 }
@@ -184,7 +188,6 @@ Package[] checkCacheStatus(Package[] packages)
 
 export void print_table()
 {
-    params = parseEnv!Params;
     createResultDirs();
 
     getPrecalcMatrix()
@@ -205,6 +208,8 @@ struct Params
 
     void setup()
     {
+        if (this.flakePre == "")
+            this.flakePre = "checks";
     }
 }
 
@@ -393,9 +398,6 @@ SupportedSystem[] getSupportedSystems(string flakeRef = ".")
 
 Package[] nixEvalForAllSystems()
 {
-    if (params.flakePre == "")
-        params.flakePre = "checks";
-
     const cachixUrl = "https://" ~ params.cachixCache ~ ".cachix.org";
     const systems = getSupportedSystems();
 
@@ -536,7 +538,7 @@ unittest
     }
 }
 
-string getStatus(JSONValue pkg, string key)
+string getStatus(JSONValue pkg, string key, bool isInitial)
 {
     if (key in pkg)
     {
@@ -544,7 +546,7 @@ string getStatus(JSONValue pkg, string key)
         {
             return "[✅ cached](" ~ pkg[key]["cacheUrl"].str ~ ")";
         }
-        else if (params.isInitial)
+        else if (isInitial)
         {
             return "⏳ building...";
         }
@@ -559,7 +561,10 @@ string getStatus(JSONValue pkg, string key)
     }
 }
 
-SummaryTableEntry[] convertNixEvalToTableSummary(Package[] packages)
+SummaryTableEntry[] convertNixEvalToTableSummary(
+    const Package[] packages,
+    bool isInitial
+)
 {
 
     SummaryTableEntry[] tableSummary = packages
@@ -574,9 +579,10 @@ SummaryTableEntry[] convertNixEvalToTableSummary(Package[] packages)
             }
             SummaryTableEntry entry = {
                 name, {
-                    getStatus(pkg, "x86_64_linux"), getStatus(pkg, "x86_64_darwin")
+                    getStatus(pkg, "x86_64_linux", isInitial),
+                    getStatus(pkg, "x86_64_darwin", isInitial)
                 }, {
-                    getStatus(pkg, "aarch64_darwin")
+                    getStatus(pkg, "aarch64_darwin", isInitial)
                 }
             };
             return entry;
@@ -590,7 +596,10 @@ SummaryTableEntry[] convertNixEvalToTableSummary(Package[] packages)
 @("convertNixEvalToTableSummary/getStatus")
 unittest
 {
-    auto tableSummary = convertNixEvalToTableSummary(cast(Package[]) testPackageArray);
+    auto tableSummary = convertNixEvalToTableSummary(
+        testPackageArray,
+        isInitial: false
+    );
     assert(tableSummary[0].name == testPackageArray[0].name);
     assert(tableSummary[0].x86_64.linux == "[✅ cached](https://testPackage.com)");
     assert(tableSummary[0].x86_64.darwin == "🚫 not supported");
@@ -600,9 +609,10 @@ unittest
     assert(tableSummary[1].x86_64.darwin == "🚫 not supported");
     assert(tableSummary[1].aarch64.darwin == "❌ build failed");
 
-    params.isInitial = true;
-    tableSummary = convertNixEvalToTableSummary(cast(Package[]) testPackageArray);
-    params.isInitial = false;
+    tableSummary = convertNixEvalToTableSummary(
+        testPackageArray,
+        isInitial: true
+    );
     assert(tableSummary[0].name == testPackageArray[0].name);
     assert(tableSummary[0].x86_64.linux == "[✅ cached](https://testPackage.com)");
     assert(tableSummary[0].x86_64.darwin == "🚫 not supported");
@@ -621,7 +631,7 @@ void printTableForCacheStatus(Package[] packages)
         saveGHCIMatrix(packages);
     }
     saveCachixDeploySpec(packages);
-    saveGHCIComment(convertNixEvalToTableSummary(packages));
+    saveGHCIComment(convertNixEvalToTableSummary(packages, params.isInitial));
 }
 
 Package checkPackage(Package pkg)
