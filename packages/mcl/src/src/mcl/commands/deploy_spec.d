@@ -16,15 +16,10 @@ import mcl.utils.json : toJSON, fromJSON;
 
 import mcl.commands.ci_matrix : flakeAttr, Params, nixEvalJobs, SupportedSystem;
 
-shared string deploySpecFile;
-
-shared static this()
-{
-    deploySpecFile = resultDir.buildPath("cachix-deploy-spec.json");
-}
-
 export void deploy_spec()
 {
+    const deploySpecFile = resultDir.buildPath("cachix-deploy-spec.json");
+
     auto params = parseEnv!Params;
 
     if (!exists(deploySpecFile))
