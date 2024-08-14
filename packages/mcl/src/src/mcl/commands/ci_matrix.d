@@ -641,7 +641,10 @@ Package checkPackage(Package pkg)
     }
     catch (HTTPStatusException e)
     {
-        pkg.isCached = false;
+        if (e.status == 404)
+            pkg.isCached = false;
+        else
+            throw e;
     }
 
     return pkg;
