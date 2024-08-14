@@ -20,8 +20,6 @@ export void deploy_spec()
 {
     const deploySpecFile = resultDir.buildPath("cachix-deploy-spec.json");
 
-    params = parseEnv!Params;
-
     if (!exists(deploySpecFile))
     {
         auto nixosConfigs = flakeAttr("legacyPackages", SupportedSystem.x86_64_linux, "bareMetalMachines")
