@@ -12,7 +12,7 @@ import mcl.utils.path : resultDir;
 import mcl.utils.env : parseEnv;
 import mcl.utils.cachix : cachixNixStoreUrl, DeploySpec, createMachineDeploySpec;
 import mcl.utils.tui : bold;
-import mcl.utils.json : toJSON, fromJSON;
+import mcl.utils.json : toJSON, fromJSON, tryDeserializeFromJsonFile;
 
 import mcl.commands.ci_matrix : flakeAttr, params, Params, nixEvalJobs, SupportedSystem;
 
@@ -49,11 +49,9 @@ export void deploy_spec()
     }
     else
     {
-        warningf(
-            "Reusing existing deploy spec at '%s':\n---\n%s\n---",
-            deploySpecFile.bold,
-            deploySpecFile.readText().parseJSON.fromJSON!DeploySpec
-        );
+        warningf("Reusing existing deploy spec at:\n'%s'", deploySpecFile.bold);
+
+        warningf("\n---\n%s\n---", deploySpecFile.tryDeserializeFromJsonFile!DeploySpec);
     }
 
     spawnProcessInline([
