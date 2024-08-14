@@ -2,11 +2,10 @@ module mcl.utils.json;
 import mcl.utils.test;
 import mcl.utils.string;
 import std.traits: isNumeric, isArray, isSomeChar, ForeachType, isBoolean, isAssociativeArray;
-import std.json: JSONValue, JSONOptions, JSONType;
+import std.json: parseJSON, JSONValue, JSONOptions, JSONType;
 import std.conv: to;
 import std.string: strip;
 import std.range: front;
-import std.stdio: writeln;
 import std.algorithm: map;
 import std.array: join, array, replace, split;
 import std.datetime: SysTime;
@@ -31,7 +30,7 @@ T fromJSON(T)(in JSONValue value) {
         return value;
     }
     else static if (is(T == bool) || is(T == string) || isSomeChar!T || isNumeric!T || is(T == enum)) {
-        return value.toString(JSONOptions.doNotEscapeSlashes).strip("\"").to!T;
+        return value.get!T;
     }
     else static if (isSumType!T) {
         static foreach (SumTypeVariant; T.Types)
@@ -69,19 +68,125 @@ T fromJSON(T)(in JSONValue value) {
         }
         return result;
     }
-    else static if (isAssociativeArray!T) {
-        T result;
-        foreach (key, val; value.object) {
-            if (key in result) {
-                result[key] = val.fromJSON!(typeof(result[key]));
-            }
-        }
+    else static if (is(immutable T == immutable V[K], V, K)) {
+        V[K] result;
+        foreach (key, val; value.object)
+            result[key] = val.fromJSON!V;
         return result;
     }
     else {
         static assert(false, "Unsupported type: `", T,  "` ", isSumType!T);
     }
+}
 
+@("fromJSON.AA")
+unittest {
+    {
+        struct Node {
+            string name;
+            ulong size;
+            Node[string] children;
+        }
+
+        auto json = parseJSON(`{
+            "name": "root",
+            "size": 42,
+            "children": {
+                "child1": {
+                    "name": "child1",
+                    "size": 1,
+                    "children": {}
+                },
+                "child2": {
+                    "name": "child2",
+                    "size": 2,
+                    "children": {
+                        "child3": {
+                            "name": "child3",
+                            "size": 3,
+                            "children": {}
+                        }
+                    }
+                }
+            }
+        }`);
+
+        assert(json.fromJSON!Node == Node("root", 42, [
+            "child1": Node("child1", 1, null),
+            "child2": Node("child2", 2, [
+                "child3": Node("child3", 3, null)
+            ])
+        ]));
+    }
+
+    {
+        alias Type = SumType!(
+            int,
+            bool[string]
+        );
+
+        auto json = parseJSON(`{
+            "1": 1,
+            "2": { "a": true }
+        }`);
+
+        assert(json.fromJSON!(Type[string]) == [
+            "1": Type(1),
+            "2": Type([ "a": true ])
+        ]);
+    }
+
+    {
+        alias Type = SumType!(
+            int,
+            bool[string]
+        );
+
+        auto json = parseJSON(`[1, { "a": true } ]`);
+
+        assert(json.fromJSON!(Type[]) == [
+            Type(1),
+            Type([ "a": true ])
+        ]);
+    }
+
+    {
+        auto json = parseJSON(`{
+            "1": "a",
+            "2": 3,
+            "3": [ 1, { "x": true } ]
+        }`);
+
+        // alias Type = SumType!(
+        //     string,
+        //     int,
+        //     SumType!(
+        //         int,
+        //         bool[string]
+        //     )
+        // )[string];
+
+        alias InnerType = SumType!(
+            int,
+            bool[string]
+        );
+
+        alias OuterType = SumType!(
+            string,
+            int,
+            InnerType[]
+        );
+
+        alias Type = OuterType[string];
+
+        Type expectedValue = [
+            "1": OuterType("a"),
+            "2": OuterType(3),
+            "3": OuterType([ InnerType(1), InnerType([ "x": true ]) ])
+        ];
+
+        assert(json.fromJSON!Type == expectedValue);
+    }
 }
 
 @("fromJSON.SumType")
@@ -176,7 +281,6 @@ version(unittest)
 @("toJSON")
 unittest
 {
-    import std.stdio: writeln;
     assert(1.toJSON == JSONValue(1));
     assert(true.toJSON == JSONValue(true));
     assert("test".toJSON == JSONValue("test"));
