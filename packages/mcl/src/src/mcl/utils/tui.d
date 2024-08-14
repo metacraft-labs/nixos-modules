@@ -1,3 +1,3 @@
 module mcl.utils.tui;
 
-string bold(string s) => "\033[1m" ~ s ~ "\033[0m";
+string bold(const char[] s) => cast(string)("\033[1m" ~ s ~ "\033[0m");
