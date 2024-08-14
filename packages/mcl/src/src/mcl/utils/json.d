@@ -295,3 +295,38 @@ unittest
     assert(testStruct3.toJSON == JSONValue(["a": JSONValue(1), "b": JSONValue(["a": JSONValue(1), "b": JSONValue(["a": JSONValue(1), "b": JSONValue("test"), "c": JSONValue(true)])])]));
 }
 
+
+T tryGet(T)(lazy T value, string errorMsg, string file = __FILE__, size_t line = __LINE__)
+{
+    try
+    {
+        return value;
+    }
+    catch (Exception e)
+    {
+        throw new Exception(errorMsg, file, line, e);
+    }
+}
+
+T tryDeserializeFromJsonFile(T)(string path)
+{
+    import std.file : readText;
+    import std.format : format;
+    import std.json : parseJSON;
+    import std.string : strip;
+
+    import mcl.utils.tui : bold;
+
+    auto txt = path
+        .readText()
+        .strip()
+        .tryGet("Error reading file: '%s'".format(path.bold));
+
+    auto json = txt
+        .parseJSON()
+        .tryGet("Error parsing JSON. File contents: '%s'".format(txt.bold));
+
+    return json
+        .fromJSON!T()
+        .tryGet("Error deserializing %s. JSON: %s".format(T.stringof.bold, json.toPrettyString().bold));
+}
