@@ -230,6 +230,9 @@ jobs:
             && contains(needs.*.result, 'failure')
             || contains(needs.*.result, 'cancelled')
 
+      - uses: actions/checkout@v4
+        if: inputs.do_deploy
+
       - name: Deploy
         if: inputs.do_deploy
         env:
