@@ -79,7 +79,10 @@
         inherit (pkgs) terraform;
         inherit (legacyPackages.inputs.terranix) terranix;
         inherit (legacyPackages.inputs.dlang-nix) dcd dscanner serve-d dmd ldc;
-        inherit (legacyPackages.inputs.ethereum-nix) mev-boost nethermind web3signer foundry nimbus-eth2;
+        inherit (legacyPackages.inputs.ethereum-nix) mev-boost nethermind web3signer nimbus-eth2;
+        foundry = legacyPackages.inputs.ethereum-nix.foundry.override {
+          rustPlatform = pkgs.rustPlatform;
+        };
       };
   };
 }
