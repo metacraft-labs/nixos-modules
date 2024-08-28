@@ -16,7 +16,7 @@ import mcl.utils.json : toJSON, fromJSON, tryDeserializeFromJsonFile;
 
 import mcl.commands.ci_matrix : flakeAttr, params, Params, nixEvalJobs, SupportedSystem;
 
-export void deploy_spec()
+export void deploy_spec(string[] args)
 {
     const deploySpecFile = resultDir.buildPath("cachix-deploy-spec.json");
 
