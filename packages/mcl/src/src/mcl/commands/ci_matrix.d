@@ -308,6 +308,8 @@ Package[] nixEvalJobs(string flakeAttrPrefix, string cachixUrl, bool doCheck = t
 {
     Package[] result = [];
 
+    bool hasError = false;
+
     int maxMemoryMB = getAvailableMemoryMB();
     int maxWorkers = getNixEvalWorkerCount();
 
@@ -333,6 +335,7 @@ Package[] nixEvalJobs(string flakeAttrPrefix, string cachixUrl, bool doCheck = t
         if (line.indexOf("{") == -1)
         {
             errorf("Expected JSON object on stdout from nix-eval-jobs, got: `%s`", line);
+            hasError = true;
             continue;
         }
 
@@ -341,6 +344,7 @@ Package[] nixEvalJobs(string flakeAttrPrefix, string cachixUrl, bool doCheck = t
         if (auto err = "error" in json)
         {
             logError((*err).str);
+            hasError = true;
             continue; // drain the output
         }
 
@@ -374,7 +378,7 @@ Package[] nixEvalJobs(string flakeAttrPrefix, string cachixUrl, bool doCheck = t
     }
 
     int status = wait(pipes.pid);
-    enforce(status == 0, "Command `%s` failed with status %s".fmt(args, status));
+    enforce(!hasError && status == 0, "Command `%s` failed with status %s".fmt(args, status));
 
     return result;
 }
