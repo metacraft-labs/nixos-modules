@@ -6,16 +6,16 @@
 }:
 buildGoModule rec {
   pname = "pyroscope";
-  version = "1.6.1";
+  version = "1.7.1";
 
   src = fetchFromGitHub {
     owner = "grafana";
     repo = "pyroscope";
     rev = "v${version}";
-    hash = "sha256-P2gEL4HhHuAHW0K/ApCwb2RxGVRBuTLMefmGLZOjMSU=";
+    hash = "sha256-iMP67J0Q8Cgo52iImMzAM3PEkk6uLF7r6v9TyXZVaIE=";
   };
 
-  vendorHash = "sha256-yMnvN370o7FVDfRE9V7iEPY5ezIchNEzgTItjbhxayo=";
+  vendorHash = "sha256-fpkdy9fupjMNbnGDP+aD/cngaZ89ihRUBCpVIk+Yzzw=";
   proxyVendor = true;
   # preConfigure = ''
   #   export GOWORK=off
