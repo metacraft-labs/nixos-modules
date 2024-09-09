@@ -75,14 +75,16 @@
       // optionalAttrs isLinux {
         inherit (inputs'.validator-ejector.packages) validator-ejector;
       }
+      // optionalAttrs (system == "x86_64-linux" || system == "x86_64-darwin") {
+        foundry = legacyPackages.inputs.ethereum-nix.foundry.override {
+          inherit (pkgs) rustPlatform;
+        };
+      }
       // optionalAttrs (system == "x86_64-linux") {
         inherit (pkgs) terraform;
         inherit (legacyPackages.inputs.terranix) terranix;
         inherit (legacyPackages.inputs.dlang-nix) dcd dscanner serve-d dmd ldc;
         inherit (legacyPackages.inputs.ethereum-nix) mev-boost nethermind web3signer nimbus-eth2;
-        foundry = legacyPackages.inputs.ethereum-nix.foundry.override {
-          rustPlatform = pkgs.rustPlatform;
-        };
       };
   };
 }
