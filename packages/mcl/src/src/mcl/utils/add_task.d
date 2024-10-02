@@ -20,6 +20,8 @@ void addTask()
     auto assignee_column_id = "c-UN6X8s-5Oo";
     auto status_column_id = "c-o7Utgsgdrl";
     auto priority_column_id = "c-qWRh4X8QSm";
+    auto time_estimate_column_id = "c-ciqYsdyENp";
+    auto milestone_column_id = "c-yIihZAmgKN";
 
     // if we need to add another column, find it's id from here:
     // foreach (column; columns)
@@ -35,6 +37,8 @@ void addTask()
             CodaCell(assignee_column_id, params.userName),
             CodaCell(status_column_id, params.status),
             CodaCell(priority_column_id, params.priority),
+            CodaCell(time_estimate_column_id, params.estimate),
+            CodaCell(milestone_column_id, params.milestone),
         ])
     ];
 
@@ -55,8 +59,10 @@ struct Params
     string parentTicket;
     string taskName;
     string userName;
-    string status;
-    string priority;
+    @optional() string status = "Backlog";
+    @optional() string priority = "normal";
+    @optional() string milestone;
+    @optional() string estimate;
 
     void setup()
     {
