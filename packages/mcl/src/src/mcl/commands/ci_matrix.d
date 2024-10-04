@@ -149,7 +149,7 @@ shared static this()
     params = parseEnv!Params;
 }
 
-export void ci_matrix()
+export void ci_matrix(string[] args)
 {
     createResultDirs();
     nixEvalForAllSystems().array.printTableForCacheStatus();
@@ -186,7 +186,7 @@ Package[] checkCacheStatus(Package[] packages)
     return packages;
 }
 
-export void print_table()
+export void print_table(string[] args)
 {
     createResultDirs();
 

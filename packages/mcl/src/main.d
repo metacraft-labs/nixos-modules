@@ -27,7 +27,14 @@ int main(string[] args)
 
     string cmd = args[1];
     LogLevel logLevel = LogLevel.info;
-    args.getopt("log-level", &logLevel);
+    
+    // sorry for that: it breaks my custom `--kind=arg` parsing
+    // in add_task.d
+    // probably there is a better method, but at least temporarily
+    // commented out for our fork 
+    // (alexander):
+    //
+    // args.getopt("log-level", &logLevel);
 
     setLogLevel(logLevel);
 
@@ -43,7 +50,7 @@ int main(string[] args)
             {
 
                 infof("Running %s task", cmd.bold);
-                command();
+                command(args);
                 infof("Execution Succesfull");
                 return 0;
             }

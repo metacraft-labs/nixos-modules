@@ -13,7 +13,7 @@ import mcl.utils.nix : queryStorePath, nix;
 import mcl.utils.string : camelCaseToCapitalCase;
 import mcl.utils.process : execute;
 
-export void get_fstab()
+export void get_fstab(string[] args)
 {
     const params = parseEnv!Params;
     const machineStorePath = getCachixDeploymentStorePath(params);
