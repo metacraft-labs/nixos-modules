@@ -18,7 +18,7 @@ import mcl.utils.json : toJSON;
 
 Params params;
 
-export void ci()
+export void ci(string[] args)
 {
     params = parseEnv!Params;
 
