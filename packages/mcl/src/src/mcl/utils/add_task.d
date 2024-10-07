@@ -20,6 +20,11 @@ export void add_task(string[] args)
         if (i < 2) {
             continue; // ignore mcl and `add_task` command args
         }
+        else if (arg == "--help")
+        {
+            writeAddTaskHelp();
+            return;
+        }
         else if (i == 2)
         {
             taskManager.params.taskName = arg;
@@ -32,6 +37,27 @@ export void add_task(string[] args)
     // writeln("original params struct: ", taskManager.params);
     taskManager.resolveParams();
     taskManager.addTaskToCoda();
+}
+
+export void writeAddTaskHelp() {
+    writeln("        mcl add_task <task-title> [<username/priority/status/milestone/estimate/tshirt-size> ..]");
+    writeln("            <username> is `@<name>` (might be a shorter name if registered in mcl_config.json)");
+    writeln("            <priority> is highest / high / normal / low");
+    writeln("            <status> is backlog / ready (for ready to start) / progress (for in progress) / done / blocker / paused / cancelled");
+    writeln("            <milestone> is project-specific, but can be auto-recognized based on shorter names in mcl_config.json");
+    writeln("            <estimate> is time(days) estimate, needs explicit `--estimate=..` for now");
+    writeln("            <tshirt-size> is S / M / L / XL");
+    writeln("");
+    writeln("            for all you can also pass explicit flag like `--priority=<value>");
+    writeln("");
+    writeln("        examples (with a hypothetical mcl_config.json):");
+    writeln("            mcl add_task \"test task\" @Paul low progress beta M");
+    writeln("            mcl add_task \"test task 2\" @Paul v1 L");
+    writeln("            mcl add_task \"test task 3\" @John done normal M beta");
+    writeln("            mcl add_task \"test task 4\" M backlog @John");
+    writeln("            mcl add_task \"test task 5\"");
+    writeln("            mcl add_task \"test task 6\" @Paul --priority=low backlog");
+    writeln("            mcl add_task \"test task 7\" @Paul --priority=low --status=backlog");
 }
 
 struct TaskConfig {

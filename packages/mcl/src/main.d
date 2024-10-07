@@ -5,7 +5,6 @@ import std.logger : infof, errorf, LogLevel;
 
 import mcl.utils.path : rootDir;
 import mcl.utils.tui : bold;
-
 import cmds = mcl.commands;
 
 alias supportedCommands = imported!`std.traits`.AliasSeq!(
@@ -73,8 +72,11 @@ int wrongUsage(string error)
 {
     writefln("Error: %s.", error);
     writeln("Usage:\n");
-    static foreach (cmd; supportedCommands)
+    static foreach (cmd; supportedCommands) {
         writefln("    mcl %s", __traits(identifier, cmd));
-
+        static if (__traits(identifier, cmd) == "add_task") {
+            cmds.writeAddTaskHelp();
+        }
+    }
     return 1;
 }
