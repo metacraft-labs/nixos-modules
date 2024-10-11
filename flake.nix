@@ -72,7 +72,13 @@
       url = "github:metacraft-labs/ethereum.nix";
       inputs = {
         nixpkgs.follows = "nixos-2311";
-        nixpkgs-unstable.follows = "nixpkgs-unstable";
+
+        # Comment out the unstable packages temporarily since the `rustc-wrapper`
+        # version in our unstable version is `1.80.1` and the compilation fails
+        # with an error, however the `rustc-wrapper` version in the `ethereum-nix`
+        # unstable version is `1.78.0`.
+        # nixpkgs-unstable.follows = "nixpkgs-unstable";
+
         flake-parts.follows = "flake-parts";
         flake-utils.follows = "flake-utils";
         systems.follows = "systems";

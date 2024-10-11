@@ -240,9 +240,7 @@
           "nixos-2311"
         ],
         "nixpkgs-2311": "nixpkgs-2311",
-        "nixpkgs-unstable": [
-          "nixpkgs-unstable"
-        ],
+        "nixpkgs-unstable": "nixpkgs-unstable",
         "systems": [
           "systems"
         ],
@@ -906,6 +904,22 @@
     },
     "nixpkgs-unstable": {
       "locked": {
+        "lastModified": 1719317636,
+        "narHash": "sha256-bu0xbu2Z6DDzA9LGV81yJunIti6r7tjUImeR8orAL/I=",
+        "owner": "nixos",
+        "repo": "nixpkgs",
+        "rev": "9c513fc6fb75142f6aec6b7545cb8af2236b80f5",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nixos",
+        "ref": "nixpkgs-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "nixpkgs-unstable_2": {
+      "locked": {
         "lastModified": 1728492678,
         "narHash": "sha256-9UTxR8eukdg+XZeHgxW5hQA9fIKHsKCdOIUycTryeVw=",
         "owner": "NixOS",
@@ -1016,7 +1030,7 @@
         "nixpkgs": [
           "nixos-2405"
         ],
-        "nixpkgs-unstable": "nixpkgs-unstable",
+        "nixpkgs-unstable": "nixpkgs-unstable_2",
         "systems": "systems",
         "terranix": "terranix",
         "treefmt-nix": "treefmt-nix_2",
