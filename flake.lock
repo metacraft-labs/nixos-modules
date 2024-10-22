@@ -236,9 +236,11 @@
         "foundry-nix": "foundry-nix",
         "lib-extras": "lib-extras",
         "nixpkgs": [
+          "nixpkgs"
+        ],
+        "nixpkgs-2311": [
           "nixos-2311"
         ],
-        "nixpkgs-2311": "nixpkgs-2311",
         "nixpkgs-nethermind": "nixpkgs-nethermind",
         "nixpkgs-unstable": [
           "nixpkgs-unstable"
@@ -886,22 +888,6 @@
         "owner": "NixOS",
         "repo": "nixpkgs",
         "rev": "a62e6edd6d5e1fa0329b8653c801147986f8d446",
-        "type": "github"
-      }
-    },
-    "nixpkgs-2311": {
-      "locked": {
-        "lastModified": 1701282334,
-        "narHash": "sha256-MxCVrXY6v4QmfTwIysjjaX0XUhqBbxTWWB4HXtDYsdk=",
-        "owner": "nixos",
-        "repo": "nixpkgs",
-        "rev": "057f9aecfb71c4437d2b27d3323df7f93c010b7e",
-        "type": "github"
-      },
-      "original": {
-        "owner": "nixos",
-        "ref": "23.11",
-        "repo": "nixpkgs",
         "type": "github"
       }
     },
