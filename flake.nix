@@ -78,6 +78,7 @@
         systems.follows = "systems";
         flake-compat.follows = "flake-compat";
         treefmt-nix.follows = "treefmt-nix";
+        fenix.follows = "fenix";
       };
     };
 
