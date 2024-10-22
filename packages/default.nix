@@ -68,6 +68,7 @@
         inherit (legacyPackages) rustToolchain;
         inherit (legacyPackages.inputs.dlang-nix) dub;
         inherit (legacyPackages.inputs.nixpkgs) cachix nix nix-eval-jobs nix-fast-build;
+        inherit (legacyPackages.inputs.ethereum-nix) foundry;
       }
       // optionalAttrs (system == "x86_64-linux" || system == "aarch64-darwin") {
         inherit (legacyPackages.inputs.ethereum-nix) geth;
@@ -80,9 +81,6 @@
         inherit (legacyPackages.inputs.terranix) terranix;
         inherit (legacyPackages.inputs.dlang-nix) dcd dscanner serve-d dmd ldc;
         inherit (legacyPackages.inputs.ethereum-nix) mev-boost nethermind web3signer nimbus-eth2;
-        foundry = legacyPackages.inputs.ethereum-nix.foundry.override {
-          rustPlatform = pkgs.rustPlatform;
-        };
       };
   };
 }
