@@ -165,8 +165,7 @@
     terranix = {
       url = "github:terranix/terranix";
       inputs = {
-        nixpkgs.follows = "nixos-2311";
-        flake-utils.follows = "flake-utils";
+        nixpkgs.follows = "nixpkgs-unstable";
       };
     };
 
@@ -193,7 +192,6 @@
 
     crane = {
       url = "github:ipetkov/crane";
-      inputs.nixpkgs.follows = "nixpkgs";
     };
 
     dlang-nix = {
