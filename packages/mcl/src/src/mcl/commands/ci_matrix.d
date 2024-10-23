@@ -3,7 +3,7 @@ module mcl.commands.ci_matrix;
 import std.stdio : writeln, stderr, stdout;
 import std.traits : EnumMembers;
 import std.string : indexOf, splitLines;
-import std.algorithm : map, filter, reduce, chunkBy, find, any, sort, startsWith, each, canFind;
+import std.algorithm : map, filter, reduce, chunkBy, find, any, sort, startsWith, each, canFind, fold;
 import std.file : write, readText;
 import std.range : array, front, join, split;
 import std.conv : to;
@@ -324,30 +324,23 @@ Package[] nixEvalJobs(string flakeAttrPrefix, string cachixUrl, bool doCheck = t
 
     auto pipes = pipeProcess(args, Redirect.stdout | Redirect.stderr);
 
-    void logWarning(string errorMsg)
+    void logWarning(const char[] msg)
     {
-        warningf("Command `%s` stderr:\n---\n%s\n---", commandString, errorMsg);
+        warningf("Command `%s` stderr:\n---\n%s\n---", commandString, msg);
     }
 
-    void logError(string errorMsg)
+    void logError(const char[] msg)
     {
-        errorf("Command `%s` failed with error:\n---\n%s\n---", commandString, errorMsg);
+        errorf("Command `%s` failed with error:\n---\n%s\n---", commandString, msg);
     }
 
-    foreach (line; pipes.stdout.byLine)
-    {
-        if (line.indexOf("{") == -1)
-        {
-            errorf("Expected JSON object on stdout from nix-eval-jobs, got: `%s`", line);
-            continue;
-        }
-
+    const errorsReported = pipes.stdout.byLine.fold!((errorsReported, line) {
         auto json = parseJSON(line);
 
         if (auto err = "error" in json)
         {
             logError((*err).str);
-            continue; // drain the output
+            return true;
         }
 
         Package pkg = json.packageFromNixEvalJobsJson(
@@ -370,17 +363,19 @@ Package[] nixEvalJobs(string flakeAttrPrefix, string cachixUrl, bool doCheck = t
             attr: pkg.attrPath,
             output: pkg.output
         ).writeRecordAsTable(stderr.lockingTextWriter);
-    }
+
+        return errorsReported;
+    })(false);
 
     const stderrLogs = pipes.stderr.byLine
         .filter!(line => !uselessWarnings.canFind(line))
-        .join("\n")
-        .idup;
+        .join("\n");
 
     logWarning(stderrLogs);
 
     int status = wait(pipes.pid);
-    enforce(status == 0, "Command `%s` failed with status %s".fmt(args, status));
+
+    enforce(status == 0 && !errorsReported, "Command `%s` failed with status %s".fmt(commandString, status));
 
     return result;
 }
