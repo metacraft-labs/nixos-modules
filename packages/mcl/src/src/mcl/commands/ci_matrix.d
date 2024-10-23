@@ -3,7 +3,7 @@ module mcl.commands.ci_matrix;
 import std.stdio : writeln, stderr, stdout;
 import std.traits : EnumMembers;
 import std.string : indexOf, splitLines;
-import std.algorithm : map, filter, reduce, chunkBy, find, any, sort, startsWith, each;
+import std.algorithm : map, filter, reduce, chunkBy, find, any, sort, startsWith, each, canFind;
 import std.file : write, readText;
 import std.range : array, front, join, split;
 import std.conv : to;
@@ -14,7 +14,7 @@ import std.path : buildPath;
 import std.process : pipeProcess, wait, Redirect, kill;
 import std.exception : enforce;
 import std.format : fmt = format;
-import std.logger : tracef, infof, errorf;
+import std.logger : tracef, infof, errorf, warningf;
 
 import mcl.utils.env : optional, MissingEnvVarsException, parseEnv;
 import mcl.utils.string : enumToString, StringRepresentation, MaxWidth, writeRecordAsTable;
@@ -318,14 +318,20 @@ Package[] nixEvalJobs(string flakeAttrPrefix, string cachixUrl, bool doCheck = t
         "--flake", rootDir ~ "#" ~ flakeAttrPrefix
     ];
 
+    const commandString = args.join(" ");
+
     tracef("%-(%s %)", args);
 
     auto pipes = pipeProcess(args, Redirect.stdout | Redirect.stderr);
 
+    void logWarning(string errorMsg)
+    {
+        warningf("Command `%s` stderr:\n---\n%s\n---", commandString, errorMsg);
+    }
+
     void logError(string errorMsg)
     {
-        errorf("Command `%s` failed with error:\n---\n%s\n---",
-            args, errorMsg);
+        errorf("Command `%s` failed with error:\n---\n%s\n---", commandString, errorMsg);
     }
 
     foreach (line; pipes.stdout.byLine)
@@ -365,13 +371,13 @@ Package[] nixEvalJobs(string flakeAttrPrefix, string cachixUrl, bool doCheck = t
             output: pkg.output
         ).writeRecordAsTable(stderr.lockingTextWriter);
     }
-    foreach (line; pipes.stderr.byLine)
-    {
-        if (uselessWarnings.map!((warning) => line.indexOf(warning) != -1).any)
-            continue;
 
-        logError(line.idup);
-    }
+    const stderrLogs = pipes.stderr.byLine
+        .filter!(line => !uselessWarnings.canFind(line))
+        .join("\n")
+        .idup;
+
+    logWarning(stderrLogs);
 
     int status = wait(pipes.pid);
     enforce(status == 0, "Command `%s` failed with status %s".fmt(args, status));
