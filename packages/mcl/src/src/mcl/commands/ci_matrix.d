@@ -14,7 +14,7 @@ import std.path : buildPath;
 import std.process : pipeProcess, wait, Redirect, kill;
 import std.exception : enforce;
 import std.format : fmt = format;
-import std.logger : tracef, infof, errorf;
+import std.logger : tracef, infof, errorf, warningf;
 
 import mcl.utils.env : optional, MissingEnvVarsException, parseEnv;
 import mcl.utils.string : enumToString, StringRepresentation, MaxWidth, writeRecordAsTable;
@@ -22,6 +22,7 @@ import mcl.utils.json : toJSON;
 import mcl.utils.path : rootDir, resultDir, gcRootsDir, createResultDirs;
 import mcl.utils.process : execute;
 import mcl.utils.nix : nix;
+import mcl.utils.cachix : cachixNixStoreUrl;
 
 enum GitHubOS
 {
@@ -141,18 +142,12 @@ version (unittest)
     ];
 }
 
-immutable Params params;
-
-version (unittest) {} else
-shared static this()
-{
-    params = parseEnv!Params;
-}
-
 export void ci_matrix()
 {
+    Params params = parseEnv!Params;
+
     createResultDirs();
-    nixEvalForAllSystems().array.printTableForCacheStatus();
+    nixEvalForAllSystems(params).array.printTableForCacheStatus(params);
 }
 
 string flakeAttr(string prefix, SupportedSystem system, string postfix)
@@ -167,14 +162,14 @@ string flakeAttr(string prefix, string arch, string os, string postfix)
     return "%s.%s-%s%s".fmt(prefix, arch, os, postfix);
 }
 
-Package[] checkCacheStatus(Package[] packages)
+Package[] checkCacheStatus(Package[] packages, string cachixAuthToken)
 {
     import std.array : appender;
     import std.parallelism : parallel;
 
     foreach (ref pkg; packages.parallel)
     {
-        pkg = checkPackage(pkg);
+        pkg = checkPackage(pkg, cachixAuthToken);
         struct Output { string isCached, name, storePath; }
         auto res = appender!string;
         writeRecordAsTable(
@@ -188,11 +183,13 @@ Package[] checkCacheStatus(Package[] packages)
 
 export void print_table()
 {
+    Params params = parseEnv!Params;
+
     createResultDirs();
 
-    getPrecalcMatrix()
-        .checkCacheStatus()
-        .printTableForCacheStatus();
+    getPrecalcMatrix(params)
+        .checkCacheStatus(params.cachixAuthToken)
+        .printTableForCacheStatus(params);
 }
 
 struct Params
@@ -304,12 +301,12 @@ unittest
     }
 }
 
-Package[] nixEvalJobs(string flakeAttrPrefix, string cachixUrl, bool doCheck = true)
+Package[] nixEvalJobs(string flakeAttrPrefix, Params params, string cachixUrl, bool doCheck = true)
 {
     Package[] result = [];
 
-    int maxMemoryMB = getAvailableMemoryMB();
-    int maxWorkers = getNixEvalWorkerCount();
+    int maxMemoryMB = getAvailableMemoryMB(params.maxMemory);
+    int maxWorkers = getNixEvalWorkerCount(params.maxWorkers);
 
     const args = [
         "nix-eval-jobs", "--quiet", "--option", "warn-dirty", "false",
@@ -322,32 +319,34 @@ Package[] nixEvalJobs(string flakeAttrPrefix, string cachixUrl, bool doCheck = t
 
     auto pipes = pipeProcess(args, Redirect.stdout | Redirect.stderr);
 
+    void logWarning(string errorMsg)
+    {
+        warningf("Command `%s` stderr:\n---\n%s\n---", args, errorMsg);
+    }
+
     void logError(string errorMsg)
     {
         errorf("Command `%s` failed with error:\n---\n%s\n---",
             args, errorMsg);
     }
 
+    bool jobFailed = false;
+
     foreach (line; pipes.stdout.byLine)
     {
-        if (line.indexOf("{") == -1)
-        {
-            errorf("Expected JSON object on stdout from nix-eval-jobs, got: `%s`", line);
-            continue;
-        }
-
         auto json = parseJSON(line);
 
         if (auto err = "error" in json)
         {
             logError((*err).str);
+            jobFailed = true;
             continue; // drain the output
         }
 
         Package pkg = json.packageFromNixEvalJobsJson(
             flakeAttrPrefix, cachixUrl);
 
-        if (doCheck)pkg = pkg.checkPackage();
+        if (doCheck)pkg = pkg.checkPackage(params.cachixAuthToken);
 
         result ~= pkg;
 
@@ -365,16 +364,20 @@ Package[] nixEvalJobs(string flakeAttrPrefix, string cachixUrl, bool doCheck = t
             output: pkg.output
         ).writeRecordAsTable(stderr.lockingTextWriter);
     }
+
+    string bufferedOutput = "";
     foreach (line; pipes.stderr.byLine)
     {
         if (uselessWarnings.map!((warning) => line.indexOf(warning) != -1).any)
             continue;
 
-        logError(line.idup);
+        bufferedOutput ~= line ~ "\n";
     }
 
+    logWarning(bufferedOutput);
+
     int status = wait(pipes.pid);
-    enforce(status == 0, "Command `%s` failed with status %s".fmt(args, status));
+    enforce(status == 0 && !jobFailed, "Command `%s` failed with status %s".fmt(args, status));
 
     return result;
 }
@@ -396,16 +399,16 @@ SupportedSystem[] getSupportedSystems(string flakeRef = ".")
     return json.array.map!(system => getSystem(system.str)).array;
 }
 
-Package[] nixEvalForAllSystems()
+Package[] nixEvalForAllSystems(Params params)
 {
-    const cachixUrl = "https://" ~ params.cachixCache ~ ".cachix.org";
+    const cachixUrl = cachixNixStoreUrl(params.cachixCache);
     const systems = getSupportedSystems();
 
     infof("Evaluating flake for: %s", systems);
 
     return systems.map!(system =>
             flakeAttr(params.flakePre, system, params.flakePost)
-                .nixEvalJobs(cachixUrl)
+                .nixEvalJobs(params, cachixUrl)
         )
         .reduce!((a, b) => a ~ b)
         .array
@@ -413,9 +416,9 @@ Package[] nixEvalForAllSystems()
         .array;
 }
 
-int getNixEvalWorkerCount()
+int getNixEvalWorkerCount(int maxWorkers)
 {
-    return params.maxWorkers == 0 ? (threadsPerCPU() < 8 ? threadsPerCPU() : 8) : params.maxWorkers;
+    return maxWorkers == 0 ? (threadsPerCPU() < 8 ? threadsPerCPU() : 8) : maxWorkers;
 }
 
 @("getNixEvalWorkerCount")
@@ -424,7 +427,7 @@ unittest
     assert(getNixEvalWorkerCount() == (threadsPerCPU() < 8 ? threadsPerCPU() : 8));
 }
 
-int getAvailableMemoryMB()
+int getAvailableMemoryMB(int maxMemory)
 {
 
     // free="$(< /proc/meminfo grep MemFree | tr -s ' ' | cut -d ' ' -f 2)"
@@ -448,15 +451,15 @@ int getAvailableMemoryMB()
         .find!(a => a.indexOf("Shmem:") != -1)
         .front
         .split[1].to!int;
-    int maxMemoryMB = params.maxMemory == 0 ? ((free + cached + buffers + shmem) / 1024)
-        : params.maxMemory;
+    int maxMemoryMB = maxMemory == 0 ? ((free + cached + buffers + shmem) / 1024) : maxMemory;
     return maxMemoryMB;
 }
 
 @("getAvailableMemoryMB")
 unittest
 {
-    assert(getAvailableMemoryMB() > 0);
+    Params params = parseEnv!Params;
+    assert(getAvailableMemoryMB(params.maxMemory) > 0);
 }
 
 void saveCachixDeploySpec(Package[] packages)
@@ -481,12 +484,12 @@ unittest
     assert(testPackageArray[1].output == deploySpec[0]["out"].str);
 }
 
-void saveGHCIMatrix(Package[] packages)
+void saveGHCIMatrix(Package[] packages, bool isInitial)
 {
     auto matrix = JSONValue([
         "include": JSONValue(packages.map!(pkg => pkg.toJSON()).array)
     ]);
-    string resPath = rootDir.buildPath(params.isInitial ? "matrix-pre.json" : "matrix-post.json");
+    string resPath = rootDir.buildPath(isInitial ? "matrix-pre.json" : "matrix-post.json");
     resPath.write(JSONValue(matrix).toString(JSONOptions.doNotEscapeSlashes));
 }
 
@@ -495,8 +498,10 @@ unittest
 {
     import std.file : rmdirRecurse;
 
+    Params params = parseEnv!Params;
+
     createResultDirs();
-    saveGHCIMatrix(cast(Package[]) testPackageArray);
+    saveGHCIMatrix(cast(Package[]) testPackageArray, params.isInitial);
     JSONValue matrix = rootDir
         .buildPath(params.isInitial ? "matrix-pre.json" : "matrix-post.json")
         .readText
@@ -624,24 +629,24 @@ unittest
 
 }
 
-void printTableForCacheStatus(Package[] packages)
+void printTableForCacheStatus(Package[] packages, Params params)
 {
     if (params.precalcMatrix == "")
     {
-        saveGHCIMatrix(packages);
+        saveGHCIMatrix(packages, params.isInitial);
     }
     saveCachixDeploySpec(packages);
     saveGHCIComment(convertNixEvalToTableSummary(packages, params.isInitial));
 }
 
-Package checkPackage(Package pkg)
+Package checkPackage(Package pkg, ref string cachixAuthToken)
 {
     import std.algorithm : canFind;
     import std.string : lineSplitter;
     import std.net.curl : HTTP, httpGet = get, HTTPStatusException;
 
     auto http = HTTP();
-    http.addRequestHeader("Authorization", "Bearer " ~ params.cachixAuthToken);
+    http.addRequestHeader("Authorization", "Bearer " ~ cachixAuthToken);
 
     try
     {
@@ -663,6 +668,8 @@ Package checkPackage(Package pkg)
 @("checkPackage")
 unittest
 {
+    Params params = parseEnv!Params;
+
     const nixosCacheEndpoint = "https://cache.nixos.org/";
     const storePathHash = "mdb034kf7sq6g03ric56jxr4a7043l41";
     const storePath = "/nix/store/" ~ storePathHash ~ "-hello-2.12.1";
@@ -673,14 +680,14 @@ unittest
     );
 
     assert(!testPackage.isCached);
-    assert(checkPackage(testPackage).isCached);
+    assert(checkPackage(testPackage, params.cachixAuthToken).isCached);
 
     testPackage.cacheUrl = nixosCacheEndpoint ~ "nonexistent.narinfo";
 
-    assert(!checkPackage(testPackage).isCached);
+    assert(!checkPackage(testPackage, params.cachixAuthToken).isCached);
 }
 
-Package[] getPrecalcMatrix()
+Package[] getPrecalcMatrix(Params params)
 {
     auto precalcMatrixStr = params.precalcMatrix == "" ? "{\"include\": []}" : params.precalcMatrix;
     enforce!MissingEnvVarsException(

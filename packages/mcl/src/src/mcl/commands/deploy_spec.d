@@ -14,16 +14,19 @@ import mcl.utils.cachix : cachixNixStoreUrl, DeploySpec, createMachineDeploySpec
 import mcl.utils.tui : bold;
 import mcl.utils.json : toJSON, fromJSON, tryDeserializeFromJsonFile;
 
-import mcl.commands.ci_matrix : flakeAttr, params, Params, nixEvalJobs, SupportedSystem;
+import mcl.commands.ci_matrix : flakeAttr, Params, nixEvalJobs, SupportedSystem;
 
 export void deploy_spec()
 {
+
     const deploySpecFile = resultDir.buildPath("cachix-deploy-spec.json");
 
     if (!exists(deploySpecFile))
     {
+        Params params = parseEnv!Params;
+        
         auto nixosConfigs = flakeAttr("legacyPackages", SupportedSystem.x86_64_linux, "bareMetalMachines")
-            .nixEvalJobs(params.cachixCache.cachixNixStoreUrl);
+            .nixEvalJobs(params, params.cachixCache.cachixNixStoreUrl);
 
         auto configsMissingFromCachix = nixosConfigs.filter!(c => !c.isCached);
 
