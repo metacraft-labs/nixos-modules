@@ -16,11 +16,9 @@ import mcl.utils.process : execute;
 import mcl.utils.nix : nix;
 import mcl.utils.json : toJSON;
 
-Params params;
-
 export void ci()
 {
-    params = parseEnv!Params;
+    Params params = parseEnv!Params;
 
     auto shardMatrix = generateShardMatrix();
     foreach (shard; shardMatrix.include)
@@ -53,7 +51,7 @@ export void ci()
         }
 
         auto matrix = flakeAttr(params.flakePre, arch, os, params.flakePost)
-            .nixEvalJobs(cachixUrl, false);
+            .nixEvalJobs(params, cachixUrl, false);
 
         foreach (pkg; matrix)
         {
