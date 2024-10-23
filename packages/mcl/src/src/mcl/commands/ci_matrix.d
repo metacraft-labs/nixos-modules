@@ -238,7 +238,13 @@ static immutable string[] uselessWarnings =
         "Please note that certain features, such as the test framework, may not function properly with the legacy table type.",
         "If you encounter errors similar to:",
         "error: The option `disko.devices.disk.disk1.content.partitions",
-        "this is likely due to the use of the legacy table type."
+        "this is likely due to the use of the legacy table type.",
+        "warning: system.stateVersion is not set, defaulting to",
+        "warning: Runner registration tokens have been deprecated and disabled by default in GitLab >= 17.0.",
+        "Consider migrating to runner authentication tokens by setting `services.gitlab-runner.services.codetracer.authenticationTokenConfigFile`.",
+        "https://docs.gitlab.com/17.0/ee/ci/runners/new_creation_workflow.html"
+        "for a migration you can follow the guide at https://github.com/nix-community/disko/blob/master/docs/table-to-gpt.md"
+
     ];
 
 Package packageFromNixEvalJobsJson(
@@ -308,6 +314,8 @@ Package[] nixEvalJobs(string flakeAttrPrefix, string cachixUrl, bool doCheck = t
 {
     Package[] result = [];
 
+    bool hasError = false;
+
     int maxMemoryMB = getAvailableMemoryMB();
     int maxWorkers = getNixEvalWorkerCount();
 
@@ -333,6 +341,7 @@ Package[] nixEvalJobs(string flakeAttrPrefix, string cachixUrl, bool doCheck = t
         if (line.indexOf("{") == -1)
         {
             errorf("Expected JSON object on stdout from nix-eval-jobs, got: `%s`", line);
+            hasError = true;
             continue;
         }
 
@@ -341,6 +350,7 @@ Package[] nixEvalJobs(string flakeAttrPrefix, string cachixUrl, bool doCheck = t
         if (auto err = "error" in json)
         {
             logError((*err).str);
+            hasError = true;
             continue; // drain the output
         }
 
@@ -367,14 +377,14 @@ Package[] nixEvalJobs(string flakeAttrPrefix, string cachixUrl, bool doCheck = t
     }
     foreach (line; pipes.stderr.byLine)
     {
-        if (uselessWarnings.map!((warning) => line.indexOf(warning) != -1).any)
+        if (line.trim == "" || uselessWarnings.map!((warning) => line.indexOf(warning) != -1).any)
             continue;
 
         logError(line.idup);
     }
 
     int status = wait(pipes.pid);
-    enforce(status == 0, "Command `%s` failed with status %s".fmt(args, status));
+    enforce(!hasError && status == 0, "Command `%s` failed with status %s".fmt(args, status));
 
     return result;
 }
