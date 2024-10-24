@@ -18,11 +18,36 @@ export void config(string[] args)
     const params = parseEnv!Params;
     switch (args.front) {
         case "sys":
+            sys(params, args);
+            break;
         case "home":
+            home(params, args);
+            break;
         case "start-vm":
+            startVM(params, args);
+            break;
         default:
             assert(false, "Unknown config subcommand" ~ args.front);
     }
+}
+
+void sys(Params params, string[] args)
+{
+}
+
+void home(Params params, string[] args)
+{
+}
+
+void startVM(Params params, string[] args)
+{
+    if (args.length < 2 || args.length > 2)
+        assert(false, "Usage: mcl config start-vm <vm-name>");
+    else {
+        string vmName = args[1];
+        writeln("Starting VM: ", vmName);
+        execute(["just", "start-vm", vmName]);
+    };
 }
 
 struct Params
