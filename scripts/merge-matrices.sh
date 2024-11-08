@@ -4,7 +4,8 @@ PATH="$(nix build --print-out-paths 'nixpkgs#jq^bin')/bin:$PATH"
 export PATH
 
 ls */matrix-pre.json
-matrix="$(cat */matrix-pre.json | jq -cr '.include[]' | jq '[ select (.isCached == false) ]' | jq -s 'add' | jq -c  '. | {include: .}')"
+# TODO: Fix this
+matrix="$(cat */matrix-pre.json | jq -cr '.include[]' | jq '[ select (.cacheUrl != "" and .cacheUrl != null) ]' | jq -s 'add' | jq -c  '. | {include: .}')"
 
 if [[ "$matrix" == '' ]] || [[ "$matrix" == '{}' ]] || [[ "$matrix" == '{"include":null}' ]] || [[ "$matrix" == '{"include":[]}' ]]; then
   matrix='{"include":[],"empty":"true"}'

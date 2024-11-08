@@ -22,18 +22,16 @@ export void deploy_spec()
 
     if (!exists(deploySpecFile))
     {
+        Params params = parseEnv!Params;
+
         auto nixosConfigs = flakeAttr("legacyPackages", SupportedSystem.x86_64_linux, "bareMetalMachines")
-            .nixEvalJobs(params.cachixCache.cachixNixStoreUrl);
+            .nixEvalJobs(params.nixCaches);
 
         auto configsMissingFromCachix = nixosConfigs.filter!(c => !c.isCached);
 
         foreach (config; configsMissingFromCachix.save())
         {
-            warningf(
-                "Nixos configuration '%s' is not in cachix.\nExpected Cachix URL: %s\n",
-                config.name.bold,
-                config.cacheUrl.bold
-            );
+            warningf("Nixos configuration '%s' is not in cachix.\n", config.name.bold);
         }
 
         if (!configsMissingFromCachix.empty)

@@ -8,7 +8,6 @@ import std.file : write, readText;
 import std.range : array, front, join, split;
 import std.conv : to;
 import std.json : JSONValue, parseJSON, JSONOptions;
-import std.regex : matchFirst;
 import core.cpuid : threadsPerCPU;
 import std.path : buildPath;
 import std.process : pipeProcess, wait, Redirect, kill;
@@ -21,7 +20,8 @@ import mcl.utils.string : enumToString, StringRepresentation, MaxWidth, writeRec
 import mcl.utils.json : toJSON;
 import mcl.utils.path : rootDir, resultDir, gcRootsDir, createResultDirs;
 import mcl.utils.process : execute;
-import mcl.utils.nix : nix;
+import mcl.utils.nix : nix, remoteStoreURL, extractHashFromNixStorePath;
+import mcl.utils.cachix : cachixNixStoreUrl;
 
 enum GitHubOS
 {
@@ -93,18 +93,19 @@ struct Package
     bool allowedToFail = false;
     string attrPath;
     string cacheUrl;
-    bool isCached;
     GitHubOS os;
     SupportedSystem system;
     string derivation;
     string output;
+
+    bool isCached() const => this.cacheUrl != null;
 }
 
 version (unittest)
 {
     static immutable Package[] testPackageArray = [
-        Package("testPackage", false, "testPackagePath", "https://testPackage.com", true, GitHubOS.ubuntuLatest, SupportedSystem.x86_64_linux, "testPackageOutput"),
-        Package("testPackage2", true, "testPackagePath2", "https://testPackage2.com", false, GitHubOS.macos14, SupportedSystem
+        Package("testPackage", false, "testPackagePath", "https://testPackage.com", GitHubOS.ubuntuLatest, SupportedSystem.x86_64_linux, "testPackageOutput"),
+        Package("testPackage2", true, "testPackagePath2", null, GitHubOS.macos14, SupportedSystem
                 .aarch64_darwin, "testPackageOutput2")
     ];
 }
@@ -152,7 +153,7 @@ shared static this()
 export void ci_matrix()
 {
     createResultDirs();
-    nixEvalForAllSystems().array.printTableForCacheStatus();
+    nixEvalForAllSystems(params.nixCaches).array.printTableForCacheStatus();
 }
 
 string flakeAttr(string prefix, SupportedSystem system, string postfix)
@@ -167,14 +168,14 @@ string flakeAttr(string prefix, string arch, string os, string postfix)
     return "%s.%s-%s%s".fmt(prefix, arch, os, postfix);
 }
 
-Package[] checkCacheStatus(Package[] packages)
+Package[] checkCacheStatus(Package[] packages, in NixCache[] caches)
 {
     import std.array : appender;
     import std.parallelism : parallel;
 
     foreach (ref pkg; packages.parallel)
     {
-        pkg = checkPackage(pkg);
+        pkg = checkPackage(pkg, caches);
         struct Output { string isCached, name, storePath; }
         auto res = appender!string;
         writeRecordAsTable(
@@ -191,7 +192,7 @@ export void print_table()
     createResultDirs();
 
     getPrecalcMatrix()
-        .checkCacheStatus()
+        .checkCacheStatus(params.nixCaches)
         .printTableForCacheStatus();
 }
 
@@ -211,6 +212,19 @@ struct Params
         if (this.flakePre == "")
             this.flakePre = "checks";
     }
+
+    NixCache[] nixCaches() const
+    {
+        return [
+            NixCache(cachixNixStoreUrl(this.cachixCache), this.cachixAuthToken),
+            NixCache("https://cache.nixos.org", null),
+        ];
+    }
+}
+
+struct NixCache {
+    string endpoint;
+    string authToken;
 }
 
 GitHubOS systemToGHPlatform(SupportedSystem os)
@@ -244,20 +258,16 @@ static immutable string[] uselessWarnings =
 Package packageFromNixEvalJobsJson(
     JSONValue json,
     string flakeAttrPrefix,
-    string binaryCacheHttpEndpoint = "https://cache.nixos.org"
 )
 {
     return Package(
         name: json["attr"].str,
         allowedToFail: false,
         attrPath: flakeAttrPrefix ~ "." ~ json["attr"].str,
-        isCached: json["isCached"].boolean,
         system: getSystem(json["system"].str),
         os: systemToGHPlatform(getSystem(json["system"].str)),
         derivation: json["drvPath"].str,
         output: json["outputs"]["out"].str,
-        cacheUrl: binaryCacheHttpEndpoint ~ "/" ~ json["outputs"]["out"].str.matchFirst(
-            "^/nix/store/(?P<hash>[^-]+)-")["hash"] ~ ".narinfo"
     );
 }
 
@@ -288,23 +298,20 @@ unittest
 
         auto testPackage = testJSON.packageFromNixEvalJobsJson(
             "legacyPackages.x86_64-linux.mcl.matrix.shards.0",
-            "https://binary-cache.internal"
         );
         assert(testPackage == Package(
             name: "home/bean-desktop",
             allowedToFail: false,
             attrPath: "legacyPackages.x86_64-linux.mcl.matrix.shards.0.home/bean-desktop",
-            isCached: false,
             system: SupportedSystem.x86_64_linux,
             os: GitHubOS.selfHosted,
             derivation: "/nix/store/jp7qgm9mgikksypzljrbhmxa31xmmq1x-home-manager-generation.drv",
             output: "/nix/store/30qrziyj0vbg6n43bbh08ql0xbnsy76d-home-manager-generation",
-            cacheUrl: "https://binary-cache.internal/30qrziyj0vbg6n43bbh08ql0xbnsy76d.narinfo"
         ));
     }
 }
 
-Package[] nixEvalJobs(string flakeAttrPrefix, string cachixUrl, bool doCheck = true)
+Package[] nixEvalJobs(string flakeAttrPrefix, in NixCache[] caches, bool doCheck = true)
 {
     Package[] result = [];
 
@@ -343,10 +350,9 @@ Package[] nixEvalJobs(string flakeAttrPrefix, string cachixUrl, bool doCheck = t
             return true;
         }
 
-        Package pkg = json.packageFromNixEvalJobsJson(
-            flakeAttrPrefix, cachixUrl);
+        Package pkg = json.packageFromNixEvalJobsJson(flakeAttrPrefix);
 
-        if (doCheck)pkg = pkg.checkPackage();
+        if (doCheck)pkg = pkg.checkPackage(caches);
 
         result ~= pkg;
 
@@ -397,16 +403,15 @@ SupportedSystem[] getSupportedSystems(string flakeRef = ".")
     return json.array.map!(system => getSystem(system.str)).array;
 }
 
-Package[] nixEvalForAllSystems()
+Package[] nixEvalForAllSystems(in NixCache[] caches)
 {
-    const cachixUrl = "https://" ~ params.cachixCache ~ ".cachix.org";
     const systems = getSupportedSystems();
 
     infof("Evaluating flake for: %s", systems);
 
     return systems.map!(system =>
             flakeAttr(params.flakePre, system, params.flakePost)
-                .nixEvalJobs(cachixUrl)
+                .nixEvalJobs(caches)
         )
         .reduce!((a, b) => a ~ b)
         .array
@@ -460,28 +465,6 @@ unittest
     assert(getAvailableMemoryMB() > 0);
 }
 
-void saveCachixDeploySpec(Package[] packages)
-{
-    auto agents = packages.filter!(pkg => pkg.isCached == false).map!(pkg => JSONValue([
-            "package": pkg.name,
-            "out": pkg.output
-        ])).array;
-    auto resPath = resultDir.buildPath("cachix-deploy-spec.json");
-    resPath.write(JSONValue(agents).toString(JSONOptions.doNotEscapeSlashes));
-}
-
-@("saveCachixDeploySpec")
-unittest
-{
-    import std.file : rmdirRecurse;
-
-    createResultDirs();
-    saveCachixDeploySpec(cast(Package[]) testPackageArray);
-    JSONValue deploySpec = parseJSON(resultDir.buildPath("cachix-deploy-spec.json").readText);
-    assert(testPackageArray[1].name == deploySpec[0]["package"].str);
-    assert(testPackageArray[1].output == deploySpec[0]["out"].str);
-}
-
 void saveGHCIMatrix(Package[] packages)
 {
     auto matrix = JSONValue([
@@ -505,7 +488,7 @@ unittest
     assert(testPackageArray[0].name == matrix["include"][0]["name"].str);
 }
 
-void saveGHCIComment(SummaryTableEntry[] tableSummaryJSON)
+void saveGHCIComment(in SummaryTableEntry[] tableSummaryJSON)
 {
     import std.path : buildNormalizedPath, absolutePath;
 
@@ -528,7 +511,7 @@ unittest
     import std.file : rmdirRecurse;
 
     createResultDirs();
-    saveGHCIComment(cast(SummaryTableEntry[]) testSummaryTableEntryArray);
+    saveGHCIComment(testSummaryTableEntryArray);
     string comment = rootDir.buildPath("comment.md").readText;
     foreach (pkg; testSummaryTableEntryArray)
     {
@@ -543,9 +526,10 @@ string getStatus(JSONValue pkg, string key, bool isInitial)
 {
     if (key in pkg)
     {
-        if (pkg[key]["isCached"].boolean)
+        const cacheUrl = pkg[key]["cacheUrl"].str;
+        if (cacheUrl != null)
         {
-            return "[✅ cached](" ~ pkg[key]["cacheUrl"].str ~ ")";
+            return "[✅ cached](" ~ cacheUrl ~ ")";
         }
         else if (isInitial)
         {
@@ -567,7 +551,6 @@ SummaryTableEntry[] convertNixEvalToTableSummary(
     bool isInitial
 )
 {
-
     SummaryTableEntry[] tableSummary = packages
         .chunkBy!((a, b) => a.name == b.name)
         .map!((group) {
@@ -631,31 +614,46 @@ void printTableForCacheStatus(Package[] packages)
     {
         saveGHCIMatrix(packages);
     }
-    saveCachixDeploySpec(packages);
     saveGHCIComment(convertNixEvalToTableSummary(packages, params.isInitial));
 }
 
-Package checkPackage(Package pkg)
+Package checkPackage(Package pkg, in NixCache[] caches)
 {
     import std.algorithm : canFind;
     import std.string : lineSplitter;
     import std.net.curl : HTTP, httpGet = get, HTTPStatusException;
 
-    auto http = HTTP();
-    http.addRequestHeader("Authorization", "Bearer " ~ params.cachixAuthToken);
+    if (pkg.isCached) return pkg;
 
-    try
+    const storeHash = extractHashFromNixStorePath(pkg.output);
+
+    foreach (cache; caches)
     {
-        pkg.isCached = httpGet(pkg.cacheUrl, http)
-            .lineSplitter
-            .canFind("StorePath: " ~ pkg.output);
-    }
-    catch (HTTPStatusException e)
-    {
-        if (e.status == 404)
-            pkg.isCached = false;
-        else
-            throw e;
+        if (pkg.isCached) break;
+
+        auto http = HTTP();
+        const cacheUrl = remoteStoreURL(cache.endpoint, storeHash);
+
+        if (cache.authToken != null)
+        {
+            http.addRequestHeader("Authorization", "Bearer " ~ cache.authToken);
+        }
+
+        try
+        {
+            const isCached = httpGet(cacheUrl, http)
+                .lineSplitter
+                .canFind("StorePath: " ~ pkg.output);
+
+            pkg.cacheUrl = isCached
+                ? cacheUrl
+                : null;
+        }
+        catch (HTTPStatusException e)
+        {
+            if (e.status != 404)
+                throw e;
+        }
     }
 
     return pkg;
@@ -664,21 +662,17 @@ Package checkPackage(Package pkg)
 @("checkPackage")
 unittest
 {
-    const nixosCacheEndpoint = "https://cache.nixos.org/";
+    const nixosCacheEndpoint = "https://cache.nixos.org";
     const storePathHash = "mdb034kf7sq6g03ric56jxr4a7043l41";
     const storePath = "/nix/store/" ~ storePathHash ~ "-hello-2.12.1";
 
-    auto testPackage = Package(
-        output: storePath,
-        cacheUrl: nixosCacheEndpoint ~ storePathHash ~ ".narinfo",
-    );
+    auto testPackage = Package(output: storePath);
 
     assert(!testPackage.isCached);
-    assert(checkPackage(testPackage).isCached);
+    assert(checkPackage(testPackage, [NixCache(nixosCacheEndpoint, null)]).isCached);
 
-    testPackage.cacheUrl = nixosCacheEndpoint ~ "nonexistent.narinfo";
-
-    assert(!checkPackage(testPackage).isCached);
+    testPackage.cacheUrl = null;
+    assert(!checkPackage(testPackage, [NixCache(nixosCacheEndpoint ~ "/nonexistent", null)]).isCached);
 }
 
 Package[] getPrecalcMatrix()
@@ -693,12 +687,11 @@ Package[] getPrecalcMatrix()
             name: pkg["name"].str,
             allowedToFail: pkg["allowedToFail"].boolean,
             attrPath: pkg["attrPath"].str,
-            cacheUrl: pkg["cacheUrl"].str,
-            isCached: pkg["isCached"].boolean,
             os: getGHOS(pkg["os"].str),
             system: getSystem(pkg["system"].str),
-            output: pkg["output"].str};
-            return result;
-        }).array;
-
-    }
+            output: pkg["output"].str,
+            cacheUrl: pkg["cacheUrl"].str,
+        };
+        return result;
+    }).array;
+}

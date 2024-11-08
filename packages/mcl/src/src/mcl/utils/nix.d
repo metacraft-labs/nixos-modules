@@ -9,8 +9,20 @@ import std.format : fmt = format;
 import std.string : lineSplitter, strip, replace;
 import std.json : parseJSON, JSONValue;
 import std.stdio : writeln;
+import std.regex : matchFirst;
 
 import mcl.utils.process : execute;
+
+string remoteStoreURL(string endpoint, string hash) => endpoint ~ "/" ~ hash ~ ".narinfo";
+string extractHashFromNixStorePath(string storePath) => storePath.matchFirst("^/nix/store/(?P<hash>[^-]+)-")["hash"];
+
+@("remoteStoreURL")
+unittest
+{
+    const endpoint = "https://binary-cache.internal";
+    const hash = "30qrziyj0vbg6n43bbh08ql0xbnsy76d";
+    assert(remoteStoreURL(endpoint, hash) == "https://binary-cache.internal/30qrziyj0vbg6n43bbh08ql0xbnsy76d.narinfo");
+}
 
 string queryStorePath(string storePath, string[] referenceSuffixes, string storeUrl)
 {

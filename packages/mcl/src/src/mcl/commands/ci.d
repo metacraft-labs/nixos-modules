@@ -53,7 +53,7 @@ export void ci()
         }
 
         auto matrix = flakeAttr(params.flakePre, arch, os, params.flakePost)
-            .nixEvalJobs(cachixUrl, false);
+            .nixEvalJobs(params.nixCaches, false);
 
         foreach (pkg; matrix)
         {
