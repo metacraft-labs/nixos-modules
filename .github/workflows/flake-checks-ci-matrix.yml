@@ -34,16 +34,6 @@ on:
         default: false
         required: false
 
-  # Allow this workflow to be triggered in merge
-  merge_group:
-
-  push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
-
 concurrency:
   group: ${{ github.workflow }}-${{ github.repository }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
