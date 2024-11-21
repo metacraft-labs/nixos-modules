@@ -7,7 +7,7 @@ on:
       runner:
         description: 'JSON-encoded list of runner labels'
         default: '["self-hosted"]'
-        required: true
+        required: false
         type: string
 
     secrets:

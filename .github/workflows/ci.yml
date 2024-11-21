@@ -17,7 +17,7 @@ on:
 
 jobs:
   ci:
-    uses: metacraft-labs/nixos-modules/.github/workflows/flake-checks-ci-matrix.yml@main
+    uses: ./.github/workflows/reusable-flake-checks-ci-matrix.yml
     secrets: inherit
     with:
       runner: '["self-hosted", "Linux", "x86-64-v2"]'
