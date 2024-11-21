@@ -3,6 +3,13 @@ name: "Update Flake Packages ❄️"
 on:
   # Allow this workflow to be reused by other workflows:
   workflow_call:
+    inputs:
+      runner:
+        description: 'JSON-encoded list of runner labels'
+        default: '["self-hosted"]'
+        required: true
+        type: string
+
     secrets:
       NIX_GITHUB_TOKEN:
         description: GitHub token to add as access-token in nix.conf
@@ -26,7 +33,7 @@ on:
 
 jobs:
   updateFlakePackages:
-    runs-on: self-hosted
+    runs-on: ${{ fromJSON(inputs.runner) }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
