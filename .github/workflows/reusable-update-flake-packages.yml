@@ -1,0 +1,60 @@
+name: "Update Flake Packages ❄️"
+
+on:
+  # Allow this workflow to be reused by other workflows:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'JSON-encoded list of runner labels'
+        default: '["self-hosted"]'
+        required: false
+        type: string
+
+    secrets:
+      NIX_GITHUB_TOKEN:
+        description: GitHub token to add as access-token in nix.conf
+        required: false
+      CACHIX_AUTH_TOKEN:
+        description: 'Cachix auth token'
+        required: true
+      CREATE_PR_APP_ID:
+        description: ID of the GitHub App used for opening pull requests.
+        required: true
+      CREATE_PR_APP_PRIVATE_KEY:
+        description: Private key of the GitHub App used for opening pull requests.
+        required: true
+
+  # Allow this workflow to be triggered manually:
+  workflow_dispatch:
+
+  # Run everyday at 00:00:
+  schedule:
+    - cron: "0 0 * * *" # https://crontab.guru/#0_0_*_*_*
+
+jobs:
+  updateFlakePackages:
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: metacraft-labs/nixos-modules/.github/install-nix@main
+        with:
+          nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+
+      - uses: tibdex/github-app-token@v2.1.0
+        id: generate-token
+        with:
+          app_id: ${{ secrets.CREATE_PR_APP_ID }}
+          private_key: ${{ secrets.CREATE_PR_APP_PRIVATE_KEY }}
+
+      - name: Update flake packages
+        uses: metacraft-labs/nix-update-action@main
+        with:
+          token: ${{ steps.generate-token.outputs.token }}
+          blacklist: "ci-matrix,folder-size-metrics,mcl,grafana-agent,validator-ejector"
