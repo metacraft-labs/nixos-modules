@@ -99,7 +99,7 @@
       inputs = {
         cachix.follows = "cachix";
         nixpkgs.follows = "nixpkgs";
-        pre-commit-hooks.follows = "git-hooks-nix";
+        git-hooks.follows = "git-hooks-nix";
         flake-compat.follows = "flake-compat";
       };
     };
