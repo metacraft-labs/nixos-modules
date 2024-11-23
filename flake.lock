@@ -236,7 +236,7 @@
         "foundry-nix": "foundry-nix",
         "lib-extras": "lib-extras",
         "nixpkgs": [
-          "nixpkgs"
+          "nixos-2405"
         ],
         "nixpkgs-2311": [
           "nixos-2311"
