@@ -4,7 +4,7 @@
     pkgs,
     ...
   }: let
-    inherit (lib) optionalAttrs;
+    inherit (lib) optionalAttrs versionAtLeast;
     inherit (pkgs) system;
     inherit (pkgs.hostPlatform) isLinux;
   in rec {
@@ -12,7 +12,10 @@
       inputs = {
         nixpkgs = rec {
           inherit (pkgs) cachix;
-          nix = pkgs.nixVersions.nix_2_22;
+          nix = let
+            nixStable = pkgs.nixVersions.stable;
+          in
+            assert versionAtLeast nixStable.version "2.24.10"; nixStable;
           nix-eval-jobs = pkgs.nix-eval-jobs.override {inherit nix;};
           nix-fast-build = pkgs.nix-fast-build.override {inherit nix-eval-jobs;};
         };
