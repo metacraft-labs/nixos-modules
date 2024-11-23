@@ -15,12 +15,13 @@
   inputs = {
     nixos-2311.url = "github:NixOS/nixpkgs/nixos-23.11";
     nixos-2405.url = "github:NixOS/nixpkgs/nixos-24.05";
+    nixos-2411.url = "github:NixOS/nixpkgs/nixos-24.11";
 
-    nixpkgs.follows = "nixos-2405";
+    nixpkgs.follows = "nixos-2411";
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
 
     home-manager = {
-      url = "github:nix-community/home-manager/release-24.05";
+      url = "github:nix-community/home-manager/release-24.11";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
