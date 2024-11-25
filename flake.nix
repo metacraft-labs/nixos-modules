@@ -15,7 +15,10 @@
   inputs = {
     nixos-2311.url = "github:NixOS/nixpkgs/nixos-23.11";
     nixos-2405.url = "github:NixOS/nixpkgs/nixos-24.05";
-    nixos-2411.url = "github:NixOS/nixpkgs/nixos-24.11";
+
+    # FIXME: change back to `nixos-24.11` once
+    # https://nixpk.gs/pr-tracker.html?pr=356660 is all green
+    nixos-2411.url = "github:NixOS/nixpkgs/staging-next-24.11";
 
     nixpkgs.follows = "nixos-2411";
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
