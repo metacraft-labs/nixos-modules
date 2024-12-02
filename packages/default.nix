@@ -79,6 +79,11 @@
       // optionalAttrs isLinux {
         inherit (inputs'.validator-ejector.packages) validator-ejector;
       }
+      // optionalAttrs (system == "x86_64-linux" || system == "x86_64-darwin") {
+        foundry = legacyPackages.inputs.ethereum-nix.foundry.override {
+          inherit (pkgs) rustPlatform;
+        };
+      }
       // optionalAttrs (system == "x86_64-linux") {
         inherit (pkgs) terraform;
         inherit (legacyPackages.inputs.terranix) terranix;
