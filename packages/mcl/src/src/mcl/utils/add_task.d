@@ -43,7 +43,7 @@ export void writeAddTaskHelp() {
     writeln("        mcl add_task <task-title> [<username/priority/status/milestone/estimate/tshirt-size> ..]");
     writeln("            <username> is `@<name>` (might be a shorter name if registered in mcl_config.json)");
     writeln("            <priority> is highest / high / normal / low");
-    writeln("            <status> is backlog / ready (for ready to start) / progress (for in progress) / done / blocker / paused / cancelled");
+    writeln("            <status> is backlog / next (for next up) / worked (for worked on) / done / blocked / paused / cancelled");
     writeln("            <milestone> is project-specific, but can be auto-recognized based on shorter names in mcl_config.json");
     writeln("            <estimate> is time(days) estimate, needs explicit `--estimate=..` for now");
     writeln("            <tshirt-size> is S / M / L / XL");
@@ -51,7 +51,7 @@ export void writeAddTaskHelp() {
     writeln("            for all you can also pass explicit flag like `--priority=<value>");
     writeln("");
     writeln("        examples (with a hypothetical mcl_config.json):");
-    writeln("            mcl add_task \"test task\" @Paul low progress beta M");
+    writeln("            mcl add_task \"test task\" @Paul low worked beta M");
     writeln("            mcl add_task \"test task 2\" @Paul v1 L");
     writeln("            mcl add_task \"test task 3\" @John done normal M beta");
     writeln("            mcl add_task \"test task 4\" M backlog @John");
@@ -133,14 +133,14 @@ class TaskManager {
             Arg result = { kind: "status", value: "Backlog" };
             return result;
         }
-        else if (raw == "ready" || raw == "ready to start")
+        else if (raw == "next" || raw == "next up")
         {
-            Arg result = { kind: "status", value: "Ready to Start" };
+            Arg result = { kind: "status", value: "Next Up" };
             return result;
         }
-        else if (raw == "progress" || raw == "in progress")
+        else if (raw == "worked" || raw == "worked on")
         {
-            Arg result = { kind: "status", value: "In progress" };
+            Arg result = { kind: "status", value: "Worked On" };
             return result;
         }
         else if (raw == "review" || raw == "code review")
@@ -165,7 +165,7 @@ class TaskManager {
         }
         else if (raw == "blocked")
         {
-            Arg result = { kind: "status", value: "blocked" };
+            Arg result = { kind: "status", value: "Blocked" };
             return result;
         }
         else if (raw.startsWith("--status="))
