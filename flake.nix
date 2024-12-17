@@ -239,8 +239,8 @@
       };
       flake.lib.create = {
         rootDir,
-        machinesDir ? null,
-        usersDir ? null,
+        machinesDir ? rootDir + "/machines",
+        usersDir ? rootDir + "/users",
       }: {
         dirs = {
           lib = self + "/lib";
