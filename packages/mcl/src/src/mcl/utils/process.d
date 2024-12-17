@@ -22,10 +22,10 @@ T execute(T = string)(string[] args, bool printCommand = true, bool returnErr = 
     import std.process : pipeShell, wait, escapeShellCommand;
     import std.logger : tracef, errorf, infof;
     import std.array : join;
-    import std.algorithm : map;
+    import std.algorithm : map, canFind;
     import std.conv : to;
 
-    auto cmd = args.map!escapeShellCommand.join(" ");
+    auto cmd = args.map!(x => x.canFind("*") ? x : x.escapeShellCommand()).join(" ");
 
     if (printCommand)
     {

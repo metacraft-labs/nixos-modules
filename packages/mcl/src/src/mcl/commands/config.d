@@ -1,98 +1,125 @@
 module mcl.commands.config;
 
-import std.stdio : writeln, write;
-import std.conv : to;
-import std.json : JSONValue;
-import std.format : fmt = format;
-import std.exception : enforce;
-import std.range : front;
-import std.string : indexOf, strip;
-import std.logger: errorf;
-import core.stdc.stdlib: exit;
-import std.algorithm : each;
+import std.algorithm : canFind;
 import std.array : array;
-import std.process : Redirect, ProcessPipes, wait;
+import std.process : ProcessPipes, Redirect, wait, environment;
+import std.range : drop, front;
+import std.stdio : writeln;
+import std.string : indexOf;
 
 import mcl.utils.env : optional, parseEnv;
 import mcl.utils.fetch : fetchJson;
-import mcl.utils.nix : queryStorePath, nix;
-import mcl.utils.string : camelCaseToCapitalCase;
+import mcl.utils.log : errorAndExit;
+import mcl.utils.nix : nix, queryStorePath;
 import mcl.utils.process : execute;
+import mcl.utils.string : camelCaseToCapitalCase;
 
-export void config(string[] args)
-{
-    if (args.length == 0)
-    {
+export void config(string[] args) {
+    if (args.length == 0) {
+        errorAndExit("Usage: mcl config <subcommand> [args]");
+    }
+    if (!checkRepo()) {
+        errorAndExit("This command must be run from a repository containing a NixOS machine configuration");
+    }
 
-        errorf("Usage: mcl config <subcommand> [args]");
-        exit(1);
-    }
-    if (!checkRepo())
-    {
-        errorf("This command must be run from a repository containing a NixOS machine configuration");
-        exit(1);
-    }
-    switch (args.front) {
+    string subcommand = args.front;
+
+    switch (subcommand) {
         case "sys":
-            sys(args[1..$]);
+            sys(args.drop(1));
             break;
         case "home":
-            home(args[1..$]);
+            home(args.drop(1));
             break;
         case "start-vm":
-            startVM(args[1..$]);
+            startVM(args.drop(1));
             break;
         default:
-            errorf("Unknown config subcommand" ~ args.front ~ ". Supported subcommands: sys, home, start-vm");
+            errorAndExit("Unknown config subcommand " ~ subcommand ~ ". Supported subcommands: sys, home, start-vm");
+            break;
     }
 }
 
 bool checkRepo()
 {
+    const string[] validRepos = ["nixos-machine-config", "infra-lido"];
     string remoteOriginUrl = execute(["git", "config", "--get", "remote.origin.url"], false);
-    return remoteOriginUrl.indexOf("nixos-machine-config") != -1 || remoteOriginUrl.indexOf("infra-lido") != -1;
+
+    foreach (string repo; validRepos) {
+        if (remoteOriginUrl.indexOf(repo) != -1) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void executeCommand(string command) {
+    auto exec = execute!ProcessPipes(command, true, false, Redirect.stderrToStdout);
+    wait(exec.pid);
+}
+
+void edit(string type, string path) {
+    string editor = environment.get("EDITOR", "vim");
+    string user = environment.get("USER", "root");
+    writeln("Editing " ~ path ~ " configuration from: ", path);
+    final switch (type) {
+        case "system":
+            executeCommand(editor ~ " machines/*/" ~ path ~ "/*.nix");
+            break;
+        case "user":
+            executeCommand(editor~ " users/" ~ user ~ "/gitconfig " ~ "users/" ~ user ~ "/*.nix " ~ "users/" ~ user ~ "/home-"~path~"/*.nix");
+            break;
+    }
 }
 
 void sys(string[] args)
 {
-    if ((args.length < 1 || args.length > 2) && args.front != "apply")
+    if ((args.length < 1 || args.length > 2) && !["apply", "edit"].canFind(args.front))
     {
-        errorf("Usage: mcl config sys apply or mcl config sys apply <machine-name>");
-        exit(1);
+        errorAndExit("Usage: mcl config sys apply or mcl config sys apply <machine-name>\n"~
+                    "       mcl config sys edit or mcl config sys edit <machine-name>");
     }
-    else {
-        string machineName = args.length > 1 ? args[1] : "";
-        writeln("Applying system configuration from: ", machineName);
-        auto exec = execute!ProcessPipes( "just switch-system " ~ machineName, true, false, Redirect.stderrToStdout);
-        wait(exec.pid);
-    };
+
+    string machineName = args.length > 1 ? args[1] : "";
+    final switch (args.front) {
+        case "apply":
+            writeln("Applying system configuration from: ", machineName);
+            executeCommand("just switch-system " ~ machineName);
+            break;
+        case "edit":
+            edit("system", machineName);
+            break;
+    }
 }
 
 void home(string[] args)
 {
     if ((args.length != 2) && args.front != "apply")
     {
-        errorf("Usage: mcl config home apply <desktop/server>");
-        exit(1);
+        errorAndExit("Usage: mcl config home apply <desktop/server>\n"~
+                    "       mcl config home edit  <desktop/server>");
     }
-    else {
-        auto type = args[1];
-        writeln("Applying home configuration from: ", type);
-        auto exec = execute!ProcessPipes( ["just", "switch-home", type], true, false, Redirect.stderrToStdout);
-        wait(exec.pid);
+
+    auto type = args[1];
+    final switch (args.front) {
+        case "apply":
+            writeln("Applying home configuration from: ", type);
+            executeCommand("just switch-home " ~ type);
+            break;
+        case "edit":
+            edit("user", type);
+            break;
     }
 }
 
 void startVM(string[] args)
 {
-    if (args.length < 1 || args.length > 1)
+    if (args.length != 1)
     {
-        errorf("Usage: mcl config start-vm <vm-name>");
-        exit(1);
+        errorAndExit("Usage: mcl config start-vm <vm-name>");
     }
-    else {
-        string vmName = args.front;
-        writeln("Starting VM: ", vmName);
-        execute(["just", "start-vm", vmName]);
-    };
+
+    string vmName = args.front;
+    writeln("Starting VM: ", vmName);
+    executeCommand("just start-vm " ~ vmName);
 }
