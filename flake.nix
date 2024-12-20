@@ -207,6 +207,15 @@
         flake-parts.follows = "flake-parts";
       };
     };
+
+    pre-commit-hooks = {
+      url = "github:cachix/git-hooks.nix";
+      inputs = {
+        flake-compat.follows = "flake-compat";
+        nixpkgs.follows = "nixpkgs";
+        nixpkgs-stable.follows = "nixpkgs";
+      };
+    };
   };
 
   outputs =
