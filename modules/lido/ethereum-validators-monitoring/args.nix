@@ -1,19 +1,36 @@
-lib:
-with lib; {
+lib: with lib; {
   log-level = mkOption {
-    type = types.nullOr (types.enum ["error" "warning" "notice" "info" "debug"]);
+    type = types.nullOr (
+      types.enum [
+        "error"
+        "warning"
+        "notice"
+        "info"
+        "debug"
+      ]
+    );
     default = null;
     description = "Application log level.";
   };
 
   log-format = mkOption {
-    type = types.nullOr (types.enum ["simple" "json"]);
+    type = types.nullOr (
+      types.enum [
+        "simple"
+        "json"
+      ]
+    );
     default = null;
     description = "Application log format.";
   };
 
   working-mode = mkOption {
-    type = types.nullOr (types.enum ["finalized" "head"]);
+    type = types.nullOr (
+      types.enum [
+        "finalized"
+        "head"
+      ]
+    );
     default = null;
     description = "Application working mode.";
   };
@@ -58,13 +75,28 @@ with lib; {
   };
 
   node-env = mkOption {
-    type = types.nullOr (types.enum ["development" "production" "staging" "testnet" "test"]);
+    type = types.nullOr (
+      types.enum [
+        "development"
+        "production"
+        "staging"
+        "testnet"
+        "test"
+      ]
+    );
     default = null;
     description = "Node.js environment.";
   };
 
   eth-network = mkOption {
-    type = types.nullOr (types.enum [1 5 17000 1337702]);
+    type = types.nullOr (
+      types.enum [
+        1
+        5
+        17000
+        1337702
+      ]
+    );
     description = "Ethereum network ID for connection execution layer RPC.";
   };
 
@@ -127,7 +159,13 @@ with lib; {
   };
 
   validator-registry-source = mkOption {
-    type = types.nullOr (types.enum ["lido" "keysapi" "file"]);
+    type = types.nullOr (
+      types.enum [
+        "lido"
+        "keysapi"
+        "file"
+      ]
+    );
     default = null;
     description = "Validators registry source.";
   };

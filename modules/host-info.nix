@@ -2,12 +2,18 @@
   config,
   lib,
   ...
-}: {
+}:
+{
   options.mcl.host-info = with lib; {
     type = mkOption {
-      type = types.nullOr (types.enum ["desktop" "server"]);
+      type = types.nullOr (
+        types.enum [
+          "desktop"
+          "server"
+        ]
+      );
       default = null;
-      example = ["desktop"];
+      example = [ "desktop" ];
       description = ''
         Whether this host is a desktop or a server.
       '';
@@ -16,7 +22,7 @@
     isVM = mkOption {
       type = types.nullOr types.bool;
       default = null;
-      example = ["false"];
+      example = [ "false" ];
       description = ''
         Whether this configuration is a VM variant.
       '';
@@ -25,7 +31,7 @@
     configPath = mkOption {
       type = types.nullOr types.string;
       default = null;
-      example = ["machines/server/solunska-server"];
+      example = [ "machines/server/solunska-server" ];
       description = ''
         The configuration path for this host relative to the repo root.
       '';

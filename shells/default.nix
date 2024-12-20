@@ -1,9 +1,10 @@
 {
+  self',
   pkgs,
-  flake,
   inputs',
   ...
-}: let
+}:
+let
   repl = pkgs.writeShellApplication {
     name = "repl";
     text = ''
@@ -11,25 +12,28 @@
     '';
   };
 in
-  pkgs.mkShell {
-    packages = with pkgs; [
-      inputs'.agenix.packages.agenix
-      inputs'.nixos-anywhere.packages.nixos-anywhere
-      figlet
-      just
-      jq
-      nix-eval-jobs
-      nixos-rebuild
-      nix-output-monitor
-      repl
-      rage
-      inputs'.dlang-nix.packages.dmd
-      inputs'.dlang-nix.packages.dub
-      act
-    ];
+pkgs.mkShell {
+  packages = with pkgs; [
+    inputs'.agenix.packages.agenix
+    inputs'.nixos-anywhere.packages.nixos-anywhere
+    figlet
+    just
+    jq
+    nix-eval-jobs
+    nixos-rebuild
+    nix-output-monitor
+    repl
+    rage
+    inputs'.dlang-nix.packages.dmd
+    inputs'.dlang-nix.packages.dub
+    act
+    self'.checks.pre-commit-check.enabledPackages
+  ];
 
-    shellHook = ''
+  shellHook =
+    ''
       export REPO_ROOT="$PWD"
-      figlet -t "${flake.description}"
-    '';
-  }
+      figlet -t "Metacraft Nixos Modules"
+    ''
+    + self'.checks.pre-commit-check.shellHook;
+}
