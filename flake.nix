@@ -222,6 +222,7 @@
     in
     flake-parts.lib.mkFlake { inherit inputs; } {
       imports = [
+        ./checks
         ./modules
         ./packages
       ];
