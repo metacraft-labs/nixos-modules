@@ -209,49 +209,67 @@
     };
   };
 
-  outputs = inputs @ {
-    self,
-    nixpkgs,
-    flake-parts,
-    ...
-  }: let
-    lib = import "${nixpkgs}/lib";
-    flake = import "${self}/flake.nix";
-  in
-    flake-parts.lib.mkFlake {inherit inputs;} {
+  outputs =
+    inputs@{
+      self,
+      nixpkgs,
+      flake-parts,
+      ...
+    }:
+    let
+      lib = import "${nixpkgs}/lib";
+      flake = import "${self}/flake.nix";
+    in
+    flake-parts.lib.mkFlake { inherit inputs; } {
       imports = [
         ./modules
         ./packages
       ];
-      systems = ["x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin"];
-      perSystem = {
-        system,
-        pkgs,
-        inputs',
-        ...
-      }: {
-        _module.args.pkgs = import nixpkgs {
-          inherit system;
-          config.allowUnfree = true;
+      systems = [
+        "x86_64-linux"
+        "aarch64-linux"
+        "x86_64-darwin"
+        "aarch64-darwin"
+      ];
+      perSystem =
+        {
+          system,
+          pkgs,
+          inputs',
+          ...
+        }:
+        {
+          _module.args.pkgs = import nixpkgs {
+            inherit system;
+            config.allowUnfree = true;
+          };
+          devShells.default = import ./shells/default.nix { inherit pkgs flake inputs'; };
+          devShells.ci = import ./shells/ci.nix { inherit pkgs; };
         };
-        devShells.default = import ./shells/default.nix {inherit pkgs flake inputs';};
-        devShells.ci = import ./shells/ci.nix {inherit pkgs;};
-      };
-      flake.lib.create = {
-        rootDir,
-        machinesDir ? null,
-        usersDir ? null,
-      }: {
-        dirs = {
-          lib = self + "/lib";
-          services = self + "/services";
-          modules = self + "/modules";
-          machines = rootDir + "/machines";
+      flake.lib.create =
+        {
+          rootDir,
+          machinesDir ? null,
+          usersDir ? null,
+        }:
+        {
+          dirs = {
+            lib = self + "/lib";
+            services = self + "/services";
+            modules = self + "/modules";
+            machines = rootDir + "/machines";
+          };
+          libs = {
+            make-config = import ./lib/make-config.nix {
+              inherit
+                lib
+                rootDir
+                machinesDir
+                usersDir
+                ;
+            };
+            utils = import ./lib { inherit usersDir rootDir machinesDir; };
+          };
         };
-        libs = {
-          make-config = import ./lib/make-config.nix {inherit lib rootDir machinesDir usersDir;};
-          utils = import ./lib {inherit usersDir rootDir machinesDir;};
-        };
-      };
     };
 }

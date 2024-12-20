@@ -3,28 +3,30 @@
   books = [
     {
       author = "Bilbo/Frodo/Sam";
-      category = [];
+      category = [ ];
       title = "The Red Book of Westmarch";
     }
     {
       author = "Meriadoc Brandybuck, Master of Buckland";
-      category = [];
+      category = [ ];
       title = "Herblore of the Shire ";
     }
     {
       author = "Meriadoc Brandybuck, Master of Buckland";
-      category = ["Scholarly"];
+      category = [ "Scholarly" ];
       title = "Reckoning of Years";
     }
     {
-      category = [];
+      category = [ ];
       title = "The Tale of Years";
     }
     {
       author = "Ori";
-      category = [];
+      category = [ ];
       title = "The Book of Mazarbul";
     }
   ];
-  sources = ["https://middle-earth.xenite.org/what-are-the-various-books-named-in-the-lord-of-the-rings/"];
+  sources = [
+    "https://middle-earth.xenite.org/what-are-the-various-books-named-in-the-lord-of-the-rings/"
+  ];
 }
