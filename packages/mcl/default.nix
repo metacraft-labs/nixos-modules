@@ -5,7 +5,8 @@
   nix,
   nix-eval-jobs,
   ...
-}: let
+}:
+let
   deps =
     [
       nix
@@ -32,31 +33,40 @@
     ]
   );
 in
-  buildDubPackage rec {
-    pname = "mcl";
-    version = "unstable";
-    src = lib.fileset.toSource {
-      root = ./.;
-      fileset =
-        lib.fileset.fileFilter
-        (file: builtins.any file.hasExt ["d" "sdl" "json" "nix"])
-        ./.;
-    };
+buildDubPackage rec {
+  pname = "mcl";
+  version = "unstable";
+  src = lib.fileset.toSource {
+    root = ./.;
+    fileset = lib.fileset.fileFilter (
+      file:
+      builtins.any file.hasExt [
+        "d"
+        "sdl"
+        "json"
+        "nix"
+      ]
+    ) ./.;
+  };
 
-    nativeBuildInputs = [pkgs.makeWrapper] ++ deps;
+  nativeBuildInputs = [ pkgs.makeWrapper ] ++ deps;
 
-    postFixup = ''
-      wrapProgram $out/bin/${pname} --set PATH "${lib.makeBinPath deps}"
-    '';
+  postFixup = ''
+    wrapProgram $out/bin/${pname} --set PATH "${lib.makeBinPath deps}"
+  '';
 
-    dubBuildFlags = ["--compiler=dmd" "-b" "debug"];
+  dubBuildFlags = [
+    "--compiler=dmd"
+    "-b"
+    "debug"
+  ];
 
-    dubTestFlags = [
-      "--compiler=dmd"
-      "--"
-      "-e"
-      excludedTests
-    ];
+  dubTestFlags = [
+    "--compiler=dmd"
+    "--"
+    "-e"
+    excludedTests
+  ];
 
-    meta.mainProgram = pname;
-  }
+  meta.mainProgram = pname;
+}

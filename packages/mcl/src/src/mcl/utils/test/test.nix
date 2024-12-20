@@ -1,2 +1,1 @@
-with import <nixpkgs> {};
-  writeShellScriptBin "helloWorld" "echo Hello World"
+with import <nixpkgs> { }; writeShellScriptBin "helloWorld" "echo Hello World"
