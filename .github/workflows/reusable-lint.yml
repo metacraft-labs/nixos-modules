@@ -1,0 +1,37 @@
+name: 'Lint'
+
+on:
+  # Allow this workflow to be reused by other workflows:
+  workflow_call:
+    inputs:
+      runner:
+        description: 'JSON-encoded list of runner labels'
+        default: '["self-hosted"]'
+        required: false
+        type: string
+
+    secrets:
+      NIX_GITHUB_TOKEN:
+        description: GitHub token to add as access-token in nix.conf
+        required: false
+      CACHIX_AUTH_TOKEN:
+        description: 'Cachix auth token'
+        required: true
+
+jobs:
+  lint:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: metacraft-labs/nixos-modules/.github/install-nix@main
+        with:
+          nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+
+      - name: Check formatting
+        run: nix develop --accept-flake-config .#pre-commit -c pre-commit run --all --show-diff-on-failure --color=always
