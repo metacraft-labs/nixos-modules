@@ -1,5 +1,6 @@
 {
   lib,
+  inputs,
   ...
 }:
 {
@@ -28,6 +29,8 @@
             nix-fast-build
             ;
           inherit (self'.legacyPackages.inputs.ethereum-nix) foundry;
+
+          pre-commit-check = import ./pre-commit.nix { inherit inputs system; };
         }
         // optionalAttrs (system == "x86_64-linux" || system == "aarch64-darwin") {
           inherit (self'.legacyPackages.inputs.ethereum-nix) geth;

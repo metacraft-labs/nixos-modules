@@ -246,6 +246,7 @@
           system,
           pkgs,
           inputs',
+          self',
           ...
         }:
         {
@@ -253,7 +254,14 @@
             inherit system;
             config.allowUnfree = true;
           };
-          devShells.default = import ./shells/default.nix { inherit pkgs flake inputs'; };
+          devShells.default = import ./shells/default.nix {
+            inherit
+              pkgs
+              flake
+              inputs'
+              self'
+              ;
+          };
           devShells.ci = import ./shells/ci.nix { inherit pkgs; };
         };
       flake.lib.create =

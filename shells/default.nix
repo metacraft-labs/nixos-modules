@@ -1,6 +1,6 @@
 {
+  self',
   pkgs,
-  flake,
   inputs',
   ...
 }:
@@ -27,10 +27,13 @@ pkgs.mkShell {
     inputs'.dlang-nix.packages.dmd
     inputs'.dlang-nix.packages.dub
     act
+    self'.checks.pre-commit-check.enabledPackages
   ];
 
-  shellHook = ''
-    export REPO_ROOT="$PWD"
-    figlet -t "${flake.description}"
-  '';
+  shellHook =
+    ''
+      export REPO_ROOT="$PWD"
+      figlet -t "Metacraft Nixos Modules"
+    ''
+    + self'.checks.pre-commit-check.shellHook;
 }
