@@ -21,10 +21,16 @@ buildGoModule rec {
   #   export GOWORK=off
   # '';
 
-  buildInputs = with pkgs; [gcc pkg-config];
+  buildInputs = with pkgs; [
+    gcc
+    pkg-config
+  ];
   nativeBuildInputs = buildInputs;
 
-  subPackages = ["cmd/pyroscope" "cmd/profilecli"];
+  subPackages = [
+    "cmd/pyroscope"
+    "cmd/profilecli"
+  ];
 
   ldflags = [
     "-X=github.com/grafana/pyroscope/pkg/util/build.Branch=${src.rev}"
@@ -38,7 +44,7 @@ buildGoModule rec {
     homepage = "https://github.com/grafana/pyroscope";
     changelog = "https://github.com/grafana/pyroscope/blob/${src.rev}/CHANGELOG.md";
     license = licenses.agpl3Only;
-    maintainers = with maintainers; [];
+    maintainers = with maintainers; [ ];
     mainProgram = "pyroscope";
   };
 }
