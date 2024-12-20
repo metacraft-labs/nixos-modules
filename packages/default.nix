@@ -72,41 +72,5 @@
             inherit (legacyPackages.inputs.nixpkgs) cachix nix nix-eval-jobs;
           };
         };
-      checks =
-        packages
-        // {
-          inherit (legacyPackages) rustToolchain;
-          inherit (legacyPackages.inputs.dlang-nix) dub;
-          inherit (legacyPackages.inputs.nixpkgs)
-            cachix
-            nix
-            nix-eval-jobs
-            nix-fast-build
-            ;
-          inherit (legacyPackages.inputs.ethereum-nix) foundry;
-        }
-        // optionalAttrs (system == "x86_64-linux" || system == "aarch64-darwin") {
-          inherit (legacyPackages.inputs.ethereum-nix) geth;
-        }
-        // optionalAttrs isLinux {
-          inherit (inputs'.validator-ejector.packages) validator-ejector;
-        }
-        // optionalAttrs (system == "x86_64-linux") {
-          inherit (pkgs) terraform;
-          inherit (legacyPackages.inputs.terranix) terranix;
-          inherit (legacyPackages.inputs.dlang-nix)
-            dcd
-            dscanner
-            serve-d
-            dmd
-            ldc
-            ;
-          inherit (legacyPackages.inputs.ethereum-nix)
-            mev-boost
-            nethermind
-            web3signer
-            nimbus-eth2
-            ;
-        };
     };
 }
