@@ -13,3 +13,6 @@ matrix-*.json
 shardMatrix.json
 
 .vscode
+
+# Pre Commit
+.pre-commit-config.yaml

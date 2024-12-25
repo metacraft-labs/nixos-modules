@@ -1,9 +1,16 @@
-{ ... }:
+{ inputs, ... }:
 {
+  imports = [
+    (import ../checks/pre-commit.nix {
+      inherit inputs;
+    }).flake.flakeModules.git-hooks
+  ];
+
   perSystem =
     {
       pkgs,
       inputs',
+      config,
       ...
     }:
     {
@@ -36,10 +43,12 @@
               inputs'.dlang-nix.packages.dmd
             ];
 
-          shellHook = ''
-            export REPO_ROOT="$PWD"
-            figlet -t "Metacraft Nixos Modules"
-          '';
+          shellHook =
+            ''
+              export REPO_ROOT="$PWD"
+              figlet -t "Metacraft Nixos Modules"
+            ''
+            + config.pre-commit.installationScript;
         };
     };
 }
