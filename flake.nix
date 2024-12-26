@@ -217,13 +217,13 @@
       ...
     }:
     let
-      lib = import "${nixpkgs}/lib";
-      flake = import "${self}/flake.nix";
+      inherit (nixpkgs) lib;
     in
     flake-parts.lib.mkFlake { inherit inputs; } {
       imports = [
         ./modules
         ./packages
+        ./shells
       ];
       systems = [
         "x86_64-linux"
@@ -232,19 +232,12 @@
         "aarch64-darwin"
       ];
       perSystem =
-        {
-          system,
-          pkgs,
-          inputs',
-          ...
-        }:
+        { system, ... }:
         {
           _module.args.pkgs = import nixpkgs {
             inherit system;
             config.allowUnfree = true;
           };
-          devShells.default = import ./shells/default.nix { inherit pkgs flake inputs'; };
-          devShells.ci = import ./shells/ci.nix { inherit pkgs; };
         };
       flake.lib.create =
         {
