@@ -1,6 +1,5 @@
 {
   pkgs,
-  flake,
   inputs',
   ...
 }:
@@ -27,7 +26,6 @@ pkgs.mkShell {
       repl
       rage
       inputs'.dlang-nix.packages.dub
-      act
     ]
     ++ pkgs.lib.optionals (pkgs.stdenv.system == "x86_64-linux") [
       inputs'.dlang-nix.packages.dmd
@@ -35,6 +33,6 @@ pkgs.mkShell {
 
   shellHook = ''
     export REPO_ROOT="$PWD"
-    figlet -t "${flake.description}"
+    figlet -t "Metacraft Nixos Modules"
   '';
 }
