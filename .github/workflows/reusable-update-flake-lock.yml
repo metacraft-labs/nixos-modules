@@ -1,4 +1,4 @@
-name: "Update Nix Flake lockfile"
+name: 'Update Nix Flake lockfile'
 
 on:
   # Allow this workflow to be reused by other workflows:

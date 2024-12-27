@@ -1,4 +1,4 @@
-name: "Update Flake Packages ❄️"
+name: 'Update Flake Packages ❄️'
 
 on:
   # Allow this workflow to be reused by other workflows:
@@ -29,7 +29,7 @@ on:
 
   # Run everyday at 00:00:
   schedule:
-    - cron: "0 0 * * *" # https://crontab.guru/#0_0_*_*_*
+    - cron: '0 0 * * *' # https://crontab.guru/#0_0_*_*_*
 
 jobs:
   updateFlakePackages:
@@ -57,4 +57,4 @@ jobs:
         uses: metacraft-labs/nix-update-action@main
         with:
           token: ${{ steps.generate-token.outputs.token }}
-          blacklist: "ci-matrix,folder-size-metrics,mcl,grafana-agent,validator-ejector"
+          blacklist: 'ci-matrix,folder-size-metrics,mcl,grafana-agent,validator-ejector'

@@ -657,9 +657,9 @@ MachineConfigInfo getMachineConfigInfo()
         if (_module != "" && (
                 // Mass-storage controller.  Definitely important.
                 _class.startsWith("0x01") ||
-                 //Firewire controller.  A disk might be attached.
+                //Firewire controller.  A disk might be attached.
                 _class.startsWith("0x0c00") ||
-                 //USB controller.  Needed if we want to use the
+                //USB controller.  Needed if we want to use the
                 // keyboard when things go wrong in the initrd.
                 _class.startsWith("0x0c03")))
         {
