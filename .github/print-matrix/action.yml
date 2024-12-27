@@ -38,7 +38,7 @@ outputs:
     value: ${{ steps.print-matrix.outputs.comment }}
 
 runs:
-  using: "composite"
+  using: 'composite'
   steps:
     - name: Install Nix
       uses: metacraft-labs/nixos-modules/.github/install-nix@main

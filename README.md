@@ -23,6 +23,7 @@ Evaluates each package, and compares it to it's last cached version, creating a 
 This command is not meant to be run manually, but rather to be ran by the CI.
 
 ENV Variables:
+
 - IS_INITIAL: `true` or `false`
 - CACHIX_CACHE: Which cachix cache to search
 - CACHIX_AUTH_TOKEN: The auth token for the cache
@@ -36,6 +37,7 @@ Usage: Use `mcl ci` instead
 Evaluates each package, and compares it to it's last cached version, creating a table listing which packages are cached, which aren't, and which failed.
 
 ENV Variables:
+
 - IS_INITIAL: `true` or `false`
 - CACHIX_CACHE: Which cachix cache to search
 - CACHIX_AUTH_TOKEN: The auth token for the cache
@@ -53,6 +55,7 @@ Usage: `mcl deploy_spec`
 ### get_fstab
 
 ENV Variables:
+
 - IS_INITIAL: `true` or `false`
 - CACHIX_CACHE: Which cachix cache to search
 - CACHIX_AUTH_TOKEN: The auth token for the cache
@@ -74,9 +77,11 @@ Usage: `mcl host_info`
 Create a starting nix configuration for target machine.
 
 ENV Variables:
+
 - SSH_PATH: SSH path of target machine
 
 The remaining ENV variables are optional, and if missing will be prompted at runtime.
+
 - CREATE_USER: bool
 - USER_NAME: string
 - MACHINE_NAME: string
@@ -93,6 +98,7 @@ Usage: `mcl machine_create`
 Splits the list of packages under `checks` into n number of shards. Requires manual configuration using modules/shard-split. See this repo and `nix-blockchain-development`
 
 ENV Variables:
+
 - [Optional] GITHUB_OUTPUT: If set, exports results to GITHUB_INPUT env variable
 
 Usage: `mcl shard_matrix`
