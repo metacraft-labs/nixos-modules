@@ -1,6 +1,6 @@
 { inputs, ... }:
 {
-  flake.flakeModules.git-hooks =
+  flake.modules.flake.git-hooks =
     { ... }:
     {
       imports = [
