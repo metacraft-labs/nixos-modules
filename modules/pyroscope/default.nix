@@ -1,6 +1,6 @@
 { withSystem, ... }:
 {
-  flake.nixosModules.pyroscope =
+  flake.modules.nixos.pyroscope =
     {
       pkgs,
       config,

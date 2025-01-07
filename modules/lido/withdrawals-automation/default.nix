@@ -1,6 +1,6 @@
 { withSystem, ... }:
 {
-  flake.nixosModules.lido-withdrawals-automation =
+  flake.modules.nixos.lido-withdrawals-automation =
     {
       pkgs,
       config,

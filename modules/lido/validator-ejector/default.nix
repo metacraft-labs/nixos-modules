@@ -1,6 +1,6 @@
 { withSystem, ... }:
 {
-  flake.nixosModules.lido-validator-ejector =
+  flake.modules.nixos.lido-validator-ejector =
     {
       pkgs,
       config,

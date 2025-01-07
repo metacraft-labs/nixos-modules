@@ -1,6 +1,6 @@
 { withSystem, ... }:
 {
-  flake.nixosModules.lido-keys-api =
+  flake.modules.nixos.lido-keys-api =
     {
       pkgs,
       config,
