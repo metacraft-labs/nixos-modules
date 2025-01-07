@@ -3,7 +3,7 @@ let
   inherit (import ../../lib/shard-attrs.nix lib) shardAttrs;
 in
 {
-  flake.flakeModules.shardSplit =
+  flake.modules.flake.shardSplit =
     { config, ... }:
     let
       cfg = config.mcl.matrix.shard;

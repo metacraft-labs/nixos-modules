@@ -3,7 +3,7 @@
   imports = [
     (import ../checks/pre-commit.nix {
       inherit inputs;
-    }).flake.flakeModules.git-hooks
+    }).flake.modules.flake.git-hooks
   ];
 
   perSystem =
