@@ -1,6 +1,6 @@
 { withSystem, ... }:
 {
-  flake.nixosModules.folder-size-metrics =
+  flake.modules.nixos.folder-size-metrics =
     {
       pkgs,
       config,

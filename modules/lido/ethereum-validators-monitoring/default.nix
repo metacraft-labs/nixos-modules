@@ -1,6 +1,6 @@
 { withSystem, ... }:
 {
-  flake.nixosModules.ethereum-validators-monitoring =
+  flake.modules.nixos.ethereum-validators-monitoring =
     {
       pkgs,
       config,

@@ -1,6 +1,6 @@
 { withSystem, ... }:
 {
-  flake.nixosModules.grafana-agent-flow =
+  flake.modules.nixos.grafana-agent-flow =
     {
       pkgs,
       config,
