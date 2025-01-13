@@ -4,34 +4,34 @@ import mcl.utils.test;
 
 import mcl.utils.tui : bold;
 
-import std.process : ProcessPipes;
+import std.process : ProcessPipes, Redirect;
 import std.string : split, strip;
 import core.sys.posix.unistd : geteuid;
 import std.json : JSONValue, parseJSON;
 
 bool isRoot() => geteuid() == 0;
 
-T execute(T = string)(string args, bool printCommand = true, bool returnErr = false) if (is(T == string) || is(T == ProcessPipes) || is(T == JSONValue))
+T execute(T = string)(string args, bool printCommand = true, bool returnErr = false, Redirect redirect = Redirect.all) if (is(T == string) || is(T == ProcessPipes) || is(T == JSONValue))
 {
-    return execute!T(args.split(" "), printCommand, returnErr);
+    return execute!T(args.strip.split(" "), printCommand, returnErr, redirect);
 }
-T execute(T = string)(string[] args, bool printCommand = true, bool returnErr = false) if (is(T == string) || is(T == ProcessPipes) || is(T == JSONValue))
+T execute(T = string)(string[] args, bool printCommand = true, bool returnErr = false, Redirect redirect = Redirect.all) if (is(T == string) || is(T == ProcessPipes) || is(T == JSONValue))
 {
     import std.exception : enforce;
     import std.format : format;
-    import std.process : pipeShell, wait, Redirect, escapeShellCommand;
+    import std.process : pipeShell, wait, escapeShellCommand;
     import std.logger : tracef, errorf, infof;
     import std.array : join;
-    import std.algorithm : map;
+    import std.algorithm : map, canFind;
     import std.conv : to;
 
-    auto cmd = args.map!escapeShellCommand.join(" ");
+    auto cmd = args.map!(x => x.canFind("*") ? x : x.escapeShellCommand()).join(" ");
 
     if (printCommand)
     {
         infof("\n$ `%s`", cmd.bold);
     }
-    auto res = pipeShell(cmd, Redirect.all);
+    auto res = pipeShell(cmd, redirect);
     static if (is(T == ProcessPipes))
     {
         return res;
