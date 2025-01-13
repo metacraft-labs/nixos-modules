@@ -65,7 +65,7 @@ string[string] getProcInfo(string fileOrData, bool file = true)
     return r;
 }
 
-export void host_info()
+export void host_info(string[] args)
 {
     params = parseEnv!Params;
 
