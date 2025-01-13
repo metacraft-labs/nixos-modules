@@ -1,5 +1,14 @@
 module mcl.utils.log;
 
+
+void errorAndExit(string message) {
+    import core.stdc.stdlib: exit;
+    import std.stdio : stderr;
+
+    stderr.writeln(message);
+    exit(1);
+}
+
 T prompt(T)(string message, T[] options = [], string input = "unfilled")
 {
     import std.stdio : write, writeln, readln;
