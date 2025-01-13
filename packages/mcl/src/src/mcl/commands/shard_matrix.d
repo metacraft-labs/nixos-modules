@@ -18,7 +18,7 @@ import mcl.utils.json : toJSON;
 import mcl.utils.nix : nix;
 import mcl.utils.path : createResultDirs, resultDir, rootDir;
 
-export void shard_matrix()
+export void shard_matrix(string[] args)
 {
     const params = parseEnv!Params;
     auto matrix = generateShardMatrix();

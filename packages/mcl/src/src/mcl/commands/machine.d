@@ -1,4 +1,4 @@
-module mcl.commands.machine_create;
+module mcl.commands.machine;
 
 import std;
 import mcl.utils.log : prompt;
@@ -221,7 +221,7 @@ struct MachineConfiguration
 }
 
 void createMachine(MachineType machineType, string machineName, User user) {
-    auto infoJSON = execute(["ssh", params.sshPath, "sudo nix --experimental-features \\'nix-command flakes\\' --refresh --accept-flake-config run github:metacraft-labs/nixos-modules/feat/machine_create#mcl host_info"],false, false);
+    auto infoJSON = execute(["ssh", params.sshPath, "sudo nix --experimental-features \\'nix-command flakes\\' --refresh --accept-flake-config run github:metacraft-labs/nixos-modules/#mcl host_info"],false, false);
     auto infoJSONParsed = infoJSON.parseJSON;
     Info info = infoJSONParsed.fromJSON!Info;
 
@@ -377,10 +377,17 @@ void createMachineConfiguration()
 
 Params params;
 
-export void machine_create()
+export void machine(string[] args)
 {
     params = parseEnv!Params;
-    createMachineConfiguration();
+    switch (args.front)
+    {
+        case "create":
+            createMachineConfiguration();
+            break;
+        default:
+            assert(0, "Unknown machine action: " ~ args.front);
+    }
 }
 struct Params
 {
