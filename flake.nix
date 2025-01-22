@@ -173,7 +173,7 @@
     };
 
     vscode-server = {
-      url = "github:nix-community/nixos-vscode-server?rev=7e581626a07486b1779ef02320e7e310feb11611";
+      url = "github:nix-community/nixos-vscode-server";
       inputs = {
         nixpkgs.follows = "nixpkgs";
         flake-utils.follows = "flake-utils";
