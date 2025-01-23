@@ -20,6 +20,8 @@ export void deploy_spec()
 {
     const deploySpecFile = resultDir.buildPath("cachix-deploy-spec.json");
 
+    DeploySpec spec;
+
     if (!exists(deploySpecFile))
     {
         auto nixosConfigs = flakeAttr("legacyPackages", SupportedSystem.x86_64_linux, "bareMetalMachines")
@@ -39,18 +41,20 @@ export void deploy_spec()
         if (!configsMissingFromCachix.empty)
             throw new Exception("Some Nixos configurations are not in cachix. Please cache them first.");
 
-        auto spec = nixosConfigs.createMachineDeploySpec().toJSON;
-
-        infof("Deploy spec: %s", spec.toPrettyString(JSONOptions.doNotEscapeSlashes));
-
-        writeFile(deploySpecFile, spec.toString());
+        spec = nixosConfigs.createMachineDeploySpec();
+        writeFile(deploySpecFile, spec.toJSON.toPrettyString(JSONOptions.doNotEscapeSlashes));
     }
     else
     {
         warningf("Reusing existing deploy spec at:\n'%s'", deploySpecFile.bold);
-
-        warningf("\n---\n%s\n---", deploySpecFile.tryDeserializeFromJsonFile!DeploySpec);
+        spec = deploySpecFile.tryDeserializeFromJsonFile!DeploySpec;
     }
+
+    infof("\n---\n%s\n---", spec);
+    infof("%s machines will be deployed.", spec.agents.length);
+
+    if (!spec.agents.length)
+        return;
 
     spawnProcessInline([
         "cachix", "deploy", "activate", deploySpecFile, "--async"
