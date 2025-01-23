@@ -368,7 +368,7 @@ Package[] nixEvalJobs(string flakeAttrPrefix, string cachixUrl, bool doCheck = t
     })(false);
 
     const stderrLogs = pipes.stderr.byLine
-        .filter!(line => !uselessWarnings.canFind(line))
+        .filter!(line => !uselessWarnings.any!(w => line.canFind(w)))
         .join("\n");
 
     logWarning(stderrLogs);
