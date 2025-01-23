@@ -328,5 +328,5 @@ T tryDeserializeFromJsonFile(T)(string path)
 
     return json
         .fromJSON!T()
-        .tryGet("Error deserializing %s. JSON: %s".format(T.stringof.bold, json.toPrettyString().bold));
+        .tryGet("Error deserializing %s. JSON: \n%s".format(T.stringof.bold, json.toPrettyString().bold));
 }
