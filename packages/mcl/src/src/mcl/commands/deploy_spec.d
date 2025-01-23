@@ -2,19 +2,16 @@ module mcl.commands.deploy_spec;
 
 import std.algorithm : filter;
 import std.logger : infof, warningf;
-import std.file : exists, readText;
+import std.file : exists;
 import std.path : buildPath;
-import std.file : writeFile = write;
-import std.json : parseJSON, JSONOptions;
 
 import mcl.utils.process : spawnProcessInline;
 import mcl.utils.path : resultDir;
-import mcl.utils.env : parseEnv;
 import mcl.utils.cachix : cachixNixStoreUrl, DeploySpec, createMachineDeploySpec;
 import mcl.utils.tui : bold;
-import mcl.utils.json : toJSON, fromJSON, tryDeserializeFromJsonFile;
+import mcl.utils.json : tryDeserializeFromJsonFile, writeJsonFile;
 
-import mcl.commands.ci_matrix : flakeAttr, params, Params, nixEvalJobs, SupportedSystem;
+import mcl.commands.ci_matrix : flakeAttr, params, nixEvalJobs, SupportedSystem;
 
 export void deploy_spec()
 {
@@ -42,7 +39,7 @@ export void deploy_spec()
             throw new Exception("Some Nixos configurations are not in cachix. Please cache them first.");
 
         spec = nixosConfigs.createMachineDeploySpec();
-        writeFile(deploySpecFile, spec.toJSON.toPrettyString(JSONOptions.doNotEscapeSlashes));
+        writeJsonFile(spec, deploySpecFile);
     }
     else
     {

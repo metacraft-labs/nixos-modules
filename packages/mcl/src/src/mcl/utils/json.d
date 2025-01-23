@@ -330,3 +330,12 @@ T tryDeserializeFromJsonFile(T)(string path)
         .fromJSON!T()
         .tryGet("Error deserializing %s. JSON: \n%s".format(T.stringof.bold, json.toPrettyString().bold));
 }
+
+void writeJsonFile(T)(in T value, const(char)[] path)
+{
+    import std.path : dirName;
+    import std.file : mkdirRecurse, writeFile = write;
+    auto json = value.toJSON.toPrettyString(JSONOptions.doNotEscapeSlashes);
+    mkdirRecurse(path.dirName);
+    writeFile(path, json);
+}
