@@ -49,27 +49,31 @@
               check.enable = false;
 
               # Enable commonly used formatters
-              settings.hooks = {
-                # Basic whitespace formatting
-                end-of-file-fixer.enable = true;
-                editorconfig-checker.enable = true;
+              settings = {
+                excludes = [ "^.*\.age$" ];
 
-                # *.nix formatting
-                nixfmt-rfc-style.enable = true;
+                hooks = {
+                  # Basic whitespace formatting
+                  end-of-file-fixer.enable = true;
+                  editorconfig-checker.enable = true;
 
-                # *.rs formatting
-                rustfmt.enable = true;
+                  # *.nix formatting
+                  nixfmt-rfc-style.enable = true;
 
-                # *.{js,jsx,ts,tsx,css,html,md,json} formatting
-                prettier = {
-                  enable = true;
-                  args = [
-                    "--check"
-                    "--list-different=false"
-                    "--log-level=warn"
-                    "--ignore-unknown"
-                    "--write"
-                  ];
+                  # *.rs formatting
+                  rustfmt.enable = true;
+
+                  # *.{js,jsx,ts,tsx,css,html,md,json} formatting
+                  prettier = {
+                    enable = true;
+                    args = [
+                      "--check"
+                      "--list-different=false"
+                      "--log-level=warn"
+                      "--ignore-unknown"
+                      "--write"
+                    ];
+                  };
                 };
               };
             };
