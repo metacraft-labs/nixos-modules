@@ -1,8 +1,4 @@
-{
-  usersDir,
-  rootDir,
-  machinesDir,
-}:
+utils:
 {
   config,
   lib,
@@ -12,7 +8,6 @@ let
   cfg = config.users;
   enabled = cfg.includedUsers != [ ] || cfg.includedGroups != [ ];
 
-  utils = import ../lib { inherit usersDir rootDir machinesDir; };
   allUsers = utils.usersInfo;
   allGroups =
     let
