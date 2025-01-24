@@ -86,6 +86,7 @@ pkgs.writeShellApplication {
 
     if [ "$vm" = "true" ]; then
         RULES="$(nix eval --raw ".#nixosConfigurations.$machine.config.virtualisation.vmVariant.mcl.secrets.services.$service.nix-file")"
+        secretsFolder="./modules/default-vm-config/secrets/$service"
     else
         RULES="$(nix eval --raw ".#nixosConfigurations.$machine.config.mcl.secrets.services.$service.nix-file")"
     fi
