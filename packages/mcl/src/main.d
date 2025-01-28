@@ -5,7 +5,6 @@ import std.logger : infof, errorf, LogLevel;
 
 import mcl.utils.path : rootDir;
 import mcl.utils.tui : bold;
-
 import cmds = mcl.commands;
 
 alias supportedCommands = imported!`std.traits`.AliasSeq!(
@@ -16,7 +15,8 @@ alias supportedCommands = imported!`std.traits`.AliasSeq!(
     cmds.shard_matrix,
     cmds.host_info,
     cmds.ci,
-    cmds.machine_create
+    cmds.machine_create,
+    cmds.add_task,
 );
 
 int main(string[] args)
@@ -26,7 +26,14 @@ int main(string[] args)
 
     string cmd = args[1];
     LogLevel logLevel = LogLevel.info;
-    args.getopt("log-level", &logLevel);
+    
+    // sorry for that: it breaks my custom `--kind=arg` parsing
+    // in add_task.d
+    // probably there is a better method, but at least temporarily
+    // commented out for our fork 
+    // (alexander):
+    //
+    // args.getopt("log-level", &logLevel);
 
     setLogLevel(logLevel);
 
@@ -42,7 +49,7 @@ int main(string[] args)
             {
 
                 infof("Running %s task", cmd.bold);
-                command();
+                command(args);
                 infof("Execution Succesfull");
                 return 0;
             }
@@ -65,8 +72,11 @@ int wrongUsage(string error)
 {
     writefln("Error: %s.", error);
     writeln("Usage:\n");
-    static foreach (cmd; supportedCommands)
+    static foreach (cmd; supportedCommands) {
         writefln("    mcl %s", __traits(identifier, cmd));
-
+        static if (__traits(identifier, cmd) == "add_task") {
+            cmds.writeAddTaskHelp();
+        }
+    }
     return 1;
 }
