@@ -244,6 +244,9 @@
           machinesDir ? null,
           usersDir ? null,
         }:
+        let
+          utils = import ./lib { inherit usersDir rootDir machinesDir; };
+        in
         {
           dirs = {
             lib = self + "/lib";
@@ -260,7 +263,11 @@
                 usersDir
                 ;
             };
-            utils = import ./lib { inherit usersDir rootDir machinesDir; };
+            inherit utils;
+          };
+
+          modules = {
+            users = import ./modules/users.nix utils;
           };
         };
     };
