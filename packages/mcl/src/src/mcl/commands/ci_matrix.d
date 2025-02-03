@@ -203,8 +203,9 @@ struct Params
     @optional() int maxWorkers;
     @optional() int maxMemory;
     @optional() bool isInitial;
-    string cachixCache;
-    string cachixAuthToken;
+
+    @optional() string cachixCache; // not actually optional, but it tries to enforce it due to ci_matrix's use in a unittest
+    @optional() string cachixAuthToken; // not actually optional, but it tries to enforce it due to ci_matrix's use in a unittest
 
     void setup()
     {

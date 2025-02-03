@@ -1,3 +1,5 @@
+module mcl.main;
+
 import std.stdio : writefln, writeln, stderr;
 import std.array : replace;
 import std.getopt : getopt;
@@ -8,66 +10,84 @@ import mcl.utils.tui : bold;
 
 import cmds = mcl.commands;
 
-alias supportedCommands = imported!`std.traits`.AliasSeq!(
-    cmds.get_fstab,
-    cmds.deploy_spec,
-    cmds.ci_matrix,
-    cmds.print_table,
-    cmds.shard_matrix,
-    cmds.host_info,
-    cmds.ci,
-    cmds.machine,
-    cmds.config
-);
+import argparse;
 
-int main(string[] args)
+struct MCLArgs
 {
-    if (args.length < 2)
-        return wrongUsage("no command selected");
-
-    string cmd = args[1];
-    LogLevel logLevel = LogLevel.info;
-    args.getopt("log-level", &logLevel);
-
-    setLogLevel(logLevel);
-
-    infof("Git root: '%s'", rootDir.bold);
-
-    try switch (cmd)
-    {
-        default:
-            return wrongUsage("unknown command: `" ~ cmd ~ "`");
-
-        static foreach (command; supportedCommands)
-            case __traits(identifier, command):
-            {
-
-                infof("Running %s task", cmd.bold);
-                command(args[2..$]);
-                infof("Execution Succesfull");
-                return 0;
-            }
-    }
-    catch (Exception e)
-    {
-        errorf("Task %s failed. Error:\n%s", cmd.bold, e);
-        return 1;
-    }
+    LogLevel logLevel;
 }
 
-void setLogLevel(LogLevel l)
+mixin CLI!MCLArgs.main!((args)
 {
-    import std.logger : globalLogLevel, sharedLog;
-    globalLogLevel = l;
-    (cast()sharedLog()).logLevel = l;
-}
+    // 'args' has 'Example' type
+    static assert(is(typeof(args) == MCLArgs));
 
-int wrongUsage(string error)
-{
-    writefln("Error: %s.", error);
-    writeln("Usage:\n");
-    static foreach (cmd; supportedCommands)
-        writefln("    mcl %s", __traits(identifier, cmd));
+    // do whatever you need
+    import std.stdio: writeln;
+    args.writeln;
+    return 0;
+});
 
-    return 1;
-}
+// alias supportedCommands = imported!`std.traits`.AliasSeq!(
+//     cmds.get_fstab,
+//     cmds.deploy_spec,
+//     cmds.ci_matrix,
+//     cmds.print_table,
+//     cmds.shard_matrix,
+//     cmds.host_info,
+//     cmds.ci,
+//     cmds.machine,
+//     cmds.config
+// );
+
+// int main(string[] args)
+// {
+//     if (args.length < 2)
+//         return wrongUsage("no command selected");
+
+//     string cmd = args[1];
+//     LogLevel logLevel = LogLevel.info;
+//     args.getopt("log-level", &logLevel);
+
+//     setLogLevel(logLevel);
+
+//     infof("Git root: '%s'", rootDir.bold);
+
+//     try switch (cmd)
+//     {
+//         default:
+//             return wrongUsage("unknown command: `" ~ cmd ~ "`");
+
+//         static foreach (command; supportedCommands)
+//             case __traits(identifier, command):
+//             {
+
+//                 infof("Running %s task", cmd.bold);
+//                 command(args[2..$]);
+//                 infof("Execution Succesfull");
+//                 return 0;
+//             }
+//     }
+//     catch (Exception e)
+//     {
+//         errorf("Task %s failed. Error:\n%s", cmd.bold, e);
+//         return 1;
+//     }
+// }
+
+// void setLogLevel(LogLevel l)
+// {
+//     import std.logger : globalLogLevel, sharedLog;
+//     globalLogLevel = l;
+//     (cast()sharedLog()).logLevel = l;
+// }
+
+// int wrongUsage(string error)
+// {
+//     writefln("Error: %s.", error);
+//     writeln("Usage:\n");
+//     static foreach (cmd; supportedCommands)
+//         writefln("    mcl %s", __traits(identifier, cmd));
+
+//     return 1;
+// }
