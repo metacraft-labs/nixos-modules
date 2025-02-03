@@ -5,5 +5,6 @@
     ./pyroscope
     ./folder-size-metrics
     ./shard-split
+    ./random-alerts
   ];
 }
