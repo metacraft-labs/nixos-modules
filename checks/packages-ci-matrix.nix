@@ -50,7 +50,7 @@
             mev-boost
             nethermind
             web3signer
-            nimbus-eth2
+            nimbus
             ;
         };
     };
