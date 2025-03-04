@@ -17,6 +17,11 @@
     {
       options.services.lido-withdrawals-automation = with lib; {
         enable = mkEnableOption (lib.mdDoc "Lido Withdrawals Automation");
+        timerFrequency = mkOption {
+          type = types.str;
+          default = "daily";
+          example = "hourly";
+        };
         args = {
           percentage = mkOption {
             type = types.nullOr types.int;
@@ -78,8 +83,18 @@
           };
         };
       };
-      config = {
-        systemd.services.lido-withdrawals-automation = lib.mkIf cfg.enable {
+      config = lib.mkIf cfg.enable {
+
+        systemd.timers.lido-withdrawals-automation = {
+          wantedBy = [ "timers.target" ];
+          partOf = [ "lido-withdrawals-automation.service" ];
+          timerConfig = {
+            OnCalendar = cfg.timerFrequency;
+            Unit = "lido-withdrawals-automation.service";
+          };
+        };
+
+        systemd.services.lido-withdrawals-automation = {
           description = "Lido Withdrawals Automation";
 
           wantedBy = [ "multi-user.target" ];
@@ -90,6 +105,7 @@
 
           serviceConfig = lib.mkMerge [
             {
+              Type = "oneshot";
               Group = "lido";
               ExecStart = lib.getExe (
                 pkgs.writeShellApplication {
