@@ -16,7 +16,8 @@ alias supportedCommands = imported!`std.traits`.AliasSeq!(
     cmds.shard_matrix,
     cmds.host_info,
     cmds.ci,
-    cmds.machine_create
+    cmds.machine,
+    cmds.config
 );
 
 int main(string[] args)
@@ -42,7 +43,7 @@ int main(string[] args)
             {
 
                 infof("Running %s task", cmd.bold);
-                command();
+                command(args[2..$]);
                 infof("Execution Succesfull");
                 return 0;
             }
