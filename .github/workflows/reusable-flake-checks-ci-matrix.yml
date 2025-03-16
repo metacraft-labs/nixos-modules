@@ -25,19 +25,6 @@ on:
         description: GitHub token to add as access-token in nix.conf
         required: false
 
-  # Allow this workflow to be triggered manually:
-  workflow_dispatch:
-    inputs:
-      run-cachix-deploy:
-        description: 'Deploy to cachix'
-        type: 'boolean'
-        default: false
-        required: false
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.repository }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
 jobs:
   post-initial-comment:
     runs-on: ${{ fromJSON(inputs.runner) }}
