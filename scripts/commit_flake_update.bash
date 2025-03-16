@@ -15,7 +15,7 @@ fi
 current_commit="$(git rev-parse HEAD)"
 export PRE_COMMIT_ALLOW_NO_CONFIG=1
 
-nix flake update --commit-lock-file
+nix flake update --accept-flake-config --commit-lock-file
 commit_after_update="$(git rev-parse HEAD)"
 
 if [[ "$commit_after_update" = "$current_commit" ]]; then
