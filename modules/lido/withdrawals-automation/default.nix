@@ -97,8 +97,6 @@
         systemd.services.lido-withdrawals-automation = {
           description = "Lido Withdrawals Automation";
 
-          wantedBy = [ "multi-user.target" ];
-
           environment = toEnvVariables cfg.args;
 
           path = [ package ];
