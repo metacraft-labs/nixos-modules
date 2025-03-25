@@ -15,6 +15,7 @@
     partitions =
       lib.optionals legacyBoot {
         "boot" = {
+          device = "${disk}-boot";
           size = "1M";
           type = "EF02";
         };
