@@ -8,5 +8,6 @@
     ./random-alerts
     ./host-info.nix
     ./secrets.nix
+    ./mcl-disko
   ];
 }
