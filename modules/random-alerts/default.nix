@@ -42,6 +42,20 @@
             description = ''Time after alerts ends in seconds'';
           };
 
+          start-time = mkOption {
+            type = types.str;
+            default = "00:00:00";
+            example = "10:00:00";
+            description = ''The start time of alerts in a 24-hour clock'';
+          };
+
+          end-time = mkOption {
+            type = types.str;
+            default = "23:59:59";
+            example = "22:00:00";
+            description = ''The end time of alerts in a 24-hour clock'';
+          };
+
           log-level = mkOption {
             type = types.enum [
               "info"
