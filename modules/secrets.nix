@@ -12,6 +12,8 @@
       eachServiceCfg = config.mcl.secrets.services;
       isDebugVM = config.mcl.host-info.isDebugVM;
 
+      mcl-secrets = config.mcl.secrets;
+
       sshKey =
         if isDebugVM then
           config.virtualisation.vmVariant.mcl.host-info.sshKey
@@ -36,6 +38,16 @@
       ];
 
       options.mcl.secrets = with lib; {
+        extraKeys = mkOption {
+          type = types.listOf types.str;
+          default = [ ];
+          example = [
+            "ssh-ed25519 AAAAC3Nza"
+            "ssh-ed25519 AAAACSNss"
+          ];
+          description = "Extra keys which can decrypt the secrets.";
+        };
+
         services = mkOption {
           type = types.attrsOf (
             types.submodule (
@@ -84,11 +96,12 @@
                     default = builtins.toFile "${serviceName}-secrets.nix" ''
                       let
                         hostKey = ["${sshKey}"];
-                        extraKeys = ["${concatStringsSep "\"\"" config.extraKeys}"];
+                        extraKeysPerService = ["${concatStringsSep "\"\"" config.extraKeys}"];
+                        extraKeysPerHost = ["${concatStringsSep "\"\"" mcl-secrets.extraKeys}"];
                       in {
-                        ${concatMapStringsSep "\n" (n: "\"${n}.age\".publicKeys = hostKey ++ extraKeys;") (
-                          builtins.attrNames config.secrets
-                        )}
+                        ${concatMapStringsSep "\n" (
+                          n: "\"${n}.age\".publicKeys = hostKey ++ extraKeysPerService ++ extraKeysPerHost;"
+                        ) (builtins.attrNames config.secrets)}
                       }
                     '';
                     type = types.path;
