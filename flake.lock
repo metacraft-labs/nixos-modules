@@ -1060,7 +1060,7 @@
         "bats-support": "bats-support",
         "flake-parts": "flake-parts_3",
         "nixpkgs": [
-          "nixpkgs-unstable"
+          "nixpkgs"
         ],
         "systems": "systems_2",
         "terranix-examples": "terranix-examples"
