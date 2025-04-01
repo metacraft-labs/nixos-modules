@@ -1,7 +1,7 @@
 import core.thread : Thread;
 import std.datetime : Duration, Clock, seconds, TimeOfDay;
 import std.format : format;
-import std.getopt : getopt, getOptConfig = config;
+import std.getopt : getopt, getOptConfig = config, arraySep;
 import std.json : JSONValue, parseJSON, JSONOptions;
 import std.logger : infof, errorf, tracef, LogLevel;
 import std.random : uniform;
@@ -14,7 +14,7 @@ struct Params
     Duration minWaitTime;
     Duration maxWaitTime;
     Duration alertDuration;
-    string url;
+    string[] urls;
     TimeOfDay startTime;
     TimeOfDay endTime;
 }
@@ -38,7 +38,7 @@ struct Alert
 int main(string[] args)
 {
     LogLevel logLevel = LogLevel.info;
-    string url;
+    string[] urls;
     string startTime = "00:00:00";
     string endTime = "23:59:59";
     uint minWaitTimeInSeconds = 3600;  // 1 hour
@@ -47,8 +47,9 @@ int main(string[] args)
 
     try
     {
+        arraySep = ",";
         args.getopt(
-            getOptConfig.required, "url", &url,
+            getOptConfig.required, "urls", &urls,
             "start-time", &startTime,
             "end-time", &endTime,
             "min-wait-time", &minWaitTimeInSeconds,
@@ -61,9 +62,10 @@ int main(string[] args)
 
         setLogLevel(logLevel);
 
+
         executeAtRandomIntervals(
             Params(
-                url: url,
+                urls: urls,
                 startTime: TimeOfDay.fromISOExtString(startTime),
                 endTime: TimeOfDay.fromISOExtString(endTime),
                 minWaitTime: minWaitTimeInSeconds.seconds(),
@@ -99,9 +101,12 @@ void executeAtRandomIntervals(Params params)
 
         if (currentTimeTOD >= startTime && currentTimeTOD <= endTime)
         {
-            infof("Posting alert... ");
-            postAlert(url, alertDuration);
-            infof("Alert posted successfully.");
+            foreach (url; urls)
+            {
+                infof("Posting alert on %s...", url);
+                postAlert(url, alertDuration);
+                infof("Alert posted successfully.");
+            }
         }
         else
         {
