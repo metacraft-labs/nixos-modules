@@ -15,10 +15,12 @@
       options.services.random-alerts = with lib; {
         enable = mkEnableOption (lib.mdDoc "Random Alerts");
         args = {
-          url = mkOption {
-            type = types.str;
-            example = "http://localhost:9093";
-            description = ''Alertmanager URL'';
+          urls = mkOption {
+            type = types.listOf types.str;
+            example = [ "http://localhost:9093" ];
+            description = ''
+              A list of Alertmanager endpoint URLs used for sending alert notifications.
+            '';
           };
 
           min-wait-time = mkOption {
@@ -73,7 +75,11 @@
             sep: f: attrs:
             lib.concatStringsSep sep (lib.attrValues (lib.mapAttrs f attrs));
 
-          args = concatMapAttrsStringSep " " (n: v: "--${n}=${toString v}") cfg.args;
+          filteredArgs = removeAttrs cfg.args [ "urls" ];
+          filteredArgsToString = concatMapAttrsStringSep " " (n: v: "--${n}=${toString v}") filteredArgs;
+          urlsArg = " --urls=${lib.concatStringsSep "," cfg.args.urls} ";
+          args = filteredArgsToString + urlsArg;
+
         in
         lib.mkIf cfg.enable {
           systemd.services.random-alerts = {
