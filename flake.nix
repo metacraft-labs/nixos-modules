@@ -167,7 +167,7 @@
     terranix = {
       url = "github:terranix/terranix";
       inputs = {
-        nixpkgs.follows = "nixpkgs-unstable";
+        nixpkgs.follows = "nixpkgs";
       };
     };
 
