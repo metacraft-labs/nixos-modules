@@ -141,16 +141,12 @@ version (unittest)
     ];
 }
 
-immutable Params params;
+Params params;
 
-version (unittest) {} else
-shared static this()
-{
-    params = parseEnv!Params;
-}
 
 export void ci_matrix(string[] args)
 {
+    params = parseEnv!Params;
     createResultDirs();
     nixEvalForAllSystems().array.printTableForCacheStatus();
 }
