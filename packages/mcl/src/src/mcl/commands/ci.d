@@ -8,6 +8,8 @@ import std.array : array, join;
 import std.conv : to;
 import std.process : ProcessPipes;
 
+import argparse;
+
 import mcl.utils.env : optional, parseEnv;
 import mcl.commands.ci_matrix: nixEvalJobs, SupportedSystem, Params, flakeAttr;
 import mcl.commands.shard_matrix: generateShardMatrix;
@@ -17,6 +19,11 @@ import mcl.utils.nix : nix;
 import mcl.utils.json : toJSON;
 
 Params params;
+
+@(Command("ci").Description("Run CI"))
+struct ci_args
+{
+}
 
 export void ci(string[] args)
 {

@@ -16,6 +16,8 @@ import std.exception : enforce;
 import std.format : fmt = format;
 import std.logger : tracef, infof, errorf, warningf;
 
+import argparse;
+
 import mcl.utils.env : optional, MissingEnvVarsException, parseEnv;
 import mcl.utils.string : enumToString, StringRepresentation, MaxWidth, writeRecordAsTable;
 import mcl.utils.json : toJSON;
@@ -143,8 +145,11 @@ version (unittest)
 
 Params params;
 
-
-export void ci_matrix(string[] args)
+@(Command("ci-matrix").Description("Print a table of the cache status of each package"))
+struct ci_matrix_args
+{
+}
+export void ci_matrix(ci_matrix_args args)
 {
     params = parseEnv!Params;
     createResultDirs();
@@ -182,13 +187,20 @@ Package[] checkCacheStatus(Package[] packages)
     return packages;
 }
 
-export void print_table(string[] args)
+@(Command("print-table").Description("Print a table of the cache status of each package"))
+struct print_table_args
+{
+}
+
+export int print_table(print_table_args args)
 {
     createResultDirs();
 
     getPrecalcMatrix()
         .checkCacheStatus()
         .printTableForCacheStatus();
+
+    return 0;
 }
 
 struct Params
@@ -199,6 +211,7 @@ struct Params
     @optional() int maxWorkers;
     @optional() int maxMemory;
     @optional() bool isInitial;
+
     string cachixCache;
     string cachixAuthToken;
 

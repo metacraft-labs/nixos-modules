@@ -34,6 +34,10 @@ template genSubCommandArgs()
             "host_info_args,"~
             "config_args,"~
             "machine_args,"~
+            "ci_matrix_args,"~
+            "ci_args,"~
+            "print_table_args,"~
+            "shard_matrix_args,"~
             "Default!unknown_command_args"~
         ") cmd;";
 }
@@ -74,7 +78,7 @@ mixin CLI!MCLArgs.main!((args)
 
     mixin genSubCommandMatch;
 
-                return 0;
+    return 0;
 });
 
 void setLogLevel(LogLevel l)
