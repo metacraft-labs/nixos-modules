@@ -31,6 +31,7 @@ template genSubCommandArgs()
         "SumType!("~
             "get_fstab_args,"~
             "deploy_spec_args,"~
+            "host_info_args,"~
             "Default!unknown_command_args"~
         ") cmd;";
 }

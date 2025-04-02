@@ -19,6 +19,8 @@ import std.format : format;
 import std.system : nativeEndian = endian;;
 import core.stdc.string : strlen;
 
+import argparse;
+
 import mcl.utils.env : parseEnv, optional;
 import mcl.utils.json : toJSON;
 import mcl.utils.process : execute, isRoot;
@@ -30,9 +32,7 @@ import mcl.utils.coda : CodaApiClient, RowValues, CodaCell;
 struct Params
 {
     @optional() string codaApiToken;
-    void setup()
-    {
-    }
+    void setup() {}
 }
 
 string[string] cpuinfo;
@@ -59,7 +59,10 @@ string[string] getProcInfo(string fileOrData, bool file = true)
     return r;
 }
 
-export void host_info(string[] args)
+@(Command("host-info").Description("Get information about the host machine"))
+struct host_info_args {}
+
+export int host_info(host_info_args args)
 {
     const Params params = parseEnv!Params;
 
@@ -72,12 +75,14 @@ export void host_info(string[] args)
 
     if (!params.codaApiToken) {
         writeln("No Coda API token specified -> not uploading");
-        return;
+        return 1;
     }
 
     writeln("Coda API token specified -> uploading");
     auto coda = CodaApiClient(params.codaApiToken);
     coda.uploadHostInfo(hostInfo);
+
+    return 1;
 
 }
 

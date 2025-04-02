@@ -58,7 +58,7 @@ export int deploy_spec(deploy_spec_args args)
     infof("%s machines will be deployed.", spec.agents.length);
 
     if (!spec.agents.length)
-        return;
+        return 1;
 
     spawnProcessInline([
         "cachix", "deploy", "activate", deploySpecFile, "--async"
