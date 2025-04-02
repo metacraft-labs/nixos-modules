@@ -5,6 +5,8 @@ import std.logger : infof, warningf;
 import std.file : exists;
 import std.path : buildPath;
 
+import argparse;
+
 import mcl.utils.process : spawnProcessInline;
 import mcl.utils.path : resultDir;
 import mcl.utils.cachix : cachixNixStoreUrl, DeploySpec, createMachineDeploySpec;
@@ -13,7 +15,12 @@ import mcl.utils.json : tryDeserializeFromJsonFile, writeJsonFile;
 
 import mcl.commands.ci_matrix : flakeAttr, params, nixEvalJobs, SupportedSystem;
 
-export void deploy_spec(string[] args)
+
+@(Command("deploy-spec").Description("Evaluate the Nixos machine configurations in bareMetalMachines and deploy them to cachix."))
+export struct deploy_spec_args {
+}
+
+export int deploy_spec(deploy_spec_args args)
 {
     const deploySpecFile = resultDir.buildPath("cachix-deploy-spec.json");
 
@@ -56,4 +63,6 @@ export void deploy_spec(string[] args)
     spawnProcessInline([
         "cachix", "deploy", "activate", deploySpecFile, "--async"
     ]);
+
+    return 0;
 }

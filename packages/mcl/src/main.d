@@ -30,6 +30,7 @@ template genSubCommandArgs()
         "@SubCommands\n"~
         "SumType!("~
             "get_fstab_args,"~
+            "deploy_spec_args,"~
             "Default!unknown_command_args"~
         ") cmd;";
 }
