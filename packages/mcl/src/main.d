@@ -1,73 +1,80 @@
+module mcl.main;
+
 import std.stdio : writefln, writeln, stderr;
 import std.array : replace;
 import std.getopt : getopt;
 import std.logger : infof, errorf, LogLevel;
-
+import std.sumtype : SumType, match;
+import std.string : stripRight, stripLeft;
+import std.algorithm : endsWith;
+import std.format : format;
 import mcl.utils.path : rootDir;
 import mcl.utils.tui : bold;
 
-import cmds = mcl.commands;
+import mcl.commands;
 
-alias supportedCommands = imported!`std.traits`.AliasSeq!(
-    cmds.get_fstab,
-    cmds.deploy_spec,
-    cmds.ci_matrix,
-    cmds.print_table,
-    cmds.shard_matrix,
-    cmds.host_info,
-    cmds.ci,
-    cmds.machine,
-    cmds.config,
-);
+import argparse;
 
-int main(string[] args)
+
+@(Command(" ").Description(" "))
+struct unknown_command_args {}
+int unknown_command(unknown_command_args unused)
 {
-    if (args.length < 2)
-        return wrongUsage("no command selected");
+    stderr.writeln("Unknown command. Use --help for a list of available commands.");
+    return 1;
+}
 
-    string cmd = args[1];
+template genSubCommandArgs()
+{
+    const char[] genSubCommandArgs =
+        "@SubCommands\n"~
+        "SumType!("~
+            "Default!unknown_command_args"~
+        ") cmd;";
+}
+
+template genSubCommandMatch()
+{
+    const char[] generateMatchString = () {
+        alias CmdTypes = typeof(MCLArgs.cmd).Types;
+        string match = "int result = args.cmd.match!(";
+
+        static foreach (CmdType; CmdTypes)
+        {{
+            string name = CmdType.stringof.replace("Default!(", "").stripRight(")");
+            match ~= format("\n\t(%s a) => %s(a)", name, name.replace("_args", "")) ~ ", ";
+        }}
+        match = match.stripRight(", ");
+        match ~= "\n);";
+
+        return match;
+    }();
+}
+
+struct MCLArgs
+{
+    @NamedArgument(["log-level"])
+    LogLevel logLevel = cast(LogLevel)-1;
+    mixin(genSubCommandArgs!());
+}
+
+mixin CLI!MCLArgs.main!((args)
+{
+    static assert(is(typeof(args) == MCLArgs));
+
     LogLevel logLevel = LogLevel.info;
-    args.getopt("log-level", &logLevel);
-
+    if (args.logLevel != cast(LogLevel)-1)
+        logLevel = args.logLevel;
     setLogLevel(logLevel);
 
-    infof("Git root: '%s'", rootDir.bold);
+    mixin genSubCommandMatch;
 
-    try switch (cmd)
-    {
-        default:
-            return wrongUsage("unknown command: `" ~ cmd ~ "`");
-
-        static foreach (command; supportedCommands)
-            case __traits(identifier, command):
-            {
-
-                infof("Running %s task", cmd.bold);
-                command(args[2..$]);
-                infof("Execution Succesfull");
                 return 0;
-            }
-    }
-    catch (Exception e)
-    {
-        errorf("Task %s failed. Error:\n%s", cmd.bold, e);
-        return 1;
-    }
-}
+});
 
 void setLogLevel(LogLevel l)
 {
     import std.logger : globalLogLevel, sharedLog;
     globalLogLevel = l;
     (cast()sharedLog()).logLevel = l;
-}
-
-int wrongUsage(string error)
-{
-    writefln("Error: %s.", error);
-    writeln("Usage:\n");
-    static foreach (cmd; supportedCommands)
-        writefln("    mcl %s", __traits(identifier, cmd));
-
-    return 1;
 }
