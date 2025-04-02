@@ -33,6 +33,7 @@ template genSubCommandArgs()
             "deploy_spec_args,"~
             "host_info_args,"~
             "config_args,"~
+            "machine_args,"~
             "Default!unknown_command_args"~
         ") cmd;";
 }
