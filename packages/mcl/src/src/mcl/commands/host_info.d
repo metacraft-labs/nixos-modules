@@ -16,28 +16,14 @@ import std.json;
 import std.process : ProcessPipes, environment;
 import core.stdc.string: strlen;
 
+import argparse;
+
 import mcl.utils.env : parseEnv, optional;
 import mcl.utils.json : toJSON;
 import mcl.utils.process : execute, isRoot;
 import mcl.utils.number : humanReadableSize;
 import mcl.utils.array : uniqIfSame;
 import mcl.utils.nix : Literal;
-
-// enum InfoFormat
-// {
-//     JSON,
-//     CSV,
-//     TSV
-// }
-
-struct Params
-{
-    // @optional()
-    // InfoFormat format = InfoFormat.JSON;
-    void setup()
-    {
-    }
-}
 
 string[string] cpuinfo;
 
@@ -62,13 +48,16 @@ string[string] getProcInfo(string fileOrData, bool file = true)
     return r;
 }
 
-export void host_info()
-{
-    const params = parseEnv!Params;
+@(Command("host-info").Description("Get information about the host machine"))
+struct host_info_args {}
 
+export int host_info(host_info_args args)
+{
     Info info = getInfo();
 
     writeln(info.toJSON(true).toPrettyString(JSONOptions.doNotEscapeSlashes));
+
+    return 1;
 
 }
 
