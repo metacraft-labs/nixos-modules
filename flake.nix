@@ -210,6 +210,7 @@
       self,
       nixpkgs,
       flake-parts,
+      crane,
       ...
     }:
     let

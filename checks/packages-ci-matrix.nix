@@ -15,12 +15,31 @@
       inherit (lib) optionalAttrs;
       inherit (pkgs) system;
       inherit (pkgs.hostPlatform) isLinux;
+
+      reexportedPackages = {
+        ethereum_nix =
+          {
+            # geth = inputs'.ethereum_nix.packages.geth; # TODO: re-enable when flake show/check passes
+          }
+          // lib.optionalAttrs (pkgs.hostPlatform.isx86 && pkgs.hostPlatform.isLinux) {
+            # nimbus = inputs'.ethereum_nix.packages.nimbus-eth2; # TODO: re-enable when flake show/check passes
+          };
+        # noir = {
+        #   nargo = inputs'.noir.packages.nargo;
+        #   noirc_abi_wasm = inputs'.noir.packages.noirc_abi_wasm;
+        #   acvm_js = inputs'.noir.packages.acvm_js;
+        # };
+      };
+
+      disabledPackages = [
+        #"circ" # has been fixed
+      ];
     in
     rec {
       checks =
-        self'.packages
+        (builtins.removeAttrs self'.packages disabledPackages)
+        // reexportedPackages.ethereum_nix
         // {
-          inherit (self'.legacyPackages) rustToolchain;
           inherit (self'.legacyPackages.inputs.dlang-nix) dub;
           inherit (self'.legacyPackages.inputs.nixpkgs)
             cachix
