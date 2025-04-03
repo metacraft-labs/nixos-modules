@@ -32,7 +32,7 @@
       };
 
       disabledPackages = [
-        "circ"
+        #"circ" # has been fixed
         "leap"
         "go-opera"
       ];

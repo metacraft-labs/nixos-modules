@@ -24,6 +24,10 @@ let
       hash = "sha256-pYG6IYGHv4DwizCdVZbOS4DUxwNtwQVcPU66fDxTxg0=";
     };
 
+    preBuild = ''
+      sed -i 's/#!\[deny(warnings)\]//' src/lib.rs #deny warnings causes build to fail
+    '';
+
     nativeBuildInputs = [
       rustPlatform.bindgenHook
       zlib
