@@ -305,7 +305,6 @@
           # inherit elrond-go elrond-proxy-go; # Require buildGo117Module
 
           # EOS / Antelope
-          # leap = callPackage ./leap/default.nix {}; // Needs llvm 7 through 11
           eos-vm = callPackage ./eos-vm/default.nix { };
           cdt = callPackage ./cdt/default.nix { };
 

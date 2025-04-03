@@ -33,7 +33,6 @@
 
       disabledPackages = [
         #"circ" # has been fixed
-        "leap"
       ];
     in
     rec {
