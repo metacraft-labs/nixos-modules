@@ -282,8 +282,6 @@
             '';
           });
 
-          go-opera = callPackage ./go-opera/default.nix { };
-
           circom_runtime = callPackage ./circom_runtime/default.nix { };
 
           # Polkadot

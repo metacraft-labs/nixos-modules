@@ -34,7 +34,6 @@
       disabledPackages = [
         #"circ" # has been fixed
         "leap"
-        "go-opera"
       ];
     in
     rec {
