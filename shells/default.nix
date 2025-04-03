@@ -11,6 +11,8 @@
       pkgs,
       inputs',
       config,
+      final,
+      self',
       ...
     }:
     {
@@ -50,5 +52,20 @@
             ''
             + config.pre-commit.installationScript;
         };
+
+      devShells.all = import ./all.nix {
+        pkgs = final;
+        inherit self';
+      };
+      devShells.ci = import ./ci.nix {
+        pkgs = final;
+        inherit config;
+      };
+      devShells.nexus = import ./nexus.nix { pkgs = final; };
+      devShells.jolt = import ./jolt.nix { pkgs = final; };
+      devShells.zkm = import ./zkm.nix { pkgs = final; };
+      devShells.zkwasm = import ./zkwasm.nix { pkgs = final; };
+      devShells.sp1 = import ./sp1.nix { pkgs = final; };
+      devShells.risc0 = import ./risc0.nix { pkgs = final; };
     };
 }
