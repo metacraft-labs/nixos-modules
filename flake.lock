@@ -203,11 +203,11 @@
         "nixpkgs": "nixpkgs_2"
       },
       "locked": {
-        "lastModified": 1719092179,
-        "narHash": "sha256-/4jxq5+pDkVMao5RzOm27C2AfANjisTuvsycA0pbBCg=",
+        "lastModified": 1744030092,
+        "narHash": "sha256-EwKNnBBTpjgNH20nfhJocGh6rZQJji0/8i1qsaviiGQ=",
         "owner": "PetarKirov",
         "repo": "dlang.nix",
-        "rev": "21b1b3b18b3b635a43b319612aff529d26b1863b",
+        "rev": "ab6b8f72d7b56bfd0b12e189fc4dfaed9d46de76",
         "type": "github"
       },
       "original": {
