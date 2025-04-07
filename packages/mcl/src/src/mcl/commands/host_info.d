@@ -395,7 +395,7 @@ string getDistribution()
     if (exists("/etc/os-release"))
     {
         foreach (line; execute([
-                "awk", "-F", "=", "'/^NAME=/ {print $2}'", "/etc/os-release"
+                "awk", "-F", "=", "/^NAME=/ {print $2}", "/etc/os-release"
             ], false).split("\n"))
         {
             distribution = line;
@@ -418,7 +418,7 @@ string getDistributionVersion()
     if (exists("/etc/os-release"))
     {
         foreach (line; execute([
-                "awk", "-F", "=", "'/^VERSION=/ {print $2}'", "/etc/os-release"
+                "awk", "-F", "=", "/^VERSION=/ {print $2}", "/etc/os-release"
             ], false).split("\n"))
         {
             distributionVersion = line.strip("\"");
