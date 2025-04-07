@@ -26,6 +26,7 @@ let
       alejandra
       openssh
       cachix
+      curl
     ])
     ++ lib.optionals (isLinux && isx86) [
       dmidecode
@@ -61,7 +62,7 @@ buildDubPackage rec {
   nativeBuildInputs = [ pkgs.makeWrapper ] ++ deps;
 
   postFixup = ''
-    wrapProgram $out/bin/${pname} --set PATH "${lib.makeBinPath deps}"
+    wrapProgram $out/bin/${pname} --set PATH "${lib.makeBinPath deps}" --set LD_LIBRARY_PATH "${lib.makeLibraryPath deps}"
   '';
 
   dubBuildFlags = [
