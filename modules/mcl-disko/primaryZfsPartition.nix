@@ -13,7 +13,7 @@
   content = {
     type = "gpt";
     partitions = {
-      "boot/ESP" =
+      "${if legacyBoot then "boot" else "ESP"}" =
         {
           device = "${disk}-part1";
           size = espSize;
@@ -26,7 +26,6 @@
           };
         }
         // lib.optionalAttrs legacyBoot {
-          size = "100M";
           type = "EF02";
         };
       "zfs" = {
