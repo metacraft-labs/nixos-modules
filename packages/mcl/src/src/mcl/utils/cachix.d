@@ -10,8 +10,7 @@ import std.format : fmt = format;
 import std.json : JSONValue;
 import std.typecons : tuple;
 
-string getCachixDeploymentApiUrl(string workspace, string machine, uint deploymentId)
-in (workspace && machine && deploymentId) =>
+string getCachixDeploymentApiUrl(string workspace, string machine, uint deploymentId) =>
     "https://app.cachix.org/api/v1/deploy/deployment/%s/%s/%s"
     .fmt(workspace, machine, deploymentId);
 

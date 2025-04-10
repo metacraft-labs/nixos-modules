@@ -16,6 +16,8 @@ import std.json;
 import std.process : ProcessPipes, environment;
 import core.stdc.string: strlen;
 
+import argparse;
+
 import mcl.utils.env : parseEnv, optional;
 import mcl.utils.json : toJSON;
 import mcl.utils.process : execute, isRoot;
@@ -24,23 +26,11 @@ import mcl.utils.array : uniqIfSame;
 import mcl.utils.nix : Literal;
 import mcl.utils.coda;
 
-// enum InfoFormat
-// {
-//     JSON,
-//     CSV,
-//     TSV
-// }
-
 struct Params
 {
-    // @optional()
-    // InfoFormat format = InfoFormat.JSON;
     @optional() string codaApiToken;
-    void setup()
-    {
-    }
+    void setup() {}
 }
-Params params;
 
 string[string] cpuinfo;
 
@@ -65,17 +55,22 @@ string[string] getProcInfo(string fileOrData, bool file = true)
     return r;
 }
 
-export void host_info()
-{
-    params = parseEnv!Params;
+@(Command("host-info").Description("Get information about the host machine"))
+struct host_info_args {}
 
-    Info info = getInfo();
+export int host_info(host_info_args args)
+{
+    Params params = parseEnv!Params;
+
+    Info info = getInfo(params);
 
     writeln(info.toJSON(true).toPrettyString(JSONOptions.doNotEscapeSlashes));
 
+    return 1;
+
 }
 
-Info getInfo()
+Info getInfo(Params params)
 {
 
     cpuinfo = getProcInfo("/proc/cpuinfo");
