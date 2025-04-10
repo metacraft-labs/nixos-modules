@@ -1,6 +1,5 @@
 module mcl.commands.shard_matrix;
 
-
 import std.algorithm : map;
 import std.array : array;
 import std.conv : to, parse;
@@ -12,6 +11,10 @@ import std.range : iota;
 import std.regex : matchFirst, regex;
 import std.stdio : writeln;
 import std.string : strip;
+import std.regex : matchFirst, regex;
+import std.format : format;
+import std.algorithm : each;
+import std.parallelism : parallel;
 
 import mcl.utils.env : parseEnv, optional;
 import mcl.utils.json : toJSON;
@@ -51,15 +54,16 @@ ShardMatrix generateShardMatrix(string flakeRef = ".")
 {
     import std.path : isValidPath, absolutePath, buildNormalizedPath;
 
-    if (flakeRef.isValidPath) {
+    if (flakeRef.isValidPath)
+    {
         flakeRef = flakeRef.absolutePath.buildNormalizedPath;
     }
 
     const shardCountOutput = nix.eval("", [
-        "--impure",
-        "--expr",
-        `(builtins.getFlake "` ~ flakeRef ~ `").outputs.legacyPackages.x86_64-linux.mcl.matrix.shardCount or 0`
-    ]);
+            "--impure",
+            "--expr",
+            `(builtins.getFlake "` ~ flakeRef ~ `").outputs.legacyPackages.x86_64-linux.mcl.matrix.shardCount or 0`
+        ]);
 
     infof("shardCount: '%s'", shardCountOutput);
 
@@ -87,27 +91,37 @@ unittest
     else
     {
         import mcl.utils.path : rootDir;
-        auto flakeRef = rootDir.buildPath("packages/mcl/src/src/mcl/utils/test/nix/shard-matrix-ok");
+
+        auto flakeRef = rootDir.buildPath(
+            "packages/mcl/src/src/mcl/utils/test/nix/shard-matrix-ok");
     }
 
     auto shards = generateShardMatrix(flakeRef);
     assert(shards.include.length == 11);
-    assert(shards.include[0].prefix == "legacyPackages");
-    assert(shards.include[0].postfix == "mcl.matrix.shards.0");
-    assert(shards.include[0].digit == 0);
+    foreach(i, shard; shards.include.parallel)
+        assertShard(shard, i.to!int);
 }
+
+void assertShard(Shard shard, int index) {
+    string expectedPrefix = index == -1 ? "" : "legacyPackages";
+    string expectedPostfix = index == -1 ? "" : ("mcl.matrix.shards." ~ index.to!string);
+    assert(shard.prefix == expectedPrefix, "Expected shard %s to have prefix '%s', but got %s".format(index, expectedPrefix, shard.prefix));
+    assert(shard.postfix == expectedPostfix, "Expected shard %s to have postfix '%s', but got %s".format(index, expectedPostfix, shard.postfix));
+    assert(shard.digit == index, "Expected shard %s to have digit %s, but got %s".format(index, index, shard.digit));
+}
+
 
 @("generateShardMatrix.fail")
 unittest
 {
     import mcl.utils.path : rootDir;
-    auto flakeRef = rootDir.buildPath("packages/mcl/src/src/mcl/utils/test/nix/shard-matrix-no-shards");
+
+    auto flakeRef = rootDir.buildPath(
+        "packages/mcl/src/src/mcl/utils/test/nix/shard-matrix-no-shards");
 
     auto shards = generateShardMatrix(flakeRef);
-    assert(shards.include.length == 1);
-    assert(shards.include[0].prefix == "");
-    assert(shards.include[0].postfix == "");
-    assert(shards.include[0].digit == -1);
+    assert(shards.include.length == 1, "generateShardMatrix should return 1 shard, but got %s".format(shards.include.length));
+    assertShard(shards.include[0], -1);
 }
 
 ShardMatrix splitToShards(int shardCount)
@@ -125,16 +139,9 @@ ShardMatrix splitToShards(int shardCount)
 unittest
 {
     auto shards = splitToShards(3);
-    assert(shards.include.length == 3);
-    assert(shards.include[0].prefix == "legacyPackages");
-    assert(shards.include[0].postfix == "mcl.matrix.shards.0");
-    assert(shards.include[0].digit == 0);
-    assert(shards.include[1].prefix == "legacyPackages");
-    assert(shards.include[1].postfix == "mcl.matrix.shards.1");
-    assert(shards.include[1].digit == 1);
-    assert(shards.include[2].prefix == "legacyPackages");
-    assert(shards.include[2].postfix == "mcl.matrix.shards.2");
-    assert(shards.include[2].digit == 2);
+    assert(shards.include.length == 3, "Expected splitToShards(3) to return 3 shards, but got %s".format(shards.include.length));
+    foreach(i, shard; shards.include.parallel)
+        assertShard(shard, i.to!int);
 
 }
 
@@ -145,9 +152,7 @@ void saveShardMatrix(ShardMatrix matrix, Params params)
     infof("Shard matrix: %s", matrixJson.toPrettyString);
     const envLine = "gen_matrix=" ~ matrixString;
     if (params.githubOutput != "")
-    {
         params.githubOutput.append(envLine);
-    }
     else
     {
         createResultDirs();

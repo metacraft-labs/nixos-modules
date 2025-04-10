@@ -19,7 +19,9 @@ in (workspace && machine && deploymentId) =>
 unittest
 {
     assert(getCachixDeploymentApiUrl("my-workspace", "my-machine", 123) ==
-            "https://app.cachix.org/api/v1/deploy/deployment/my-workspace/my-machine/123");
+            "https://app.cachix.org/api/v1/deploy/deployment/my-workspace/my-machine/123",
+            "getCachixDeploymentApiUrl(\"my-workspace\", \"my-machine\", 123) should return \"https://app.cachix.org/api/v1/deploy/deployment/my-workspace/my-machine/123\", but returned %s"
+            .fmt(getCachixDeploymentApiUrl("my-workspace", "my-machine", 123)));
 
 }
 

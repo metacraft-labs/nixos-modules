@@ -2,9 +2,7 @@ module mcl.utils.user_info;
 
 import std.typecons : Nullable, nullable;
 
-version (Posix):
-
-import core.sys.posix.sys.types : gid_t;
+version (Posix)  : import core.sys.posix.sys.types : gid_t;
 import core.sys.posix.unistd : getgid;
 import core.sys.posix.grp : getgrnam;
 
@@ -35,7 +33,6 @@ unittest
         assert(nixbld_gid.get == getgid());
     }
 }
-
 
 Nullable!gid_t getGroupId(in char[] groupName)
 {

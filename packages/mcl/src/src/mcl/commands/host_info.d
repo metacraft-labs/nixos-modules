@@ -7,17 +7,18 @@ import std.system;
 
 import std.stdio : writeln;
 import std.conv : to;
-import std.string : strip, indexOf, isNumeric;
-import std.array : split, join, array, replace;
-import std.algorithm : map, filter, startsWith, joiner, any, sum, find;
+import std.string : strip, indexOf, isNumeric, splitLines;
+import std.array : split, join, array, replace, assocArray;
+import std.algorithm : map, filter, startsWith, joiner, any, sum, find, canFind, all;
 import std.file : exists, write, readText, readLink, dirEntries, SpanMode;
 import std.path : baseName;
 import std.json;
 import std.process : ProcessPipes, environment;
-import core.stdc.string: strlen;
+import std.typecons : tuple;
+import core.stdc.string : strlen;
 
 import mcl.utils.env : parseEnv, optional;
-import mcl.utils.json : toJSON;
+import mcl.utils.json : toJSON, getStrOrDefault;
 import mcl.utils.process : execute, isRoot;
 import mcl.utils.number : humanReadableSize;
 import mcl.utils.array : uniqIfSame;
@@ -48,21 +49,14 @@ string[string] meminfo;
 
 string[string] getProcInfo(string fileOrData, bool file = true)
 {
-    string[string] r;
-    foreach (line; file ? fileOrData.readText().split(
-            "\n").map!(strip).array : fileOrData.split("\n").map!(strip).array)
-    {
-        if (line.indexOf(":") == -1 || line.strip == "edid-decode (hex):")
-        {
-            continue;
-        }
-        auto parts = line.split(":");
-        if (parts.length >= 2 && parts[0].strip != "")
-        {
-            r[parts[0].strip] = parts[1].strip;
-        }
-    }
-    return r;
+    auto lines = file ? fileOrData.readText().splitLines : fileOrData.splitLines;
+    return lines
+        .map!(strip)
+        .filter!(line => line.canFind(":") && line.strip != "edid-decode (hex):")
+        .map!(line => line.split(":"))
+        .filter!(parts => parts.length >= 2 && parts[0].strip != "")
+        .map!(parts => tuple(parts[0].strip, parts[1].strip))
+        .assocArray;
 }
 
 export void host_info()
@@ -72,7 +66,6 @@ export void host_info()
     Info info = getInfo();
 
     writeln(info.toJSON(true).toPrettyString(JSONOptions.doNotEscapeSlashes));
-
 }
 
 Info getInfo()
@@ -235,31 +228,18 @@ string getOpMode()
     case ISA.msp430:
         opMode = [16];
         break;
-    case ISA.x86_64:
-    case ISA.aarch64:
-    case ISA.ppc64:
-    case ISA.mips64:
-    case ISA.nvptx64:
-    case ISA.riscv64:
-    case ISA.sparc64:
-    case ISA.hppa64:
+    case ISA.x86_64, ISA.aarch64, ISA.ppc64:
+    case ISA.mips64, ISA.nvptx64, ISA.riscv64:
+    case ISA.sparc64, ISA.hppa64:
         opMode = [32, 64];
         break;
-    case ISA.x86:
-    case ISA.arm:
-    case ISA.ppc:
-    case ISA.mips32:
-    case ISA.nvptx:
-    case ISA.riscv32:
-    case ISA.sparc:
-    case ISA.s390:
-    case ISA.hppa:
-    case ISA.sh:
-    case ISA.webAssembly:
+    case ISA.x86, ISA.arm, ISA.ppc:
+    case ISA.mips32, ISA.nvptx, ISA.riscv32:
+    case ISA.sparc, ISA.s390, ISA.hppa:
+    case ISA.sh, ISA.webAssembly:
         opMode = [32];
         break;
-    case ISA.ia64:
-    case ISA.alpha:
+    case ISA.ia64, ISA.alpha:
         opMode = [64];
         break;
     case ISA.systemZ:
@@ -292,7 +272,7 @@ ProcessorInfo getProcessorInfo()
     r.vendor = cpuid.x86_any.vendor;
     char[48] modelCharArr;
     cpuid.x86_any.brand(modelCharArr);
-    r.model = modelCharArr.idup[0..(strlen(modelCharArr.ptr)-1)];
+    r.model = modelCharArr.idup[0 .. (strlen(modelCharArr.ptr) - 1)];
     r.cpus = cpuid.unified.cpus();
     r.cores = [r.cpus * cpuid.unified.cores()];
     r.threads = [cpuid.unified.threads()];
@@ -300,18 +280,27 @@ ProcessorInfo getProcessorInfo()
 
     if (isRoot)
     {
-        auto dmi = execute("dmidecode -t 4", false).split("\n");
-        r.voltage = dmi.getFromDmi("Voltage:").map!(a => a.split(" ")[0]).array.uniqIfSame[0];
-        r.frequency = dmi.getFromDmi("Current Speed:")
-            .map!(a => a.split(" ")[0].to!size_t).array.uniqIfSame;
-        r.maxFrequency = dmi.getFromDmi("Max Speed:")
-            .map!(a => a.split(" ")[0].to!size_t).array.uniqIfSame;
-        r.cpus = dmi.getFromDmi("Processor Information").length;
-        r.cores = dmi.getFromDmi("Core Count").map!(a => a.to!size_t).array.uniqIfSame;
-        r.threads = dmi.getFromDmi("Thread Count").map!(a => a.to!size_t).array.uniqIfSame;
+        auto dmi = execute("dmidecode -t 4", false).splitLines;
+        r.voltage = dmi.parseDmiDataUniq("Voltage:", a => a.split(" ")[0])[0];
+        r.frequency = dmi.parseDmiDataUniq("Current Speed:", a => a.split(" ")[0].to!size_t);
+        r.maxFrequency = dmi.parseDmiDataUniq("Max Speed:", a => a.split(" ")[0].to!size_t);
+        r.cpus = dmi.parseDmiData("Processor Information").length;
+        r.cores = dmi.parseDmiDataUniq!size_t("Core Count");
+        r.threads = dmi.parseDmiDataUniq!size_t("Thread Count");
     }
 
     return r;
+}
+
+T[] parseDmiData(T = string)(string[] dmi, string key, T delegate(string) transform = a => a.to!T)
+{
+    return dmi.getFromDmi(key).map!(transform).array;
+}
+
+T[] parseDmiDataUniq(T = string)(string[] dmi, string key, T delegate(string) transform = a => a
+        .to!T)
+{
+    return dmi.parseDmiData!T(key, transform).uniqIfSame;
 }
 
 struct MotherboardInfo
@@ -394,21 +383,14 @@ string getDistribution()
     auto distribution = execute("uname -o", false);
     if (exists("/etc/os-release"))
     {
-        foreach (line; execute([
-                "awk", "-F", "=", "/^NAME=/ {print $2}", "/etc/os-release"
-            ], false).split("\n"))
-        {
-            distribution = line;
-        }
+        distribution = execute([
+            "awk", "-F", "=", "/^NAME=/ {print $2}", "/etc/os-release"
+        ], false).strip;
     }
     else if (distribution == "Darwin")
-    {
         distribution = execute("sw_vers", false);
-    }
     else if (exists("/etc/lsb-release"))
-    {
         distribution = execute("lsb_release -i", false);
-    }
     return distribution;
 }
 
@@ -417,12 +399,9 @@ string getDistributionVersion()
     auto distributionVersion = execute("uname -r", false);
     if (exists("/etc/os-release"))
     {
-        foreach (line; execute([
-                "awk", "-F", "=", "/^VERSION=/ {print $2}", "/etc/os-release"
-            ], false).split("\n"))
-        {
-            distributionVersion = line.strip("\"");
-        }
+        distributionVersion = execute([
+            "awk", "-F", "=", "/^VERSION=/ {print $2}", "/etc/os-release"
+        ], false).strip("\"");
     }
     else if (execute("uname -o") == "Darwin")
     {
@@ -430,9 +409,7 @@ string getDistributionVersion()
             "sw_vers -buildVersion", false) ~ " )";
     }
     else if (exists("/etc/lsb-release"))
-    {
         distributionVersion = execute("lsb_release -r", false);
-    }
     return distributionVersion;
 }
 
@@ -450,11 +427,15 @@ struct MemoryInfo
     string serial = "ROOT PERMISSIONS REQUIRED";
 }
 
+static immutable ExcludedStrings = [
+    "Unknown", "No Module Installed", "Not Provided", "None"
+];
+
 string[] getFromDmi(string[] dmi, string key)
 {
     return dmi.filter!(a => a.strip.startsWith(key))
-        .map!(x => x.indexOf(":") != -1 ? x.split(":")[1].strip : x)
-        .filter!(a => a != "Unknown" && a != "No Module Installed" && a != "Not Provided" && a != "None")
+        .map!(x => x.canFind(":") ? x.split(":")[1].strip : x)
+        .filter!(a => ExcludedStrings.all!(s => a != s))
         .array;
 }
 
@@ -466,23 +447,30 @@ MemoryInfo getMemoryInfo()
     r.totalGB = r.total.split(" ")[0].to!int;
     if (isRoot)
     {
-        string[] dmi = execute("dmidecode -t memory", false).split("\n");
-        r.type = dmi.getFromDmi("Type:").uniqIfSame.join("/");
-        r.count = dmi.getFromDmi("Type:").length;
-        r.slots = dmi.getFromDmi("Memory Device")
+        string[] dmi = execute("dmidecode -t memory", false).splitLines;
+        r.type = dmi.parseDmiDataUniq("Type:").join("/");
+        r.count = dmi.parseDmiData("Type:").length;
+        r.slots = dmi.parseDmiData("Memory Device")
             .filter!(a => a.indexOf("DMI type 17") != -1).array.length;
-        r.totalGB = dmi.getFromDmi("Size:").map!(a => a.split(" ")[0]).array.filter!(isNumeric).array.map!(to!int).array.sum();
-        r.total =r.totalGB.to!string ~ " GB (" ~ dmi.getFromDmi("Size:").map!(a => a.split(" ")[0]).join("/") ~ ")";
-        auto totalWidth = dmi.getFromDmi("Total Width");
-        auto dataWidth = dmi.getFromDmi("Data Width");
+        r.totalGB = dmi.parseDmiData("Size:", a => a.split(" ")[0])
+            .array
+            .filter!(isNumeric)
+            .array
+            .map!(to!int)
+            .array
+            .sum();
+        r.total = r.totalGB.to!string ~ " GB (" ~ dmi.parseDmiData("Size:", a => a.split(" ")[0]).join(
+            "/") ~ ")";
+        auto totalWidth = dmi.parseDmiData("Total Width");
+        auto dataWidth = dmi.parseDmiData("Data Width");
         foreach (i, width; totalWidth)
         {
             r.ecc ~= dataWidth[i] != width;
         }
-        r.speed = dmi.getFromDmi("Speed:").uniqIfSame.join("/");
-        r.vendor = dmi.getFromDmi("Manufacturer:").uniqIfSame.join("/");
-        r.partNumber = dmi.getFromDmi("Part Number:").uniqIfSame.join("/");
-        r.serial = dmi.getFromDmi("Serial Number:").uniqIfSame.join("/");
+        r.speed = dmi.parseDmiDataUniq("Speed:").join("/");
+        r.vendor = dmi.parseDmiDataUniq("Manufacturer:").join("/");
+        r.partNumber = dmi.parseDmiDataUniq("Part Number:").join("/");
+        r.serial = dmi.parseDmiDataUniq("Serial Number:").join("/");
 
     }
 
@@ -532,41 +520,34 @@ StorageInfo getStorageInfo()
     foreach (JSONValue dev; lsblk["blockdevices"].array)
     {
         if (dev["id"].isNull)
-        {
             continue;
-        }
         Device d;
-        d.dev = dev["kname"].isNull ? "" : dev["kname"].str;
-        d.uuid = dev["id"].isNull ? "" : dev["id"].str;
-        d.type = dev["type"].isNull ? "" : dev["type"].str;
-        d.size = dev["size"].isNull ? "" : dev["size"].str;
-        d.model = dev["model"].isNull ? "Unknown Model" : dev["model"].str;
-        d.serial = dev["serial"].isNull ? "Missing Serial Number" : dev["serial"].str;
-        d.vendor = dev["vendor"].isNull ? "Unknown Vendor" : dev["vendor"].str;
-        d.state = dev["state"].isNull ? "" : dev["state"].str;
-        d.partitionTableType = dev["pttype"].isNull ? "" : dev["pttype"].str;
-        d.partitionTableUUID = dev["ptuuid"].isNull ? "" : dev["ptuuid"].str;
+        d.dev = getStrOrDefault(dev["kname"]);
+        d.uuid = getStrOrDefault(dev["id"]);
+        d.type = getStrOrDefault(dev["type"]);
+        d.size = getStrOrDefault(dev["size"]);
+        d.model = getStrOrDefault(dev["model"], "Unknown Model");
+        d.serial = getStrOrDefault(dev["serial"], "Missing Serial Number");
+        d.vendor = getStrOrDefault(dev["vendor"], "Unknown Vendor");
+        d.state = getStrOrDefault(dev["state"]);
+        d.partitionTableType = getStrOrDefault(dev["pttype"]);
+        d.partitionTableUUID = getStrOrDefault(dev["ptuuid"]);
 
-        switch (d.size[$ - 1])
-        {
-        case 'B':
-            total += d.size[0 .. $ - 1].to!real;
-            break;
-        case 'K':
-            total += d.size[0 .. $ - 1].to!real * 1024;
-            break;
-        case 'M':
-            total += d.size[0 .. $ - 1].to!real * 1024 * 1024;
-            break;
-        case 'G':
-            total += d.size[0 .. $ - 1].to!real * 1024 * 1024 * 1024;
-            break;
-        case 'T':
-            total += d.size[0 .. $ - 1].to!real * 1024 * 1024 * 1024 * 1024;
-            break;
-        default:
-            assert(0, "Unknown size unit" ~ d.size[$ - 1]);
-        }
+        int[char] sizeUnits = [
+            'B': 1,
+            'K': 1024,
+            'M': 1024 * 1024,
+            'G': 1024 * 1024 * 1024,
+            'T': 1024 * 1024 * 1024 * 1024
+        ];
+
+        auto size = d.size[0 .. $ - 1].to!real;
+        auto unit = d.size[$ - 1];
+
+        if (unit in sizeUnits)
+            total += size * sizeUnits[unit];
+        else
+            assert(0, "Unknown size unit: " ~ unit);
 
         if (isRoot)
         {
@@ -575,17 +556,15 @@ StorageInfo getStorageInfo()
             foreach (JSONValue part; partData.array)
             {
                 if (part["partuuid"].isNull)
-                {
                     continue;
-                }
                 Partition p;
-                p.dev = part["kname"].isNull ? "" : part["kname"].str;
-                p.fslabel = part["label"].isNull ? "" : part["label"].str;
-                p.partlabel = part["partlabel"].isNull ? "" : part["partlabel"].str;
-                p.size = part["size"].isNull ? "" : part["size"].str;
-                p.type = part["fstype"].isNull ? "" : part["fstype"].str;
-                p.mount = part["mountpoint"].isNull ? "Not Mounted" : part["mountpoint"].str;
-                p.id = part["partuuid"].isNull ? "" : part["partuuid"].str;
+                p.dev = getStrOrDefault(part["kname"]);
+                p.fslabel = getStrOrDefault(part["label"]);
+                p.partlabel = getStrOrDefault(part["partlabel"]);
+                p.size = getStrOrDefault(part["size"]);
+                p.type = getStrOrDefault(part["fstype"]);
+                p.mount = getStrOrDefault(part["mountpoint"], "Not Mounted");
+                p.id = getStrOrDefault(part["partuuid"]);
                 d.partitions ~= p;
             }
         }
@@ -618,56 +597,57 @@ struct DisplayInfo
     size_t count;
 }
 
+Display getDeviceData(JSONValue device)
+{
+    Display d;
+
+    d.name = device["device_name"].str;
+    d.connected = device["is_connected"].boolean;
+    d.primary = device["is_primary"].boolean;
+    d.resolution = device["resolution_width"].integer.to!string ~ "x" ~ device["resolution_height"]
+        .integer.to!string;
+    foreach (JSONValue mode; device["modes"].array)
+    {
+        foreach (JSONValue freq; mode["frequencies"].array)
+        {
+            d.modes ~= mode["resolution_width"].integer.to!string ~ "x" ~ mode["resolution_height"].integer
+                .to!string ~ "@" ~ freq["frequency"].floating.to!string ~ "Hz";
+            if (freq["is_current"].boolean)
+                d.refreshRate = freq["frequency"].floating.to!string ~ "Hz";
+        }
+    }
+    if ("/sys/class/rm/card0-" ~ d.name.replace("HDMI-", "HDMI-A-") ~ "/edid".exists)
+    {
+        auto edidTmp = execute("edid-decode /sys/class/drm/card0-" ~ d.name.replace("HDMI-", "HDMI-A-") ~ "/edid", false);
+        auto edidData = getProcInfo(edidTmp, false);
+        d.vendor = ("Manufacturer" in edidData) ? edidData["Manufacturer"] : "Unknown";
+        d.model = ("Model" in edidData) ? edidData["Model"] : "Unknown";
+        d.serial = ("Serial Number" in edidData) ? edidData["Serial Number"] : "Unknown";
+        d.manufactureDate = ("Made in" in edidData) ? edidData["Made in"] : "Unknown";
+        d.size = ("Maximum image size" in edidData) ? edidData["Maximum image size"] : "Unknown";
+    }
+    return d;
+}
+
 DisplayInfo getDisplayInfo()
 {
     DisplayInfo r;
     if ("DISPLAY" !in environment)
         return r;
+    JSONValue[] xrandr;
     try
     {
-        auto xrandr = execute!JSONValue("jc xrandr --properties", false)["screens"].array;
-        foreach (JSONValue screen; xrandr)
-        {
-            foreach (JSONValue device; screen["devices"].array)
-            {
-                Display d;
-
-                d.name = device["device_name"].str;
-                d.connected = device["is_connected"].boolean;
-                d.primary = device["is_primary"].boolean;
-                d.resolution = device["resolution_width"].integer.to!string ~ "x" ~ device["resolution_height"]
-                    .integer.to!string;
-                foreach (JSONValue mode; device["modes"].array)
-                {
-                    foreach (JSONValue freq; mode["frequencies"].array)
-                    {
-                        d.modes ~= mode["resolution_width"].integer.to!string ~ "x" ~ mode["resolution_height"].integer
-                            .to!string ~ "@" ~ freq["frequency"].floating.to!string ~ "Hz";
-                        if (freq["is_current"].boolean)
-                        {
-                            d.refreshRate = freq["frequency"].floating.to!string ~ "Hz";
-                        }
-                    }
-                }
-                if ("/sys/class/rm/card0-" ~ d.name.replace("HDMI-", "HDMI-A-") ~ "/edid".exists)
-                {
-                    auto edidTmp = execute("edid-decode /sys/class/drm/card0-" ~ d.name.replace("HDMI-", "HDMI-A-") ~ "/edid", false);
-                    auto edidData = getProcInfo(edidTmp, false);
-                    d.vendor = ("Manufacturer" in edidData) ? edidData["Manufacturer"] : "Unknown";
-                    d.model = ("Model" in edidData) ? edidData["Model"] : "Unknown";
-                    d.serial = ("Serial Number" in edidData) ? edidData["Serial Number"] : "Unknown";
-                    d.manufactureDate = ("Made in" in edidData) ? edidData["Made in"] : "Unknown";
-                    d.size = ("Maximum image size" in edidData) ? edidData["Maximum image size"] : "Unknown";
-                }
-
-                r.displays ~= d;
-                r.count++;
-            }
-        }
+        xrandr = execute!JSONValue("jc xrandr --properties", false)["screens"].array;
     }
     catch (Exception e)
-    {
         return r;
+    foreach (JSONValue screen; xrandr)
+    {
+        foreach (JSONValue device; screen["devices"].array)
+        {
+            r.displays ~= getDeviceData(device);
+            r.count++;
+        }
     }
     return r;
 }
@@ -680,22 +660,28 @@ struct GraphicsProcessorInfo
     string vram;
 }
 
+string getGlxInfoValue(ref string[string] glxinfo, string key)
+{
+    return (key in glxinfo) ? glxinfo[key] : "Unknown";
+}
+
 GraphicsProcessorInfo getGraphicsProcessorInfo()
 {
     GraphicsProcessorInfo r;
-    if ("DISPLAY" !in environment) return r;
-    try {
-        auto glxinfo = getProcInfo(execute("glxinfo", false), false);
-        r.vendor = ("OpenGL vendor string" in glxinfo) ? glxinfo["OpenGL vendor string"] : "Unknown";
-        r.model = ("OpenGL renderer string" in glxinfo) ? glxinfo["OpenGL renderer string"] : "Unknown";
-        r.coreProfile = ("OpenGL core profile version string" in glxinfo) ? glxinfo["OpenGL core profile version string"] : "Unknown";
-        r.vram = ("Video memory" in glxinfo) ? glxinfo["Video memory"] : "Unknown";
+    if ("DISPLAY" !in environment)
+        return r;
+    string[string] glxinfo;
+    try
+    {
+        glxinfo = getProcInfo(execute("glxinfo", false), false);
     }
     catch (Exception e)
-    {
         return r;
-    }
 
+    r.vendor = getGlxInfoValue(glxinfo, "OpenGL vendor string");
+    r.model = getGlxInfoValue(glxinfo, "OpenGL renderer string");
+    r.coreProfile = getGlxInfoValue(glxinfo, "OpenGL core profile version string");
+    r.vram = getGlxInfoValue(glxinfo, "Video memory");
     return r;
 }
 
@@ -724,10 +710,8 @@ struct MachineConfigInfo
     string[] videoDrivers;
 }
 
-MachineConfigInfo getMachineConfigInfo()
+void getPCIDeviceInfo(ref MachineConfigInfo info)
 {
-    MachineConfigInfo r;
-
 
     // PCI devices
     foreach (path; dirEntries("/sys/bus/pci/devices", SpanMode.shallow).map!(a => a.name).array)
@@ -737,9 +721,7 @@ MachineConfigInfo getMachineConfigInfo()
         string _class = readText(path ~ "/class").strip;
         string _module;
         if (exists(path ~ "/driver/module"))
-        {
             _module = readLink(path ~ "/driver/module").baseName;
-        }
 
         if (_module != "" && (
                 // Mass-storage controller.  Definitely important.
@@ -750,7 +732,7 @@ MachineConfigInfo getMachineConfigInfo()
                 // keyboard when things go wrong in the initrd.
                 _class.startsWith("0x0c03")))
         {
-            r.availableKernelModules ~= _module;
+            info.availableKernelModules ~= _module;
         }
 
         // broadcom STA driver (wl.ko)
@@ -765,9 +747,9 @@ MachineConfigInfo getMachineConfigInfo()
                 "0x4331", "0x43a0", "0x43b1"
             ].any!(a => device.startsWith(a)))
         {
-            r.extraModulePackages ~= Literal(
+            info.extraModulePackages ~= Literal(
                 "config.boot.kernelPackages.broadcom_sta");
-            r.kernelModules ~= "wl";
+            info.kernelModules ~= "wl";
         }
 
         // broadcom FullMac driver
@@ -782,15 +764,13 @@ MachineConfigInfo getMachineConfigInfo()
                 "0x43c5"
             ].any!(a => device.startsWith(a)))
         {
-            r.imports ~= Literal(
+            info.imports ~= Literal(
                 "(modulesPath + \"/hardware/network/broadcom-43xx.nix\")");
         }
 
         // In case this is a virtio scsi device, we need to explicitly make this available.
         if (vendor.startsWith("0x1af4") && ["0x1004", "0x1048"].any!(a => device.startsWith(a)))
-        {
-            r.availableKernelModules ~= "virtio_scsi";
-        }
+            info.availableKernelModules ~= "virtio_scsi";
 
         // Can't rely on $module here, since the module may not be loaded
         // due to missing firmware.  Ideally we would check modules.pcimap
@@ -800,12 +780,12 @@ MachineConfigInfo getMachineConfigInfo()
             if (["0x1043", "0x104f", "0x4220", "0x4221", "0x4223", "0x4224"].any!(
                     a => device.startsWith(a)))
             {
-                r.literalAttrs ~= Literal(
+                info.literalAttrs ~= Literal(
                     "networking.enableIntel2200BGFirmware = true;");
             }
             else if (["0x4229", "0x4230", "0x4222", "0x4227"].any!(a => device.startsWith(a)))
             {
-                r.literalAttrs ~= Literal(
+                info.literalAttrs ~= Literal(
                     "networking.enableIntel3945ABGFirmware = true;");
             }
         }
@@ -815,85 +795,109 @@ MachineConfigInfo getMachineConfigInfo()
         // FIXME: do we want to enable an unfree driver here?
         if (vendor.startsWith("0x10de") && _class.startsWith("0x03"))
         {
-            r.videoDrivers ~= "nvidia";
-            r.blacklistedKernelModules ~= "nouveau";
+            info.videoDrivers ~= "nvidia";
+            info.blacklistedKernelModules ~= "nouveau";
         }
     }
+}
 
+void getUSBDeviceInfo(ref MachineConfigInfo info)
+{
     // USB devices
     foreach (path; dirEntries("/sys/bus/usb/devices", SpanMode.shallow).map!(a => a.name).array)
     {
         if (!exists(path ~ "/bInterfaceClass"))
-        {
             continue;
-        }
         string _class = readText(path ~ "/bInterfaceClass").strip;
         string subClass = readText(path ~ "/bInterfaceSubClass").strip;
         string protocol = readText(path ~ "/bInterfaceProtocol").strip;
 
         string _module;
         if (exists(path ~ "/driver/module"))
-        {
             _module = readLink(path ~ "/driver/module").baseName;
-        }
 
         if (_module != "" &&
-        // Mass-storage controller. Definitely important.
-        _class.startsWith("0x08") ||
-        // Keyboard. Needed if we want to use the keyboard when things go wrong in the initrd.
-        (subClass.startsWith("0x03") || protocol.startsWith("0x01")))
+            // Mass-storage controller. Definitely important.
+            _class.startsWith("0x08") ||
+            // Keyboard. Needed if we want to use the keyboard when things go wrong in the initrd.
+            (subClass.startsWith("0x03") || protocol.startsWith("0x01")))
         {
-            r.availableKernelModules ~= _module;
+            info.availableKernelModules ~= _module;
         }
     }
+}
 
+void getBlockDeviceInfo(ref MachineConfigInfo info)
+{
     // Block and MMC devices
     foreach (path; (
-        (exists("/sys/class/block") ? dirEntries("/sys/class/block", SpanMode.shallow).array : []) ~
-        (exists("/sys/class/mmc_host") ? dirEntries("/sys/class/mmc_host", SpanMode.shallow).array : []))
+            (exists("/sys/class/block") ? dirEntries("/sys/class/block", SpanMode.shallow)
+            .array : []) ~
+            (exists("/sys/class/mmc_host") ? dirEntries("/sys/class/mmc_host", SpanMode.shallow).array
+            : []))
         .map!(a => a.name).array)
     {
-        if (exists(path ~ "/device/driver/module")) {
+        if (exists(path ~ "/device/driver/module"))
+        {
             string _module = readLink(path ~ "/device/driver/module").baseName;
-            r.availableKernelModules ~= _module;
+            info.availableKernelModules ~= _module;
         }
     }
+}
+
+void getBCacheInfo(ref MachineConfigInfo info)
+{
     // Bcache
-    auto bcacheDevices = dirEntries("/dev", SpanMode.shallow).map!(a => a.name).array.filter!(a => a.startsWith("bcache")).array;
+    auto bcacheDevices = dirEntries("/dev", SpanMode.shallow).map!(a => a.name)
+        .array
+        .filter!(a => a.startsWith("bcache"))
+        .array;
     bcacheDevices = bcacheDevices.filter!(device => device.indexOf("dev/bcachefs") == -1).array;
 
-    if (bcacheDevices.length > 0) {
-        r.availableKernelModules ~= "bcache";
-    }
+    if (bcacheDevices.length > 0)
+        info.availableKernelModules ~= "bcache";
+}
+
+void getVMInfo(ref MachineConfigInfo info)
+{
     //Prevent unbootable systems if LVM snapshots are present at boot time.
     if (execute("lsblk -o TYPE", false).indexOf("lvm") != -1)
-    {
-        r.kernelModules ~= "dm-snapshot";
-    }
+        info.kernelModules ~= "dm-snapshot";
     // Check if we're in a VirtualBox guest. If so, enable the guest additions.
     auto virt = execute!ProcessPipes("systemd-detect-virt", false).stdout.readln.strip;
-    switch (virt) {
-        case "oracle":
-            r.literalAttrs ~= Literal("virtualisation.virtualbox.guest.enable = true;");
-            break;
-        case "parallels":
-            r.literalAttrs ~= Literal("hardware.parallels.enable = true;");
-            r.literalAttrs ~= Literal("nixpkgs.config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) [ \"prl-tools\" ];");
-            break;
-        case "qemu":
-        case "kvm":
-        case "bochs":
-            r.imports ~= Literal("(modulesPath + \"/profiles/qemu-guest.nix\")");
-            break;
-        case "microsoft":
-            r.literalAttrs ~= Literal("virtualization.hypervGuest.enable = true;");
-            break;
-        case "systemd-nspawn":
-            r.literalAttrs ~= Literal("boot.isContainer;");
-            break;
-        default:
-            break;
+    switch (virt)
+    {
+    case "oracle":
+        info.literalAttrs ~= Literal("virtualisation.virtualbox.guest.enable = true;");
+        break;
+    case "parallels":
+        info.literalAttrs ~= Literal("hardware.parallels.enable = true;");
+        info.literalAttrs ~= Literal(
+            "nixpkgs.config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) [ \"prl-tools\" ];");
+        break;
+    case "qemu", "kvm", "bochs":
+        info.imports ~= Literal("(modulesPath + \"/profiles/qemu-guest.nix\")");
+        break;
+    case "microsoft":
+        info.literalAttrs ~= Literal("virtualization.hypervGuest.enable = true;");
+        break;
+    case "systemd-nspawn":
+        info.literalAttrs ~= Literal("boot.isContainer;");
+        break;
+    default:
+        break;
     }
+}
+
+MachineConfigInfo getMachineConfigInfo()
+{
+    MachineConfigInfo r;
+
+    r.getPCIDeviceInfo();
+    r.getUSBDeviceInfo();
+    r.getBlockDeviceInfo();
+    r.getBCacheInfo();
+    r.getVMInfo();
 
     return r;
 }

@@ -57,8 +57,9 @@ int main(string[] args)
 void setLogLevel(LogLevel l)
 {
     import std.logger : globalLogLevel, sharedLog;
+
     globalLogLevel = l;
-    (cast()sharedLog()).logLevel = l;
+    (cast() sharedLog()).logLevel = l;
 }
 
 int wrongUsage(string error)

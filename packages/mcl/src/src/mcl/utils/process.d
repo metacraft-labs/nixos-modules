@@ -8,14 +8,18 @@ import std.process : ProcessPipes;
 import std.string : split, strip;
 import core.sys.posix.unistd : geteuid;
 import std.json : JSONValue, parseJSON;
+import std.format : format;
 
 bool isRoot() => geteuid() == 0;
 
-T execute(T = string)(string args, bool printCommand = true, bool returnErr = false) if (is(T == string) || is(T == ProcessPipes) || is(T == JSONValue))
+T execute(T = string)(string args, bool printCommand = true, bool returnErr = false)
+        if (is(T == string) || is(T == ProcessPipes) || is(T == JSONValue))
 {
     return execute!T(args.split(" "), printCommand, returnErr);
 }
-T execute(T = string)(string[] args, bool printCommand = true, bool returnErr = false) if (is(T == string) || is(T == ProcessPipes) || is(T == JSONValue))
+
+T execute(T = string)(string[] args, bool printCommand = true, bool returnErr = false)
+        if (is(T == string) || is(T == ProcessPipes) || is(T == JSONValue))
 {
     import std.exception : enforce;
     import std.format : format;
@@ -70,7 +74,8 @@ T execute(T = string)(string[] args, bool printCommand = true, bool returnErr = 
             output = stderr;
         }
 
-        static if (is(T == string)) {
+        static if (is(T == string))
+        {
             return output.strip;
         }
         else
@@ -85,8 +90,11 @@ unittest
 {
     import std.exception : assertThrown;
 
-    assert(execute(["echo", "hello"]) == "hello");
-    assert(execute(["true"]) == "");
+    auto actual = execute(["echo", "hello"]);
+    assert(actual == "hello", format("Expected '%s', but got '%s'", "hello", actual));
+
+    actual = execute(["true"]);
+    assert(actual == "", format("Expected '%s', but got '%s'", "", actual));
     // assertThrown(execute(["false"]), "Command `false` failed with status 1");
 }
 
@@ -98,7 +106,6 @@ void spawnProcessInline(string[] args)
 
     const bold = "\033[1m";
     const normal = "\033[0m";
-
 
     tracef("$ %s%-(%s %)%s", bold, args, normal);
 

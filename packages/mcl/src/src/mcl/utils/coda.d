@@ -112,7 +112,7 @@ struct CodaApiClient
         auto apiToken = environment.get("CODA_API_TOKEN");
         auto coda = CodaApiClient(apiToken);
         auto resp = coda.getDocument("6vM0kjfQP6");
-        assert(resp.id == "6vM0kjfQP6");
+        assert(resp.id == "6vM0kjfQP6", "Expected document ID to be 6vM0kjfQP6, but got %s".format(resp.id));
     }
 
     Document[] listDocuments()
@@ -127,7 +127,7 @@ struct CodaApiClient
         auto apiToken = environment.get("CODA_API_TOKEN");
         auto coda = CodaApiClient(apiToken);
         auto resp = coda.listDocuments();
-        assert(resp.length > 0);
+        assert(resp.length > 0, "Expected at least one document, but got 0");
     }
 
     struct InitialPage
@@ -157,10 +157,10 @@ struct CodaApiClient
         string url = "/docs";
         JSONValue req = JSONValue(
             [
-                "title": JSONValue(title),
-                "initialPage": initialPage.toJSON,
-                "timezone": JSONValue(timezone)
-            ]);
+            "title": JSONValue(title),
+            "initialPage": initialPage.toJSON,
+            "timezone": JSONValue(timezone)
+        ]);
         if (sourceDoc != "")
             req["sourceDoc"] = JSONValue(sourceDoc);
         if (folderID != "")
@@ -189,9 +189,9 @@ struct CodaApiClient
             InitialPage.PageContent("canvas",
                 InitialPage.PageContent.CanvasContent("html", "<p><b>This</b> is rich text</p>")));
         auto resp = coda.createDocument("Test Document", "", "Europe/Sofia", "", initialPage);
-        assert(resp.name == "Test Document");
+        assert(resp.name == "Test Document", "Expected document name to be \"Test Document\", but got %s".format(resp.name));
         coda.deleteDocument(resp.id);
-        assertThrown!(HTTPStatusException)(coda.getDocument(resp.id));
+        assertThrown!(HTTPStatusException)(coda.getDocument(resp.id), "Expected coda.getDocument to throw an exception, but it didn't");
     }
 
     Document patchDocument(string documentId, string title = "", string iconName = "")
@@ -217,26 +217,30 @@ struct CodaApiClient
         auto resp = coda.createDocument("Test Document", "", "Europe/Sofia", "", initialPage);
         coda.patchDocument(resp.id, "Patched Document", "");
         auto patched = coda.getDocument(resp.id);
-        assert(patched.name == "Patched Document");
+        assert(patched.name == "Patched Document", "Expected document name to be \"Patched Document\", but got %s".format(patched.name));
         coda.deleteDocument(patched.id);
     }
 
-    struct Table {
+    struct Table
+    {
         string id;
         string type;
         string tableType;
         string href;
         string browserLink;
         string name;
-        struct Parent {
+        struct Parent
+        {
             string id;
             string type;
             string href;
             string browserLink;
             string name;
         }
+
         Parent parent;
-        struct ParentTable {
+        struct ParentTable
+        {
             string id;
             string type;
             string tableType;
@@ -245,32 +249,41 @@ struct CodaApiClient
             string name;
             Parent parent;
         }
+
         ParentTable parentTable;
-        struct DisplayColumn {
+        struct DisplayColumn
+        {
             string id;
             string type;
             string href;
         }
+
         DisplayColumn displayColumn;
         int rowCount;
-        struct Sort {
+        struct Sort
+        {
             string direction;
-            struct Column {
+            struct Column
+            {
                 string id;
                 string type;
                 string href;
             }
+
             Column column;
         }
+
         Sort[] sorts;
         string layout;
-        struct Filter {
+        struct Filter
+        {
             bool valid;
             bool isVolatile;
             bool hasUserFormula;
             bool hasTodayFormula;
             bool hasNowFormula;
         }
+
         Filter filter;
         SysTime createdAt;
         SysTime updatedAt;
@@ -288,7 +301,7 @@ struct CodaApiClient
         auto apiToken = environment.get("CODA_API_TOKEN");
         auto coda = CodaApiClient(apiToken);
         auto resp = coda.listTables("6vM0kjfQP6");
-        assert(resp.length > 0);
+        assert(resp.length > 0, "Expected at least one table, but got 0");
     }
 
     Table getTable(string documentId, string tableId)
@@ -304,10 +317,11 @@ struct CodaApiClient
         auto coda = CodaApiClient(apiToken);
         auto tables = coda.listTables("6vM0kjfQP6");
         auto resp = coda.getTable("6vM0kjfQP6", tables[0].id);
-        assert(resp.id == tables[0].id);
+        assert(resp.id == tables[0].id, "Expected table ID to be %s, but got %s".format(tables[0].id, resp.id));
     }
 
-    struct Column {
+    struct Column
+    {
         string id;
         string type;
         string href;
@@ -316,30 +330,36 @@ struct CodaApiClient
         bool calculated;
         string formula;
         string defaultValue;
-        struct Format {
+        struct Format
+        {
             string type;
             bool isArray;
             string label;
             string disableIf;
             string action;
         }
+
         Format format;
-        struct Parent {
+        struct Parent
+        {
             string id;
             string type;
             string tableType;
             string href;
             string browserLink;
             string name;
-            struct ParentParent {
+            struct ParentParent
+            {
                 string id;
                 string type;
                 string href;
                 string browserLink;
                 string name;
             }
+
             ParentParent parent;
         }
+
         Parent parent;
     }
 
@@ -356,7 +376,7 @@ struct CodaApiClient
         auto coda = CodaApiClient(apiToken);
         auto tables = coda.listTables("6vM0kjfQP6");
         auto resp = coda.listColumns("6vM0kjfQP6", tables[0].id);
-        assert(resp.length > 0);
+        assert(resp.length > 0, "Expected at least one column, but got 0");
     }
 
     Column getColumn(string documentId, string tableId, string columnId)
@@ -373,12 +393,13 @@ struct CodaApiClient
         auto tables = coda.listTables("6vM0kjfQP6");
         auto columns = coda.listColumns("6vM0kjfQP6", tables[0].id);
         auto resp = coda.getColumn("6vM0kjfQP6", tables[0].id, columns[0].id);
-        assert(resp.id == columns[0].id);
+        assert(resp.id == columns[0].id, "Expected column ID to be %s, but got %s".format(columns[0].id, resp.id));
     }
 
     alias RowValue = SumType!(string, int, bool, string[], int[], bool[]);
 
-    struct Row {
+    struct Row
+    {
         string id;
         string type;
         string href;
@@ -388,20 +409,23 @@ struct CodaApiClient
         SysTime createdAt;
         SysTime updatedAt;
         RowValue[string] values;
-        struct Parent {
+        struct Parent
+        {
             string id;
             string type;
             string tableType;
             string href;
             string browserLink;
             string name;
-            struct ParentParent {
+            struct ParentParent
+            {
                 string id;
                 string type;
                 string href;
                 string browserLink;
                 string name;
             }
+
             ParentParent parent;
         }
     }
@@ -419,15 +443,17 @@ struct CodaApiClient
         auto coda = CodaApiClient(apiToken);
         auto tables = coda.listTables("6vM0kjfQP6");
         auto resp = coda.listRows("6vM0kjfQP6", tables[0].id);
-        assert(resp.length > 0);
+        assert(resp.length > 0, "Expected at least one row, but got 0");
     }
 
-    struct InsertRowsReturn {
+    struct InsertRowsReturn
+    {
         string requestId;
         string[] addedRowIds;
     }
 
-    string[] insertRows(string documentId, string tableId, RowValues[] rows, string[] keyColumns = [])
+    string[] insertRows(string documentId, string tableId, RowValues[] rows, string[] keyColumns = [
+        ])
     {
         string url = "/docs/%s/tables/%s/rows".format(documentId, tableId);
         JSONValue req = JSONValue(
@@ -438,8 +464,8 @@ struct CodaApiClient
             req["keyColumns"] = JSONValue(keyColumns.toJSON);
         return post!InsertRowsReturn(url, req, false).addedRowIds;
     }
-    alias upsertRows = insertRows;
 
+    alias upsertRows = insertRows;
 
     // Can't be implemented because of the lack of support for a body in DELETE requests
     // void deleteRows(string documentId, string tableId, string[] rowIds)
@@ -466,13 +492,13 @@ struct CodaApiClient
         auto tables = coda.listTables("dEJJPwdxcw");
         RowValues[] rows = [
             RowValues([
-                CodaCell("c-p6Yjm8zaEH", "Test Name"),
-            ])
+                    CodaCell("c-p6Yjm8zaEH", "Test Name"),
+                ])
         ];
         auto resp = coda.insertRows("dEJJPwdxcw", tables[0].id, rows);
-        assert(resp.length > 0);
+        assert(resp.length > 0, "Expected at least one row after inserting rows, but got 0");
         coda.deleteRow("dEJJPwdxcw", tables[0].id, resp[0]);
-        assertThrown!(HTTPStatusException)(coda.getRow("dEJJPwdxcw", tables[0].id, resp[0]));
+        assertThrown!(HTTPStatusException)(coda.getRow("dEJJPwdxcw", tables[0].id, resp[0]), "Expected coda.getRow to throw an exception, but it didn't");
     }
 
     Row getRow(string documentId, string tableId, string rowId)
@@ -482,16 +508,18 @@ struct CodaApiClient
     }
 
     @("coda.getRow")
-    unittest {
+    unittest
+    {
         auto apiToken = environment.get("CODA_API_TOKEN");
         auto coda = CodaApiClient(apiToken);
         auto tables = coda.listTables("dEJJPwdxcw");
         auto rows = coda.listRows("dEJJPwdxcw", tables[0].id);
         auto resp = coda.getRow("dEJJPwdxcw", tables[0].id, rows[0].id);
-        assert(resp.id == rows[0].id);
+        assert(resp.id == rows[0].id, "Expected row ID to be %s, but got %s".format(rows[0].id, resp.id));
     }
 
-    struct UpdateRowReturn {
+    struct UpdateRowReturn
+    {
         string requestId;
         string id;
     }
@@ -507,14 +535,15 @@ struct CodaApiClient
     }
 
     @("coda.updateRow")
-    unittest {
+    unittest
+    {
         auto apiToken = environment.get("CODA_API_TOKEN");
         auto coda = CodaApiClient(apiToken);
         auto tables = coda.listTables("dEJJPwdxcw");
         RowValues[] rows = [
             RowValues([
-                CodaCell("c-p6Yjm8zaEH", "Test Name"),
-            ])
+                    CodaCell("c-p6Yjm8zaEH", "Test Name"),
+                ])
         ];
         auto resp = coda.insertRows("dEJJPwdxcw", tables[0].id, rows);
         RowValues newRow = RowValues([
@@ -523,7 +552,7 @@ struct CodaApiClient
 
         auto updated = coda.updateRow("dEJJPwdxcw", tables[0].id, resp[0], newRow);
 
-        assert(updated == resp[0]);
+        assert(updated == resp[0], "Expected updated row ID to be %s, but got %s".format(resp[0], updated));
         coda.deleteRow("dEJJPwdxcw", tables[0].id, resp[0]);
     }
 
@@ -543,29 +572,32 @@ struct CodaApiClient
         string columnId;
     }
 
-    PushButtonResponse pushButton(string documentId, string tableId, string rowId, string columnId) {
+    PushButtonResponse pushButton(string documentId, string tableId, string rowId, string columnId)
+    {
         string url = "/docs/%s/tables/%s/rows/%s/buttons/%s".format(documentId, tableId, rowId, columnId);
         return post!PushButtonResponse(url);
     }
 
     @("coda.pushButton")
-    unittest {
+    unittest
+    {
         auto apiToken = environment.get("CODA_API_TOKEN");
         auto coda = CodaApiClient(apiToken);
         auto tables = coda.listTables("dEJJPwdxcw");
         RowValues[] rows = [
             RowValues([
-                CodaCell("c-p6Yjm8zaEH", "Test Name"),
-            ])
+                    CodaCell("c-p6Yjm8zaEH", "Test Name"),
+                ])
         ];
         auto buttonColumn = "c-9MA3HmNByK";
         auto rowId = "i-HV8Hsf2O8H";
         auto buttonResp = coda.pushButton("dEJJPwdxcw", tables[0].id, rowId, buttonColumn);
-        assert(buttonResp.rowId == rowId);
-        assert(buttonResp.columnId == buttonColumn);
+        assert(buttonResp.rowId == rowId, "Expected row ID to be %s, but got %s".format(rowId, buttonResp.rowId));
+        assert(buttonResp.columnId == buttonColumn, "Expected column ID to be %s, but got %s".format(buttonColumn, buttonResp.columnId));
     }
 
-    struct Category {
+    struct Category
+    {
         string name;
     }
 
@@ -576,11 +608,12 @@ struct CodaApiClient
     }
 
     @("coda.listCategories")
-    unittest {
+    unittest
+    {
         auto apiToken = environment.get("CODA_API_TOKEN");
         auto coda = CodaApiClient(apiToken);
         auto resp = coda.listCategories();
-        assert(resp.length > 0);
+        assert(resp.length > 0, "Expected at least one category, but got 0");
     }
 
     void triggerAutomation(string documentId, string automationId, JSONValue req)
@@ -590,7 +623,8 @@ struct CodaApiClient
     }
 
     @("coda.triggerAutomation")
-    unittest {
+    unittest
+    {
         auto apiToken = environment.get("CODA_API_TOKEN");
         auto coda = CodaApiClient(apiToken);
         auto tables = coda.listTables("dEJJPwdxcw");
@@ -602,7 +636,10 @@ struct CodaApiClient
         coda.triggerAutomation("dEJJPwdxcw", automationId, req);
     }
 
-    static foreach (method; [HTTP.Method.get, HTTP.Method.post, HTTP.Method.del, HTTP.Method.patch, HTTP.Method.put])
+    static foreach (method; [
+            HTTP.Method.get, HTTP.Method.post, HTTP.Method.del, HTTP.Method.patch,
+            HTTP.Method.put
+        ])
     {
         mixin(q{
             Response %s(Response)(string endpoint, JSONValue req = JSONValue(null),
@@ -653,40 +690,32 @@ struct CodaApiClient
         http.addRequestHeader("Content-Type", "application/json");
         http.addRequestHeader("Authorization", "Bearer " ~ this.apiToken);
 
+        JSONValue ret = parseJSON("{}");
+        auto reqBody = req.toString(JSONOptions.doNotEscapeSlashes);
+        reqBody = (reqBody == "null") ? "" : reqBody;
+
         static if (method == HTTP.Method.get)
         {
             auto resp = httpGet(baseEndpoint ~ endpoint, http);
-            return parseJSON(resp);
+            ret = parseJSON(resp);
         }
         else static if (method == HTTP.Method.post)
         {
-            auto reqBody = req.toString(JSONOptions.doNotEscapeSlashes);
-            reqBody = (reqBody == "null") ? "" : reqBody;
             auto resp = httpPost(baseEndpoint ~ endpoint, reqBody, http);
-            return parseJSON(resp);
+            ret = parseJSON(resp);
         }
         else static if (method == HTTP.Method.put)
         {
-            auto reqBody = req.toString(JSONOptions.doNotEscapeSlashes);
-            reqBody = (reqBody == "null") ? "" : reqBody;
             auto resp = httpPut(baseEndpoint ~ endpoint, reqBody, http);
-            return parseJSON(resp);
+            ret = parseJSON(resp);
         }
         else static if (method == HTTP.Method.del)
-        {
-            auto reqBody = req.toString(JSONOptions.doNotEscapeSlashes);
-            reqBody = (reqBody == "null") ? "" : reqBody;
             httpDelete(baseEndpoint ~ endpoint, http);
-            return parseJSON("{}");
-        }
         else static if (method == HTTP.Method.patch)
-        {
-            auto reqBody = req.toString(JSONOptions.doNotEscapeSlashes);
-            reqBody = (reqBody == "null") ? "" : reqBody;
             httpPatch(baseEndpoint ~ endpoint, reqBody, http);
-            return parseJSON("{}");
-        }
         else
             static assert(0, "Please implement " ~ method);
+
+        return ret;
     }
 }

@@ -72,6 +72,7 @@ unittest
 {
     import std.process : environment;
     import std.exception : assertThrown;
+    import std.conv : to;
 
     environment["A"] = "1";
     environment["B"] = "2";
@@ -79,14 +80,14 @@ unittest
 
     auto config = parseEnv!Config;
 
-    assert(config.a == 1);
-    assert(config.b == "2");
-    assert(config.c == 1.0);
-    assert(config.opt is null);
+    assert(config.a == 1, "config.a should be 1, but got " ~ config.a.to!string);
+    assert(config.b == "2", "config.b should be \"2\", but got " ~ config.b);
+    assert(config.c == 1.0, "config.c should be 1.0, but got " ~ config.c.to!string);
+    assert(config.opt is null, "config.opt should be null, but got " ~ config.opt);
 
     environment["OPT"] = "3";
     config = parseEnv!Config;
-    assert(config.opt == "3");
+    assert(config.opt == "3", "config.opt should be \"3\", but got " ~ config.opt);
 
     environment.remove("A");
     assertThrown(config = parseEnv!Config, "missing environment variables:\nA\n");

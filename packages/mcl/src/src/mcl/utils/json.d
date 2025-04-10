@@ -6,15 +6,28 @@ import std.json: parseJSON, JSONValue, JSONOptions, JSONType;
 import std.conv: to;
 import std.string: strip;
 import std.range: front;
+import std.stdio: writeln;
 import std.algorithm: map;
 import std.array: join, array, replace, split;
 import std.datetime: SysTime;
 import std.sumtype: SumType, isSumType;
+import std.format: format;
 import core.stdc.string: strlen;
+
+string getStrOrDefault(JSONValue value, string defaultValue = "")
+{
+    return value.isNull ? defaultValue : value.str;
+}
+
+string jsonValueToString(in JSONValue value)
+{
+    return value.toString(JSONOptions.doNotEscapeSlashes).strip("\"");
+}
 
 bool tryDeserializeJson(T)(in JSONValue value, out T result)
 {
-    try {
+    try
+    {
         result = value.fromJSON!T;
         return true;
     } catch (Exception e) {
@@ -22,13 +35,12 @@ bool tryDeserializeJson(T)(in JSONValue value, out T result)
     }
 }
 
-T fromJSON(T)(in JSONValue value) {
-    if (value.isNull) {
+T fromJSON(T)(in JSONValue value)
+{
+    if (value.isNull)
         return T.init;
-    }
-    static if (is(T == JSONValue)) {
+    static if (is(T == JSONValue))
         return value;
-    }
     else static if (is(T == bool) || is(T == string) || isSomeChar!T || isNumeric!T || is(T == enum)) {
         return value.get!T;
     }
@@ -44,20 +56,19 @@ T fromJSON(T)(in JSONValue value) {
         throw new Exception("Failed to deserialize JSON value");
     }
     else static if (isArray!T) {
-        static if ( isBoolean!(ForeachType!T)) {
-            if (value.type == JSONType.string && isBoolean!(ForeachType!T)) {
+        static if (isBoolean!(ForeachType!T))
+        {
+            if (value.type == JSONType.string && isBoolean!(ForeachType!T))
                 return value.str.map!(a => a == '1').array;
-            }
         }
-
-        if (value.type != JSONType.array) {
+        if (value.type != JSONType.array)
             return [value.fromJSON!(ForeachType!T)];
-        }
+        else
+            return value.array.map!(a => a.fromJSON!(ForeachType!T)).array;
 
-        return value.array.map!(a => a.fromJSON!(ForeachType!T)).array;
     }
     else static if (is(T == SysTime)) {
-        return SysTime.fromISOExtString(value.toString(JSONOptions.doNotEscapeSlashes).strip("\""));
+        return SysTime.fromISOExtString(jsonValueToString(value));
     }
     else static if (is(T == struct)) {
         T result;
@@ -74,9 +85,8 @@ T fromJSON(T)(in JSONValue value) {
             result[key] = val.fromJSON!V;
         return result;
     }
-    else {
+    else
         static assert(false, "Unsupported type: `", T,  "` ", isSumType!T);
-    }
 }
 
 @("fromJSON.AA")
@@ -199,36 +209,32 @@ unittest {
 JSONValue toJSON(T)(in T value, bool simplify = false)
 {
     static if (is(T == enum))
-    {
         return JSONValue(value.enumToString);
-    }
     else static if (is(T == bool) || is(T == string) || isSomeChar!T || isNumeric!T)
         return JSONValue(value);
-    else static if ((isArray!T && isSomeChar!(ForeachType!T)) ) {
-        return JSONValue(value.idup[0..(strlen(value.ptr)-1)]);
-    }
-    else static if (isArray!T)
-    {
+    else static if ((isArray!T && isSomeChar!(ForeachType!T)))
+        return JSONValue(value.idup[0 .. (strlen(value.ptr) - 1)]);
+    else static if (isArray!T) {
         if (simplify && value.length == 1)
             return value.front.toJSON(simplify);
-        else if (simplify  && isBoolean!(ForeachType!T) ) {
-            static if (isBoolean!(ForeachType!T)) {
+        else if (simplify && isBoolean!(ForeachType!T))
+        {
+            static if (isBoolean!(ForeachType!T))
                 return JSONValue((value.map!(a => a ? '1' : '0').array).to!string);
-            }
-            else {assert(0);}
+            else
+                assert(0);
         }
-        else {
-            JSONValue[] result;
+        else
+        {
+            JSONValue[] arrayResult;
             foreach (elem; value)
-                result ~= elem.toJSON(simplify);
-            return JSONValue(result);
+                arrayResult ~= elem.toJSON(simplify);
+            return JSONValue(arrayResult);
         }
     }
-    else static if (is(T == SysTime)) {
+    else static if (is(T == SysTime))
         return JSONValue(value.toISOExtString());
-    }
-    else static if (is(T == struct))
-    {
+    else static if (is(T == struct)) {
         JSONValue[string] result;
         auto name = "";
         static foreach (idx, field; T.tupleof)
@@ -238,8 +244,7 @@ JSONValue toJSON(T)(in T value, bool simplify = false)
         }
         return JSONValue(result);
     }
-    else static if (is(T == K[V], K, V))
-    {
+    else static if (is(T == K[V], K, V)) {
         JSONValue[string] result;
         foreach (key, field; value)
         {
@@ -251,26 +256,28 @@ JSONValue toJSON(T)(in T value, bool simplify = false)
         static assert(false, "Unsupported type: `" ~ __traits(identifier, T) ~ "`");
 }
 
-version(unittest)
+version (unittest)
 {
     enum TestEnum
     {
-        @StringRepresentation("supercalifragilisticexpialidocious")
-        a,
+        @StringRepresentation("supercalifragilisticexpialidocious") a,
         b,
         c
     }
+
     struct TestStruct
     {
         int a;
         string b;
         bool c;
     }
+
     struct TestStruct2
     {
         int a;
         TestStruct b;
     }
+
     struct TestStruct3
     {
         int a;
@@ -281,20 +288,54 @@ version(unittest)
 @("toJSON")
 unittest
 {
-    assert(1.toJSON == JSONValue(1));
-    assert(true.toJSON == JSONValue(true));
-    assert("test".toJSON == JSONValue("test"));
-    assert([1, 2, 3].toJSON == JSONValue([1, 2, 3]));
-    assert(["a", "b", "c"].toJSON == JSONValue(["a", "b", "c"]));
-    assert([TestEnum.a, TestEnum.b, TestEnum.c].toJSON == JSONValue(["supercalifragilisticexpialidocious", "b", "c"]));
-    TestStruct testStruct = { 1, "test", true };
-    assert(testStruct.toJSON == JSONValue(["a": JSONValue(1), "b": JSONValue("test"), "c": JSONValue(true)]));
-    TestStruct2 testStruct2 = { 1, testStruct };
-    assert(testStruct2.toJSON == JSONValue(["a": JSONValue(1), "b": JSONValue(["a": JSONValue(1), "b": JSONValue("test"), "c": JSONValue(true)])]));
-    TestStruct3 testStruct3 = { 1, testStruct2 };
-    assert(testStruct3.toJSON == JSONValue(["a": JSONValue(1), "b": JSONValue(["a": JSONValue(1), "b": JSONValue(["a": JSONValue(1), "b": JSONValue("test"), "c": JSONValue(true)])])]));
-}
+    void assertEqual(JSONValue actual, JSONValue expected) {
+        assert(actual == expected, format("Expected %s, but got %s", expected, actual));
+    }
 
+    assertEqual(1.toJSON, JSONValue(1));
+    assertEqual(true.toJSON, JSONValue(true));
+    assertEqual("test".toJSON, JSONValue("test"));
+    assertEqual([1, 2, 3].toJSON, JSONValue([1, 2, 3]));
+    assertEqual(["a", "b", "c"].toJSON, JSONValue(["a", "b", "c"]));
+    assertEqual([TestEnum.a, TestEnum.b, TestEnum.c].toJSON, JSONValue(
+            ["supercalifragilisticexpialidocious", "b", "c"]));
+
+    TestStruct testStruct = {1, "test", true};
+    auto actual = testStruct.toJSON;
+    auto expected = JSONValue([
+        "a": JSONValue(1),
+        "b": JSONValue("test"),
+        "c": JSONValue(true)
+    ]);
+    assertEqual(actual, expected);
+
+    TestStruct2 testStruct2 = {1, testStruct};
+    actual = testStruct2.toJSON;
+    expected = JSONValue([
+        "a": JSONValue(1),
+        "b": JSONValue([
+            "a": JSONValue(1),
+            "b": JSONValue("test"),
+            "c": JSONValue(true)
+        ])
+    ]);
+    assertEqual(actual, expected);
+
+    TestStruct3 testStruct3 = {1, testStruct2};
+    actual = testStruct3.toJSON;
+    expected = JSONValue([
+        "a": JSONValue(1),
+        "b": JSONValue([
+            "a": JSONValue(1),
+            "b": JSONValue([
+                "a": JSONValue(1),
+                "b": JSONValue("test"),
+                "c": JSONValue(true)
+            ])
+        ])
+    ]);
+    assertEqual(actual, expected);
+}
 
 T tryGet(T)(lazy T value, string errorMsg, string file = __FILE__, size_t line = __LINE__)
 {

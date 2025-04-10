@@ -37,7 +37,6 @@ struct Params
 
     void setup()
     {
-
         cachixStoreUrl = cachixNixStoreUrl(cachixCache);
         if (!cachixDeployWorkspace)
             cachixDeployWorkspace = cachixCache;
