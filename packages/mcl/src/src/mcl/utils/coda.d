@@ -31,7 +31,7 @@ import std.traits : isArray;
 import mcl.utils.json : toJSON, fromJSON;
 import std.process : environment;
 import std.stdio : writeln, writefln;
-import std.algorithm : map, filter, find;
+import std.algorithm : map, filter;
 import std.exception : assertThrown;
 import std.sumtype : SumType;
 import std.array : join;
