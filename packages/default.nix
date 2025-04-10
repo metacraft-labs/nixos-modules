@@ -9,7 +9,7 @@
     let
       inherit (lib) optionalAttrs versionAtLeast;
       inherit (pkgs) system;
-      inherit (pkgs.hostPlatform) isLinux isDarwin isx86;
+      inherit (pkgs.hostPlatform) isLinux;
     in
     rec {
       legacyPackages = {
@@ -65,14 +65,13 @@
         // optionalAttrs isLinux {
           folder-size-metrics = pkgs.callPackage ./folder-size-metrics { };
         }
-        // optionalAttrs ((isLinux && isx86) || isDarwin) rec {
+        // optionalAttrs (system == "x86_64-linux") {
           mcl = pkgs.callPackage ./mcl {
             buildDubPackage = inputs'.dlang-nix.legacyPackages.buildDubPackage.override {
-              dCompiler = inputs'.dlang-nix.packages."ldc-binary-1_38_0";
+              ldc = inputs'.dlang-nix.packages."ldc-binary-1_34_0";
             };
             inherit (legacyPackages.inputs.nixpkgs) cachix nix nix-eval-jobs;
           };
         };
     };
 }
-
