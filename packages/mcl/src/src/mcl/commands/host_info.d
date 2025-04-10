@@ -10,11 +10,14 @@ import std.conv : to;
 import std.string : strip, indexOf, isNumeric;
 import std.array : split, join, array, replace;
 import std.algorithm : map, filter, startsWith, joiner, any, sum, find;
-import std.file : exists, write, readText, readLink, dirEntries, SpanMode;
+import std.file : exists, write, read, readText, readLink, dirEntries, SpanMode;
 import std.path : baseName;
 import std.json;
 import std.process : ProcessPipes, environment;
-import core.stdc.string: strlen;
+import std.bitmanip : peek;
+import std.format : format;
+import std.system : nativeEndian = endian;;
+import core.stdc.string : strlen;
 
 import mcl.utils.env : parseEnv, optional;
 import mcl.utils.json : toJSON;
@@ -22,25 +25,15 @@ import mcl.utils.process : execute, isRoot;
 import mcl.utils.number : humanReadableSize;
 import mcl.utils.array : uniqIfSame;
 import mcl.utils.nix : Literal;
-import mcl.utils.coda;
-
-// enum InfoFormat
-// {
-//     JSON,
-//     CSV,
-//     TSV
-// }
+import mcl.utils.coda : CodaApiClient, RowValues, CodaCell;
 
 struct Params
 {
-    // @optional()
-    // InfoFormat format = InfoFormat.JSON;
     @optional() string codaApiToken;
     void setup()
     {
     }
 }
-Params params;
 
 string[string] cpuinfo;
 
@@ -50,7 +43,8 @@ string[string] getProcInfo(string fileOrData, bool file = true)
 {
     string[string] r;
     foreach (line; file ? fileOrData.readText().split(
-            "\n").map!(strip).array : fileOrData.split("\n").map!(strip).array)
+            "\n").map!(strip).array
+        : fileOrData.split("\n").map!(strip).array)
     {
         if (line.indexOf(":") == -1 || line.strip == "edid-decode (hex):")
         {
@@ -67,23 +61,38 @@ string[string] getProcInfo(string fileOrData, bool file = true)
 
 export void host_info()
 {
-    params = parseEnv!Params;
+    const Params params = parseEnv!Params;
 
-    Info info = getInfo();
+    const hostInfo = gatherHostInfo();
 
-    writeln(info.toJSON(true).toPrettyString(JSONOptions.doNotEscapeSlashes));
+    hostInfo
+        .toJSON(true)
+        .toPrettyString(JSONOptions.doNotEscapeSlashes)
+        .writeln();
+
+    if (!params.codaApiToken) {
+        writeln("No Coda API token specified -> not uploading");
+        return;
+    }
+
+    writeln("Coda API token specified -> uploading");
+    auto coda = CodaApiClient(params.codaApiToken);
+    coda.uploadHostInfo(hostInfo);
 
 }
 
-Info getInfo()
+Info gatherHostInfo()
 {
 
     cpuinfo = getProcInfo("/proc/cpuinfo");
     meminfo = getProcInfo("/proc/meminfo");
 
     Info info;
-    info.softwareInfo.hostid = execute("hostid", false);
-    info.softwareInfo.hostname = execute("cat /etc/hostname", false);
+
+    info.softwareInfo.hostid = (cast(ubyte[])read("/etc/hostid"))
+        .peek!(int, nativeEndian)
+        .format!"%08x";
+    info.softwareInfo.hostname = readText("/etc/hostname").strip();
     info.softwareInfo.operatingSystemInfo = getOperatingSystemInfo();
     info.softwareInfo.opensshInfo = getOpenSSHInfo();
     info.softwareInfo.machineConfigInfo = getMachineConfigInfo();
@@ -95,87 +104,90 @@ Info getInfo()
     info.hardwareInfo.displayInfo = getDisplayInfo();
     info.hardwareInfo.graphicsProcessorInfo = getGraphicsProcessorInfo();
 
-    if (params.codaApiToken) {
-        auto docId = "0rz18jyJ1M";
-        auto hostTableId = "grid-b3MAjem325";
-        auto cpuTableId = "grid-mCI3x3nEIE";
-        auto memoryTableId = "grid-o7o2PeB4rz";
-        auto motherboardTableId = "grid-270PlzmA8K";
-        auto gpuTableId = "grid-ho6EPztvni";
-        auto storageTableId = "grid-JvXFbttMNz";
-        auto osTableId = "grid-ora7n98-ls";
-        auto coda = CodaApiClient(params.codaApiToken);
-
-        auto hostValues = RowValues([
-            CodaCell("Host Name", info.softwareInfo.hostname),
-            CodaCell("Host ID", info.softwareInfo.hostid),
-            CodaCell("OpenSSH Public Key", info.softwareInfo.opensshInfo.publicKey),
-            CodaCell("JSON", info.toJSON(true).toPrettyString(JSONOptions.doNotEscapeSlashes))
-        ]);
-
-        coda.updateOrInsertRow(docId, hostTableId, hostValues);
-
-        auto cpuValues = RowValues([
-            CodaCell("Host Name", info.softwareInfo.hostname),
-            CodaCell("Vendor", info.hardwareInfo.processorInfo.vendor),
-            CodaCell("Model", info.hardwareInfo.processorInfo.model),
-            CodaCell("Architecture", info.hardwareInfo.processorInfo.architectureInfo.architecture),
-            CodaCell("Flags", info.hardwareInfo.processorInfo.architectureInfo.flags),
-        ]);
-        coda.updateOrInsertRow(docId, cpuTableId, cpuValues);
-
-        auto memoryValues = RowValues([
-            CodaCell("Host Name", info.softwareInfo.hostname),
-            CodaCell("Vendor", info.hardwareInfo.memoryInfo.vendor),
-            CodaCell("Part Number", info.hardwareInfo.memoryInfo.partNumber),
-            CodaCell("Serial", info.hardwareInfo.memoryInfo.serial),
-            CodaCell("Generation", info.hardwareInfo.memoryInfo.type),
-            CodaCell("Slots", info.hardwareInfo.memoryInfo.slots == 0 ? "Soldered" : info.hardwareInfo.memoryInfo.count.to!string ~ "/" ~ info.hardwareInfo.memoryInfo.slots.to!string),
-            CodaCell("Total", info.hardwareInfo.memoryInfo.total),
-            CodaCell("Speed", info.hardwareInfo.memoryInfo.speed),
-        ]);
-        coda.updateOrInsertRow(docId, memoryTableId, memoryValues);
-
-        auto motherboardValues = RowValues([
-            CodaCell("Host Name", info.softwareInfo.hostname),
-            CodaCell("Vendor", info.hardwareInfo.motherboardInfo.vendor),
-            CodaCell("Model", info.hardwareInfo.motherboardInfo.model),
-            CodaCell("Revision", info.hardwareInfo.motherboardInfo.version_),
-            CodaCell("Serial", info.hardwareInfo.motherboardInfo.serial),
-            CodaCell("BIOS Vendor", info.hardwareInfo.motherboardInfo.biosInfo.vendor),
-            CodaCell("BIOS Version", info.hardwareInfo.motherboardInfo.biosInfo.version_),
-            CodaCell("BIOS Release", info.hardwareInfo.motherboardInfo.biosInfo.release),
-            CodaCell("BIOS Date", info.hardwareInfo.motherboardInfo.biosInfo.date)
-        ]);
-        coda.updateOrInsertRow(docId, motherboardTableId, motherboardValues);
-
-        auto gpuValues = RowValues([
-            CodaCell("Host Name", info.softwareInfo.hostname),
-            CodaCell("Vendor", info.hardwareInfo.graphicsProcessorInfo.vendor),
-            CodaCell("Model", info.hardwareInfo.graphicsProcessorInfo.model),
-            CodaCell("VRam", info.hardwareInfo.graphicsProcessorInfo.vram)
-        ]);
-        coda.updateOrInsertRow(docId, gpuTableId, gpuValues);
-
-        auto osValues = RowValues([
-            CodaCell("Host Name", info.softwareInfo.hostname),
-            CodaCell("Distribution", info.softwareInfo.operatingSystemInfo.distribution),
-            CodaCell("Distribution Version", info.softwareInfo.operatingSystemInfo.distributionVersion),
-            CodaCell("Kernel", info.softwareInfo.operatingSystemInfo.kernel),
-            CodaCell("Kernel Version", info.softwareInfo.operatingSystemInfo.kernelVersion)
-        ]);
-        coda.updateOrInsertRow(docId, osTableId, osValues);
-
-        auto storageValues = RowValues([
-            CodaCell("Host Name", info.softwareInfo.hostname),
-            CodaCell("Count", info.hardwareInfo.storageInfo.devices.length.to!string),
-            CodaCell("Total", info.hardwareInfo.storageInfo.total),
-            CodaCell("JSON", info.hardwareInfo.storageInfo.toJSON(true).toPrettyString(JSONOptions.doNotEscapeSlashes))
-        ]);
-        coda.updateOrInsertRow(docId, storageTableId, storageValues);
-    }
-
     return info;
+}
+
+void uploadHostInfo(CodaApiClient coda, const(Info) info)
+{
+    auto docId = "0rz18jyJ1M";
+    auto hostTableId = "grid-b3MAjem325";
+    auto cpuTableId = "grid-mCI3x3nEIE";
+    auto memoryTableId = "grid-o7o2PeB4rz";
+    auto motherboardTableId = "grid-270PlzmA8K";
+    auto gpuTableId = "grid-ho6EPztvni";
+    auto storageTableId = "grid-JvXFbttMNz";
+    auto osTableId = "grid-ora7n98-ls";
+
+    auto hostValues = RowValues([
+        CodaCell("Host Name", info.softwareInfo.hostname),
+        CodaCell("Host ID", info.softwareInfo.hostid),
+        CodaCell("OpenSSH Public Key", info.softwareInfo.opensshInfo.publicKey),
+        CodaCell("JSON", info.toJSON(true).toPrettyString(JSONOptions.doNotEscapeSlashes))
+    ]);
+
+    coda.upsertRow(docId, hostTableId, hostValues);
+
+    auto cpuValues = RowValues([
+        CodaCell("Host Name", info.softwareInfo.hostname),
+        CodaCell("Vendor", info.hardwareInfo.processorInfo.vendor),
+        CodaCell("Model", info.hardwareInfo.processorInfo.model),
+        CodaCell("Architecture", info.hardwareInfo.processorInfo.architectureInfo.architecture),
+        CodaCell("Flags", info.hardwareInfo.processorInfo.architectureInfo.flags),
+    ]);
+    coda.upsertRow(docId, cpuTableId, cpuValues);
+
+    auto memoryValues = RowValues([
+        CodaCell("Host Name", info.softwareInfo.hostname),
+        CodaCell("Vendor", info.hardwareInfo.memoryInfo.vendor),
+        CodaCell("Part Number", info.hardwareInfo.memoryInfo.partNumber),
+        CodaCell("Serial", info.hardwareInfo.memoryInfo.serial),
+        CodaCell("Generation", info.hardwareInfo.memoryInfo.type),
+        CodaCell("Slots", info.hardwareInfo.memoryInfo.slots == 0 ? "Soldered" : info.hardwareInfo.memoryInfo
+                .count.to!string ~ "/" ~ info.hardwareInfo.memoryInfo.slots.to!string),
+        CodaCell("Total", info.hardwareInfo.memoryInfo.total),
+        CodaCell("Speed", info.hardwareInfo.memoryInfo.speed),
+    ]);
+    coda.upsertRow(docId, memoryTableId, memoryValues);
+
+    auto motherboardValues = RowValues([
+        CodaCell("Host Name", info.softwareInfo.hostname),
+        CodaCell("Vendor", info.hardwareInfo.motherboardInfo.vendor),
+        CodaCell("Model", info.hardwareInfo.motherboardInfo.model),
+        CodaCell("Revision", info.hardwareInfo.motherboardInfo.version_),
+        CodaCell("Serial", info.hardwareInfo.motherboardInfo.serial),
+        CodaCell("BIOS Vendor", info.hardwareInfo.motherboardInfo.biosInfo.vendor),
+        CodaCell("BIOS Version", info.hardwareInfo.motherboardInfo.biosInfo.version_),
+        CodaCell("BIOS Release", info.hardwareInfo.motherboardInfo.biosInfo.release),
+        CodaCell("BIOS Date", info.hardwareInfo.motherboardInfo.biosInfo.date)
+    ]);
+    coda.upsertRow(docId, motherboardTableId, motherboardValues);
+
+    auto gpuValues = RowValues([
+        CodaCell("Host Name", info.softwareInfo.hostname),
+        CodaCell("Vendor", info.hardwareInfo.graphicsProcessorInfo.vendor),
+        CodaCell("Model", info.hardwareInfo.graphicsProcessorInfo.model),
+        CodaCell("VRam", info.hardwareInfo.graphicsProcessorInfo.vram)
+    ]);
+    coda.upsertRow(docId, gpuTableId, gpuValues);
+
+    auto osValues = RowValues([
+        CodaCell("Host Name", info.softwareInfo.hostname),
+        CodaCell("Distribution", info.softwareInfo.operatingSystemInfo.distribution),
+        CodaCell("Distribution Version", info.softwareInfo.operatingSystemInfo.distributionVersion),
+        CodaCell("Kernel", info.softwareInfo.operatingSystemInfo.kernel),
+        CodaCell("Kernel Version", info.softwareInfo.operatingSystemInfo.kernelVersion)
+    ]);
+    coda.upsertRow(docId, osTableId, osValues);
+
+    auto storageValues = RowValues([
+        CodaCell("Host Name", info.softwareInfo.hostname),
+        CodaCell("Count", info.hardwareInfo.storageInfo.devices.length.to!string),
+        CodaCell("Total", info.hardwareInfo.storageInfo.total),
+        CodaCell("JSON", info.hardwareInfo.storageInfo.toJSON(true)
+                .toPrettyString(JSONOptions.doNotEscapeSlashes))
+    ]);
+    coda.upsertRow(docId, storageTableId, storageValues);
+
 }
 
 struct Info
@@ -216,7 +228,7 @@ ArchitectureInfo getArchitectureInfo()
 {
     ArchitectureInfo r;
     r.architecture = instructionSetArchitecture.to!string;
-    r.byteOrder = endian.to!string;
+    r.byteOrder = nativeEndian.to!string;
     r.addressSizes = cpuinfo["address sizes"];
     r.opMode = getOpMode();
     r.flags = cpuinfo["flags"].split(" ").map!(a => a.strip).join(", ");
@@ -292,7 +304,7 @@ ProcessorInfo getProcessorInfo()
     r.vendor = cpuid.x86_any.vendor;
     char[48] modelCharArr;
     cpuid.x86_any.brand(modelCharArr);
-    r.model = modelCharArr.idup[0..(strlen(modelCharArr.ptr)-1)];
+    r.model = modelCharArr.idup[0 .. (strlen(modelCharArr.ptr) - 1)];
     r.cpus = cpuid.unified.cpus();
     r.cores = [r.cpus * cpuid.unified.cores()];
     r.threads = [cpuid.unified.threads()];
@@ -471,8 +483,15 @@ MemoryInfo getMemoryInfo()
         r.count = dmi.getFromDmi("Type:").length;
         r.slots = dmi.getFromDmi("Memory Device")
             .filter!(a => a.indexOf("DMI type 17") != -1).array.length;
-        r.totalGB = dmi.getFromDmi("Size:").map!(a => a.split(" ")[0]).array.filter!(isNumeric).array.map!(to!int).array.sum();
-        r.total =r.totalGB.to!string ~ " GB (" ~ dmi.getFromDmi("Size:").map!(a => a.split(" ")[0]).join("/") ~ ")";
+        r.totalGB = dmi.getFromDmi("Size:").map!(a => a.split(" ")[0])
+            .array
+            .filter!(isNumeric)
+            .array
+            .map!(to!int)
+            .array
+            .sum();
+        r.total = r.totalGB.to!string ~ " GB (" ~ dmi.getFromDmi("Size:")
+            .map!(a => a.split(" ")[0]).join("/") ~ ")";
         auto totalWidth = dmi.getFromDmi("Total Width");
         auto dataWidth = dmi.getFromDmi("Data Width");
         foreach (i, width; totalWidth)
@@ -657,7 +676,8 @@ DisplayInfo getDisplayInfo()
                     d.model = ("Model" in edidData) ? edidData["Model"] : "Unknown";
                     d.serial = ("Serial Number" in edidData) ? edidData["Serial Number"] : "Unknown";
                     d.manufactureDate = ("Made in" in edidData) ? edidData["Made in"] : "Unknown";
-                    d.size = ("Maximum image size" in edidData) ? edidData["Maximum image size"] : "Unknown";
+                    d.size = ("Maximum image size" in edidData) ? edidData["Maximum image size"]
+                        : "Unknown";
                 }
 
                 r.displays ~= d;
@@ -683,11 +703,14 @@ struct GraphicsProcessorInfo
 GraphicsProcessorInfo getGraphicsProcessorInfo()
 {
     GraphicsProcessorInfo r;
-    if ("DISPLAY" !in environment) return r;
-    try {
+    if ("DISPLAY" !in environment)
+        return r;
+    try
+    {
         auto glxinfo = getProcInfo(execute("glxinfo", false), false);
         r.vendor = ("OpenGL vendor string" in glxinfo) ? glxinfo["OpenGL vendor string"] : "Unknown";
-        r.model = ("OpenGL renderer string" in glxinfo) ? glxinfo["OpenGL renderer string"] : "Unknown";
+        r.model = ("OpenGL renderer string" in glxinfo) ? glxinfo["OpenGL renderer string"]
+            : "Unknown";
         r.coreProfile = ("OpenGL core profile version string" in glxinfo) ? glxinfo["OpenGL core profile version string"] : "Unknown";
         r.vram = ("Video memory" in glxinfo) ? glxinfo["Video memory"] : "Unknown";
     }
@@ -708,7 +731,7 @@ OpenSSHInfo getOpenSSHInfo()
 {
     OpenSSHInfo r;
 
-    r.publicKey = execute("cat /etc/ssh/ssh_host_ed25519_key.pub", false);
+    r.publicKey = readText("/etc/ssh/ssh_host_ed25519_key.pub").strip();
 
     return r;
 }
@@ -727,7 +750,6 @@ struct MachineConfigInfo
 MachineConfigInfo getMachineConfigInfo()
 {
     MachineConfigInfo r;
-
 
     // PCI devices
     foreach (path; dirEntries("/sys/bus/pci/devices", SpanMode.shallow).map!(a => a.name).array)
@@ -838,10 +860,10 @@ MachineConfigInfo getMachineConfigInfo()
         }
 
         if (_module != "" &&
-        // Mass-storage controller. Definitely important.
-        _class.startsWith("0x08") ||
-        // Keyboard. Needed if we want to use the keyboard when things go wrong in the initrd.
-        (subClass.startsWith("0x03") || protocol.startsWith("0x01")))
+            // Mass-storage controller. Definitely important.
+            _class.startsWith("0x08") ||
+            // Keyboard. Needed if we want to use the keyboard when things go wrong in the initrd.
+            (subClass.startsWith("0x03") || protocol.startsWith("0x01")))
         {
             r.availableKernelModules ~= _module;
         }
@@ -849,20 +871,27 @@ MachineConfigInfo getMachineConfigInfo()
 
     // Block and MMC devices
     foreach (path; (
-        (exists("/sys/class/block") ? dirEntries("/sys/class/block", SpanMode.shallow).array : []) ~
-        (exists("/sys/class/mmc_host") ? dirEntries("/sys/class/mmc_host", SpanMode.shallow).array : []))
+            (exists("/sys/class/block") ? dirEntries("/sys/class/block", SpanMode.shallow)
+            .array : []) ~
+            (exists("/sys/class/mmc_host") ? dirEntries("/sys/class/mmc_host", SpanMode.shallow).array
+            : []))
         .map!(a => a.name).array)
     {
-        if (exists(path ~ "/device/driver/module")) {
+        if (exists(path ~ "/device/driver/module"))
+        {
             string _module = readLink(path ~ "/device/driver/module").baseName;
             r.availableKernelModules ~= _module;
         }
     }
     // Bcache
-    auto bcacheDevices = dirEntries("/dev", SpanMode.shallow).map!(a => a.name).array.filter!(a => a.startsWith("bcache")).array;
+    auto bcacheDevices = dirEntries("/dev", SpanMode.shallow).map!(a => a.name)
+        .array
+        .filter!(a => a.startsWith("bcache"))
+        .array;
     bcacheDevices = bcacheDevices.filter!(device => device.indexOf("dev/bcachefs") == -1).array;
 
-    if (bcacheDevices.length > 0) {
+    if (bcacheDevices.length > 0)
+    {
         r.availableKernelModules ~= "bcache";
     }
     //Prevent unbootable systems if LVM snapshots are present at boot time.
@@ -872,27 +901,29 @@ MachineConfigInfo getMachineConfigInfo()
     }
     // Check if we're in a VirtualBox guest. If so, enable the guest additions.
     auto virt = execute!ProcessPipes("systemd-detect-virt", false).stdout.readln.strip;
-    switch (virt) {
-        case "oracle":
-            r.literalAttrs ~= Literal("virtualisation.virtualbox.guest.enable = true;");
-            break;
-        case "parallels":
-            r.literalAttrs ~= Literal("hardware.parallels.enable = true;");
-            r.literalAttrs ~= Literal("nixpkgs.config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) [ \"prl-tools\" ];");
-            break;
-        case "qemu":
-        case "kvm":
-        case "bochs":
-            r.imports ~= Literal("(modulesPath + \"/profiles/qemu-guest.nix\")");
-            break;
-        case "microsoft":
-            r.literalAttrs ~= Literal("virtualization.hypervGuest.enable = true;");
-            break;
-        case "systemd-nspawn":
-            r.literalAttrs ~= Literal("boot.isContainer;");
-            break;
-        default:
-            break;
+    switch (virt)
+    {
+    case "oracle":
+        r.literalAttrs ~= Literal("virtualisation.virtualbox.guest.enable = true;");
+        break;
+    case "parallels":
+        r.literalAttrs ~= Literal("hardware.parallels.enable = true;");
+        r.literalAttrs ~= Literal(
+            "nixpkgs.config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) [ \"prl-tools\" ];");
+        break;
+    case "qemu":
+    case "kvm":
+    case "bochs":
+        r.imports ~= Literal("(modulesPath + \"/profiles/qemu-guest.nix\")");
+        break;
+    case "microsoft":
+        r.literalAttrs ~= Literal("virtualization.hypervGuest.enable = true;");
+        break;
+    case "systemd-nspawn":
+        r.literalAttrs ~= Literal("boot.isContainer;");
+        break;
+    default:
+        break;
     }
 
     return r;

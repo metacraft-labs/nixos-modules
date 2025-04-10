@@ -65,7 +65,7 @@
         // optionalAttrs isLinux {
           folder-size-metrics = pkgs.callPackage ./folder-size-metrics { };
         }
-        // optionalAttrs (system == "x86_64-linux") rec {
+        // optionalAttrs (system == "x86_64-linux") {
           mcl = pkgs.callPackage ./mcl {
             buildDubPackage = inputs'.dlang-nix.legacyPackages.buildDubPackage.override {
               dCompiler = inputs'.dlang-nix.packages."ldc-binary-1_38_0";

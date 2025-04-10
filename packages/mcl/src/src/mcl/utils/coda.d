@@ -31,9 +31,10 @@ import std.traits : isArray;
 import mcl.utils.json : toJSON, fromJSON;
 import std.process : environment;
 import std.stdio : writeln, writefln;
-import std.algorithm : map, filter, find;
+import std.algorithm : map, filter;
 import std.exception : assertThrown;
 import std.sumtype : SumType;
+import std.array : join;
 import core.thread;
 
 struct CodaApiClient
@@ -438,8 +439,6 @@ struct CodaApiClient
             req["keyColumns"] = JSONValue(keyColumns.toJSON);
         return post!InsertRowsReturn(url, req, false).addedRowIds;
     }
-    alias upsertRows = insertRows;
-
 
     // Can't be implemented because of the lack of support for a body in DELETE requests
     // void deleteRows(string documentId, string tableId, string[] rowIds)
@@ -496,7 +495,7 @@ struct CodaApiClient
         string id;
     }
 
-    string updateRow(string documentId, string tableId, string rowId, RowValues row)
+    string updateRow(string documentId, string tableId, string rowId, RowValues row, string[] keyColumns = [])
     {
         string url = "/docs/%s/tables/%s/rows/%s".format(documentId, tableId, rowId);
         JSONValue req = JSONValue(
@@ -527,15 +526,11 @@ struct CodaApiClient
         coda.deleteRow("dEJJPwdxcw", tables[0].id, resp[0]);
     }
 
-    void updateOrInsertRow(string docId, string tableId, RowValues values) {
-        auto table = listRows(docId, tableId);
-        auto rows = find!(row => row.name == values.cells[0].value)(table);
-        if (rows.length > 0) {
-            updateRow(docId, tableId, rows[0].id, values);
-        }
-        else {
-            insertRows(docId, tableId, [values]);
-        }
+    void upsertRow(string docId, string tableId, RowValues values, string[] keyColumns = ["name"]) {
+        insertRows(docId, tableId, [values], keyColumns);
+    }
+    void upsertRows(string docId, string tableId, RowValues[] values, string[] keyColumns = ["name"]) {
+        insertRows(docId, tableId, values, keyColumns);
     }
     struct PushButtonResponse {
         string requestId;
