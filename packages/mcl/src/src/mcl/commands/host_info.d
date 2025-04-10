@@ -109,8 +109,6 @@ Info gatherHostInfo()
 
 void uploadHostInfo(CodaApiClient coda, const(Info) info)
 {
-
-
     auto docId = "0rz18jyJ1M";
     auto hostTableId = "grid-b3MAjem325";
     auto cpuTableId = "grid-mCI3x3nEIE";
