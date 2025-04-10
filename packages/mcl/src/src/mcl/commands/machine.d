@@ -224,7 +224,7 @@ struct MachineConfiguration
 }
 
 void createMachine(create_machine_args args, MachineType machineType, string machineName, User user) {
-    auto infoJSON = execute(["ssh", args.sshPath, "sudo nix --experimental-features \\'nix-command flakes\\' --refresh --accept-flake-config run github:metacraft-labs/nixos-modules/#mcl host_info"],false, false);
+    auto infoJSON = execute(["ssh", args.sshPath, "sudo nix --experimental-features \\'nix-command flakes\\' --refresh --accept-flake-config run github:metacraft-labs/nixos-modules/#mcl host-info"],false, false);
     auto infoJSONParsed = infoJSON.parseJSON;
     Info info = infoJSONParsed.fromJSON!Info;
 
