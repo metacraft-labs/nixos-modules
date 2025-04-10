@@ -22,7 +22,7 @@ import mcl.utils.process : execute, isRoot;
 import mcl.utils.number : humanReadableSize;
 import mcl.utils.array : uniqIfSame;
 import mcl.utils.nix : Literal;
-import mcl.utils.coda;
+import mcl.utils.coda : CodaApiClient, RowValues, CodaCell;
 
 // enum InfoFormat
 // {
@@ -40,7 +40,6 @@ struct Params
     {
     }
 }
-Params params;
 
 string[string] cpuinfo;
 
@@ -67,15 +66,15 @@ string[string] getProcInfo(string fileOrData, bool file = true)
 
 export void host_info()
 {
-    params = parseEnv!Params;
+    const Params params = parseEnv!Params;
 
-    Info info = getInfo();
+    Info info = params.getInfo();
 
     writeln(info.toJSON(true).toPrettyString(JSONOptions.doNotEscapeSlashes));
 
 }
 
-Info getInfo()
+Info getInfo(Params params)
 {
 
     cpuinfo = getProcInfo("/proc/cpuinfo");
@@ -96,6 +95,7 @@ Info getInfo()
     info.hardwareInfo.graphicsProcessorInfo = getGraphicsProcessorInfo();
 
     if (params.codaApiToken) {
+        writeln("Coda API token specified -> uploading");
         auto docId = "0rz18jyJ1M";
         auto hostTableId = "grid-b3MAjem325";
         auto cpuTableId = "grid-mCI3x3nEIE";
@@ -174,6 +174,8 @@ Info getInfo()
         ]);
         coda.updateOrInsertRow(docId, storageTableId, storageValues);
     }
+    else
+        writeln("No Coda API token specified -> not uploading");
 
     return info;
 }
