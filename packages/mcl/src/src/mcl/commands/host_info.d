@@ -113,7 +113,7 @@ Info getInfo(Params params)
             CodaCell("JSON", info.toJSON(true).toPrettyString(JSONOptions.doNotEscapeSlashes))
         ]);
 
-        coda.updateOrInsertRow(docId, hostTableId, hostValues);
+        coda.upsertRow(docId, hostTableId, hostValues);
 
         auto cpuValues = RowValues([
             CodaCell("Host Name", info.softwareInfo.hostname),
@@ -122,7 +122,7 @@ Info getInfo(Params params)
             CodaCell("Architecture", info.hardwareInfo.processorInfo.architectureInfo.architecture),
             CodaCell("Flags", info.hardwareInfo.processorInfo.architectureInfo.flags),
         ]);
-        coda.updateOrInsertRow(docId, cpuTableId, cpuValues);
+        coda.upsertRow(docId, cpuTableId, cpuValues);
 
         auto memoryValues = RowValues([
             CodaCell("Host Name", info.softwareInfo.hostname),
@@ -134,7 +134,7 @@ Info getInfo(Params params)
             CodaCell("Total", info.hardwareInfo.memoryInfo.total),
             CodaCell("Speed", info.hardwareInfo.memoryInfo.speed),
         ]);
-        coda.updateOrInsertRow(docId, memoryTableId, memoryValues);
+        coda.upsertRow(docId, memoryTableId, memoryValues);
 
         auto motherboardValues = RowValues([
             CodaCell("Host Name", info.softwareInfo.hostname),
@@ -147,7 +147,7 @@ Info getInfo(Params params)
             CodaCell("BIOS Release", info.hardwareInfo.motherboardInfo.biosInfo.release),
             CodaCell("BIOS Date", info.hardwareInfo.motherboardInfo.biosInfo.date)
         ]);
-        coda.updateOrInsertRow(docId, motherboardTableId, motherboardValues);
+        coda.upsertRow(docId, motherboardTableId, motherboardValues);
 
         auto gpuValues = RowValues([
             CodaCell("Host Name", info.softwareInfo.hostname),
@@ -155,7 +155,7 @@ Info getInfo(Params params)
             CodaCell("Model", info.hardwareInfo.graphicsProcessorInfo.model),
             CodaCell("VRam", info.hardwareInfo.graphicsProcessorInfo.vram)
         ]);
-        coda.updateOrInsertRow(docId, gpuTableId, gpuValues);
+        coda.upsertRow(docId, gpuTableId, gpuValues);
 
         auto osValues = RowValues([
             CodaCell("Host Name", info.softwareInfo.hostname),
@@ -164,7 +164,7 @@ Info getInfo(Params params)
             CodaCell("Kernel", info.softwareInfo.operatingSystemInfo.kernel),
             CodaCell("Kernel Version", info.softwareInfo.operatingSystemInfo.kernelVersion)
         ]);
-        coda.updateOrInsertRow(docId, osTableId, osValues);
+        coda.upsertRow(docId, osTableId, osValues);
 
         auto storageValues = RowValues([
             CodaCell("Host Name", info.softwareInfo.hostname),
@@ -172,7 +172,7 @@ Info getInfo(Params params)
             CodaCell("Total", info.hardwareInfo.storageInfo.total),
             CodaCell("JSON", info.hardwareInfo.storageInfo.toJSON(true).toPrettyString(JSONOptions.doNotEscapeSlashes))
         ]);
-        coda.updateOrInsertRow(docId, storageTableId, storageValues);
+        coda.upsertRow(docId, storageTableId, storageValues);
     }
     else
         writeln("No Coda API token specified -> not uploading");
