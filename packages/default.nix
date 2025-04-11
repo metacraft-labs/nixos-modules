@@ -8,6 +8,7 @@
     {
       inputs',
       pkgs,
+      self',
       ...
     }:
     let
@@ -351,5 +352,9 @@
 
           inherit cardano graphql;
         };
+
+      overlayAttrs = {
+        inherit (self'.legacyPackages) metacraft-labs nix2container;
+      };
     };
 }
