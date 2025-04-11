@@ -59,7 +59,7 @@ string[string] getProcInfo(string fileOrData, bool file = true)
     return r;
 }
 
-@(Command("host-info").Description("Get information about the host machine"))
+@(Command("host-info", "host_info").Description("Get information about the host machine"))
 struct host_info_args {}
 
 export int host_info(host_info_args args)
