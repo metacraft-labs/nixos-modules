@@ -145,7 +145,7 @@ version (unittest)
 
 Params params;
 
-@(Command("ci-matrix").Description("Print a table of the cache status of each package"))
+@(Command("ci-matrix", "ci_matrix").Description("Print a table of the cache status of each package"))
 struct ci_matrix_args
 {
 }
@@ -187,7 +187,7 @@ Package[] checkCacheStatus(Package[] packages)
     return packages;
 }
 
-@(Command("print-table").Description("Print a table of the cache status of each package"))
+@(Command("print-table", "print_table").Description("Print a table of the cache status of each package"))
 struct print_table_args
 {
 }
