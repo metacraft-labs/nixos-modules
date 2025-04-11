@@ -32,7 +32,7 @@ export int get_fstab(get_fstab_args args)
     return 0;
 }
 
-@(Command("get-fstab").Description("Get the store path of the fstab file for a deployment"))
+@(Command("get-fstab", "get_fstab").Description("Get the store path of the fstab file for a deployment"))
 export struct get_fstab_args {
     @(NamedArgument(["cachix-auth-token"]).Required().Placeholder("XXX").Description("Auth Token for Cachix"))
     string cachixAuthToken;
