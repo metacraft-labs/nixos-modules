@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+FLAKE_INPUT=${FLAKE_INPUT:-""}
+
 if ! git config --get user.name >/dev/null 2>&1 || \
   [ "$(git config --get user.name)" = "" ] ||
   ! git config --get user.email >/dev/null 2>&1 || \
@@ -15,7 +17,7 @@ fi
 current_commit="$(git rev-parse HEAD)"
 export PRE_COMMIT_ALLOW_NO_CONFIG=1
 
-nix flake update --accept-flake-config --commit-lock-file
+nix flake update $FLAKE_INPUT --accept-flake-config --commit-lock-file
 commit_after_update="$(git rev-parse HEAD)"
 
 if [[ "$commit_after_update" = "$current_commit" ]]; then
