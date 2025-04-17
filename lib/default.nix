@@ -21,6 +21,8 @@ let
   inherit (strings) concatStringsSep;
 in
 rec {
+  inherit (import ./expr-to-nix-str.nix { inherit lib; }) toNixString;
+
   isSubsetOf = needle: haystack: length (lib.lists.intersectLists needle haystack) == length needle;
 
   haveCommonElements = needle: haystack: length (lib.lists.intersectLists needle haystack) > 0;

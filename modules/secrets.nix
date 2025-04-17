@@ -1,4 +1,9 @@
-{ withSystem, inputs, ... }:
+{
+  withSystem,
+  inputs,
+  self,
+  ...
+}:
 {
   flake.modules.nixos.mcl-secrets =
     {
@@ -93,18 +98,29 @@
                     description = "Extra keys which can decrypt the secrets.";
                   };
                   nix-file = mkOption {
-                    default = builtins.toFile "${serviceName}-secrets.nix" ''
-                      let
-                        hostKey = ["${sshKey}"];
-                        extraKeysPerService = ["${concatStringsSep "\"\"" config.extraKeys}"];
-                        extraKeysPerHost = ["${concatStringsSep "\"\"" mcl-secrets.extraKeys}"];
-                      in {
-                        ${concatMapStringsSep "\n" (
-                          n: "\"${n}.age\".publicKeys = hostKey ++ extraKeysPerService ++ extraKeysPerHost;"
-                        ) (builtins.attrNames config.secrets)}
-                      }
-                    '';
                     type = types.path;
+                    # default = builtins.toFile "${serviceName}-secrets.nix" ''
+                    #   let
+                    #     hostKey = ["${sshKey}"];
+                    #     extraKeysPerService = ["${concatStringsSep "\"\"" config.extraKeys}"];
+                    #     extraKeysPerHost = ["${concatStringsSep "\"\"" mcl-secrets.extraKeys}"];
+                    #   in {
+                    #     ${concatMapStringsSep "\n" (
+                    #       n: "\"${n}.age\".publicKeys = hostKey ++ extraKeysPerService ++ extraKeysPerHost;"
+                    #     ) (builtins.attrNames config.secrets)}
+                    #   }
+                    # '';
+                    default = builtins.toFile "${serviceName}-secrets.nix" (
+                      (import ../lib/expr-to-nix-str.nix).toNixString (
+                        builtins.mapAttrs (
+                          n: _:
+                          {
+                            ${n}.age.publicKeys = sshKey ++ config.extraKeys;
+                          }
+                            config.secrets
+                        )
+                      )
+                    );
                   };
                 };
               }
