@@ -64,7 +64,7 @@ jobs:
         uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ steps.generate-token.outputs.token }}
-          title: 'Update Nix Flake lockfile'
+          title: ${{ inputs.flake-input == '' && 'Update Nix Flake lockfile' || format('Update {0} Flake input' , inputs.flake-input) }}
           body-path: commit_msg_body.txt
           branch: 'create-pull-request/update-flake-lockfile'
           delete-branch: true
