@@ -377,7 +377,7 @@ void createMachineConfiguration()
 
 Params params;
 
-export void machine_create()
+export void machine_create(string[] args)
 {
     params = parseEnv!Params;
     createMachineConfiguration();
