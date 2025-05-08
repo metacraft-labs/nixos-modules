@@ -1,0 +1,51 @@
+{
+  lib,
+  disk,
+  isSecondary,
+  espSize,
+  swapSize,
+  legacyBoot,
+  poolName,
+}:
+{
+  type = "disk";
+  device = disk;
+  content = {
+    type = "gpt";
+    partitions = {
+      "${if legacyBoot then "boot" else "ESP"}" =
+        {
+          device = "${disk}-part1";
+          size = espSize;
+          type = "EF00";
+          content = {
+            type = "filesystem";
+            format = "vfat";
+            mountpoint = if isSecondary then null else "/boot";
+            mountOptions = [ "umask=0077" ];
+          };
+        }
+        // lib.optionalAttrs legacyBoot {
+          type = "EF02";
+        };
+      "zfs" = {
+        device = "${disk}-part2";
+        end = "-${swapSize}";
+        type = "BF00";
+        content = {
+          type = "zfs";
+          pool = "${poolName}";
+        };
+      };
+
+      "swap" = {
+        device = "${disk}-part3";
+        size = swapSize;
+        content = {
+          type = "swap";
+          randomEncryption = true;
+        };
+      };
+    };
+  };
+}
