@@ -38,9 +38,12 @@ jobs:
 
             This comment will be updated automatically with the status of each package.
 
-  generate-matrix-matrix:
-    name: Generate Matrix of Matrices
+  generate-matrices:
+    name: Generate Matrices
     runs-on: ${{ fromJSON(inputs.runner) }}
+    outputs:
+      matrix: ${{ steps.merge-matrix.outputs.matrix }}
+      fullMatrix: ${{ steps.merge-matrix.outputs.fullMatrix }}
     steps:
       - name: Install Nix
         uses: metacraft-labs/nixos-modules/.github/install-nix@main
@@ -54,62 +57,49 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Generate Matrix for Matrix
-        id: generate-matrix
+        id: generate-matrix-of-matrices
         env:
           CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
           MCL_BRANCH: ${{ github.repository == 'metacraft-labs/nixos-modules' && github.sha || 'main' }}
-        run: nix run --accept-flake-config github:metacraft-labs/nixos-modules/${{ env.MCL_BRANCH }}#mcl shard_matrix
-    outputs:
-      gen_matrix: ${{ steps.generate-matrix.outputs.gen_matrix }}
-
-  generate-matrix:
-    needs: generate-matrix-matrix
-    runs-on: ${{ fromJSON(inputs.runner) }}
-    strategy:
-      matrix: ${{fromJSON(needs.generate-matrix-matrix.outputs.gen_matrix)}}
-    name: Generate Matrix ${{ matrix.digit != -1 && matrix.digit || '' }}
-    steps:
-      - name: Install Nix
-        uses: metacraft-labs/nixos-modules/.github/install-nix@main
-        with:
-          cachix-cache: ${{ vars.CACHIX_CACHE }}
-          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
-          substituters: ${{ vars.SUBSTITUTERS }}
-          nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
-
-      - uses: actions/checkout@v4
+        run: |
+          nix run --accept-flake-config github:metacraft-labs/nixos-modules/${{ env.MCL_BRANCH}}#mcl shard_matrix
 
       - name: Generate CI Matrix
         id: generate-matrix
-        shell: bash
         env:
           IS_INITIAL: 'true'
           CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          FLAKE_PRE: ${{ matrix.prefix }}
-          FLAKE_POST: ${{ matrix.postfix }}
           MCL_BRANCH: ${{ github.repository == 'metacraft-labs/nixos-modules' && github.sha || 'main' }}
-        run: nix run --accept-flake-config github:metacraft-labs/nixos-modules/${{ env.MCL_BRANCH }}#mcl ci_matrix
+        run: |
+          matrix_json='${{ steps.generate-matrix-of-matrices.outputs.gen_matrix }}'
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: matrix-pre${{ matrix.digit != -1 && format('-{0}', matrix.digit) || '' }}
-          path: matrix-pre.json
-    outputs:
-      matrix: ${{ steps.generate-matrix.outputs.matrix }}
+          echo "GEN_MATRIX_JSON is:"
+          echo "$matrix_json"
 
-  slurp-matrix:
-    runs-on: ${{ fromJSON(inputs.runner) }}
-    needs: generate-matrix
-    name: Merge matrices
-    outputs:
-      matrix: ${{ steps.matrix.outputs.matrix }}
-      fullMatrix: ${{ steps.matrix.outputs.fullMatrix }}
-    steps:
-      - uses: actions/download-artifact@v4
+          final_matrix='[]'
+
+          while read shard; do
+            prefix=$(jq -r '.prefix' <<<"$shard")
+            postfix=$(jq -r '.postfix' <<<"$shard")
+
+            echo "Processing shard -> prefix: $prefix, postfix: $postfix"
+
+            shard_output=$(PREFIX="$prefix" POSTFIX="$postfix" \
+              nix run --accept-flake-config \
+              github:metacraft-labs/nixos-modules/${MCL_BRANCH}#mcl ci_matrix)
+
+            echo "Shard output: $shard_output"
+
+            final_matrix=$(jq --argjson shardData "$shard_output" \
+                              '. + [$shardData]' <<<"$final_matrix")
+          done < <(jq -c '.include[]' <<< "$matrix_json")
+
+          echo "Final aggregated matrix: $final_matrix"
+
       - name: Merge matrices
+        id: merge-matrix
         run: |
           # Check if jq is installed
           if ! command -v jq &> /dev/null; then
@@ -117,10 +107,11 @@ jobs:
             export PATH
           fi
 
-          ls */matrix-pre.json
-          matrix="$(cat */matrix-pre.json | jq -cr '.include[]' | jq '[ select (.isCached == false) ]' | jq -s 'add' | jq -c  '. | {include: .}')"
-
-          if [[ "$matrix" == '' ]] || [[ "$matrix" == '{}' ]] || [[ "$matrix" == '{"include":null}' ]] || [[ "$matrix" == '{"include":[]}' ]]; then
+          if [ -f matrix-pre.json ]; then
+            echo "Found matrix-pre.json. Merging..."
+            matrix=$(jq -cr '.include' matrix-pre.json | jq -c '{include: .}')
+          else
+            # Fallback if the file doesn't exist
             matrix='{"include":[]}'
           fi
 
@@ -128,22 +119,15 @@ jobs:
           echo "Matrix:"
           echo "$matrix" | jq
           echo "---"
-          echo
-          echo
 
-          fullMatrix="$(cat */matrix-pre.json | jq -cr '.include' | jq -s 'add' | jq -c '. | {include: .}')"
+          # fullMatrix could be a superset of 'matrix'
+          # or exactly the same, depending on your logic
+          fullMatrix="$matrix"
 
-          echo "---"
-          echo "Full Matrix:"
-          echo "$fullMatrix" | jq
-          echo "---"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "fullMatrix=$fullMatrix" >> "$GITHUB_OUTPUT"
 
-          echo "matrix=$matrix" >> $GITHUB_OUTPUT
-          echo "fullMatrix=$fullMatrix" >> $GITHUB_OUTPUT
-
-        id: matrix
       - name: Post Comment
-        id: print-matrix
         uses: metacraft-labs/nixos-modules/.github/print-matrix@main
         with:
           is-initial: 'true'
@@ -151,25 +135,21 @@ jobs:
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
-          precalc_matrix: ${{ steps.matrix.outputs.fullMatrix }}
+          precalc_matrix: ${{ steps.merge-matrix.outputs.fullMatrix }}
           pr-comment-github-token: ${{ secrets.GITHUB_TOKEN }}
           nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
 
   build:
-    needs: slurp-matrix
-    if: needs.slurp-matrix.outputs.matrix != '{"include":[]}'
-
+    needs: generate-matrices
+    if: needs.generate-matrices.outputs.matrix != '{"include":[]}'
     strategy:
       fail-fast: false
-      matrix: ${{fromJSON( needs.slurp-matrix.outputs.matrix )}}
-
+      matrix: ${{ fromJSON(needs.generate-matrices.outputs.matrix) }}
     name: ${{ matrix.name }} | ${{ matrix.system }}
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.allowedToFail }}
-
     steps:
       - uses: actions/checkout@v4
-
       - name: Install Nix
         uses: metacraft-labs/nixos-modules/.github/install-nix@main
         with:
@@ -178,20 +158,18 @@ jobs:
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
           nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
-
       - name: Build ${{ matrix.name }}
         run: |
           nix build -L --no-link --keep-going --show-trace \
             '.#${{ matrix.attrPath }}'
-
       - name: Push to Cachix ${{ matrix.name }}
         run: |
           cachix push ${{ vars.CACHIX_CACHE }} ${{ matrix.output }}
 
   results:
+    needs: [build, generate-matrices]
     runs-on: ${{ fromJSON(inputs.runner) }}
     name: Final Results
-    needs: [build, slurp-matrix]
     if: always()
     steps:
       - name: Post Comment
@@ -202,19 +180,16 @@ jobs:
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
-          precalc_matrix: ${{ needs.slurp-matrix.outputs.fullMatrix }}
+          precalc_matrix: ${{ needs.generate-matrices.outputs.fullMatrix }}
           pr-comment-github-token: ${{ secrets.GITHUB_TOKEN }}
           nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
-
       - run: exit 1
         if: >-
-          needs.slurp-matrix.outputs.matrix != '{"include":[]}'
+          needs.generate-matrices.outputs.matrix != '{"include":[]}'
             && contains(needs.*.result, 'failure')
             || contains(needs.*.result, 'cancelled')
-
       - uses: actions/checkout@v4
         if: inputs.run-cachix-deploy
-
       - name: Deploy
         if: inputs.run-cachix-deploy
         env:
@@ -222,4 +197,4 @@ jobs:
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
           CACHIX_ACTIVATE_TOKEN: '${{ secrets.CACHIX_ACTIVATE_TOKEN }}'
           MCL_BRANCH: ${{ github.repository == 'metacraft-labs/nixos-modules' && github.sha || 'main' }}
-        run: nix run --accept-flake-config github:metacraft-labs/nixos-modules/${{ env.MCL_BRANCH }}#mcl deploy_spec
+        run: nix run --accept-flake-config github:metacraft-labs/nixos-modules/${MCL_BRANCH}#mcl deploy_spec
