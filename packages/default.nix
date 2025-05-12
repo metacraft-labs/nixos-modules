@@ -61,7 +61,6 @@
           inherit callPyPackage pkgs;
           inherit (inputs') nixpkgs-unstable;
         };
-        comfyui-nodes = import ./comfyui/nodes { inherit callPyPackage; };
 
       };
 

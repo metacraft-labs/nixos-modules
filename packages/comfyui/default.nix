@@ -122,6 +122,7 @@ in
       license = lib.licenses.gpl3;
       platforms = lib.platforms.all;
     };
+    passthru.nodes = import ./nodes { inherit callPyPackage; };
   }
   (
     ''
