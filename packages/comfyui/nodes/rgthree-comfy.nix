@@ -2,7 +2,6 @@
   stdenv,
   python312,
   fetchFromGitHub,
-  lib,
 }:
 stdenv.mkDerivation rec {
   pname = "rgthree-comfy";
@@ -19,6 +18,5 @@ stdenv.mkDerivation rec {
   '';
 
   dependencies = buildInputs;
-  buildInputs = with python312.pkgs; [
-  ];
+  buildInputs = [ ];
 }

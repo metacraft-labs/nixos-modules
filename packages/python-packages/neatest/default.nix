@@ -1,9 +1,6 @@
 {
-  lib,
   buildPythonPackage,
   fetchgit,
-  setuptools,
-  python312,
   chkpkg,
 }:
 buildPythonPackage rec {
@@ -11,7 +8,7 @@ buildPythonPackage rec {
   version = "3.9.1";
   pyproject = false;
 
-  buildInputs = with python312.pkgs; [
+  buildInputs = [
     chkpkg
   ];
 

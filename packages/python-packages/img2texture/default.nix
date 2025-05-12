@@ -1,13 +1,11 @@
 {
-  lib,
   buildPythonPackage,
   fetchgit,
-  setuptools,
   python312,
   chkpkg,
   neatest,
 }:
-buildPythonPackage rec {
+buildPythonPackage {
   pname = "img2texture";
   version = "unstable";
   pyproject = false;

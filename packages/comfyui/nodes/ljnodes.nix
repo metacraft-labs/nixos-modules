@@ -2,7 +2,6 @@
   stdenv,
   python312,
   fetchFromGitHub,
-  lib,
 }:
 stdenv.mkDerivation rec {
   pname = "ljnodes";
@@ -18,6 +17,5 @@ stdenv.mkDerivation rec {
     cp -r $src/* $out/custom_nodes/${pname}
   '';
 
-  dependencies = with python312.pkgs; [
-  ];
+  dependencies = [ ];
 }

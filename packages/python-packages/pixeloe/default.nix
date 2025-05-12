@@ -1,12 +1,10 @@
 {
-  lib,
   buildPythonPackage,
   fetchgit,
-  setuptools,
   python312,
   korniaWithCuda,
 }:
-buildPythonPackage rec {
+buildPythonPackage {
   pname = "pixeloe";
   version = "unstable";
   pyproject = true;

@@ -2,7 +2,6 @@
   stdenv,
   python312,
   fetchFromGitHub,
-  lib,
 }:
 stdenv.mkDerivation rec {
   pname = "inspire-pack";

@@ -9,7 +9,6 @@
   pilgram,
   img2texture,
   cstr,
-  lib,
 }:
 stdenv.mkDerivation rec {
   pname = "was-node-suite";

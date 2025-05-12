@@ -1,8 +1,6 @@
 {
   lib,
-  stdenv,
   fetchPypi,
-  python312,
   buildPythonPackage,
 }:
 buildPythonPackage rec {

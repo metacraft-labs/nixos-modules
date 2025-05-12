@@ -1,11 +1,9 @@
 {
-  lib,
   buildPythonPackage,
   fetchgit,
-  setuptools,
   python312,
 }:
-buildPythonPackage rec {
+buildPythonPackage {
   pname = "segment-anything";
   version = "unstable";
 

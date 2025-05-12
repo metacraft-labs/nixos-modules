@@ -8,9 +8,8 @@
   userPath,
   stdenv,
   fetchFromGitHub,
-  writeTextFile,
 }:
-stdenv.mkDerivation rec {
+stdenv.mkDerivation {
   pname = "comfyui-base";
   inherit version;
 

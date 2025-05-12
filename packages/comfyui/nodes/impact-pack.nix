@@ -4,7 +4,6 @@
   fetchFromGitHub,
   segment-anything,
   transformersWithCuda,
-  lib,
 }:
 stdenv.mkDerivation rec {
   pname = "impact-pack";

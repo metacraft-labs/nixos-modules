@@ -1,17 +1,13 @@
 {
-  lib,
   buildPythonPackage,
   fetchgit,
-  setuptools,
-  python312,
 }:
-buildPythonPackage rec {
+buildPythonPackage {
   pname = "cstr";
   version = "unstable";
   pyproject = false;
 
-  buildInputs = with python312.pkgs; [
-  ];
+  buildInputs = [ ];
 
   src = fetchgit {
     url = "https://github.com/WASasquatch/cstr";

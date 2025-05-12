@@ -2,10 +2,6 @@
   lib,
   runCommand,
   callPyPackage,
-  python312,
-  spandrel,
-  comfyui-frontend-package,
-  comfyui-workflow-templates,
   writers,
   writeTextFile,
   pkgs,
@@ -28,7 +24,6 @@
     vae_approx = [ ];
     gligen = [ ];
   },
-  wildcards ? { },
 }:
 
 let
@@ -126,9 +121,10 @@ in
   }
   (
     ''
-      mkdir -p $out/{bin,custom_nodes/was-node-suite,models}
+      mkdir -p $out/{bin,custom_nodes,models}
     ''
     + (lib.concatMapStrings (dir: ''
+      [[ ${dir.pname} == "was-node-suite" ]] && mkdir -p $out/custom_nodes/was-node-suite
       cp -r ${dir}/* $out/
     '') ([ comfyui-base ] ++ customNodes))
     + (lib.concatMapStrings (model: ''

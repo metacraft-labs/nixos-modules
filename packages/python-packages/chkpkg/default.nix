@@ -1,8 +1,6 @@
 {
-  lib,
   buildPythonPackage,
   fetchgit,
-  setuptools,
   python312,
 }:
 buildPythonPackage rec {
