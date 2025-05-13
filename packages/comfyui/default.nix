@@ -69,7 +69,7 @@ let
           else
             pkgs.fetchurl rec {
               url = model.url;
-              name = if builtins.hasAttr "name" model then model.name else builtins.baseNameOf model.url;
+              name = if model.name != null then model.name else builtins.baseNameOf model.url;
               hash = model.hash;
               downloadToTemp = true;
               recursiveHash = true;
