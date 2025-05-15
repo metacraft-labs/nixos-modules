@@ -32,6 +32,8 @@ on:
 jobs:
   main:
     runs-on: ${{ fromJSON(inputs.runner) }}
+    outputs:
+      pr_number: ${{ steps.create.outputs.pr_number }}
 
     steps:
       - uses: actions/checkout@v4
@@ -60,6 +62,7 @@ jobs:
           private_key: ${{ secrets.CREATE_PR_APP_PRIVATE_KEY }}
 
       - name: Create Pull Request
+        id: create-pr
         if: ${{ hashFiles('commit_msg_body.txt') != '' }}
         uses: peter-evans/create-pull-request@v7
         with:
