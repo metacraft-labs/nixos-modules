@@ -29,11 +29,13 @@ on:
         description: Private key of the GitHub App used for opening pull requests.
         required: true
 
+    outputs:
+      pr-url: ${{ steps.create-pr.outputs.pull-request-url }}
+      pr-number: ${{ steps.create-pr.outputs.pull-request-number }}
+
 jobs:
   main:
     runs-on: ${{ fromJSON(inputs.runner) }}
-    outputs:
-      pr_number: ${{ steps.create.outputs.pr_number }}
 
     steps:
       - uses: actions/checkout@v4
