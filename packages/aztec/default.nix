@@ -28,7 +28,11 @@ stdenv.mkDerivation {
     })
   ];
   sourceRoot = ".";
-  unpackCmd = "cp $curSrc $(basename $(stripHash $curSrc))";
+  unpackCmd = ''
+    curTrg=$(basename $(stripHash $curSrc))
+    cp $curSrc $curTrg
+    chmod +x $curTrg
+  '';
   installPhase = ''
     mkdir -p $out/bin
     cp -r * .* $out/bin/
