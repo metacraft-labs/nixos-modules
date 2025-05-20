@@ -1,8 +1,25 @@
 module mcl.utils.log;
 
-T prompt(T)(string message, T[] options = [], string input = "unfilled")
+template MaybeArray(T)
 {
-    import std.stdio : write, writeln, readln;
+    static if (is(immutable(T) == immutable(char[])))
+    {
+        alias MaybeArray = T[];
+    }
+    else static if (is(T == U[], U))
+    {
+        alias MaybeArray = T;
+    }
+    else
+    {
+        alias MaybeArray = T[];
+    }
+
+}
+
+T prompt(T)(string message, MaybeArray!T options = [], string input = "unfilled")
+{
+    import std.stdio : write, writeln, readln, stdin;
     import std.string : strip;
     import std.algorithm : canFind, map;
     import std.conv : to;
@@ -30,7 +47,7 @@ T prompt(T)(string message, T[] options = [], string input = "unfilled")
     {
         input = readln().strip();
     }
-    if (options.length && !options.canFind(input.to!T))
+    if (options.length && !(options.to!(string[])).canFind(input))
     {
         writeln("Invalid input.");
         return prompt!T(message, options);
