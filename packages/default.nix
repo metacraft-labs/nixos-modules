@@ -72,6 +72,7 @@
             };
             inherit (legacyPackages.inputs.nixpkgs) cachix nix nix-eval-jobs;
           };
+          tacchain = pkgs.callPackage ./tacchain { };
         };
     };
 }
