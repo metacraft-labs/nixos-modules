@@ -7,5 +7,6 @@
     ./random-alerts
     ./host-info.nix
     ./secrets.nix
+    ./tacchain
   ];
 }
