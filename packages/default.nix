@@ -1,18 +1,14 @@
 { lib, ... }:
 {
   perSystem =
-    {
-      inputs',
-      pkgs,
-      ...
-    }:
+    { inputs', pkgs, ... }:
     let
       inherit (lib) optionalAttrs versionAtLeast;
       inherit (pkgs) system;
       inherit (pkgs.hostPlatform) isLinux;
     in
     rec {
-      legacyPackages = {
+      legacyPackages = rec {
         inputs = {
           nixpkgs = rec {
             inherit (pkgs) cachix;
@@ -51,6 +47,21 @@
             rustfmt
             targets.wasm32-wasi.latest.rust-std
           ];
+
+        callPyPackage = pkgs.lib.callPackageWith (
+          pkgs
+          // pkgs.python312.pkgs
+          // pythonPackages
+          // {
+            poetry = pkgs.poetry;
+          }
+        );
+
+        pythonPackages = import ./python-packages {
+          inherit callPyPackage pkgs;
+          inherit (inputs') nixpkgs-unstable;
+        };
+
       };
 
       packages =
@@ -65,12 +76,15 @@
         // optionalAttrs isLinux {
           folder-size-metrics = pkgs.callPackage ./folder-size-metrics { };
         }
-        // optionalAttrs (system == "x86_64-linux") {
+        // optionalAttrs (system == "x86_64-linux") rec {
           mcl = pkgs.callPackage ./mcl {
             buildDubPackage = inputs'.dlang-nix.legacyPackages.buildDubPackage.override {
               dCompiler = inputs'.dlang-nix.packages."ldc-binary-1_38_0";
             };
             inherit (legacyPackages.inputs.nixpkgs) cachix nix nix-eval-jobs;
+          };
+          comfyui = legacyPackages.callPyPackage ./comfyui {
+            inherit (legacyPackages) callPyPackage;
           };
         };
     };
