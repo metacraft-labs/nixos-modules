@@ -21,7 +21,7 @@ export void deploy_spec()
 
     if (!exists(deploySpecFile))
     {
-        auto nixosConfigs = flakeAttr("legacyPackages", SupportedSystem.x86_64_linux, "bareMetalMachines")
+        auto nixosConfigs = flakeAttr("legacyPackages", SupportedSystem.x86_64_linux, "serverMachines")
             .nixEvalJobs(params.cachixCache.cachixNixStoreUrl);
 
         auto configsMissingFromCachix = nixosConfigs.filter!(c => !c.isCached);
