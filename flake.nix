@@ -16,12 +16,13 @@
     nixos-2311.url = "github:NixOS/nixpkgs/nixos-23.11";
     nixos-2405.url = "github:NixOS/nixpkgs/nixos-24.05";
     nixos-2411.url = "github:NixOS/nixpkgs/nixos-24.11";
+    nixos-2505.url = "github:NixOS/nixpkgs/nixos-25.05";
 
-    nixpkgs.follows = "nixos-2411";
+    nixpkgs.follows = "nixos-2505";
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
 
     home-manager = {
-      url = "github:nix-community/home-manager/release-24.11";
+      url = "github:nix-community/home-manager/release-25.05";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
@@ -121,7 +122,7 @@
     nixos-images = {
       url = "github:nix-community/nixos-images";
       inputs = {
-        nixos-stable.follows = "nixos-2405";
+        nixos-stable.follows = "nixos-2505";
         nixos-unstable.follows = "nixpkgs-unstable";
       };
     };
@@ -162,11 +163,6 @@
       # inputs.nixpkgs.follows = "nixpkgs";
       #
       # See: https://github.com/nix-community/nixd/blob/main/nixd/docs/editor-setup.md#installation---get-a-working-executable:~:text=do%20NOT%20override%20nixpkgs%20revision
-    };
-
-    validator-ejector = {
-      url = "github:metacraft-labs/validator-ejector?ref=add/nix-package";
-      inputs.nixpkgs.follows = "nixpkgs";
     };
 
     terranix = {
