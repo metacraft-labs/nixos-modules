@@ -33,9 +33,6 @@
         // optionalAttrs (system == "x86_64-linux" || system == "aarch64-darwin") {
           inherit (self'.legacyPackages.inputs.ethereum-nix) geth;
         }
-        // optionalAttrs isLinux {
-          inherit (inputs'.validator-ejector.packages) validator-ejector;
-        }
         // optionalAttrs (system == "x86_64-linux") {
           inherit (pkgs) terraform;
           inherit (self'.legacyPackages.inputs.terranix) terranix;

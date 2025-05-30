@@ -9,9 +9,6 @@
     }:
     let
       cfg = config.services.lido-validator-ejector;
-      package = withSystem pkgs.stdenv.hostPlatform.system (
-        { config, ... }: config.packages.validator-ejector
-      );
       inherit (import ../../lib.nix { inherit lib; }) toEnvVariables;
     in
     {

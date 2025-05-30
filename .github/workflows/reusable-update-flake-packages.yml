@@ -57,4 +57,4 @@ jobs:
         uses: metacraft-labs/nix-update-action@main
         with:
           token: ${{ steps.generate-token.outputs.token }}
-          blacklist: 'ci-matrix,folder-size-metrics,mcl,validator-ejector'
+          blacklist: 'ci-matrix,folder-size-metrics,mcl'
