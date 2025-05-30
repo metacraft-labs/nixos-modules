@@ -1,0 +1,19 @@
+{
+    "codaApiToken": "<TODO for user>",
+    "userNames": {
+        "Peter": "Peter Example",
+        "Alexander": "Alexander Ivanov"
+    },
+    "defaultUserName": "",
+    "defaultParentTicket": "Example Base",
+    "defaultStatus": "Backlog",
+    "defaultPriority": "normal",
+    "defaultEstimate": "",
+    "defaultTshirtSize": "M",
+    "defaultMilestone": "beta",
+    "milestoneShortNames": {
+        "beta": "example: beta",
+        "month": "example: this month",
+        "v1": "example: v1"
+    }
+}
