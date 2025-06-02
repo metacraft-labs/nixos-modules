@@ -15,8 +15,6 @@ buildType "unittest-debug" {
 }
 
 dflags "-preview=in"
-dflags "-preview=shortenedMethods"
-dflags "-defaultlib=libphobos2.so" platform="dmd"
 lflags "-fuse-ld=gold" platform="dmd"
 dflags "-mcpu=generic" platform="ldc"
 dflags "-mcpu=baseline" platform="dmd"
