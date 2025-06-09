@@ -90,7 +90,8 @@ pkgs.writeShellApplication {
         secretsFolder="$machineFolder/secrets/$service"
         echo "Re-encripting secrets for service $s"
         if [ "$vm" == true ]; then
-          RULES="$(nix eval --raw ".#nixosConfigurations.$machine.config.virtualisation.vmVariant.mcl.secrets.services.$service.nix-file")"
+          RULES="$(nix eval --raw ".#nixosConfigurations.''${machine}-vm.config.mcl.secrets.services.$service.nix-file")"
+
         else
           RULES="$(nix eval --raw ".#nixosConfigurations.$machine.config.mcl.secrets.services.$service.nix-file")"
         fi
