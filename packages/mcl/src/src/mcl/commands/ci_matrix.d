@@ -2,7 +2,7 @@ module mcl.commands.ci_matrix;
 
 import std.stdio : writeln, stderr, stdout;
 import std.traits : EnumMembers;
-import std.string : indexOf, splitLines;
+import std.string : indexOf, splitLines, strip;
 import std.algorithm : map, filter, reduce, chunkBy, find, any, sort, startsWith, each, canFind, fold;
 import std.file : write, readText;
 import std.range : array, front, join, split;
@@ -378,7 +378,8 @@ Package[] nixEvalJobs(string flakeAttrPrefix, string cachixUrl, bool doCheck = t
         .filter!(line => !uselessWarnings.any!(w => line.canFind(w)))
         .join("\n");
 
-    logWarning(stderrLogs);
+    if (stderrLogs.strip != "")
+        logWarning(stderrLogs);
 
     int status = wait(pipes.pid);
 
