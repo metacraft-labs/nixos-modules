@@ -25,7 +25,6 @@ export void ci(string[] args)
     auto shardMatrix = generateShardMatrix();
     foreach (shard; shardMatrix.include)
     {
-        writeln("Shard ", shard.prefix ~ " ", shard.postfix ~ " ", shard.digit);
         params.flakePre = shard.prefix;
         params.flakePost = shard.postfix;
 
@@ -57,25 +56,20 @@ export void ci(string[] args)
 
         foreach (pkg; matrix)
         {
-            if (pkg.isCached)
-            {
-                writeln("Package ", pkg.name, " is cached");
-            }
-            else
-            {
-                writeln("Package ", pkg.name, " is not cached; building...");
-                ProcessPipes res = execute!ProcessPipes(["nix", "build", "--json", ".#" ~ pkg.attrPath]);
+            if (pkg.isCached) continue;
 
-                foreach (line; res.stderr.byLine)
-                {
-                    "\r".write;
-                    line.write;
-                }
-                "".writeln;
-                auto json = parseJSON(res.stdout.byLine.join("\n").to!string);
-                auto path = json.array[0]["outputs"]["out"].str;
-                execute(["cachix", "push", params.cachixCache, path], false, true).writeln;
+            writeln("Package ", pkg.name, " is not cached; building...");
+            ProcessPipes res = execute!ProcessPipes(["nix", "build", "--json", ".#" ~ pkg.attrPath]);
+
+            foreach (line; res.stderr.byLine)
+            {
+                "\r".write;
+                line.write;
             }
+            "".writeln;
+            auto json = parseJSON(res.stdout.byLine.join("\n").to!string);
+            auto path = json.array[0]["outputs"]["out"].str;
+            execute(["cachix", "push", params.cachixCache, path], false, true).writeln;
         }
 
     }
