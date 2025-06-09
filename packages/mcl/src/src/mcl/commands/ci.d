@@ -32,10 +32,6 @@ export void ci(string[] args)
         {
             params.flakePre = "checks";
         }
-        if (params.flakePost != "")
-        {
-            params.flakePost = "." ~ params.flakePost;
-        }
         string cachixUrl = "https://" ~ params.cachixCache ~ ".cachix.org";
         version (AArch64) {
             string arch = "aarch64";
