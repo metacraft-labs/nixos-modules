@@ -95,7 +95,7 @@
 
             services =
               let
-                mainServices = lib.mapAttrs (
+                mainServices = lib.concatMapAttrs (
                   mainServiceName: serviceConfig:
                   let
                     cfg = serviceConfig.healthcheck;
@@ -104,59 +104,65 @@
                     let
                       probeCfg = cfg.readiness-probe;
                     in
-                    {
-                      # We have to force it to be a notify service, in order to use systemd-notify.
-                      serviceConfig.Type = lib.mkForce "notify";
-                      # If the TimeoutStartSec is not infinity, it can cause the service to fail, because the readiness probe is considered part of the startup.
-                      serviceConfig.TimeoutStartSec = lib.mkForce "infinity";
+                      {
+                        "${mainServiceName}-liveness-check" = {
+                          # We have to force it to be a notify service, in order to use systemd-notify.
+                          serviceConfig.Type = "oneshot";
+                          # If the TimeoutStartSec is not infinity, it can cause the service to fail, because the readiness probe is considered part of the startup.
+                          serviceConfig.TimeoutStartSec = "infinity";
 
-                      # We add a ExecStartPost with a script that runs the readiness probe
-                      serviceConfig.ExecStartPre =
-                        let
-                          scriptPath = lib.makeBinPath (
-                            [
-                              pkgs.systemd
-                              pkgs.curl
-                              pkgs.gawk
-                            ]
-                            ++ (cfg.runtimePackages or [ ])
-                            ++ (serviceConfig.path or [ ])
-                          );
-                        in
-                          pkgs.writeShellScript "${mainServiceName}-readiness-check" ''
-                            #!${pkgs.runtimeShell}
-                            set -o nounset
+                          # We add a ExecStartPost with a script that runs the readiness probe
+                          script =
+                            let
+                              scriptPath = lib.makeBinPath (
+                                [
+                                  pkgs.systemd
+                                  pkgs.curl
+                                  pkgs.gawk
+                                ]
+                                ++ (cfg.runtimePackages or [ ])
+                                ++ (serviceConfig.path or [ ])
+                              );
+                            in
+                              pkgs.writeShellScript "${mainServiceName}-readiness-check" ''
+                                #!${pkgs.runtimeShell}
+                                set -o nounset
 
-                            export NOTIFY_SOCKET
-                            monitor() {
-                              export PATH="${scriptPath}:$PATH"
+                                export PATH="${scriptPath}:$PATH"
 
-                              echo "Health check: starting background readiness probe for ${mainServiceName}." 1>>/tmp/banica1 2>>/tmp/banica2
-                              sleep ${toString probeCfg.initialDelay}
-                              retryCount=${toString probeCfg.retryCount}
-                              while true; do
-                                if (timeout ${toString probeCfg.timeout}s ${probeCfg.command} &> /dev/null); then
-                                  echo "Health check: probe successful. Notifying systemd that the service is ready." 1>>/tmp/banica1 2>>/tmp/banica2
-                                  systemd-notify --ready --status="${probeCfg.statusReadyMessage}" 1>>/tmp/banica1 2>>/tmp/banica2
-                                  exit 0
-                                else
-                                  echo "Health check: probe not successful. Notifying systemd that the service is still waiting. Retrying in ${toString probeCfg.interval} seconds..." 1>>/tmp/banica1 2>>/tmp/banica2
-                                  systemd-notify --status="${probeCfg.statusWaitingMessage}" 1>>/tmp/banica1 2>>/tmp/banica2
-                                  if [[ ''${retryCount} -ne -1 ]]; then
-                                    retryCount=$((retryCount - 1))
-                                    if [[ ''${retryCount} -le 0 ]]; then
-                                      echo "Health check: probe failed after maximum retries. Exiting." 1>>/tmp/banica1 2>>/tmp/banica2
-                                      exit 1
+                                echo "Health check: starting background readiness probe for ${mainServiceName}."
+                                sleep ${toString probeCfg.initialDelay}
+                                retryCount=${toString probeCfg.retryCount}
+                                while true; do
+                                  if (timeout ${toString probeCfg.timeout}s ${probeCfg.command} &> /dev/null); then
+                                    echo "Health check: probe successful. Notifying systemd that the service is ready."
+                                    exit 0
+                                  else
+                                    echo "Health check: probe not successful. Notifying systemd that the service is still waiting. Retrying in ${toString probeCfg.interval} seconds..."
+                                    if [[ ''${retryCount} -ne -1 ]]; then
+                                      retryCount=$((retryCount - 1))
+                                      if [[ ''${retryCount} -le 0 ]]; then
+                                        echo "Health check: probe failed after maximum retries. Exiting."
+                                        exit 1
+                                      fi
                                     fi
                                   fi
-                                fi
-                                sleep ${toString probeCfg.interval}
-                              done
-                            }
+                                  sleep ${toString probeCfg.interval}
+                                done
+                              '';
 
-                            monitor &
-                          '';
-                    }
+                          requires = [ "${mainServiceName}.service" ];
+                          after = [ "${mainServiceName}.service" ];
+                        };
+                      } // lib.pipe config.systemd.services [
+                        # TODO: not only `requires`, also `after` and friends
+                        (lib.filterAttrs (name: value: lib.elem "${mainServiceName}.service" value.requires))
+                        (lib.mapAttrs (value: lib.recursiveUpdate value {
+                          requires = value.requires ++ [
+                            "${mainServiceName}-readiness-check.service"
+                          ];
+                        }))
+                      ];
                   ))
                 ) servicesWithHealthcheck;
                 healthCheckServices = lib.mapAttrs' (
