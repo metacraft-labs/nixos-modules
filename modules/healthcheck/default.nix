@@ -111,7 +111,7 @@
                       serviceConfig.TimeoutStartSec = lib.mkForce "infinity";
 
                       # We add a ExecStartPost with a script that runs the readiness probe
-                      serviceConfig.ExecStartPost =
+                      serviceConfig.ExecStartPre =
                         let
                           scriptPath = lib.makeBinPath (
                             [
@@ -126,29 +126,35 @@
                           pkgs.writeShellScript "${mainServiceName}-readiness-check" ''
                             #!${pkgs.runtimeShell}
                             set -o nounset
-                            export PATH="${scriptPath}:$PATH"
 
-                            echo "Health check: starting background readiness probe for ${mainServiceName}."
-                            sleep ${toString probeCfg.initialDelay}
-                            retryCount=${toString probeCfg.retryCount}
-                            while true; do
-                              if (timeout ${toString probeCfg.timeout}s ${probeCfg.command} &> /dev/null); then
-                                echo "Health check: probe successful. Notifying systemd that the service is ready."
-                                systemd-notify --ready --status="${probeCfg.statusReadyMessage}"
-                                exit 0
-                              else
-                                echo "Health check: probe not successful. Notifying systemd that the service is still waiting. Retrying in ${toString probeCfg.interval} seconds..."
-                                systemd-notify --status="${probeCfg.statusWaitingMessage}"
-                                if [[ ''${retryCount} -ne -1 ]]; then
-                                  retryCount=$((retryCount - 1))
-                                  if [[ ''${retryCount} -le 0 ]]; then
-                                    echo "Health check: probe failed after maximum retries. Exiting."
-                                    exit 1
+                            export NOTIFY_SOCKET
+                            monitor() {
+                              export PATH="${scriptPath}:$PATH"
+
+                              echo "Health check: starting background readiness probe for ${mainServiceName}." 1>>/tmp/banica1 2>>/tmp/banica2
+                              sleep ${toString probeCfg.initialDelay}
+                              retryCount=${toString probeCfg.retryCount}
+                              while true; do
+                                if (timeout ${toString probeCfg.timeout}s ${probeCfg.command} &> /dev/null); then
+                                  echo "Health check: probe successful. Notifying systemd that the service is ready." 1>>/tmp/banica1 2>>/tmp/banica2
+                                  systemd-notify --ready --status="${probeCfg.statusReadyMessage}" 1>>/tmp/banica1 2>>/tmp/banica2
+                                  exit 0
+                                else
+                                  echo "Health check: probe not successful. Notifying systemd that the service is still waiting. Retrying in ${toString probeCfg.interval} seconds..." 1>>/tmp/banica1 2>>/tmp/banica2
+                                  systemd-notify --status="${probeCfg.statusWaitingMessage}" 1>>/tmp/banica1 2>>/tmp/banica2
+                                  if [[ ''${retryCount} -ne -1 ]]; then
+                                    retryCount=$((retryCount - 1))
+                                    if [[ ''${retryCount} -le 0 ]]; then
+                                      echo "Health check: probe failed after maximum retries. Exiting." 1>>/tmp/banica1 2>>/tmp/banica2
+                                      exit 1
+                                    fi
                                   fi
                                 fi
-                              fi
-                              sleep ${toString probeCfg.interval}
-                            done
+                                sleep ${toString probeCfg.interval}
+                              done
+                            }
+
+                            monitor &
                           '';
                     }
                   ))
