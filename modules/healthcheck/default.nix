@@ -75,16 +75,6 @@
           ) config.mcl.services;
         in
         {
-          assertions = lib.mapAttrsToList (
-            serviceName: serviceConfig:
-            let
-              cfg = serviceConfig.healthcheck;
-            in
-            lib.mkIf (cfg != null && cfg.readiness-probe.enable) {
-              assertion = cfg.exec != null;
-              message = "When healthcheck.readiness-probe is enabled, you must define `healthcheck.exec` with the service command. (${serviceName})";
-            }
-          ) servicesWithHealthcheck;
           systemd = {
             timers = lib.mapAttrs' (
               mainServiceName: serviceConfig:
@@ -120,8 +110,8 @@
                       # If the TimeoutStartSec is not infinity, it can cause the service to fail, because the readiness probe is considered part of the startup.
                       serviceConfig.TimeoutStartSec = lib.mkForce "infinity";
 
-                      # We replace the ExecStart with a script that runs the readiness probe in the background, and the original service command in the foreground.
-                      serviceConfig.ExecStart =
+                      # We add a ExecStartPost with a script that runs the readiness probe
+                      serviceConfig.ExecStartPost =
                         let
                           scriptPath = lib.makeBinPath (
                             [
@@ -133,46 +123,33 @@
                             ++ (serviceConfig.path or [ ])
                           );
                         in
-                        lib.mkForce (
                           pkgs.writeShellScript "${mainServiceName}-readiness-check" ''
                             #!${pkgs.runtimeShell}
                             set -o nounset
                             export PATH="${scriptPath}:$PATH"
 
-                            check() {
-                              echo "Health check: starting background readiness probe for ${mainServiceName}."
-                              sleep ${toString probeCfg.initialDelay}
-                              retryCount=${toString probeCfg.retryCount}
-                              while true; do
-                                if (timeout ${toString probeCfg.timeout}s ${probeCfg.command} &> /dev/null); then
-                                  echo "Health check: probe successful. Notifying systemd that the service is ready."
-                                  systemd-notify --ready --status="${probeCfg.statusReadyMessage}"
-                                  return 0
-                                else
-                                  echo "Health check: probe not successful. Notifying systemd that the service is still waiting. Retrying in ${toString probeCfg.interval} seconds..."
-                                  systemd-notify --status="${probeCfg.statusWaitingMessage}"
-                                  if [[ ''${retryCount} -ne -1 ]]; then
-                                    retryCount=$((retryCount - 1))
-                                    if [[ ''${retryCount} -le 0 ]]; then
-                                      echo "Health check: probe failed after maximum retries. Exiting."
-                                      exit 1
-                                    fi
+                            echo "Health check: starting background readiness probe for ${mainServiceName}."
+                            sleep ${toString probeCfg.initialDelay}
+                            retryCount=${toString probeCfg.retryCount}
+                            while true; do
+                              if (timeout ${toString probeCfg.timeout}s ${probeCfg.command} &> /dev/null); then
+                                echo "Health check: probe successful. Notifying systemd that the service is ready."
+                                systemd-notify --ready --status="${probeCfg.statusReadyMessage}"
+                                exit 0
+                              else
+                                echo "Health check: probe not successful. Notifying systemd that the service is still waiting. Retrying in ${toString probeCfg.interval} seconds..."
+                                systemd-notify --status="${probeCfg.statusWaitingMessage}"
+                                if [[ ''${retryCount} -ne -1 ]]; then
+                                  retryCount=$((retryCount - 1))
+                                  if [[ ''${retryCount} -le 0 ]]; then
+                                    echo "Health check: probe failed after maximum retries. Exiting."
+                                    exit 1
                                   fi
                                 fi
-                                sleep ${toString probeCfg.interval}
-                              done
-                            }
-
-                            if [[ -n "''${NOTIFY_SOCKET:-}" ]]; then
-                              check &
-                            else
-                              echo "Health check: NOTIFY_SOCKET not set. Cannot run readiness probe." >&2
-                              exit 1
-                            fi
-
-                            ${cfg.exec}
-                          ''
-                        );
+                              fi
+                              sleep ${toString probeCfg.interval}
+                            done
+                          '';
                     }
                   ))
                 ) servicesWithHealthcheck;
@@ -244,16 +221,6 @@
                           type = lib.types.listOf lib.types.package;
                           default = [ ];
                           description = "Additional programs to add to the PATH for health checks.";
-                        };
-
-                        # The main command for the service, required when readiness-probe is on.
-                        exec = lib.mkOption {
-                          type = lib.types.str;
-                          description = ''
-                            The actual command to run for the service.
-                            This MUST be used instead of `script` or `serviceConfig.ExecStart`
-                            when `readiness-probe.enable` is true.
-                          '';
                         };
 
                         # The new readiness probe that uses the notify pattern.
