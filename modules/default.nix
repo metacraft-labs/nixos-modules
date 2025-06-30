@@ -9,5 +9,6 @@
     ./secrets.nix
     ./mcl-disko
     ./pharos
+    ./healthcheck
   ];
 }
