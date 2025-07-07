@@ -221,6 +221,7 @@
         ./checks
         ./modules
         ./packages
+        ./machines
         ./shells
       ];
       systems = [
