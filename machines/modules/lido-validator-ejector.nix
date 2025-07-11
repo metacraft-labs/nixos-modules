@@ -8,6 +8,9 @@
     enable = true;
     args = {
       messages-location = config.services.lido-withdrawals-automation.args.output-folder;
+      consensus-node = "";
+      execution-node = "";
+      locator-address = "";
       blocks-preload = 100000;
       http-port = 8989;
       run-metrics = true;

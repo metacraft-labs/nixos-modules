@@ -19,4 +19,11 @@ in
   flake.nixosConfigurations = (
     lib.mergeAttrsList (lib.map (x: mkMachine x) (builtins.attrNames (builtins.readDir ./modules)))
   );
+  flake.modules.nixos = (
+    lib.mergeAttrsList (
+      lib.map (x: {
+        "machine_${lib.removeSuffix ".nix" x}" = (import (./modules + "/${x}"));
+      }) (builtins.attrNames (builtins.readDir ./modules))
+    )
+  );
 }
