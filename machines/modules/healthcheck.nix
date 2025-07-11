@@ -10,7 +10,7 @@
     path = with pkgs; [
     ];
     serviceConfig = {
-      Type = "oneshot";
+      Type = "simple";
       Restart = "on-failure";
       RestartSec = "10s";
 

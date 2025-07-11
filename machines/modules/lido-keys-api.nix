@@ -19,7 +19,7 @@
       db-port = 5432;
       db-host = "127.0.0.1";
       db-user = "postgres";
-      db-password = ../blankpass.txt;
+      db-password = "";
       provider-json-rpc-max-batch-size = 100;
       provider-concurrent-requests = 5;
       provider-batch-aggregation-wait-ms = 10;
