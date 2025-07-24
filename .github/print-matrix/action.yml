@@ -28,6 +28,14 @@ inputs:
     description: GitHub token to add as access-token in nix.conf
     default: ''
     required: false
+  nix-gitlab-token:
+    description: GitLab token to add as access-token in nix.conf
+    default: ''
+    required: false
+  nix-gitlab-domain:
+    description: GitLab domain to add as access-token in nix.conf
+    default: 'gitlab.com'
+    required: false
 
 outputs:
   matrix:
@@ -48,6 +56,8 @@ runs:
         trusted-public-keys: ${{ inputs.trusted-public-keys }}
         substituters: ${{ inputs.substituters }}
         nix-github-token: ${{ inputs.nix-github-token }}
+        nix-gitlab-token: ${{ inputs.nix-gitlab-token }}
+        nix-gitlab-domain: ${{ inputs.nix-gitlab-domain }}
 
     - name: Print CI Matrix
       id: print-matrix
