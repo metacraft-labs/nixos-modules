@@ -20,6 +20,14 @@ inputs:
     description: GitHub token to add as access-token in nix.conf
     default: ''
     required: false
+  nix-gitlab-token:
+    description: GitLab token to add as access-token in nix.conf
+    default: ''
+    required: false
+  nix-gitlab-domain:
+    description: GitLab domain to add as access-token in nix.conf
+    default: 'gitlab.com'
+    required: false
 
 runs:
   using: 'composite'
@@ -34,7 +42,15 @@ runs:
         mkdir -p $HOME/.config/nix
 
         cat << EOF > "$HOME/.config/nix/nix.conf"
-          ${{ inputs.nix-github-token != '' && format('access-tokens = github.com={0}', inputs.nix-github-token) || '' }}
+          ${{
+            (inputs.nix-github-token != '' && inputs.nix-gitlab-token != '' && inputs.nix-gitlab-domain != '' &&
+              format('access-tokens = github.com={0} {1}=PAT:{2}', inputs.nix-github-token, inputs.nix-gitlab-domain, inputs.nix-gitlab-token)) ||
+            (inputs.nix-github-token != '' &&
+              format('access-tokens = github.com={0}', inputs.nix-github-token)) ||
+            (inputs.nix-gitlab-token != '' && inputs.nix-gitlab-domain != '' &&
+              format('access-tokens = {0}=PAT:{1}', inputs.nix-gitlab-domain, inputs.nix-gitlab-token)) ||
+            ''
+          }}
           allow-import-from-derivation = true
           substituters = https://cache.nixos.org ${{inputs.substituters}}
           trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= ${{inputs.trusted-public-keys}}

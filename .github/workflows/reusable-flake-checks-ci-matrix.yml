@@ -24,6 +24,9 @@ on:
       NIX_GITHUB_TOKEN:
         description: GitHub token to add as access-token in nix.conf
         required: false
+      NIX_GITLAB_TOKEN:
+        description: GitLab token to add as access-token in nix.conf
+        required: false
 
 jobs:
   post-initial-comment:
@@ -50,6 +53,8 @@ jobs:
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
           nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
+          nix-gitlab-token: ${{ secrets.NIX_GITLAB_TOKEN }}
+          nix-gitlab-domain: ${{ vars.NIX_GITLAB_DOMAIN }}
 
       - uses: actions/checkout@v4
 
@@ -78,6 +83,8 @@ jobs:
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
           nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
+          nix-gitlab-token: ${{ secrets.NIX_GITLAB_TOKEN }}
+          nix-gitlab-domain: ${{ vars.NIX_GITLAB_DOMAIN }}
 
       - uses: actions/checkout@v4
 
@@ -154,6 +161,8 @@ jobs:
           precalc_matrix: ${{ steps.matrix.outputs.fullMatrix }}
           pr-comment-github-token: ${{ secrets.GITHUB_TOKEN }}
           nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
+          nix-gitlab-token: ${{ secrets.NIX_GITLAB_TOKEN }}
+          nix-gitlab-domain: ${{ vars.NIX_GITLAB_DOMAIN }}
 
   build:
     needs: slurp-matrix
@@ -178,6 +187,8 @@ jobs:
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
           nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
+          nix-gitlab-token: ${{ secrets.NIX_GITLAB_TOKEN }}
+          nix-gitlab-domain: ${{ vars.NIX_GITLAB_DOMAIN }}
 
       - name: Build ${{ matrix.name }}
         run: |
@@ -205,6 +216,8 @@ jobs:
           precalc_matrix: ${{ needs.slurp-matrix.outputs.fullMatrix }}
           pr-comment-github-token: ${{ secrets.GITHUB_TOKEN }}
           nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
+          nix-gitlab-token: ${{ secrets.NIX_GITLAB_TOKEN }}
+          nix-gitlab-domain: ${{ vars.NIX_GITLAB_DOMAIN }}
 
       - run: exit 1
         if: >-

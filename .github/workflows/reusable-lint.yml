@@ -17,6 +17,9 @@ on:
       CACHIX_AUTH_TOKEN:
         description: 'Cachix auth token'
         required: true
+      NIX_GITLAB_TOKEN:
+        description: GitLab token to add as access-token in nix.conf
+        required: false
 
 jobs:
   lint:
@@ -28,6 +31,8 @@ jobs:
         uses: metacraft-labs/nixos-modules/.github/install-nix@main
         with:
           nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
+          nix-gitlab-token: ${{ secrets.NIX_GITLAB_TOKEN }}
+          nix-gitlab-domain: ${{ vars.NIX_GITLAB_DOMAIN }}
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           cachix-cache: ${{ vars.CACHIX_CACHE }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
