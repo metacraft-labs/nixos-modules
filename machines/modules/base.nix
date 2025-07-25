@@ -1,6 +1,5 @@
-{ system, lib, ... }:
+{ lib, ... }:
 {
-  nixpkgs.system = system;
   fileSystems = {
     "/".device = lib.mkDefault "/dev/sda";
   };

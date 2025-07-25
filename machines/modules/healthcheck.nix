@@ -7,7 +7,7 @@
   systemd.services.test = {
     description = "";
     enable = true;
-    path = with pkgs; [
+    path = [
     ];
     serviceConfig = {
       Type = "simple";
