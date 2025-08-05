@@ -14,6 +14,11 @@ on:
         default: ''
         required: false
         type: string
+      sign-commits:
+        description: 'Enable GPG commit signing'
+        default: false
+        required: false
+        type: boolean
 
     secrets:
       NIX_GITHUB_TOKEN:
@@ -31,6 +36,12 @@ on:
       CREATE_PR_APP_PRIVATE_KEY:
         description: Private key of the GitHub App used for opening pull requests.
         required: true
+      GIT_GPG_SIGNING_SECRET_KEY:
+        description: GPG secret key used to sign commits
+        required: false
+      GIT_GPG_SIGNING_PASSPHRASE:
+        description: GPG passphrase for secret key
+        required: false
 
     outputs:
       pr-url:
@@ -61,13 +72,35 @@ jobs:
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
 
+      - name: Configure Git credentials
+        run: |
+          git config --local user.name "${{ vars.GIT_USER_NAME }}"
+          git config --local user.email "${{ vars.GIT_USER_EMAIL }}"
+          git config --local commit.gpgsign ${{ inputs.sign-commits }}
+
+      - name: Import GPG key with passphrase
+        if: ${{ inputs.sign-commits }}
+        env:
+          GIT_GPG_SIGNING_SECRET_KEY: ${{ secrets.GIT_GPG_SIGNING_SECRET_KEY }}
+          GIT_GPG_SIGNING_PASSPHRASE: ${{ secrets.GIT_GPG_SIGNING_PASSPHRASE }}
+        run: |
+          echo "$GIT_GPG_SIGNING_SECRET_KEY" \
+            | gpg --batch --yes \
+                --pinentry-mode loopback \
+                --passphrase "$GIT_GPG_SIGNING_PASSPHRASE" \
+                --import
+          git config --local user.signingkey "${{ vars.GIT_GPG_SIGNING_KEY_ID }}"
+
       - name: Run `nix flake update`
         id: update-lockfile
         run: |
           curl -fsSL --proto '=https' --tlsv1.2 \
             https://raw.githubusercontent.com/metacraft-labs/nixos-modules/main/scripts/commit_flake_update.bash \
-            -o commit_flake_update.bash
-          FLAKE_INPUT=${{ inputs.flake-input }} bash commit_flake_update.bash
+            -o commit_flake_update.bash && \
+          bash commit_flake_update.bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          FLAKE_INPUT: ${{ inputs.flake-input }}
 
       - uses: tibdex/github-app-token@v2.1.0
         id: generate-token

@@ -4,20 +4,25 @@ set -euo pipefail
 
 FLAKE_INPUT=${FLAKE_INPUT:-""}
 
-if ! git config --get user.name >/dev/null 2>&1 || \
-  [ "$(git config --get user.name)" = "" ] ||
-  ! git config --get user.email >/dev/null 2>&1 || \
-  [ "$(git config --get user.email)" = "" ]; then
-  echo "git config user.{name,email} is not set - configuring"
+running_in_github_actions() {
   set -x
-  git config --local user.email "out@space.com"
-  git config --local user.name "beep boop"
+  [ -n "${CI:-}" ] && \
+  [ -n "${GITHUB_REPOSITORY:-}" ] && \
+  [ -n "${GITHUB_RUN_ID:-}" ] && \
+  [ -n "${GITHUB_TOKEN:-}" ] && \
+  curl --silent --fail \
+    -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+    -H "Accept: application/vnd.github.v3+json" \
+    "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" > /dev/null 2>&1
+}
+
+if running_in_github_actions; then
+  echo "Running in GitHub Actions."
+  git config --list --show-origin
 fi
 
 current_commit="$(git rev-parse HEAD)"
 export PRE_COMMIT_ALLOW_NO_CONFIG=1
-
-git config --list --show-origin
 
 nix flake update $FLAKE_INPUT --accept-flake-config --commit-lock-file
 commit_after_update="$(git rev-parse HEAD)"
