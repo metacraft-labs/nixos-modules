@@ -12,7 +12,8 @@ let
       options = {
         "com.sun:auto-snapshot" = if dataset.snapshot then "on" else "off";
         canmount = "on";
-      } // (if (refreservation != null) then { inherit refreservation; } else { });
+      }
+      // (if (refreservation != null) then { inherit refreservation; } else { });
     };
 
   restructuredDatasets = builtins.mapAttrs (
