@@ -1,0 +1,55 @@
+name: Merge Branch
+
+on:
+  workflow_call:
+    inputs:
+      source_branch:
+        description: 'The source branch to merge from (e.g., main, testnet)'
+        required: true
+        type: string
+      target_branch:
+        description: 'The target branch to merge into (e.g., testnet, mainnet)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Git user
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Merge and Push
+        env:
+          SOURCE_BRANCH: ${{ inputs.source_branch }}
+          TARGET_BRANCH: ${{ inputs.target_branch }}
+        run: |
+          echo "Source: $SOURCE_BRANCH"
+          echo "Target: $TARGET_BRANCH"
+
+          if [ -z "$SOURCE_BRANCH" ] || [ -z "$TARGET_BRANCH" ]; then
+            echo "Error: Source and target branches must be provided."
+            exit 1
+          fi
+
+          SOURCE_COMMIT_SHA=$(git rev-parse "origin/$SOURCE_BRANCH")
+          git checkout "$TARGET_BRANCH"
+          git pull origin "$TARGET_BRANCH" --ff-only
+
+          COMMIT_MESSAGE="Merge commit '$SOURCE_COMMIT_SHA' into $TARGET_BRANCH"
+          echo "Using commit message: $COMMIT_MESSAGE"
+
+          git merge --no-ff "origin/$SOURCE_BRANCH" -m "$COMMIT_MESSAGE"
+
+          echo "Pushing changes to $TARGET_BRANCH..."
+          git push origin "$TARGET_BRANCH"
