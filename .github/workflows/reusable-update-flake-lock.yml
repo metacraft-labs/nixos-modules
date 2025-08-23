@@ -39,9 +39,6 @@ on:
       GIT_GPG_SIGNING_SECRET_KEY:
         description: GPG secret key used to sign commits
         required: false
-      GIT_GPG_SIGNING_PASSPHRASE:
-        description: GPG passphrase for secret key
-        required: false
 
     outputs:
       pr-url:
@@ -82,14 +79,15 @@ jobs:
         if: ${{ inputs.sign-commits }}
         env:
           GIT_GPG_SIGNING_SECRET_KEY: ${{ secrets.GIT_GPG_SIGNING_SECRET_KEY }}
-          GIT_GPG_SIGNING_PASSPHRASE: ${{ secrets.GIT_GPG_SIGNING_PASSPHRASE }}
         run: |
           echo "$GIT_GPG_SIGNING_SECRET_KEY" \
             | gpg --batch --yes \
                 --pinentry-mode loopback \
-                --passphrase "$GIT_GPG_SIGNING_PASSPHRASE" \
                 --import
           git config --local user.signingkey "${{ vars.GIT_GPG_SIGNING_KEY_ID }}"
+
+      - name: View flake config
+        run: nix config show
 
       - name: Run `nix flake update`
         id: update-lockfile
