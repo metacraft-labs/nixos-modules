@@ -75,7 +75,7 @@
     };
 
     ethereum-nix = {
-      url = "github:metacraft-labs/ethereum.nix";
+      url = "github:metacraft-labs/ethereum.nix/dev2";
       inputs = {
         nixpkgs.follows = "nixos-2405";
         nixpkgs-2311.follows = "nixos-2311";
