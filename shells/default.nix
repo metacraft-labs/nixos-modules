@@ -43,12 +43,11 @@
               inputs'.dlang-nix.packages.dmd
             ];
 
-          shellHook =
-            ''
-              export REPO_ROOT="$PWD"
-              figlet -t "Metacraft Nixos Modules"
-            ''
-            + config.pre-commit.installationScript;
+          shellHook = ''
+            export REPO_ROOT="$PWD"
+            figlet -t "Metacraft Nixos Modules"
+          ''
+          + config.pre-commit.installationScript;
         };
     };
 }
