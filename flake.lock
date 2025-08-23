@@ -103,22 +103,6 @@
         "type": "github"
       }
     },
-    "devour-flake": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1738639461,
-        "narHash": "sha256-R7MHvTh5fskzxNLBe9bher+GQBZ8ZHjz75CPQG3fSRI=",
-        "owner": "srid",
-        "repo": "devour-flake",
-        "rev": "9fe4db872c107ea217c13b24527b68d9e4a4c01b",
-        "type": "github"
-      },
-      "original": {
-        "owner": "srid",
-        "repo": "devour-flake",
-        "type": "github"
-      }
-    },
     "devshell": {
       "inputs": {
         "nixpkgs": [
@@ -127,11 +111,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1741473158,
-        "narHash": "sha256-kWNaq6wQUbUMlPgw8Y+9/9wP0F8SHkjy24/mN3UAppg=",
+        "lastModified": 1735644329,
+        "narHash": "sha256-tO3HrHriyLvipc4xr+Ewtdlo7wM1OjXNjlWRgmM7peY=",
         "owner": "numtide",
         "repo": "devshell",
-        "rev": "7c9e793ebe66bcba8292989a68c0419b737a22a0",
+        "rev": "f7795ede5b02664b57035b3b757876703e2c3eac",
         "type": "github"
       },
       "original": {
@@ -187,7 +171,6 @@
     },
     "ethereum-nix": {
       "inputs": {
-        "devour-flake": "devour-flake",
         "devshell": "devshell",
         "fenix": [
           "fenix"
@@ -202,8 +185,6 @@
           "flake-utils"
         ],
         "foundry-nix": "foundry-nix",
-        "lib-extras": "lib-extras",
-        "nimbus-eth2": "nimbus-eth2",
         "nixpkgs": [
           "nixos-2405"
         ],
@@ -221,15 +202,16 @@
         ]
       },
       "locked": {
-        "lastModified": 1744119391,
-        "narHash": "sha256-MEIZA2KiU6UVg2QJkBCPfKqGkG46mBT0SQATOiem2uo=",
+        "lastModified": 1756050361,
+        "narHash": "sha256-gppLXv4ALq67qhvED1FU4M85PN5/hKggRWAh3WPbiZ0=",
         "owner": "metacraft-labs",
         "repo": "ethereum.nix",
-        "rev": "207e072a3b1e61aee725ec9ff29b16e85006ade1",
+        "rev": "bb59baa0bafc6b7f1a13f67df5de23a86eb06f41",
         "type": "github"
       },
       "original": {
         "owner": "metacraft-labs",
+        "ref": "dev2",
         "repo": "ethereum.nix",
         "type": "github"
       }
@@ -336,21 +318,6 @@
     },
     "flake-root": {
       "locked": {
-        "lastModified": 1692742795,
-        "narHash": "sha256-f+Y0YhVCIJ06LemO+3Xx00lIcqQxSKJHXT/yk1RTKxw=",
-        "owner": "srid",
-        "repo": "flake-root",
-        "rev": "d9a70d9c7a5fd7f3258ccf48da9335e9b47c3937",
-        "type": "github"
-      },
-      "original": {
-        "owner": "srid",
-        "repo": "flake-root",
-        "type": "github"
-      }
-    },
-    "flake-root_2": {
-      "locked": {
         "lastModified": 1723604017,
         "narHash": "sha256-rBtQ8gg+Dn4Sx/s+pvjdq3CB2wQNzx9XGFq/JVGCB6k=",
         "owner": "srid",
@@ -416,11 +383,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1743671500,
-        "narHash": "sha256-IJ2vPxTzDQNIEKScJ3JDOXBOJoXglErDeUI/I6rBOfU=",
+        "lastModified": 1735981876,
+        "narHash": "sha256-PAyEy36HBOOwzChB7D6xKzzkHwiK9ynsRX4/0ZFspgI=",
         "owner": "shazow",
         "repo": "foundry.nix",
-        "rev": "815a4d4a35ebf5c4ef855d8d4c5655fcbe63ee41",
+        "rev": "14f071541283aa90e15efc980121a8296f70a2d3",
         "type": "github"
       },
       "original": {
@@ -539,41 +506,6 @@
         "type": "github"
       }
     },
-    "lib-extras": {
-      "inputs": {
-        "devshell": [
-          "ethereum-nix",
-          "devshell"
-        ],
-        "flake-parts": [
-          "ethereum-nix",
-          "flake-parts"
-        ],
-        "flake-root": "flake-root",
-        "nixpkgs": [
-          "ethereum-nix",
-          "nixpkgs"
-        ],
-        "treefmt-nix": [
-          "ethereum-nix",
-          "treefmt-nix"
-        ]
-      },
-      "locked": {
-        "lastModified": 1699974671,
-        "narHash": "sha256-4EsuPiX4pGEg8ME9ONn8ebY1ZKYLOp9DRCcdTrOj8sY=",
-        "owner": "aldoborrero",
-        "repo": "lib-extras",
-        "rev": "83c8935af27738b8b155e0077522220d81865269",
-        "type": "github"
-      },
-      "original": {
-        "owner": "aldoborrero",
-        "ref": "v0.2.2",
-        "repo": "lib-extras",
-        "type": "github"
-      }
-    },
     "microvm": {
       "inputs": {
         "flake-utils": [
@@ -596,30 +528,6 @@
         "owner": "astro",
         "repo": "microvm.nix",
         "type": "github"
-      }
-    },
-    "nimbus-eth2": {
-      "inputs": {
-        "nixpkgs": [
-          "ethereum-nix",
-          "nixpkgs-unstable"
-        ]
-      },
-      "locked": {
-        "lastModified": 1742560866,
-        "narHash": "sha256-3/FXHzq6YrJUNa9/nHaV8xXn3IOqCT5ymf6VU6wlXIk=",
-        "ref": "v25.3.1",
-        "rev": "283ee0b3e86028c8dbd190cfe6d25f4063b451f7",
-        "revCount": 7262,
-        "submodules": true,
-        "type": "git",
-        "url": "https://github.com/status-im/nimbus-eth2"
-      },
-      "original": {
-        "ref": "v25.3.1",
-        "submodules": true,
-        "type": "git",
-        "url": "https://github.com/status-im/nimbus-eth2"
       }
     },
     "nix": {
@@ -725,7 +633,7 @@
         "flake-parts": [
           "flake-parts"
         ],
-        "flake-root": "flake-root_2",
+        "flake-root": "flake-root",
         "nixpkgs": "nixpkgs_2",
         "treefmt-nix": "treefmt-nix"
       },
