@@ -12,7 +12,7 @@ import mcl.utils.env : optional, parseEnv;
 import mcl.commands.ci_matrix: nixEvalJobs, SupportedSystem, Params, flakeAttr;
 import mcl.commands.shard_matrix: generateShardMatrix;
 import mcl.utils.path : rootDir, createResultDirs;
-import mcl.utils.process : execute;
+import mcl.utils.process : execute, spawnProcessInline;
 import mcl.utils.nix : nix;
 import mcl.utils.json : toJSON;
 
@@ -55,17 +55,10 @@ export void ci(string[] args)
             if (pkg.isCached) continue;
 
             writeln("Package ", pkg.name, " is not cached; building...");
-            ProcessPipes res = execute!ProcessPipes(["nix", "build", "--json", ".#" ~ pkg.attrPath]);
+            JSONValue json = nix().build!JSONValue(".#" ~ pkg.attrPath);
 
-            foreach (line; res.stderr.byLine)
-            {
-                "\r".write;
-                line.write;
-            }
-            "".writeln;
-            auto json = parseJSON(res.stdout.byLine.join("\n").to!string);
             auto path = json.array[0]["outputs"]["out"].str;
-            execute(["cachix", "push", params.cachixCache, path], false, true).writeln;
+            spawnProcessInline!false(["cachix", "push", params.cachixCache, path]);
         }
 
     }

@@ -8,9 +8,8 @@ import std.exception : enforce;
 import std.format : fmt = format;
 import std.string : lineSplitter, strip, replace;
 import std.json : parseJSON, JSONValue;
-import std.stdio : writeln;
 
-import mcl.utils.process : execute;
+import mcl.utils.process : execute, spawnProcessInline;
 
 string queryStorePath(string storePath, string[] referenceSuffixes, string storeUrl)
 {
@@ -84,12 +83,12 @@ struct NixCommand
                 commandName,
             ] ~ args ~ path;
 
-            auto output = command.execute(true).strip();
+            const res = spawnProcessInline(command);
 
             static if (is(T == JSONValue))
-                return parseJSON(output);
+                return parseJSON(res);
             else
-                return output;
+                return res.strip;
         }
     }
 }
@@ -115,12 +114,12 @@ import std.json : JSONValue, JSONOptions;
 }
 
 string toNix(T)(in T value, string[] inputs = [], bool topLevel = true, int depth = -1) {
-import std.traits : isNumeric, isAssociativeArray, isSomeString, isArray, ForeachType, hasUDA;
-import std.json : JSONValue,JSONOptions;
-import std.string : join;
-import std.array : replicate;
-import std.algorithm : map, startsWith, all;
-import std.ascii : isUpper;
+    import std.traits : isNumeric, isAssociativeArray, isSomeString, isArray, ForeachType, hasUDA;
+    import std.json : JSONValue,JSONOptions;
+    import std.string : join;
+    import std.array : replicate;
+    import std.algorithm : map, startsWith, all;
+    import std.ascii : isUpper;
 
     depth++;
     string res;
@@ -256,7 +255,7 @@ unittest
     auto p = __FILE__.absolutePath.dirName;
 
     string output = nix().run(p ~ "/test/test.nix", [ "--file"]);
-    assert(output == "Hello World", "Expected 'Hello World', got: " ~ output);
+    assert(output == "Hello World");
 }
 
 @("nix.build!JSONValue")

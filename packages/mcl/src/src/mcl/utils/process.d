@@ -89,18 +89,45 @@ unittest
     // assertThrown(execute(["false"]), "Command `false` failed with status 1");
 }
 
-void spawnProcessInline(string[] args)
+auto spawnProcessInline(bool captureStdout = true)(string[] args)
 {
-    import std.logger : tracef;
+    import std.array : join;
     import std.exception : enforce;
-    import std.process : spawnProcess, wait;
+    import std.logger : tracef;
+    import std.process : spawnProcess, wait, execute, Config;
 
-    const bold = "\033[1m";
-    const normal = "\033[0m";
+    auto cmd = args.join(" ");
+    tracef("$ %s", cmd.bold);
 
+    int rc = -1;
+    scope (exit) enforce(rc == 0, "Command `" ~ cmd ~ "` failed.");
 
-    tracef("$ %s%-(%s %)%s", bold, args, normal);
+    static if (captureStdout)
+    {
+        auto res = execute(args, config: Config.stderrPassThrough);
+        rc = res.status;
+        return res.output.strip();
+    }
+    else
+    {
+        auto pid = spawnProcess(args);
+        rc = wait(pid);
+        return;
+    }
+}
 
-    auto pid = spawnProcess(args);
-    enforce(wait(pid) == 0, "Process failed.");
+@("spawnProcessInline")
+unittest
+{
+    import std.exception : assertThrown, collectExceptionMsg;
+
+    assert(spawnProcessInline(["echo", "hello"]) == "hello");
+    assert(spawnProcessInline(["true"]) == "");
+    assertThrown(spawnProcessInline(["false"]), "Command `false` failed with status 1");
+
+    assert(
+        collectExceptionMsg(
+            spawnProcessInline(["false"])
+        ) == "Command `false` failed."
+    );
 }
