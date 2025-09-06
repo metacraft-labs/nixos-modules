@@ -301,10 +301,13 @@ struct ProcessorInfo
 ProcessorInfo getProcessorInfo()
 {
     ProcessorInfo r;
-    r.vendor = cpuid.x86_any.vendor;
-    char[48] modelCharArr;
-    cpuid.x86_any.brand(modelCharArr);
-    r.model = modelCharArr.idup[0 .. (strlen(modelCharArr.ptr) - 1)];
+    version (x86)
+    {
+        r.vendor = cpuid.x86_any.vendor;
+        char[48] modelCharArr;
+        cpuid.x86_any.brand(modelCharArr);
+        r.model = modelCharArr.idup[0 .. (strlen(modelCharArr.ptr) - 1)];
+    }
     r.cpus = cpuid.unified.cpus();
     r.cores = [r.cpus * cpuid.unified.cores()];
     r.threads = [cpuid.unified.threads()];
