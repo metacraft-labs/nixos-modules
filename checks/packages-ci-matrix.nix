@@ -48,6 +48,7 @@
             nethermind
             web3signer
             nimbus
+            erigon
             ;
         };
     };
