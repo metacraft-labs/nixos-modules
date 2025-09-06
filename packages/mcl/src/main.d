@@ -1,10 +1,10 @@
 import std.stdio : writefln, writeln, stderr;
-import std.array : replace;
+import std.array : array, replace;
 import std.getopt : getopt;
 import std.logger : infof, errorf, LogLevel;
 
 import mcl.utils.path : rootDir;
-import mcl.utils.tui : bold;
+import mcl.utils.tui : bold, wrapTextInBox;
 
 import cmds = mcl.commands;
 
@@ -22,6 +22,17 @@ alias supportedCommands = imported!`std.traits`.AliasSeq!(
 
 int main(string[] args)
 {
+    import std.file : readText;
+    import mcl.utils.text : stripAnsi;
+
+    args[1]
+        .readText()
+        .stripAnsi()
+        .writeln();
+
+
+    if (1) return 0;
+
     if (args.length < 2)
         return wrongUsage("no command selected");
 

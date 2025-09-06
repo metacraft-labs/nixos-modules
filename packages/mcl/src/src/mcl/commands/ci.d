@@ -12,7 +12,7 @@ import mcl.utils.env : optional, parseEnv;
 import mcl.commands.ci_matrix: nixEvalJobs, SupportedSystem, Params, flakeAttr;
 import mcl.commands.shard_matrix: generateShardMatrix;
 import mcl.utils.path : rootDir, createResultDirs;
-import mcl.utils.process : execute, spawnProcessInline;
+import mcl.utils.process : spawnProcessInline;
 import mcl.utils.nix : nix;
 import mcl.utils.json : toJSON;
 

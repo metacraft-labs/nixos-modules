@@ -8,14 +8,17 @@ buildRequirements "allowWarnings"
 
 buildType "unittest" {
     buildOptions "unittests" "debugInfo"
+    dflags "-checkaction=context"
+    dflags "-allinst"
 }
 
 buildType "unittest-debug" {
     buildOptions "unittests" "debugMode" "debugInfo"
+    dflags "-checkaction=context"
+    dflags "-allinst"
 }
 
 dflags "-preview=in"
-dflags "-preview=shortenedMethods"
 dflags "-defaultlib=libphobos2.so" platform="dmd"
 lflags "-fuse-ld=gold" platform="dmd"
 dflags "-mcpu=generic" platform="ldc"
