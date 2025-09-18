@@ -1,5 +1,6 @@
 {
   imports = [
+    ./cachix-deploy-metrics
     ./lido
     ./pyroscope
     ./aztec
