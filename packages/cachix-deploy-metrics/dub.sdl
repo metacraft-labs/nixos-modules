@@ -1,0 +1,10 @@
+name "cachix-deploy-metrics"
+
+targetType "executable"
+targetPath "build"
+
+sourceFiles "main.d"
+
+dependency "prometheus2" version="~>1.1.0"
+dependency "vibe-d" version="~>0.10.2"
+dependency "argparse" version=">=1.3.0 <2.0.0"
