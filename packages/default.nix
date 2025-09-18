@@ -20,7 +20,7 @@
               let
                 nixStable = pkgs.nixVersions.stable;
               in
-              assert versionAtLeast nixStable.version "2.24.10";
+              assert versionAtLeast nixStable.version "2.30.2";
               nixStable;
             nix-eval-jobs = pkgs.nix-eval-jobs.override { inherit nix; };
             nix-fast-build = pkgs.nix-fast-build.override { inherit nix-eval-jobs; };
