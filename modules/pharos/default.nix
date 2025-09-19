@@ -17,15 +17,15 @@
       images = {
         "testnet" = {
           image = "public.ecr.aws/k2g7b7g1/pharos/testnet";
-          tag = "pharos_community_v0.6.1_fix";
-          digest = "sha256:0f09cb913b3a7dcf8d6f790bfa8f35ca8b2bbf831a83540ace2c0499843502aa";
-          sha256 = "sha256-l7zb38kVOIzK0ylTbTKzOjF25ysnRR7rRoA1txXDJrw=";
+          tag = "pharos_community_v7_0918";
+          digest = "sha256:9415d973aeff168d09ce7cb74982c1cf16bd07e1ce902b7a9c9cac46d2307a3b";
+          sha256 = "sha256-+UXJvRp4q8ZfH1JnbEgjjAJtZB0r2KWS5Q0ay4bLunk=";
         };
         "devnet" = {
           image = "public.ecr.aws/k2g7b7g1/pharos";
           tag = "latest";
           digest = "sha256:82c7d84fc7d7f17056e947030c4a67bf23a139fe19539a6b237ab42df8215e7b";
-          sha256 = "1lh9hna57y9n3h0lhmvy8grlg02caq6p1k9whgwp0av67wllk5km";
+          sha256 = "sha256-dZZJKT9mK3D5gzzNcA1WTIBH80N+V0gBHDb5U5SFCdI=";
         };
       };
     in
