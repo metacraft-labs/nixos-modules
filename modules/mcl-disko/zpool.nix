@@ -3,6 +3,7 @@
   poolName,
   poolMode,
   poolExtraDatasets,
+  partitioningPreset,
 }:
 let
   translateDataSetToDiskoConfig =
@@ -45,79 +46,81 @@ in
 
     postCreateHook = "zfs snapshot ${poolName}@blank";
 
-    datasets = lib.recursiveUpdate {
-      root = {
-        mountpoint = "/";
-        type = "zfs_fs";
-        options = {
-          "com.sun:auto-snapshot" = "false";
-          mountpoint = "legacy";
+    datasets =
+      lib.optionalAttrs (partitioningPreset != "ext4") {
+        root = {
+          mountpoint = "/";
+          type = "zfs_fs";
+          options = {
+            "com.sun:auto-snapshot" = "false";
+            mountpoint = "legacy";
+          };
         };
-      };
+      }
+      // (lib.recursiveUpdate {
+        "root/nix" = {
+          mountpoint = "/nix";
+          type = "zfs_fs";
+          options = {
+            "com.sun:auto-snapshot" = "false";
+            canmount = "on";
+            mountpoint = "legacy";
+            refreservation = "100GiB";
+          };
+        };
 
-      "root/nix" = {
-        mountpoint = "/nix";
-        type = "zfs_fs";
-        options = {
-          "com.sun:auto-snapshot" = "false";
-          canmount = "on";
-          mountpoint = "legacy";
-          refreservation = "100GiB";
+        "root/var" = {
+          mountpoint = "/var";
+          type = "zfs_fs";
+          options = {
+            "com.sun:auto-snapshot" = "true";
+            canmount = "on";
+            mountpoint = "legacy";
+          };
         };
-      };
 
-      "root/var" = {
-        mountpoint = "/var";
-        type = "zfs_fs";
-        options = {
-          "com.sun:auto-snapshot" = "true";
-          canmount = "on";
-          mountpoint = "legacy";
+        "root/var/lib" = {
+          mountpoint = "/var/lib";
+          type = "zfs_fs";
+          options = {
+            "com.sun:auto-snapshot" = "true";
+            canmount = "on";
+            mountpoint = "legacy";
+          };
         };
-      };
 
-      "root/var/lib" = {
-        mountpoint = "/var/lib";
-        type = "zfs_fs";
-        options = {
-          "com.sun:auto-snapshot" = "true";
-          canmount = "on";
-          mountpoint = "legacy";
+        "root/home" = {
+          mountpoint = "/home";
+          type = "zfs_fs";
+          options = {
+            "com.sun:auto-snapshot" = "true";
+            canmount = "on";
+            mountpoint = "legacy";
+            refreservation = "200GiB";
+          };
         };
-      };
 
-      "root/home" = {
-        mountpoint = "/home";
-        type = "zfs_fs";
-        options = {
-          "com.sun:auto-snapshot" = "true";
-          canmount = "on";
-          mountpoint = "legacy";
-          refreservation = "200GiB";
+        "root/var/lib/docker" = {
+          mountpoint = "/var/lib/docker";
+          type = "zfs_fs";
+          options = {
+            "com.sun:auto-snapshot" = "false";
+            canmount = "on";
+            mountpoint = "legacy";
+            refreservation = "100GiB";
+          };
         };
-      };
 
-      "root/var/lib/docker" = {
-        mountpoint = "/var/lib/docker";
-        type = "zfs_fs";
-        options = {
-          "com.sun:auto-snapshot" = "false";
-          canmount = "on";
-          mountpoint = "legacy";
-          refreservation = "100GiB";
+        "root/var/lib/containers" = {
+          mountpoint = "/var/lib/containers";
+          type = "zfs_fs";
+          options = {
+            "com.sun:auto-snapshot" = "false";
+            canmount = "on";
+            mountpoint = "legacy";
+            refreservation = "100GiB";
+          };
         };
-      };
-
-      "root/var/lib/containers" = {
-        mountpoint = "/var/lib/containers";
-        type = "zfs_fs";
-        options = {
-          "com.sun:auto-snapshot" = "false";
-          canmount = "on";
-          mountpoint = "legacy";
-          refreservation = "100GiB";
-        };
-      };
-    } restructuredDatasets;
+      } restructuredDatasets);
   };
 }
