@@ -18,11 +18,15 @@
       options.mcl.disko = {
         enable = mkEnableOption "Enable Module";
 
-        legacyBoot = mkOption {
-          type = types.bool;
-          default = false;
-          example = true;
-          description = "Declare if the configuration is for a Hetzner server or not";
+        primaryPartitionType = mkOption {
+          type = types.enum [
+            "zfs"
+            "legacyBoot"
+            "ext4"
+          ];
+          default = "zfs";
+          example = "legacyBoot";
+          description = "Declare the type of the primary partition";
         };
 
         swapSize = mkOption {
@@ -140,7 +144,7 @@
 
       config.disko =
         let
-          makePrimaryZfsDisk = import ./primaryZfsPartition.nix;
+          makePrimaryZfsDisk = import ./primaryPartition;
           makeSecondaryZfsDisk = import ./secondaryZfsPartition.nix;
 
           first = builtins.head cfg.disks;
@@ -159,7 +163,7 @@
                     isSecondary = true;
                     espSize = cfg.espSize;
                     swapSize = cfg.swapSize;
-                    legacyBoot = cfg.legacyBoot;
+                    primaryPartitionType = cfg.primaryPartitionType;
                     poolName = cfg.zpool.name;
                   }
                 else
@@ -180,7 +184,7 @@
                 isSecondary = false;
                 espSize = cfg.espSize;
                 swapSize = cfg.swapSize;
-                legacyBoot = cfg.legacyBoot;
+                primaryPartitionType = cfg.primaryPartitionType;
                 poolName = cfg.zpool.name;
               };
             };
@@ -188,6 +192,7 @@
               poolName = cfg.zpool.name;
               poolMode = cfg.zpool.mode;
               poolExtraDatasets = cfg.zpool.extraDatasets;
+              primaryPartitionType = cfg.primaryPartitionType;
               inherit lib;
             };
           };
