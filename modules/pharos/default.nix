@@ -17,9 +17,9 @@
       images = {
         "testnet" = {
           image = "public.ecr.aws/k2g7b7g1/pharos/testnet";
-          tag = "pharos_community_v7_0918";
-          digest = "sha256:9415d973aeff168d09ce7cb74982c1cf16bd07e1ce902b7a9c9cac46d2307a3b";
-          sha256 = "sha256-+UXJvRp4q8ZfH1JnbEgjjAJtZB0r2KWS5Q0ay4bLunk=";
+          tag = "pharos_community_v7_0923_01";
+          digest = "sha256:6b563cb6a24b349885ed25787b99ba25a9177038b26f58fa2beebdca81d6b58d";
+          sha256 = "sha256-Rep13rjLkX+INQ2wE/4UJNc+reBzZWi38C4ZfL9ks5I=";
         };
         "devnet" = {
           image = "public.ecr.aws/k2g7b7g1/pharos";
