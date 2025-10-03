@@ -10,5 +10,6 @@
     ./secrets.nix
     ./mcl-disko
     ./pharos
+    ./commands.nix
   ];
 }
