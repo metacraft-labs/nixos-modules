@@ -34,7 +34,7 @@ jobs:
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Build and test the `mcl` command
         run: nix develop -c sh -c "dub test --root packages/mcl -- -e 'fetchJson|(coda\.)|nix.run|nix.build'"
