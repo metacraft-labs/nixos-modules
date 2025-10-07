@@ -5,6 +5,7 @@
   espSize,
   swapSize,
   poolName,
+  randomEncryption,
 }:
 {
   "ESP" = {
@@ -38,7 +39,7 @@
     size = swapSize;
     content = {
       type = "swap";
-      randomEncryption = true;
+      inherit randomEncryption;
     };
   };
 }
