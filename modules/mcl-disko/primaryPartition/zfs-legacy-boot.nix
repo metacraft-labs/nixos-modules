@@ -4,6 +4,7 @@
   espSize,
   swapSize,
   poolName,
+  randomEncryption,
 }:
 [
   {
@@ -43,7 +44,7 @@
     part-type = "primary";
     content = {
       type = "swap";
-      randomEncryption = true;
+      inherit randomEncryption;
     };
   }
 ]
