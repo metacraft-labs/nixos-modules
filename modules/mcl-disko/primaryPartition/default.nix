@@ -6,6 +6,7 @@
   swapSize,
   partitioningPreset,
   poolName,
+  randomEncryption,
 }:
 {
   type = "disk";
@@ -21,10 +22,18 @@
             espSize
             swapSize
             poolName
+            randomEncryption
             ;
         }
       else if partitioningPreset == "ext4" then
-        import ./ext4.nix { inherit lib espSize swapSize; }
+        import ./ext4.nix {
+          inherit
+            lib
+            espSize
+            swapSize
+            randomEncryption
+            ;
+        }
       else
         import ./zfs.nix {
           inherit
@@ -34,6 +43,7 @@
             espSize
             swapSize
             poolName
+            randomEncryption
             ;
         };
   }
