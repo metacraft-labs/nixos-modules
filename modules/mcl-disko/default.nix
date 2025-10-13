@@ -29,11 +29,20 @@
           description = "Declare the type of the primary partition";
         };
 
-        swapSize = mkOption {
-          type = types.nullOr types.str;
-          default = "32G";
-          example = "32768M";
-          description = "The size of the hard disk space used when RAM is full";
+        swap = {
+          size = mkOption {
+            type = types.nullOr types.str;
+            default = "32G";
+            example = "32768M";
+            description = "The size of the hard disk space used when RAM is full";
+          };
+
+          randomEncryption = mkOption {
+            type = types.bool;
+            default = true;
+            example = false;
+            description = "Whether to use random encryption for swap partition";
+          };
         };
 
         espSize = mkOption {
@@ -162,9 +171,10 @@
                     inherit disk lib;
                     isSecondary = true;
                     espSize = cfg.espSize;
-                    swapSize = cfg.swapSize;
+                    swapSize = cfg.swap.size;
                     partitioningPreset = cfg.partitioningPreset;
                     poolName = cfg.zpool.name;
+                    randomEncryption = cfg.swap.randomEncryption;
                   }
                 else
                   makeSecondaryZfsDisk {
@@ -183,9 +193,10 @@
                 disk = first;
                 isSecondary = false;
                 espSize = cfg.espSize;
-                swapSize = cfg.swapSize;
+                swapSize = cfg.swap.size;
                 partitioningPreset = cfg.partitioningPreset;
                 poolName = cfg.zpool.name;
+                randomEncryption = cfg.swap.randomEncryption;
               };
             };
             zpool = import ./zpool.nix {

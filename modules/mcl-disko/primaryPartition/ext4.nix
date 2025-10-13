@@ -2,6 +2,7 @@
   lib,
   espSize,
   swapSize,
+  randomEncryption,
 }:
 {
   ESP = {
@@ -33,7 +34,7 @@
     size = swapSize;
     content = {
       type = "swap";
-      randomEncryption = true;
+      inherit randomEncryption;
     };
   };
 }
