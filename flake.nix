@@ -86,6 +86,7 @@
         flake-compat.follows = "flake-compat";
         treefmt-nix.follows = "treefmt-nix";
         fenix.follows = "fenix";
+        devshell.follows = "devshell";
       };
     };
 
@@ -107,6 +108,13 @@
         git-hooks.follows = "git-hooks-nix";
         flake-compat.follows = "flake-compat";
         flake-parts.follows = "flake-parts";
+      };
+    };
+
+    devshell = {
+      url = "github:numtide/devshell";
+      inputs = {
+        nixpkgs.follows = "nixpkgs";
       };
     };
 
