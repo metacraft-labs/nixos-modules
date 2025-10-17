@@ -106,6 +106,7 @@
         nixpkgs.follows = "nixpkgs";
         git-hooks.follows = "git-hooks-nix";
         flake-compat.follows = "flake-compat";
+        flake-parts.follows = "flake-parts";
       };
     };
 
@@ -168,6 +169,7 @@
       url = "github:terranix/terranix";
       inputs = {
         nixpkgs.follows = "nixpkgs";
+        flake-parts.follows = "flake-parts";
       };
     };
 
