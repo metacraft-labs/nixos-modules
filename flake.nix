@@ -159,6 +159,7 @@
     nixd = {
       url = "github:nix-community/nixd";
       inputs.flake-parts.follows = "flake-parts";
+      inputs.treefmt-nix.follows = "treefmt-nix";
       # Please refrain from adding the following line:
       # inputs.nixpkgs.follows = "nixpkgs";
       #
