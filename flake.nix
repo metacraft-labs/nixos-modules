@@ -132,6 +132,7 @@
       url = "github:numtide/nixos-anywhere";
       inputs = {
         nixpkgs.follows = "nixpkgs";
+        nixos-stable.follows = "nixpkgs";
         nixos-images.follows = "nixos-images";
         flake-parts.follows = "flake-parts";
         disko.follows = "disko";
