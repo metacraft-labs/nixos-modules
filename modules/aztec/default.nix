@@ -18,6 +18,11 @@
           type = types.listOf types.str;
           description = "Ethereum hosts for the sequencer";
         };
+        metrics-collector-endpoint = mkOption {
+          type = types.nullOr types.str;
+          default = null;
+          description = "OpenTelemetry OTLP metrics endpoint";
+        };
         l1ConsensusHostUrls = mkOption {
           type = types.listOf types.str;
           description = "L1 consensus host URLs for the sequencer";
@@ -56,16 +61,20 @@
           serviceConfig = {
             WorkingDirectory = "/var/lib/aztec-sequencer";
 
-            ExecStart = pkgs.writeShellScript "aztec-sequencer" ''
-              ${lib.getExe package} start --node --archiver --sequencer \
-                --network alpha-testnet \
-                --l1-rpc-urls ${lib.concatStringsSep "," cfg.ethereumHosts} \
-                --l1-consensus-host-urls ${lib.concatStringsSep "," cfg.l1ConsensusHostUrls} \
-                --sequencer.validatorPrivateKeys "$(cat ${cfg.validatorPrivateKeys})" \
-                --sequencer.coinbase ${cfg.coinbase} \
-                --p2p.p2pIp ${cfg.p2pIp} \
-                --p2p.p2pPort ${toString cfg.p2pPort}
-            '';
+            ExecStart =
+              pkgs.writeShellScript "aztec-sequencer" ''
+                ${lib.getExe package} start --node --archiver --sequencer \
+                  --network alpha-testnet \
+                  --l1-rpc-urls ${lib.concatStringsSep "," cfg.ethereumHosts} \
+                  --l1-consensus-host-urls ${lib.concatStringsSep "," cfg.l1ConsensusHostUrls} \
+                  --sequencer.validatorPrivateKeys "$(cat ${cfg.validatorPrivateKeys})" \
+                  --sequencer.coinbase ${cfg.coinbase} \
+                  --p2p.p2pIp ${cfg.p2pIp} \
+                  --p2p.p2pPort ${toString cfg.p2pPort} \
+              ''
+              + lib.optionalString (cfg.metrics-collector-endpoint != null) ''
+                --tel.metricsCollectorUrl ${cfg.metrics-collector-endpoint}
+              '';
           };
         };
 
