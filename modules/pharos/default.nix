@@ -15,6 +15,12 @@
       # https://docs.pharosnetwork.xyz/node-and-validator-guide/validator-node-deployment/using-docker-testnet
       # https://docs.pharosnetwork.xyz/node-and-validator-guide/validator-node-deployment/using-docker-devnet
       images = {
+        "atlantic" = {
+          image = "public.ecr.aws/k2g7b7g1/pharos/atlantic";
+          tag = "atlantic_community-v0.7.2_102206";
+          digest = "sha256:c2f8b08d4fb9778537e118404be2ad1782c1c64a171954ebe3ff2a063c52eccf";
+          sha256 = "sha256-1lEoVuyKyHvfn3zZzl9qZHr+Topu6MLbiUv8sg2FGDI=";
+        };
         "testnet" = {
           image = "public.ecr.aws/k2g7b7g1/pharos/testnet";
           tag = "pharos_community_v7_0923_01";
@@ -35,10 +41,11 @@
         network = mkOption {
           type = types.enum [
             "testnet"
+            "atlantic"
             "devnet"
             "mainnet"
           ];
-          default = "testnet";
+          default = "atlantic";
           description = "Network to connect to";
         };
       };
