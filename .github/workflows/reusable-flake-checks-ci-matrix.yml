@@ -33,7 +33,7 @@ jobs:
     runs-on: ${{ fromJSON(inputs.runner) }}
     steps:
       - name: 'Post initial package status comment'
-        uses: marocchino/sticky-pull-request-comment@v2.9.3
+        uses: marocchino/sticky-pull-request-comment@v2.9.4
         with:
           recreate: true
           message: |
@@ -56,7 +56,7 @@ jobs:
           nix-gitlab-token: ${{ secrets.NIX_GITLAB_TOKEN }}
           nix-gitlab-domain: ${{ vars.NIX_GITLAB_DOMAIN }}
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Generate Matrix for Matrix
         id: generate-matrix
@@ -86,7 +86,7 @@ jobs:
           nix-gitlab-token: ${{ secrets.NIX_GITLAB_TOKEN }}
           nix-gitlab-domain: ${{ vars.NIX_GITLAB_DOMAIN }}
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Generate CI Matrix
         id: generate-matrix
@@ -115,7 +115,7 @@ jobs:
       matrix: ${{ steps.matrix.outputs.matrix }}
       fullMatrix: ${{ steps.matrix.outputs.fullMatrix }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
       - name: Merge matrices
         run: |
           # Check if jq is installed
@@ -177,7 +177,7 @@ jobs:
     continue-on-error: ${{ matrix.allowedToFail }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Nix
         uses: metacraft-labs/nixos-modules/.github/install-nix@main
@@ -225,7 +225,7 @@ jobs:
             && contains(needs.*.result, 'failure')
             || contains(needs.*.result, 'cancelled')
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         if: inputs.run-cachix-deploy
 
       - name: Deploy
