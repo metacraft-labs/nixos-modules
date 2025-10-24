@@ -25,7 +25,7 @@ jobs:
   lint:
     runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Nix
         uses: metacraft-labs/nixos-modules/.github/install-nix@main
