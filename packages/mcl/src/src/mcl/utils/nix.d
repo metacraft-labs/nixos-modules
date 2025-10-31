@@ -61,7 +61,7 @@ struct NixCommand
 
     template opDispatch(string commandName)
     {
-        T opDispatch(T = string)(string path, string[] args = [])
+        T opDispatch(T = string)(string path, string[] args = [], string subcommand = "")
         {
             import std.algorithm : canFind;
 
@@ -80,9 +80,9 @@ struct NixCommand
                 args = ["--json"] ~ args;
 
             auto command = [
-                "nix", "--experimental-features", "nix-command flakes",
+                "nix", "--experimental-features", "nix-command flakes pipe-operators",
                 commandName,
-            ] ~ args ~ path;
+            ] ~ (subcommand == "" ? [] : [ subcommand ]) ~ args ~ path;
 
             auto output = command.execute(true).strip();
 

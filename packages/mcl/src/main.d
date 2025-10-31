@@ -18,6 +18,7 @@ alias supportedCommands = imported!`std.traits`.AliasSeq!(
     cmds.ci,
     cmds.machine,
     cmds.config,
+    cmds.compare_disko,
 );
 
 int main(string[] args)
