@@ -26,15 +26,16 @@ jobs:
   test-mcl:
     runs-on: self-hosted
     steps:
+      - name: Checkout first to use locally defined actions
+        uses: actions/checkout@v4
+
       - name: Install Nix
-        uses: metacraft-labs/nixos-modules/.github/install-nix@main
+        uses: ./.github/install-nix
         with:
           cachix-cache: ${{ vars.CACHIX_CACHE }}
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
-
-      - uses: actions/checkout@v4
 
       - name: Build and test the `mcl` command
         run: nix develop -c sh -c "dub test --root packages/mcl -- -e 'fetchJson|(coda\.)|nix.run|nix.build'"
