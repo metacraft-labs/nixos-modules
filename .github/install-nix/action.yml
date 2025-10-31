@@ -32,9 +32,6 @@ inputs:
 runs:
   using: 'composite'
   steps:
-    - name: Log GH API rate limits
-      run: gh api /rate_limit | jq
-
     - name: Install Nix
       uses: cachix/install-nix-action@v31
       if: ${{ runner.environment == 'github-hosted' }}
