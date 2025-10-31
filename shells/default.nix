@@ -35,9 +35,14 @@
               nix-eval-jobs
               nixos-rebuild
               nix-output-monitor
+              curl
+              openssl
+              zlib
+              pkg-config
               repl
               rage
               dub
+              dub-to-nix
               ldc
             ]
             ++ pkgs.lib.optionals (pkgs.stdenv.system == "x86_64-linux") [
