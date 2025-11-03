@@ -124,8 +124,25 @@ jobs:
             export PATH
           fi
 
-          ls */matrix-pre.json
-          matrix="$(cat */matrix-pre.json | jq -cr '.include[]' | jq '[ select (.isCached == false) ]' | jq -s 'add' | jq -c  '. | {include: .}')"
+          matrix_files=()
+          while IFS= read -r -d '' file; do
+            matrix_files+=("$file")
+          done < <(find . -type f -name 'matrix-pre.json' -print0 | sort -z)
+
+          if [[ "${#matrix_files[@]}" -eq 0 ]]; then
+            echo "No matrix-pre.json artifacts found" >&2
+            exit 1
+          fi
+
+          echo "Found matrix-pre.json files:"
+          for file in "${matrix_files[@]}"; do
+            ls "$file"
+          done
+
+          matrix="$(jq -sc '
+            [.[].include[]? | select(.isCached == false)] as $filtered
+            | {include: $filtered}
+          ' "${matrix_files[@]}")"
 
           if [[ "$matrix" == '' ]] || [[ "$matrix" == '{}' ]] || [[ "$matrix" == '{"include":null}' ]] || [[ "$matrix" == '{"include":[]}' ]]; then
             matrix='{"include":[]}'
@@ -138,7 +155,10 @@ jobs:
           echo
           echo
 
-          fullMatrix="$(cat */matrix-pre.json | jq -cr '.include' | jq -s 'add' | jq -c '. | {include: .}')"
+          fullMatrix="$(jq -sc '
+            [.[].include[]?] as $all
+            | {include: $all}
+          ' "${matrix_files[@]}")"
 
           echo "---"
           echo "Full Matrix:"
