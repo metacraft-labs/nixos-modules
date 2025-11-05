@@ -551,6 +551,35 @@
         "type": "github"
       }
     },
+    "nix-topology": {
+      "inputs": {
+        "devshell": [
+          "devshell"
+        ],
+        "flake-utils": [
+          "flake-utils"
+        ],
+        "nixpkgs": [
+          "nixpkgs"
+        ],
+        "pre-commit-hooks": [
+          "git-hooks-nix"
+        ]
+      },
+      "locked": {
+        "lastModified": 1762088663,
+        "narHash": "sha256-rpCvFan9Dji1Vw4HfVqYdfWesz5sKZE3uSgYR9gRreA=",
+        "owner": "oddlama",
+        "repo": "nix-topology",
+        "rev": "c15f569794a0f1a437850d0ac81675bcf23ca6cb",
+        "type": "github"
+      },
+      "original": {
+        "owner": "oddlama",
+        "repo": "nix-topology",
+        "type": "github"
+      }
+    },
     "nix-vm-test": {
       "inputs": {
         "nixpkgs": [
@@ -809,6 +838,7 @@
         "home-manager-unstable": "home-manager-unstable",
         "microvm": "microvm",
         "nix-darwin": "nix-darwin",
+        "nix-topology": "nix-topology",
         "nix2container": "nix2container",
         "nixd": "nixd",
         "nixos-2311": "nixos-2311",
