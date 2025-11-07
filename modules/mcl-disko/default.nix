@@ -47,6 +47,7 @@
               };
             };
           };
+          default = { };
         };
 
         espSize = mkOption {
