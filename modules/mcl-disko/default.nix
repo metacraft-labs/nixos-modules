@@ -29,19 +29,23 @@
           description = "Declare the type of the primary partition";
         };
 
-        swap = {
-          size = mkOption {
-            type = types.nullOr types.str;
-            default = "32G";
-            example = "32768M";
-            description = "The size of the hard disk space used when RAM is full";
-          };
+        swap = mkOption {
+          type = types.submodule {
+            options = {
+              size = mkOption {
+                type = types.nullOr types.str;
+                default = "32G";
+                example = "32768M";
+                description = "The size of the hard disk space used when RAM is full";
+              };
 
-          randomEncryption = mkOption {
-            type = types.bool;
-            default = true;
-            example = false;
-            description = "Whether to use random encryption for swap partition";
+              randomEncryption = mkOption {
+                type = types.bool;
+                default = true;
+                example = false;
+                description = "Whether to use random encryption for swap partition";
+              };
+            };
           };
         };
 
