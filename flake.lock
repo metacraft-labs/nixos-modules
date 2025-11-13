@@ -190,7 +190,7 @@
         ],
         "foundry-nix": "foundry-nix",
         "nixpkgs": [
-          "nixos-2405"
+          "nixos-2505"
         ],
         "nixpkgs-unstable": [
           "nixpkgs-unstable"
@@ -212,7 +212,7 @@
       },
       "original": {
         "owner": "metacraft-labs",
-        "ref": "dev2",
+        "ref": "dev",
         "repo": "ethereum.nix",
         "type": "github"
       }
