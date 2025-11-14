@@ -149,11 +149,12 @@ Params params;
 struct ci_matrix_args
 {
 }
-export void ci_matrix(ci_matrix_args args)
+export int ci_matrix(ci_matrix_args args)
 {
     params = parseEnv!Params;
     createResultDirs();
     nixEvalForAllSystems().array.printTableForCacheStatus();
+    return 0;
 }
 
 string flakeAttr(string prefix, SupportedSystem system, string postfix)

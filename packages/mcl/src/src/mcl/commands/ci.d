@@ -25,7 +25,7 @@ struct ci_args
 {
 }
 
-export void ci(string[] args)
+export int ci(ci_args args)
 {
     params = parseEnv!Params;
 
@@ -76,4 +76,5 @@ export void ci(string[] args)
         }
 
     }
+    return 0;
 }
