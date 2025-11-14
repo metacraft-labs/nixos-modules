@@ -48,6 +48,7 @@ jobs:
       - name: Install Nix
         uses: metacraft-labs/nixos-modules/.github/install-nix@main
         with:
+          push-to-cache: false
           cachix-cache: ${{ vars.CACHIX_CACHE }}
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
@@ -78,6 +79,7 @@ jobs:
       - name: Install Nix
         uses: metacraft-labs/nixos-modules/.github/install-nix@main
         with:
+          push-to-cache: false
           cachix-cache: ${{ vars.CACHIX_CACHE }}
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
@@ -202,6 +204,7 @@ jobs:
       - name: Install Nix
         uses: metacraft-labs/nixos-modules/.github/install-nix@main
         with:
+          push-to-cache: true
           cachix-cache: ${{ vars.CACHIX_CACHE }}
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
@@ -215,6 +218,7 @@ jobs:
           nix build -L --no-link --keep-going --show-trace \
             '.#${{ matrix.attrPath }}'
 
+      # TODO: replace with `attic`
       - name: Push to Cachix ${{ matrix.name }}
         run: |
           cachix push ${{ vars.CACHIX_CACHE }} ${{ matrix.output }}

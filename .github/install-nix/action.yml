@@ -2,6 +2,10 @@ name: Install Nix
 description: Installs Nix and configures substituters and trusted public keys
 
 inputs:
+  push-to-cache:
+    description: Whether to use cachix or not
+    required: false
+    default: false
   cachix-cache:
     description: The name of the cachix cache to use
     required: true
@@ -74,6 +78,7 @@ runs:
         EOF
 
     - uses: cachix/cachix-action@v15
+      if: inputs.push-to-cache == true
       with:
         name: ${{ inputs.cachix-cache }}
         authToken: ${{ inputs.cachix-auth-token }}
