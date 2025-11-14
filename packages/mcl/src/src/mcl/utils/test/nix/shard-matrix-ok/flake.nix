@@ -1,6 +1,6 @@
 {
   inputs = {
-    nixos-modules.url = "github:metacraft-labs/nixos-modules?rev=a6302392aa47a0820d4e1fbd3e565df6c2d01084";
+    nixos-modules.url = "path:../../../../../../../../../";
     nixpkgs.follows = "nixos-modules/nixpkgs";
     flake-parts.follows = "nixos-modules/flake-parts";
   };
@@ -11,16 +11,17 @@
       nixos-modules,
       ...
     }:
-    flake-parts.lib.mkFlake { inherit inputs; } {
+    flake-parts.lib.mkFlake { inherit inputs; } ({ config, lib, ... }: {
       systems = [ "x86_64-linux" ];
-      imports = [ nixos-modules.flakeModules.shardSplit ];
+      imports = [ nixos-modules.modules.flake.shardSplit ];
 
       mcl.matrix.shard = {
         size = 10;
-        attributePath = [
+        perSystemAttributePath = [
           "legacyPackages"
           "ci-checks"
         ];
+        systemsToBuild = config.systems;
       };
 
       perSystem =
@@ -43,5 +44,5 @@
             )
           ];
         };
-    };
+    });
 }
