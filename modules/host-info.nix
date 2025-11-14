@@ -1,6 +1,6 @@
 { withSystem, ... }:
-{
-  flake.modules.nixos.mcl-host-info =
+let
+  mclHostInfoModule =
     {
       config,
       lib,
@@ -47,4 +47,10 @@
         };
       };
     };
+in
+{
+  flake.modules = {
+    nixos.mcl-host-info = mclHostInfoModule;
+    darwin.mcl-host-info = mclHostInfoModule;
+  };
 }
