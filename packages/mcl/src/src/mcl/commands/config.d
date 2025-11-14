@@ -112,7 +112,7 @@ export int config(config_args args)
 
 bool checkRepo()
 {
-    const string[] validRepos = ["nixos-machine-config", "infra-lido"];
+    const string[] validRepos = ["infra"];
     string remoteOriginUrl = execute([
         "git", "config", "--get", "remote.origin.url"
     ], false);
