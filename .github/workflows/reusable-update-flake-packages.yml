@@ -44,6 +44,7 @@ jobs:
       - name: Install Nix
         uses: metacraft-labs/nixos-modules/.github/install-nix@main
         with:
+          push-to-cache: false
           nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
           nix-gitlab-token: ${{ secrets.NIX_GITLAB_TOKEN }}
           nix-gitlab-domain: ${{ vars.NIX_GITLAB_DOMAIN }}

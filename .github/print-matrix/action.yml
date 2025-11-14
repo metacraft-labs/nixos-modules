@@ -51,6 +51,7 @@ runs:
     - name: Install Nix
       uses: metacraft-labs/nixos-modules/.github/install-nix@main
       with:
+        push-to-cache: false
         cachix-cache: ${{ inputs.cachix-cache }}
         cachix-auth-token: ${{ inputs.cachix-auth-token }}
         trusted-public-keys: ${{ inputs.trusted-public-keys }}
