@@ -8,13 +8,14 @@ import std.sumtype : SumType, match;
 import std.string : stripRight, stripLeft;
 import std.algorithm : endsWith;
 import std.format : format;
+import std.meta : staticMap;
+import std.traits : Parameters;
 import mcl.utils.path : rootDir;
 import mcl.utils.tui : bold;
 
-import mcl.commands;
+import mcl.commands : SubCommandFunctions;
 
 import argparse;
-
 
 @(Command(" ").Description(" "))
 struct unknown_command_args {}
@@ -24,59 +25,30 @@ int unknown_command(unknown_command_args unused)
     return 1;
 }
 
-template genSubCommandArgs()
-{
-    const char[] genSubCommandArgs =
-        "@SubCommands\n"~
-        "SumType!("~
-            "get_fstab_args,"~
-            "deploy_spec_args,"~
-            "host_info_args,"~
-            "config_args,"~
-            "machine_args,"~
-            "ci_matrix_args,"~
-            "ci_args,"~
-            "print_table_args,"~
-            "shard_matrix_args,"~
-            "Default!unknown_command_args"~
-        ") cmd;";
-}
-
-template genSubCommandMatch()
-{
-    const char[] generateMatchString = () {
-        alias CmdTypes = typeof(MCLArgs.cmd).Types;
-        string match = "int result = args.cmd.match!(";
-
-        static foreach (CmdType; CmdTypes)
-        {{
-            string name = CmdType.stringof.replace("Default!(", "").stripRight(")");
-            match ~= format("\n\t(%s a) => %s(a)", name, name.replace("_args", "")) ~ ", ";
-        }}
-        match = match.stripRight(", ");
-        match ~= "\n);";
-
-        return match;
-    }();
-}
-
 struct MCLArgs
 {
     @NamedArgument(["log-level"])
     LogLevel logLevel = cast(LogLevel)-1;
-    mixin(genSubCommandArgs!());
+
+    @SubCommands
+    SumType!(
+        staticMap!(Parameters, SubCommandFunctions),
+        Default!unknown_command_args
+    ) cmd;
 }
+
+alias SumTypeCase(alias func) = (Parameters!func args) => func(args);
 
 mixin CLI!MCLArgs.main!((args)
 {
-    static assert(is(typeof(args) == MCLArgs));
-
     LogLevel logLevel = LogLevel.info;
     if (args.logLevel != cast(LogLevel)-1)
         logLevel = args.logLevel;
     setLogLevel(logLevel);
 
-    mixin genSubCommandMatch;
+    int result = args.cmd.match!(
+        staticMap!(SumTypeCase, unknown_command, SubCommandFunctions),
+    );
 
     return 0;
 });
