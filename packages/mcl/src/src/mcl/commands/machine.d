@@ -176,7 +176,7 @@ string[] getGroups()
     return groups;
 }
 
-User createUser(create_machine_args args) {
+User createUser(CreateMachineArgs args) {
 
         auto createUser = args.createUser || prompt!bool("Create new user");
         if (!createUser)
@@ -223,7 +223,7 @@ struct MachineConfiguration
     MachineUserInfo users;
 }
 
-void createMachine(create_machine_args args, MachineType machineType, string machineName, User user) {
+void createMachine(CreateMachineArgs args, MachineType machineType, string machineName, User user) {
     auto infoJSON = execute(["ssh", args.sshPath, "sudo nix --experimental-features \\'nix-command flakes\\' --refresh --accept-flake-config run github:metacraft-labs/nixos-modules/#mcl host-info"],false, false);
     auto infoJSONParsed = infoJSON.parseJSON;
     Info info = infoJSONParsed.fromJSON!Info;
@@ -368,7 +368,7 @@ struct HardwareConfiguration {
     Services services;
 }
 
-int createMachineConfiguration(create_machine_args args)
+int createMachineConfiguration(CreateMachineArgs args)
 {
     checkifNixosMachineConfigRepo();
     auto machineType = cast(int)args.machineType != 0 ? args.machineType : prompt!MachineType("Machine type");
@@ -380,16 +380,17 @@ int createMachineConfiguration(create_machine_args args)
 }
 
 
-export int machine(machine_args args)
+export int machine(MachineArgs args)
 {
     return args.cmd.match!(
-        (create_machine_args a) => createMachineConfiguration(a),
-        (unknown_command_args a) => unknown_command(a)
+        (CreateMachineArgs a) => createMachineConfiguration(a),
+        (UnknownCommandArgs a) => unknown_command(a)
     );
 }
-@(Command("create").Description("Create a new machine"))
-struct create_machine_args {
 
+@(Command("create").Description("Create a new machine"))
+struct CreateMachineArgs
+{
     @(PositionalArgument(0).Placeholder("ssh").Description("SSH path to the machine"))
     string sshPath;
     @(NamedArgument(["create-user"]).Placeholder("true/false").Description("Create a new user"))
@@ -409,17 +410,18 @@ struct create_machine_args {
     @(NamedArgument(["disks"]).Placeholder("CT2000P3PSSD8_2402E88C1519,...").Description("Disks to use"))
     string disks;
 }
+
 @(Command(" ").Description(" "))
-struct unknown_command_args {}
-int unknown_command(unknown_command_args unused)
+struct UnknownCommandArgs {}
+
+int unknown_command(UnknownCommandArgs unused)
 {
     stderr.writeln("Unknown machine command. Use --help for a list of available commands.");
     return 1;
 }
 
 @(Command("machine").Description("Manage machines"))
-struct machine_args
+struct MachineArgs
 {
-
-    @SubCommands SumType!(create_machine_args,Default!unknown_command_args) cmd;
+    @SubCommands SumType!(CreateMachineArgs,Default!UnknownCommandArgs) cmd;
 }

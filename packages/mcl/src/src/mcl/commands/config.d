@@ -18,83 +18,83 @@ import mcl.utils.process : execute;
 import mcl.utils.string : camelCaseToCapitalCase;
 
 @(Command("config").Description("Manage NixOS machine configurations"))
-export struct config_args
+export struct ConfigArgs
 {
     @SubCommands SumType!(
-        sys_args,
-        home_args,
-        start_vm_args,
-        Default!unknown_command_args
+        SysArgs,
+        HomeArgs,
+        StartVmArgs,
+        Default!UnknownCommandArgs
     ) cmd;
 }
 
 @(Command("sys").Description("Manage system configurations"))
-struct sys_args
+struct SysArgs
 {
     @SubCommands SumType!(
-        sys_apply_args,
-        sys_edit_args,
-        Default!unknown_command_args
+        SysApplyArgs,
+        SysEditArgs,
+        Default!UnknownCommandArgs
     ) cmd;
 }
 
 @(Command("apply").Description("Apply system configuration"))
-struct sys_apply_args
+struct SysApplyArgs
 {
     @(PositionalArgument(0).Placeholder("machine-name").Description("Name of the machine"))
     string machineName;
 }
 
 @(Command("edit").Description("Edit system configuration"))
-struct sys_edit_args
+struct SysEditArgs
 {
     @(PositionalArgument(0).Placeholder("machine-name").Description("Name of the machine"))
     string machineName;
 }
 
 @(Command("home").Description("Manage home configurations"))
-struct home_args
+struct HomeArgs
 {
     @SubCommands SumType!(
-        home_apply_args,
-        home_edit_args,
-        Default!unknown_command_args
+        HomeApplyArgs,
+        HomeEditArgs,
+        Default!UnknownCommandArgs
     ) cmd;
 }
 
 @(Command("apply").Description("Apply user configuration"))
-struct home_apply_args
+struct HomeApplyArgs
 {
     @(PositionalArgument(0).Placeholder("desktop/server").Description("Type of home configuration"))
     string type;
 }
 
 @(Command("edit").Description("Edit user configuration"))
-struct home_edit_args
+struct HomeEditArgs
 {
     @(PositionalArgument(0).Placeholder("desktop/server").Description("Type of home configuration"))
     string type;
 }
 
 @(Command("start-vm").Description("Start a VM"))
-struct start_vm_args
+struct StartVmArgs
 {
     @(PositionalArgument(0).Optional().Placeholder("vm-name").Description("Name of the VM"))
     string vmName = "";
 }
 
 @(Command(" ").Description(" "))
-struct unknown_command_args
+struct UnknownCommandArgs
 {
 }
 
-int unknown_command(unknown_command_args unused)
+int unknown_command(UnknownCommandArgs unused)
 {
     errorAndExit("Unknown command. Use --help for a list of available commands.");
     return 1;
 }
 
-export int config(config_args args)
+export int config(ConfigArgs args)
 {
     if (!checkRepo())
     {
@@ -103,10 +103,10 @@ export int config(config_args args)
     }
 
     return args.cmd.match!(
-        (sys_args a) => sys(a),
-        (home_args a) => home(a),
-        (start_vm_args a) => startVM(a.vmName),
-        (unknown_command_args a) => unknown_command(a)
+        (SysArgs a) => sys(a),
+        (HomeArgs a) => home(a),
+        (StartVmArgs a) => startVM(a.vmName),
+        (UnknownCommandArgs a) => unknown_command(a)
     );
 }
 
@@ -153,25 +153,25 @@ int apply(string type, string value)
     return executeCommand("just switch-" ~ type ~ " " ~ value);
 }
 
-int sys(sys_args args)
+int sys(SysArgs args)
 {
     return args.cmd.match!(
-        (sys_apply_args a) => apply("system", a.machineName),
-        (sys_edit_args a) => edit("system", a.machineName),
-        (unknown_command_args a) => unknown_command(a)
+        (SysApplyArgs a) => apply("system", a.machineName),
+        (SysEditArgs a) => edit("system", a.machineName),
+        (UnknownCommandArgs a) => unknown_command(a)
     );
 }
 
-int home(home_args args)
+int home(HomeArgs args)
 {
 
     return args.cmd.match!(
-        (home_apply_args a) {
+        (HomeApplyArgs a) {
         writeln("Applying home configuration from: ", a.type);
         return executeCommand("just switch-home " ~ a.type);
     },
-        (home_edit_args a) => "user".edit(a.type),
-        (unknown_command_args a) => unknown_command(a)
+        (HomeEditArgs a) => "user".edit(a.type),
+        (UnknownCommandArgs a) => unknown_command(a)
     );
 }
 

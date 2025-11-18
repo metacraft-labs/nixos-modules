@@ -17,10 +17,10 @@ import mcl.commands.ci_matrix : flakeAttr, params, nixEvalJobs, SupportedSystem;
 
 
 @(Command("deploy-spec", "deploy_spec").Description("Evaluate the Nixos machine configurations in bareMetalMachines and deploy them to cachix."))
-export struct deploy_spec_args {
+export struct DeploySpecArgs {
 }
 
-export int deploy_spec(deploy_spec_args args)
+export int deploy_spec(DeploySpecArgs args)
 {
     const deploySpecFile = resultDir.buildPath("cachix-deploy-spec.json");
 

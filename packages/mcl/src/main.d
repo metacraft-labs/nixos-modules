@@ -18,8 +18,8 @@ import mcl.commands : SubCommandFunctions;
 import argparse;
 
 @(Command(" ").Description(" "))
-struct unknown_command_args {}
-int unknown_command(unknown_command_args unused)
+struct UnknownCommandArgs {}
+int unknown_command(UnknownCommandArgs unused)
 {
     stderr.writeln("Unknown command. Use --help for a list of available commands.");
     return 1;
@@ -33,7 +33,7 @@ struct MCLArgs
     @SubCommands
     SumType!(
         staticMap!(Parameters, SubCommandFunctions),
-        Default!unknown_command_args
+        Default!UnknownCommandArgs
     ) cmd;
 }
 
