@@ -19,7 +19,7 @@ import std.format : format;
 import std.system : nativeEndian = endian;;
 import core.stdc.string : strlen;
 
-import argparse;
+import argparse : Command, Description;
 
 import mcl.utils.env : parseEnv, optional;
 import mcl.utils.json : toJSON;

@@ -13,7 +13,7 @@ import std.regex : matchFirst, regex;
 import std.stdio : writeln;
 import std.string : strip;
 
-import argparse;
+import argparse : Command, Description, NamedArgument, Placeholder;
 
 import mcl.utils.env : parseEnv, optional;
 import mcl.utils.json : toJSON;

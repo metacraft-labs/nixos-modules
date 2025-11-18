@@ -5,7 +5,7 @@ import std.logger : infof, warningf;
 import std.file : exists;
 import std.path : buildPath;
 
-import argparse;
+import argparse : Command, Description;
 
 import mcl.utils.process : spawnProcessInline;
 import mcl.utils.path : resultDir;
