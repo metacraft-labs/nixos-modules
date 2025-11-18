@@ -47,7 +47,8 @@ T parseEnv(T)()
         "missing environment variables:\n%(* %s\n%)".fmt(missingEnvVars)
     );
 
-    result.setup();
+    static if (__traits(hasMember, T, "setup"))
+        result.setup();
 
     return result;
 }
@@ -60,10 +61,6 @@ version (unittest)
         int a;
         string b;
         float c = 1.0;
-
-        void setup()
-        {
-        }
     }
 }
 
