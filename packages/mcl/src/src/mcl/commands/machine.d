@@ -412,7 +412,7 @@ struct CreateMachineArgs
 }
 
 @(Command(" ").Description(" "))
-struct UnknownCommandArgs {}
+struct UnknownCommandArgs { }
 
 int unknown_command(UnknownCommandArgs unused)
 {

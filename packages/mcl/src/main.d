@@ -18,7 +18,7 @@ import mcl.commands : SubCommandFunctions;
 import argparse : Command, Description, SubCommands, NamedArgument, Default, CLI;
 
 @(Command(" ").Description(" "))
-struct UnknownCommandArgs {}
+struct UnknownCommandArgs { }
 int unknown_command(UnknownCommandArgs unused)
 {
     stderr.writeln("Unknown command. Use --help for a list of available commands.");

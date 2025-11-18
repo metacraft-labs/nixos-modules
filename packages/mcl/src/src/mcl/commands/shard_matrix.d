@@ -20,7 +20,8 @@ import mcl.utils.json : toJSON;
 import mcl.utils.nix : nix;
 import mcl.utils.path : createResultDirs, resultDir, rootDir;
 
-@(Command("shard-matrix", "shard_matrix").Description("Generate a shard matrix for a flake"))
+@(Command("shard-matrix", "shard_matrix")
+    .Description("Generate a shard matrix for a flake"))
 struct ShardMatrixArgs
 {
     @(NamedArgument(["github-output"]).Placeholder("output").Description("Output to GitHub Actions"))
