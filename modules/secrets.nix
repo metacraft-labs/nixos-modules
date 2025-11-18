@@ -1,6 +1,7 @@
 { withSystem, inputs, ... }:
-{
-  flake.modules.nixos.mcl-secrets =
+let
+  mkModule =
+    variant:
     {
       config,
       options,
@@ -34,7 +35,7 @@
     in
     {
       imports = [
-        inputs.agenix.nixosModules.default
+        inputs.agenix."${variant}Modules".default
       ];
 
       options.mcl.secrets = with lib; {
@@ -136,4 +137,10 @@
         ];
       };
     };
+in
+{
+  flake.modules = {
+    nixos.mcl-secrets = mkModule "nixos";
+    darwin.mcl-secrets = mkModule "darwin";
+  };
 }
