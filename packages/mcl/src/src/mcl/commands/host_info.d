@@ -590,26 +590,23 @@ StorageInfo getStorageInfo()
             assert(0, "Unknown size unit" ~ d.size[$ - 1]);
         }
 
-        if (isRoot)
+        auto partData = execute!JSONValue("lsblk -o KNAME,SIZE,PARTFLAGS,PARTLABEL,PARTN,PARTTYPE,PARTTYPENAME,PARTUUID,MOUNTPOINT,FSTYPE,LABEL -J /dev/" ~ d
+                .dev, false)["blockdevices"].array;
+        foreach (JSONValue part; partData.array)
         {
-            auto partData = execute!JSONValue("lsblk -o KNAME,SIZE,PARTFLAGS,PARTLABEL,PARTN,PARTTYPE,PARTTYPENAME,PARTUUID,MOUNTPOINT,FSTYPE,LABEL -J /dev/" ~ d
-                    .dev, false)["blockdevices"].array;
-            foreach (JSONValue part; partData.array)
+            if (part["partuuid"].isNull)
             {
-                if (part["partuuid"].isNull)
-                {
-                    continue;
-                }
-                Partition p;
-                p.dev = part["kname"].isNull ? "" : part["kname"].str;
-                p.fslabel = part["label"].isNull ? "" : part["label"].str;
-                p.partlabel = part["partlabel"].isNull ? "" : part["partlabel"].str;
-                p.size = part["size"].isNull ? "" : part["size"].str;
-                p.type = part["fstype"].isNull ? "" : part["fstype"].str;
-                p.mount = part["mountpoint"].isNull ? "Not Mounted" : part["mountpoint"].str;
-                p.id = part["partuuid"].isNull ? "" : part["partuuid"].str;
-                d.partitions ~= p;
+                continue;
             }
+            Partition p;
+            p.dev = part["kname"].isNull ? "" : part["kname"].str;
+            p.fslabel = part["label"].isNull ? "" : part["label"].str;
+            p.partlabel = part["partlabel"].isNull ? "" : part["partlabel"].str;
+            p.size = part["size"].isNull ? "" : part["size"].str;
+            p.type = part["fstype"].isNull ? "" : part["fstype"].str;
+            p.mount = part["mountpoint"].isNull ? "Not Mounted" : part["mountpoint"].str;
+            p.id = part["partuuid"].isNull ? "" : part["partuuid"].str;
+            d.partitions ~= p;
         }
 
         r.devices ~= d;
