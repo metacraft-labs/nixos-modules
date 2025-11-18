@@ -13,7 +13,7 @@ import std.regex : matchFirst, regex;
 import std.stdio : writeln;
 import std.string : strip;
 
-import argparse : Command, Description, NamedArgument, Placeholder;
+import argparse : Command, Description, NamedArgument, Placeholder, EnvFallback;
 
 import mcl.utils.env : parseEnv, optional;
 import mcl.utils.json : toJSON;
@@ -24,7 +24,11 @@ import mcl.utils.path : createResultDirs, resultDir, rootDir;
     .Description("Generate a shard matrix for a flake"))
 struct ShardMatrixArgs
 {
-    @(NamedArgument(["github-output"]).Placeholder("output").Description("Output to GitHub Actions"))
+    @(NamedArgument(["github-output"])
+        .Placeholder("output")
+        .Description("Output to GitHub Actions")
+        .EnvFallback("GITHUB_OUTPUT")
+    )
     string githubOutput;
 }
 
