@@ -21,13 +21,13 @@ import mcl.utils.nix : nix;
 import mcl.utils.path : createResultDirs, resultDir, rootDir;
 
 @(Command("shard-matrix", "shard_matrix").Description("Generate a shard matrix for a flake"))
-struct shard_matrix_args
+struct ShardMatrixArgs
 {
     @(NamedArgument(["github-output"]).Placeholder("output").Description("Output to GitHub Actions"))
     string githubOutput;
 }
 
-export int shard_matrix(shard_matrix_args args)
+export int shard_matrix(ShardMatrixArgs args)
 {
     auto matrix = generateShardMatrix();
     saveShardMatrix(matrix, args);
@@ -138,7 +138,7 @@ unittest
 
 }
 
-void saveShardMatrix(ShardMatrix matrix, shard_matrix_args args)
+void saveShardMatrix(ShardMatrix matrix, ShardMatrixArgs args)
 {
     const matrixJson = matrix.toJSON();
     const matrixString = matrixJson.toString();

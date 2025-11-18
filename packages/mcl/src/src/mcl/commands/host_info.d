@@ -60,9 +60,9 @@ string[string] getProcInfo(string fileOrData, bool file = true)
 }
 
 @(Command("host-info", "host_info").Description("Get information about the host machine"))
-struct host_info_args {}
+struct HostInfoArgs {}
 
-export int host_info(host_info_args args)
+export int host_info(HostInfoArgs args)
 {
     const Params params = parseEnv!Params;
 

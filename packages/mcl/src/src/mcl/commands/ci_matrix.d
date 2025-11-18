@@ -146,10 +146,11 @@ version (unittest)
 Params params;
 
 @(Command("ci-matrix", "ci_matrix").Description("Print a table of the cache status of each package"))
-struct ci_matrix_args
+struct CiMatrixArgs
 {
 }
-export int ci_matrix(ci_matrix_args args)
+
+export int ci_matrix(CiMatrixArgs args)
 {
     params = parseEnv!Params;
     createResultDirs();
@@ -189,11 +190,11 @@ Package[] checkCacheStatus(Package[] packages)
 }
 
 @(Command("print-table", "print_table").Description("Print a table of the cache status of each package"))
-struct print_table_args
+struct PrintTableArgs
 {
 }
 
-export int print_table(print_table_args args)
+export int print_table(PrintTableArgs args)
 {
     createResultDirs();
 

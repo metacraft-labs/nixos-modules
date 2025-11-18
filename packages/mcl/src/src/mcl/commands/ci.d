@@ -21,11 +21,11 @@ import mcl.utils.json : toJSON;
 Params params;
 
 @(Command("ci").Description("Run CI"))
-struct ci_args
+struct CiArgs
 {
 }
 
-export int ci(ci_args args)
+export int ci(CiArgs args)
 {
     params = parseEnv!Params;
 

@@ -15,7 +15,7 @@ import mcl.utils.nix : queryStorePath, nix;
 import mcl.utils.string : camelCaseToCapitalCase;
 import mcl.utils.process : execute;
 
-export int get_fstab(get_fstab_args args)
+export int get_fstab(GetFstabArgs args)
 {
     args.cachixStoreUrl = cachixNixStoreUrl(args.cachixCache);
     if (!args.cachixDeployWorkspace)
@@ -33,7 +33,7 @@ export int get_fstab(get_fstab_args args)
 }
 
 @(Command("get-fstab", "get_fstab").Description("Get the store path of the fstab file for a deployment"))
-export struct get_fstab_args {
+export struct GetFstabArgs {
     @(NamedArgument(["cachix-auth-token"]).Required().Placeholder("XXX").Description("Auth Token for Cachix"))
     string cachixAuthToken;
     @(NamedArgument(["cachix-cache"]).Required().Placeholder("cache").Description("Which Cachix cache to use"))
@@ -50,8 +50,7 @@ export struct get_fstab_args {
     uint deploymentId;
 }
 
-
-string getCachixDeploymentStorePath(get_fstab_args args)
+string getCachixDeploymentStorePath(GetFstabArgs args)
 {
     const url = getCachixDeploymentApiUrl(args.cachixDeployWorkspace, args.machineName, args.deploymentId);
     const response = fetchJson(url, args.cachixAuthToken);
