@@ -6,7 +6,7 @@ import std.json : JSONValue;
 import std.format : fmt = format;
 import std.exception : enforce;
 
-import argparse;
+import argparse : Command, Description, NamedArgument, PositionalArgument, Required, Placeholder;
 
 import mcl.utils.cachix : cachixNixStoreUrl, getCachixDeploymentApiUrl;
 import mcl.utils.env : optional, parseEnv;

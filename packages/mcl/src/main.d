@@ -15,7 +15,7 @@ import mcl.utils.tui : bold;
 
 import mcl.commands : SubCommandFunctions;
 
-import argparse;
+import argparse : Command, Description, SubCommands, NamedArgument, Default, CLI;
 
 @(Command(" ").Description(" "))
 struct UnknownCommandArgs {}

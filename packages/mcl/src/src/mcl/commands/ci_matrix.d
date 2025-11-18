@@ -16,7 +16,7 @@ import std.exception : enforce;
 import std.format : fmt = format;
 import std.logger : tracef, infof, errorf, warningf;
 
-import argparse;
+import argparse : Command, Description;
 
 import mcl.utils.env : optional, MissingEnvVarsException, parseEnv;
 import mcl.utils.string : enumToString, StringRepresentation, MaxWidth, writeRecordAsTable;

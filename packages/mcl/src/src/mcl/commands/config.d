@@ -8,7 +8,7 @@ import std.stdio : writeln;
 import std.string : indexOf;
 import std.sumtype : SumType, match;
 
-import argparse;
+import argparse : Command, Description, SubCommands, Default, PositionalArgument, Placeholder, Optional;
 
 import mcl.utils.env : optional, parseEnv;
 import mcl.utils.fetch : fetchJson;

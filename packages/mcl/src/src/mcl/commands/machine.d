@@ -2,7 +2,7 @@ module mcl.commands.machine;
 
 import std;
 
-import argparse;
+import argparse : Command, Description, NamedArgument, PositionalArgument, Placeholder, SubCommands, Default;
 
 import mcl.utils.log : prompt;
 import mcl.utils.process : execute;

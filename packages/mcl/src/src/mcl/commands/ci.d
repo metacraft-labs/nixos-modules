@@ -8,7 +8,7 @@ import std.array : array, join;
 import std.conv : to;
 import std.process : ProcessPipes;
 
-import argparse;
+import argparse : Command, Description;
 
 import mcl.utils.env : optional, parseEnv;
 import mcl.commands.ci_matrix: nixEvalJobs, SupportedSystem, Params, flakeAttr;
