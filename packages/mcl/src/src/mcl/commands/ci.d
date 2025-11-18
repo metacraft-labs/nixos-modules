@@ -21,9 +21,7 @@ import mcl.utils.json : toJSON;
 Params params;
 
 @(Command("ci").Description("Run CI"))
-struct CiArgs
-{
-}
+struct CiArgs { }
 
 export int ci(CiArgs args)
 {

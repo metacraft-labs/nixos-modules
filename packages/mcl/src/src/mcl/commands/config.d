@@ -18,7 +18,7 @@ import mcl.utils.process : execute;
 import mcl.utils.string : camelCaseToCapitalCase;
 
 @(Command("config").Description("Manage NixOS machine configurations"))
-export struct ConfigArgs
+struct ConfigArgs
 {
     @SubCommands SumType!(
         SysArgs,
@@ -84,9 +84,7 @@ struct StartVmArgs
 }
 
 @(Command(" ").Description(" "))
-struct UnknownCommandArgs
-{
-}
+struct UnknownCommandArgs { }
 
 int unknown_command(UnknownCommandArgs unused)
 {

@@ -16,9 +16,9 @@ import mcl.utils.json : tryDeserializeFromJsonFile, writeJsonFile;
 import mcl.commands.ci_matrix : flakeAttr, params, nixEvalJobs, SupportedSystem;
 
 
-@(Command("deploy-spec", "deploy_spec").Description("Evaluate the Nixos machine configurations in bareMetalMachines and deploy them to cachix."))
-export struct DeploySpecArgs {
-}
+@(Command("deploy-spec", "deploy_spec")
+    .Description("Evaluate the Nixos machine configurations in bareMetalMachines and deploy them to cachix."))
+struct DeploySpecArgs { }
 
 export int deploy_spec(DeploySpecArgs args)
 {
