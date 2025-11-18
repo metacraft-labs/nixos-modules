@@ -32,7 +32,6 @@ import mcl.utils.coda : CodaApiClient, RowValues, CodaCell;
 struct Params
 {
     @optional() string codaApiToken;
-    void setup() {}
 }
 
 string[string] cpuinfo;
