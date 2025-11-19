@@ -15,7 +15,7 @@ import mcl.utils.tui : bold;
 
 import mcl.commands : SubCommandFunctions;
 
-import argparse : Command, Description, SubCommands, NamedArgument, Default, CLI;
+import argparse : Command, Description, SubCommand, NamedArgument, Default, CLI, matchCmd;
 
 @(Command(" ").Description(" "))
 struct UnknownCommandArgs { }
@@ -30,8 +30,7 @@ struct MCLArgs
     @NamedArgument(["log-level"])
     LogLevel logLevel = cast(LogLevel)-1;
 
-    @SubCommands
-    SumType!(
+    SubCommand!(
         staticMap!(Parameters, SubCommandFunctions),
         Default!UnknownCommandArgs
     ) cmd;
@@ -46,7 +45,7 @@ mixin CLI!MCLArgs.main!((args)
         logLevel = args.logLevel;
     setLogLevel(logLevel);
 
-    int result = args.cmd.match!(
+    int result = args.cmd.matchCmd!(
         staticMap!(SumTypeCase, unknown_command, SubCommandFunctions),
     );
 

@@ -21,4 +21,4 @@ dflags "-mcpu=baseline" platform="dmd"
 
 dependency "mir-cpuid" version="~>1.2.11"
 dependency "silly" version="~>1.1.1"
-dependency "argparse" version="~>1.4.1"
+dependency "argparse" version="~>2.0.2"

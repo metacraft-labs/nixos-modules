@@ -1,8 +1,8 @@
 {
 	"fileVersion": 1,
 	"versions": {
-		"argparse": "1.4.1",
-		"mir-core": "1.7.1",
+		"argparse": "2.0.2",
+		"mir-core": "1.7.3",
 		"mir-cpuid": "1.2.11",
 		"silly": "1.1.1"
 	}
