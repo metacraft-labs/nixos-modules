@@ -6,9 +6,8 @@ import std.process : ProcessPipes, Redirect, wait, environment;
 import std.range : drop, front;
 import std.stdio : writeln;
 import std.string : indexOf;
-import std.sumtype : SumType, match;
 
-import argparse : Command, Description, SubCommands, Default, PositionalArgument, Placeholder, Optional;
+import argparse : Command, Description, SubCommand, Default, PositionalArgument, Placeholder, Optional, matchCmd;
 
 import mcl.utils.env : optional, parseEnv;
 import mcl.utils.fetch : fetchJson;
@@ -20,7 +19,7 @@ import mcl.utils.string : camelCaseToCapitalCase;
 @(Command("config").Description("Manage NixOS machine configurations"))
 struct ConfigArgs
 {
-    @SubCommands SumType!(
+    SubCommand!(
         SysArgs,
         HomeArgs,
         StartVmArgs,
@@ -31,7 +30,7 @@ struct ConfigArgs
 @(Command("sys").Description("Manage system configurations"))
 struct SysArgs
 {
-    @SubCommands SumType!(
+    SubCommand!(
         SysApplyArgs,
         SysEditArgs,
         Default!UnknownCommandArgs
@@ -55,7 +54,7 @@ struct SysEditArgs
 @(Command("home").Description("Manage home configurations"))
 struct HomeArgs
 {
-    @SubCommands SumType!(
+    SubCommand!(
         HomeApplyArgs,
         HomeEditArgs,
         Default!UnknownCommandArgs
@@ -100,7 +99,7 @@ export int config(ConfigArgs args)
             "This command must be run from a repository containing a NixOS machine configuration");
     }
 
-    return args.cmd.match!(
+    return args.cmd.matchCmd!(
         (SysArgs a) => sys(a),
         (HomeArgs a) => home(a),
         (StartVmArgs a) => startVM(a.vmName),
@@ -153,7 +152,7 @@ int apply(string type, string value)
 
 int sys(SysArgs args)
 {
-    return args.cmd.match!(
+    return args.cmd.matchCmd!(
         (SysApplyArgs a) => apply("system", a.machineName),
         (SysEditArgs a) => edit("system", a.machineName),
         (UnknownCommandArgs a) => unknown_command(a)
@@ -163,7 +162,7 @@ int sys(SysArgs args)
 int home(HomeArgs args)
 {
 
-    return args.cmd.match!(
+    return args.cmd.matchCmd!(
         (HomeApplyArgs a) {
         writeln("Applying home configuration from: ", a.type);
         return executeCommand("just switch-home " ~ a.type);

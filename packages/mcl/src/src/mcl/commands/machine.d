@@ -2,7 +2,7 @@ module mcl.commands.machine;
 
 import std;
 
-import argparse : Command, Description, NamedArgument, PositionalArgument, Placeholder, SubCommands, Default;
+import argparse : Command, Description, NamedArgument, PositionalArgument, Placeholder, SubCommand, Default, matchCmd;
 
 import mcl.utils.log : prompt;
 import mcl.utils.process : execute;
@@ -382,7 +382,7 @@ int createMachineConfiguration(CreateMachineArgs args)
 
 export int machine(MachineArgs args)
 {
-    return args.cmd.match!(
+    return args.cmd.matchCmd!(
         (CreateMachineArgs a) => createMachineConfiguration(a),
         (UnknownCommandArgs a) => unknown_command(a)
     );
@@ -423,5 +423,5 @@ int unknown_command(UnknownCommandArgs unused)
 @(Command("machine").Description("Manage machines"))
 struct MachineArgs
 {
-    @SubCommands SumType!(CreateMachineArgs,Default!UnknownCommandArgs) cmd;
+    SubCommand!(CreateMachineArgs,Default!UnknownCommandArgs) cmd;
 }

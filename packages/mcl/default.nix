@@ -1,6 +1,6 @@
 {
   lib,
-  buildDubPackage,
+  dCompiler,
   pkgs,
   nix,
   nix-eval-jobs,
@@ -43,9 +43,10 @@ let
     ]
   );
 in
-buildDubPackage rec {
+pkgs.buildDubPackage rec {
   pname = "mcl";
   version = "unstable";
+
   src = lib.fileset.toSource {
     root = ./.;
     fileset = lib.fileset.fileFilter (
@@ -59,22 +60,33 @@ buildDubPackage rec {
     ) ./.;
   };
 
+  inherit dCompiler;
+
+  dubLock = ./dub-lock.json;
+
   nativeBuildInputs = [ pkgs.makeWrapper ] ++ deps;
 
-  postFixup = ''
-    wrapProgram $out/bin/${pname} --set PATH "${lib.makeBinPath deps}" --set LD_LIBRARY_PATH "${lib.makeLibraryPath deps}"
-  '';
+  dubBuildType = "debug";
 
-  dubBuildFlags = [
-    "-b"
-    "debug"
-  ];
+  doCheck = true;
 
   dubTestFlags = [
     "--"
     "-e"
-    excludedTests
+    (lib.escapeShellArg excludedTests)
   ];
+
+  installPhase = ''
+    runHook preInstall
+    install -Dm755 ./build/${pname} -t $out/bin/
+    runHook postInstall
+  '';
+
+  postFixup = ''
+    wrapProgram $out/bin/${pname} \
+      --set PATH "${lib.makeBinPath deps}" \
+      --set LD_LIBRARY_PATH "${lib.makeLibraryPath deps}"
+  '';
 
   meta.mainProgram = pname;
 }
