@@ -143,7 +143,13 @@ version (unittest)
     ];
 }
 
-Params params;
+immutable Params params;
+
+version (unittest) {} else
+shared static this()
+{
+    params = parseEnv!Params;
+}
 
 @(Command("ci-matrix", "ci_matrix")
     .Description("Print a table of the cache status of each package"))
@@ -151,7 +157,6 @@ struct CiMatrixArgs { }
 
 export int ci_matrix(CiMatrixArgs args)
 {
-    params = parseEnv!Params;
     createResultDirs();
     nixEvalForAllSystems().array.printTableForCacheStatus();
     return 0;
