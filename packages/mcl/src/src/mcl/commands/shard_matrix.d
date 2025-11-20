@@ -15,7 +15,6 @@ import std.string : strip;
 
 import argparse : Command, Description, NamedArgument, Placeholder, EnvFallback;
 
-import mcl.utils.env : parseEnv, optional;
 import mcl.utils.json : toJSON;
 import mcl.utils.nix : nix;
 import mcl.utils.path : createResultDirs, resultDir, rootDir;

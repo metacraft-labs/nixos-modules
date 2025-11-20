@@ -16,14 +16,16 @@ import std.exception : enforce;
 import std.format : fmt = format;
 import std.logger : tracef, infof, errorf, warningf;
 
-import argparse : Command, Description;
+import argparse : Command, Description, NamedArgument, Required, Placeholder, EnvFallback;
 
-import mcl.utils.env : optional, MissingEnvVarsException, parseEnv;
 import mcl.utils.string : enumToString, StringRepresentation, MaxWidth, writeRecordAsTable;
 import mcl.utils.json : toJSON;
 import mcl.utils.path : rootDir, resultDir, gcRootsDir, createResultDirs;
 import mcl.utils.process : execute;
 import mcl.utils.nix : nix;
+
+import mcl.commands.ci: CiArgs;
+import mcl.commands.deploy_spec: DeploySpecArgs;
 
 enum GitHubOS
 {
@@ -143,22 +145,83 @@ version (unittest)
     ];
 }
 
-immutable Params params;
-
-version (unittest) {} else
-shared static this()
+mixin template CiMatrixBaseArgs()
 {
-    params = parseEnv!Params;
+    import argparse : Command, Description, NamedArgument, Required, Placeholder, EnvFallback;
+
+    @(NamedArgument(["flake-pre"])
+        .Placeholder("prefix")
+    )
+    string flakePre = "checks";
+
+    @(NamedArgument(["flake-post"])
+        .Placeholder("postfix")
+    )
+    string flakePost;
+
+    @(NamedArgument(["max-workers"])
+        .Placeholder("count")
+    )
+    int maxWorkers;
+
+    @(NamedArgument(["max-memory"])
+        .Placeholder("mb")
+    )
+    int maxMemory;
+
+    @(NamedArgument(["initial"])
+    )
+    bool isInitial;
+
+    @(NamedArgument(["cachix-cache"])
+        .Placeholder("cache")
+        .EnvFallback("CACHIX_CACHE")
+        .Required()
+    )
+    string cachixCache;
+
+    @(NamedArgument(["cachix-auth-token"])
+        .Placeholder("token")
+        .EnvFallback("CACHIX_AUTH_TOKEN")
+        .Required()
+    )
+    string cachixAuthToken;
 }
 
 @(Command("ci-matrix", "ci_matrix")
     .Description("Print a table of the cache status of each package"))
-struct CiMatrixArgs { }
+struct CiMatrixArgs
+{
+    mixin CiMatrixBaseArgs!();
+}
+
+@(Command("print-table", "print_table")
+    .Description("Print a table of the cache status of each package"))
+struct PrintTableArgs
+{
+    mixin CiMatrixBaseArgs!();
+
+    @(NamedArgument(["precalc-matrix"])
+        .Placeholder("matrix")
+    )
+    string precalcMatrix;
+}
 
 export int ci_matrix(CiMatrixArgs args)
 {
     createResultDirs();
-    nixEvalForAllSystems().array.printTableForCacheStatus();
+    nixEvalForAllSystems(args).array.printTableForCacheStatus(args);
+    return 0;
+}
+
+export int print_table(PrintTableArgs args)
+{
+    createResultDirs();
+
+    getPrecalcMatrix(args)
+        .checkCacheStatus(args)
+        .printTableForCacheStatus(args);
+
     return 0;
 }
 
@@ -174,14 +237,15 @@ string flakeAttr(string prefix, string arch, string os, string postfix)
     return "%s.%s-%s%s".fmt(prefix, arch, os, postfix);
 }
 
-Package[] checkCacheStatus(Package[] packages)
+Package[] checkCacheStatus(T)(Package[] packages, auto ref T args)
+    if (is(T == CiMatrixArgs) || is(T == PrintTableArgs) || is(T == CiArgs) || is(T == DeploySpecArgs))
 {
     import std.array : appender;
     import std.parallelism : parallel;
 
     foreach (ref pkg; packages.parallel)
     {
-        pkg = checkPackage(pkg);
+        pkg = checkPackage(pkg, args);
         struct Output { string isCached, name, storePath; }
         auto res = appender!string;
         writeRecordAsTable(
@@ -193,39 +257,7 @@ Package[] checkCacheStatus(Package[] packages)
     return packages;
 }
 
-@(Command("print-table", "print_table")
-    .Description("Print a table of the cache status of each package"))
-struct PrintTableArgs { }
 
-export int print_table(PrintTableArgs args)
-{
-    createResultDirs();
-
-    getPrecalcMatrix()
-        .checkCacheStatus()
-        .printTableForCacheStatus();
-
-    return 0;
-}
-
-struct Params
-{
-    @optional() string flakePre;
-    @optional() string flakePost;
-    @optional() string precalcMatrix;
-    @optional() int maxWorkers;
-    @optional() int maxMemory;
-    @optional() bool isInitial;
-
-    string cachixCache;
-    string cachixAuthToken;
-
-    void setup()
-    {
-        if (this.flakePre == "")
-            this.flakePre = "checks";
-    }
-}
 
 GitHubOS systemToGHPlatform(SupportedSystem os)
 {
@@ -322,28 +354,28 @@ unittest
         ));
     }
 }
-
-Package[] nixEvalJobs(string flakeAttrPrefix, string cachixUrl, bool doCheck = true)
+Package[] nixEvalJobs(T)(string flakeAttrPrefix, string cachixUrl, auto ref T args, bool doCheck = true)
+    if (is(T == CiMatrixArgs) || is(T == PrintTableArgs) || is(T == CiArgs) || is(T == DeploySpecArgs))
 {
     Package[] result = [];
 
     bool hasError = false;
 
-    int maxMemoryMB = getAvailableMemoryMB();
-    int maxWorkers = getNixEvalWorkerCount();
+    int maxMemoryMB = getAvailableMemoryMB(args);
+    int maxWorkers = getNixEvalWorkerCount(args);
 
-    const args = [
+    const nixArgs = [
         "nix-eval-jobs", "--quiet", "--option", "warn-dirty", "false",
         "--check-cache-status", "--gc-roots-dir", gcRootsDir, "--workers",
         maxWorkers.to!string, "--max-memory-size", maxMemoryMB.to!string,
         "--flake", rootDir ~ "#" ~ flakeAttrPrefix
     ];
 
-    const commandString = args.join(" ");
+    const commandString = nixArgs.join(" ");
 
-    tracef("%-(%s %)", args);
+    tracef("%-(%s %)", nixArgs);
 
-    auto pipes = pipeProcess(args, Redirect.stdout | Redirect.stderr);
+    auto pipes = pipeProcess(nixArgs, Redirect.stdout | Redirect.stderr);
 
     void logWarning(const char[] msg)
     {
@@ -367,7 +399,7 @@ Package[] nixEvalJobs(string flakeAttrPrefix, string cachixUrl, bool doCheck = t
         Package pkg = json.packageFromNixEvalJobsJson(
             flakeAttrPrefix, cachixUrl);
 
-        if (doCheck)pkg = pkg.checkPackage();
+        if (doCheck)pkg = pkg.checkPackage(args);
 
         result ~= pkg;
 
@@ -419,16 +451,17 @@ SupportedSystem[] getSupportedSystems(string flakeRef = ".")
     return json.array.map!(system => getSystem(system.str)).array;
 }
 
-Package[] nixEvalForAllSystems()
+Package[] nixEvalForAllSystems(T)(auto ref T args)
+    if (is(T == CiMatrixArgs) || is(T == PrintTableArgs) || is(T == CiArgs) || is(T == DeploySpecArgs))
 {
-    const cachixUrl = "https://" ~ params.cachixCache ~ ".cachix.org";
+    const cachixUrl = "https://" ~ args.cachixCache ~ ".cachix.org";
     const systems = getSupportedSystems();
 
     infof("Evaluating flake for: %s", systems);
 
     return systems.map!(system =>
-            flakeAttr(params.flakePre, system, params.flakePost)
-                .nixEvalJobs(cachixUrl)
+            flakeAttr(args.flakePre, system, args.flakePost)
+                .nixEvalJobs(cachixUrl, args)
         )
         .reduce!((a, b) => a ~ b)
         .array
@@ -436,21 +469,26 @@ Package[] nixEvalForAllSystems()
         .array;
 }
 
-int getNixEvalWorkerCount()
+int getNixEvalWorkerCount(T)(auto ref T args)
+    if (is(T == CiMatrixArgs) || is(T == PrintTableArgs) || is(T == CiArgs) || is(T == DeploySpecArgs))
 {
-    return params.maxWorkers == 0 ? (threadsPerCPU() < 8 ? threadsPerCPU() : 8) : params.maxWorkers;
+    return args.maxWorkers == 0 ? (threadsPerCPU() < 8 ? threadsPerCPU() : 8) : args.maxWorkers;
 }
 
 @("getNixEvalWorkerCount")
 unittest
 {
-    assert(getNixEvalWorkerCount() == (threadsPerCPU() < 8 ? threadsPerCPU() : 8));
+    CiMatrixArgs args;
+    args.maxWorkers = 0;
+    assert(getNixEvalWorkerCount(args) == (threadsPerCPU() < 8 ? threadsPerCPU() : 8));
+
+    args.maxWorkers = 4;
+    assert(getNixEvalWorkerCount(args) == 4);
 }
 
-int getAvailableMemoryMB()
+int getAvailableMemoryMB(T)(auto ref T args)
+    if (is(T == CiMatrixArgs) || is(T == PrintTableArgs) || is(T == CiArgs) || is(T == DeploySpecArgs))
 {
-
-    // free="$(< /proc/meminfo grep MemFree | tr -s ' ' | cut -d ' ' -f 2)"
     int free = "/proc/meminfo".readText
         .splitLines
         .find!(a => a.indexOf("MemFree") != -1)
@@ -471,15 +509,20 @@ int getAvailableMemoryMB()
         .find!(a => a.indexOf("Shmem:") != -1)
         .front
         .split[1].to!int;
-    int maxMemoryMB = params.maxMemory == 0 ? ((free + cached + buffers + shmem) / 1024)
-        : params.maxMemory;
+    int maxMemoryMB = args.maxMemory == 0 ? ((free + cached + buffers + shmem) / 1024)
+        : args.maxMemory;
     return maxMemoryMB;
 }
 
 @("getAvailableMemoryMB")
 unittest
 {
-    assert(getAvailableMemoryMB() > 0);
+    CiMatrixArgs args;
+    args.maxMemory = 0;
+    assert(getAvailableMemoryMB(args) > 0);
+
+    args.maxMemory = 1024;
+    assert(getAvailableMemoryMB(args) == 1024);
 }
 
 void saveCachixDeploySpec(Package[] packages)
@@ -504,12 +547,13 @@ unittest
     assert(testPackageArray[1].output == deploySpec[0]["out"].str);
 }
 
-void saveGHCIMatrix(Package[] packages)
+void saveGHCIMatrix(T)(Package[] packages, auto ref T args)
+    if (is(T == CiMatrixArgs) || is(T == PrintTableArgs) || is(T == CiArgs) || is(T == DeploySpecArgs))
 {
     auto matrix = JSONValue([
         "include": JSONValue(packages.map!(pkg => pkg.toJSON()).array)
     ]);
-    string resPath = rootDir.buildPath(params.isInitial ? "matrix-pre.json" : "matrix-post.json");
+    string resPath = rootDir.buildPath(args.isInitial ? "matrix-pre.json" : "matrix-post.json");
     resPath.write(JSONValue(matrix).toString(JSONOptions.doNotEscapeSlashes));
 }
 
@@ -519,9 +563,11 @@ unittest
     import std.file : rmdirRecurse;
 
     createResultDirs();
-    saveGHCIMatrix(cast(Package[]) testPackageArray);
+    CiMatrixArgs args;
+    args.isInitial = false;
+    saveGHCIMatrix(cast(Package[]) testPackageArray, args);
     JSONValue matrix = rootDir
-        .buildPath(params.isInitial ? "matrix-pre.json" : "matrix-post.json")
+        .buildPath(args.isInitial ? "matrix-pre.json" : "matrix-post.json")
         .readText
         .parseJSON;
     assert(testPackageArray[0].name == matrix["include"][0]["name"].str);
@@ -647,24 +693,28 @@ unittest
 
 }
 
-void printTableForCacheStatus(Package[] packages)
+void printTableForCacheStatus(T)(Package[] packages, auto ref T args)
+    if (is(T == CiMatrixArgs) || is(T == PrintTableArgs) || is(T == CiArgs) || is(T == DeploySpecArgs))
 {
-    if (params.precalcMatrix == "")
-    {
-        saveGHCIMatrix(packages);
+    static if (is(T == PrintTableArgs)) {
+        if (args.precalcMatrix == "")
+        {
+            saveGHCIMatrix(packages, args);
+        }
     }
     saveCachixDeploySpec(packages);
-    saveGHCIComment(convertNixEvalToTableSummary(packages, params.isInitial));
+    saveGHCIComment(convertNixEvalToTableSummary(packages, args.isInitial));
 }
 
-Package checkPackage(Package pkg)
+Package checkPackage(T)(Package pkg, auto ref T args)
+    if (is(T == CiMatrixArgs) || is(T == PrintTableArgs) || is(T == CiArgs) || is(T == DeploySpecArgs))
 {
     import std.algorithm : canFind;
     import std.string : lineSplitter;
     import std.net.curl : HTTP, httpGet = get, HTTPStatusException;
 
     auto http = HTTP();
-    http.addRequestHeader("Authorization", "Bearer " ~ params.cachixAuthToken);
+    http.addRequestHeader("Authorization", "Bearer " ~ args.cachixAuthToken);
 
     try
     {
@@ -695,21 +745,20 @@ unittest
         cacheUrl: nixosCacheEndpoint ~ storePathHash ~ ".narinfo",
     );
 
+    CiMatrixArgs args;
+    args.cachixAuthToken = "";
+
     assert(!testPackage.isCached);
-    assert(checkPackage(testPackage).isCached);
+    assert(checkPackage(testPackage, args).isCached);
 
     testPackage.cacheUrl = nixosCacheEndpoint ~ "nonexistent.narinfo";
 
-    assert(!checkPackage(testPackage).isCached);
+    assert(!checkPackage(testPackage, args).isCached);
 }
 
-Package[] getPrecalcMatrix()
+Package[] getPrecalcMatrix(PrintTableArgs args)
 {
-    auto precalcMatrixStr = params.precalcMatrix == "" ? "{\"include\": []}" : params.precalcMatrix;
-    enforce!MissingEnvVarsException(
-        params.precalcMatrix != "",
-        "missing environment variables: %s".fmt("precalcMatrix")
-    );
+    auto precalcMatrixStr = args.precalcMatrix == "" ? "{\"include\": []}" : args.precalcMatrix;
     return parseJSON(precalcMatrixStr)["include"].array.map!((pkg) {
         Package result = {
             name: pkg["name"].str,
@@ -722,5 +771,4 @@ Package[] getPrecalcMatrix()
             output: pkg["output"].str};
             return result;
         }).array;
-
-    }
+}

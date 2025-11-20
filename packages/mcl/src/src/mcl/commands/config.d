@@ -9,7 +9,6 @@ import std.string : indexOf;
 
 import argparse : Command, Description, SubCommand, Default, PositionalArgument, Placeholder, Optional, matchCmd;
 
-import mcl.utils.env : optional, parseEnv;
 import mcl.utils.fetch : fetchJson;
 import mcl.utils.log : errorAndExit;
 import mcl.utils.nix : nix, queryStorePath;

@@ -6,10 +6,9 @@ import std.json : JSONValue;
 import std.format : fmt = format;
 import std.exception : enforce;
 
-import argparse : Command, Description, NamedArgument, PositionalArgument, Required, Placeholder;
+import argparse : Command, Description, NamedArgument, PositionalArgument, Required, Placeholder, EnvFallback;
 
 import mcl.utils.cachix : cachixNixStoreUrl, getCachixDeploymentApiUrl;
-import mcl.utils.env : optional, parseEnv;
 import mcl.utils.fetch : fetchJson;
 import mcl.utils.nix : queryStorePath, nix;
 import mcl.utils.string : camelCaseToCapitalCase;
@@ -36,9 +35,9 @@ export int get_fstab(GetFstabArgs args)
     .Description("Get the store path of the fstab file for a deployment"))
 struct GetFstabArgs
 {
-    @(NamedArgument(["cachix-auth-token"]).Required().Placeholder("XXX").Description("Auth Token for Cachix"))
+    @(NamedArgument(["cachix-auth-token"]).Required().Placeholder("XXX").Description("Auth Token for Cachix").EnvFallback("CACHIX_AUTH_TOKEN"))
     string cachixAuthToken;
-    @(NamedArgument(["cachix-cache"]).Required().Placeholder("cache").Description("Which Cachix cache to use"))
+    @(NamedArgument(["cachix-cache"]).Required().Placeholder("cache").Description("Which Cachix cache to use").EnvFallback("CACHIX_CACHE"))
     string cachixCache;
 
     @(NamedArgument(["cachix-store-url"]).Placeholder("https://...").Description("URL of the Cachix store"))
