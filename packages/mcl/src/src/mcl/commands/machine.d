@@ -8,7 +8,6 @@ import mcl.utils.log : prompt;
 import mcl.utils.process : execute;
 import mcl.utils.nix : nix, toNix, Literal, mkDefault;
 import mcl.utils.json : toJSON, fromJSON;
-import mcl.utils.env : optional, parseEnv;
 import mcl.utils.array : uniqArrays;
 import mcl.commands.host_info: Info;
 
