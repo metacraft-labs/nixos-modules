@@ -35,7 +35,6 @@ struct User {
 
 struct UserInfo
 {
-    bool isNormalUser;
     string description;
     string[] extraGroups;
     string hashedPassword;
@@ -59,7 +58,6 @@ User getUser(string userName)
     auto userJson = nix.eval!JSONValue("users/" ~ userName ~ "/user-info.nix", ["--file"]);
     User user;
     user.userName = userName;
-    user.userInfo.isNormalUser = userJson["userInfo"]["isNormalUser"].boolean;
     user.userInfo.description = userJson["userInfo"]["description"].str;
     user.userInfo.extraGroups = userJson["userInfo"]["extraGroups"].array.map!(a => a.str).array;
     user.userInfo.hashedPassword = userJson["userInfo"]["hashedPassword"].str;
@@ -189,7 +187,6 @@ User createUser(CreateMachineArgs args) {
             User user;
             user.userName = args.userName != "" ? args.userName : prompt!string("Enter the new username");
             user.userInfo.description = args.description != "" ? args.description : prompt!string("Enter the user's description/full name");
-            user.userInfo.isNormalUser = args.isNormalUser || prompt!bool("Is this a normal or root user");
             user.userInfo.extraGroups = (args.extraGroups != "" ? args.extraGroups : prompt!string("Enter the user's extra groups (comma delimited)", getGroups())).split(",").map!(strip).array;
             createUserDir(user);
             return user;
@@ -400,8 +397,6 @@ struct CreateMachineArgs
     string machineName;
     @(NamedArgument(["description"]).Placeholder("description").Description("Description of the user"))
     string description;
-    @(NamedArgument(["is-normal-user"]).Placeholder("true/false").Description("Is this a normal user"))
-    bool isNormalUser;
     @(NamedArgument(["extra-groups"]).Placeholder("group1,group2").Description("Extra groups for the user"))
     string extraGroups;
     @(NamedArgument(["machine-type"]).Placeholder("desktop/server/container").Description("Type of machine"))

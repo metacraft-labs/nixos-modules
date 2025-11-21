@@ -4,7 +4,6 @@ import std.stdio : writefln, writeln, stderr;
 import std.array : replace;
 import std.getopt : getopt;
 import std.logger : infof, errorf, LogLevel;
-import std.sumtype : SumType, match;
 import std.string : stripRight, stripLeft;
 import std.algorithm : endsWith;
 import std.format : format;
@@ -28,7 +27,7 @@ int unknown_command(UnknownCommandArgs unused)
 struct MCLArgs
 {
     @NamedArgument(["log-level"])
-    LogLevel logLevel = cast(LogLevel)-1;
+    LogLevel logLevel = LogLevel.info;
 
     SubCommand!(
         staticMap!(Parameters, SubCommandFunctions),
@@ -40,16 +39,13 @@ alias SumTypeCase(alias func) = (Parameters!func args) => func(args);
 
 mixin CLI!MCLArgs.main!((args)
 {
-    LogLevel logLevel = LogLevel.info;
-    if (args.logLevel != cast(LogLevel)-1)
-        logLevel = args.logLevel;
-    setLogLevel(logLevel);
+    setLogLevel(args.logLevel);
 
     int result = args.cmd.matchCmd!(
         staticMap!(SumTypeCase, unknown_command, SubCommandFunctions),
     );
 
-    return 0;
+    return result;
 });
 
 void setLogLevel(LogLevel l)
