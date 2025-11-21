@@ -151,11 +151,18 @@ mixin template CiMatrixBaseArgs()
 
     @(NamedArgument(["flake-pre"])
         .Placeholder("prefix")
+        .EnvFallback("FLAKE_PRE")
     )
-    string flakePre = "checks";
+    string _flakePre = "checks";
+
+    @property {
+        string flakePre() => _flakePre == "" ? "checks" : _flakePre;
+        void flakePre(string v) => cast(void)(_flakePre = v);
+    }
 
     @(NamedArgument(["flake-post"])
         .Placeholder("postfix")
+        .EnvFallback("FLAKE_POST")
     )
     string flakePost;
 
@@ -169,7 +176,9 @@ mixin template CiMatrixBaseArgs()
     )
     int maxMemory;
 
-    @(NamedArgument(["initial"])
+    @(NamedArgument(["is-initial"])
+        .Description("Is this the initial run of the CI?")
+        .EnvFallback("IS_INITIAL")
     )
     bool isInitial;
 
@@ -186,6 +195,12 @@ mixin template CiMatrixBaseArgs()
         .Required()
     )
     string cachixAuthToken;
+
+    @(NamedArgument(["precalc-matrix"])
+        .Placeholder("matrix")
+        .EnvFallback("PRECALC_MATRIX")
+    )
+    string precalcMatrix = "";
 }
 
 @(Command("ci-matrix", "ci_matrix")
@@ -200,11 +215,6 @@ struct CiMatrixArgs
 struct PrintTableArgs
 {
     mixin CiMatrixBaseArgs!();
-
-    @(NamedArgument(["precalc-matrix"])
-        .Placeholder("matrix")
-    )
-    string precalcMatrix;
 }
 
 export int ci_matrix(CiMatrixArgs args)
@@ -696,11 +706,9 @@ unittest
 void printTableForCacheStatus(T)(Package[] packages, auto ref T args)
     if (is(T == CiMatrixArgs) || is(T == PrintTableArgs) || is(T == CiArgs) || is(T == DeploySpecArgs))
 {
-    static if (is(T == PrintTableArgs)) {
-        if (args.precalcMatrix == "")
-        {
-            saveGHCIMatrix(packages, args);
-        }
+    if (args.precalcMatrix == "")
+    {
+        saveGHCIMatrix(packages, args);
     }
     saveCachixDeploySpec(packages);
     saveGHCIComment(convertNixEvalToTableSummary(packages, args.isInitial));

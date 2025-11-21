@@ -1,13 +1,14 @@
 module mcl.commands.config;
 
 import std.algorithm : canFind;
-import std.array : array;
+import std.array : array, join;
 import std.process : ProcessPipes, Redirect, wait, environment;
 import std.range : drop, front;
 import std.stdio : writeln;
 import std.string : indexOf;
+import std.conv : to;
 
-import argparse : Command, Description, SubCommand, Default, PositionalArgument, Placeholder, Optional, matchCmd;
+import argparse : Command, Description, SubCommand, Default, PositionalArgument, Placeholder, Optional, matchCmd, NamedArgument, EnvFallback;
 
 import mcl.utils.fetch : fetchJson;
 import mcl.utils.log : errorAndExit;
@@ -60,18 +61,23 @@ struct HomeArgs
     ) cmd;
 }
 
+enum HomeConfigType { desktop, server }
+
 @(Command("apply").Description("Apply user configuration"))
 struct HomeApplyArgs
 {
     @(PositionalArgument(0).Placeholder("desktop/server").Description("Type of home configuration"))
-    string type;
+    HomeConfigType type;
+
+    @(NamedArgument(["user"]).Optional().Placeholder("username").Description("Username to apply the configuration for").EnvFallback("USER"))
+    string user = "";
 }
 
 @(Command("edit").Description("Edit user configuration"))
 struct HomeEditArgs
 {
     @(PositionalArgument(0).Placeholder("desktop/server").Description("Type of home configuration"))
-    string type;
+    HomeConfigType type;
 }
 
 @(Command("start-vm").Description("Start a VM"))
@@ -143,17 +149,17 @@ int edit(string type, string path)
     }
 }
 
-int apply(string type, string value)
+int apply(string type, string[] args)
 {
-    writeln("Applying ", type, " configuration from: ", value);
-    return executeCommand("just switch-" ~ type ~ " " ~ value);
+    writeln("Applying ", type, " configuration from: ", args);
+    return executeCommand("just switch-" ~ type ~ " " ~ args.join(" "));
 }
 
 int sys(SysArgs args)
 {
     return args.cmd.matchCmd!(
-        (SysApplyArgs a) => apply("system", a.machineName),
-        (SysEditArgs a) => edit("system", a.machineName),
+        (SysApplyArgs a) => "system".apply([a.machineName]),
+        (SysEditArgs a) => "system".edit(a.machineName),
         (UnknownCommandArgs a) => unknown_command(a)
     );
 }
@@ -162,11 +168,8 @@ int home(HomeArgs args)
 {
 
     return args.cmd.matchCmd!(
-        (HomeApplyArgs a) {
-        writeln("Applying home configuration from: ", a.type);
-        return executeCommand("just switch-home " ~ a.type);
-    },
-        (HomeEditArgs a) => "user".edit(a.type),
+        (HomeApplyArgs a) => "home".apply([a.type.to!string, a.user]),
+        (HomeEditArgs a) => "user".edit(a.type.to!string),
         (UnknownCommandArgs a) => unknown_command(a)
     );
 }

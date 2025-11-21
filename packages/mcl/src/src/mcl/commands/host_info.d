@@ -57,9 +57,12 @@ string[string] getProcInfo(string fileOrData, bool file = true)
 struct HostInfoArgs {
     @(NamedArgument(["coda-api-token"])
         .Placeholder("token")
-        .EnvFallback("CODA_API_TOKEN")
-    )
+        .EnvFallback("CODA_API_TOKEN"))
     string codaApiToken;
+
+    @(NamedArgument(["upload-to-coda"])
+        .Description("Upload the host info to Coda"))
+    bool uploadToCoda = false;
 }
 
 export int host_info(HostInfoArgs args)
@@ -72,7 +75,7 @@ export int host_info(HostInfoArgs args)
         .toPrettyString(JSONOptions.doNotEscapeSlashes)
         .writeln();
 
-    if (!args.codaApiToken) {
+    if (args.uploadToCoda &&!args.codaApiToken) {
         writeln("No Coda API token specified -> not uploading");
         return 1;
     }
@@ -81,7 +84,7 @@ export int host_info(HostInfoArgs args)
     auto coda = CodaApiClient(args.codaApiToken);
     coda.uploadHostInfo(hostInfo);
 
-    return 1;
+    return 0;
 
 }
 
