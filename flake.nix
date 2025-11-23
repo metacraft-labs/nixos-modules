@@ -78,7 +78,6 @@
       url = "github:metacraft-labs/ethereum.nix/dev";
       inputs = {
         nixpkgs.follows = "nixos-2505";
-        nixpkgs-2311.follows = "nixos-2311";
         nixpkgs-unstable.follows = "nixpkgs-unstable";
         flake-parts.follows = "flake-parts";
         flake-utils.follows = "flake-utils";
