@@ -13,6 +13,7 @@ pkgs.writeShellApplication {
     set -euo pipefail
 
     machine=""
+    configurationType="nixos"
     service=""
     secret=""
     vm=false
@@ -24,6 +25,7 @@ pkgs.writeShellApplication {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --machine=*) machine="''${1#*=}";;
+            --configuration-type=*) configurationType="''${1#*=}";;
             --secrets-folder=*) secretsFolder="''${1#*=}";;
             --service=*) service="''${1#*=}";;
             --secret=*) secret="''${1#*=}";;
@@ -46,6 +48,7 @@ pkgs.writeShellApplication {
         By default, secrets are stored in /(folder of the machine)/secrets/service/\n\
         if this directory exists, unless otherwise specified.
         --machine - Machine for which you want to create a secret.\n\
+        --configuration-type - Type of configurations, either \`nixos\` or \`nix-darwin\`\n\
         --service - Service for which you want to create a secret.\n\
         --secret  - Secret you want to encrypt.\n\
         --vm - Make secret for the vmVariant.\n\
@@ -60,6 +63,19 @@ pkgs.writeShellApplication {
         shift
     done
 
+    case "$configurationType" in
+      (nixos)
+        configurationsAttr="nixosConfigurations"
+        ;;
+      (nix-darwin)
+        configurationsAttr="darwinConfigurations"
+        ;;
+      (*)
+        echo "Invalid configuration type $configurationType"
+        exit 1
+        ;;
+    esac
+
     if [[ "$reEncryptAll" == true && -z "$machine" ]]; then
       echo "You must specify machine"
       exit 1
@@ -71,29 +87,32 @@ pkgs.writeShellApplication {
       exit 1
     fi
 
-    machineFolder="$(nix eval ".#nixosConfigurations.$machine.config.mcl.host-info.configPath" | sed 's|^\([^/]*/\)\{4\}||; s|"||g')"
+    machineFolder="$(nix eval ".#$configurationsAttr.$machine.config.mcl.host-info.configPath" | sed 's|^\([^/]*/\)\{4\}||; s|"||g')"
 
     if [ "$secretsFolder" == "" ]; then
       secretsFolder="$machineFolder/secrets/$service"
     fi
 
     if [[ "$vm" == true && "$reEncryptAll" == false ]]; then
-        RULES="$(nix eval --raw ".#nixosConfigurations.$machine.config.virtualisation.vmVariant.mcl.secrets.services.$service.nix-file")"
+        if [[ "$configurationType" != "nixos" ]]; then
+            echo "Cannot use \`vm\` with \`configuration-type\` $configurationType" 1>&2
+            exit 1
+        fi
+        RULES="$(nix eval --raw ".#nixosConfigurations.$machine-vm.config.virtualisation.vmVariant.mcl.secrets.services.$service.nix-file")"
         secretsFolder="./modules/default-vm-config/secrets/$service"
     elif [ "$reEncryptAll" == false ]; then
-        RULES="$(nix eval --raw ".#nixosConfigurations.$machine.config.mcl.secrets.services.$service.nix-file")"
+        RULES="$(nix eval --raw ".#$configurationsAttr.$machine.config.mcl.secrets.services.$service.nix-file")"
     fi
 
     if [ "$reEncryptAll" == true ]; then
-      for s in $(nix eval ".#nixosConfigurations.$machine.config.mcl.secrets.services" --apply builtins.attrNames | tr -d '[]"'); do
+      for s in $(nix eval ".#$configurationsAttr.$machine.config.mcl.secrets.services" --apply builtins.attrNames | tr -d '[]"'); do
         service=$s
         secretsFolder="$machineFolder/secrets/$service"
         echo "Re-encripting secrets for service $s"
         if [ "$vm" == true ]; then
-          RULES="$(nix eval --raw ".#nixosConfigurations.''${machine}-vm.config.mcl.secrets.services.$service.nix-file")"
-
+          RULES="$(nix eval --raw ".#$configurationsAttr.$machine-vm.config.mcl.secrets.services.$service.nix-file")"
         else
-          RULES="$(nix eval --raw ".#nixosConfigurations.$machine.config.mcl.secrets.services.$service.nix-file")"
+          RULES="$(nix eval --raw ".#$configurationsAttr.$machine.config.mcl.secrets.services.$service.nix-file")"
         fi
         (
           cd "$secretsFolder"
