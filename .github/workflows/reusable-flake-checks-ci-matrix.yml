@@ -57,7 +57,7 @@ jobs:
           nix-gitlab-token: ${{ secrets.NIX_GITLAB_TOKEN }}
           nix-gitlab-domain: ${{ vars.NIX_GITLAB_DOMAIN }}
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Generate Matrix for Matrix
         id: generate-matrix
@@ -88,7 +88,7 @@ jobs:
           nix-gitlab-token: ${{ secrets.NIX_GITLAB_TOKEN }}
           nix-gitlab-domain: ${{ vars.NIX_GITLAB_DOMAIN }}
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Generate CI Matrix
         id: generate-matrix
@@ -199,7 +199,7 @@ jobs:
     continue-on-error: ${{ matrix.allowedToFail }}
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Install Nix
         uses: metacraft-labs/nixos-modules/.github/install-nix@main
@@ -249,7 +249,7 @@ jobs:
             && contains(needs.*.result, 'failure')
             || contains(needs.*.result, 'cancelled')
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         if: inputs.run-cachix-deploy
 
       - name: Deploy
