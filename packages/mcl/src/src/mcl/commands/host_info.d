@@ -16,24 +16,17 @@ import std.json;
 import std.process : ProcessPipes, environment;
 import std.bitmanip : peek;
 import std.format : format;
-import std.system : nativeEndian = endian;;
+import std.system : nativeEndian = endian;
 import core.stdc.string : strlen;
 
-import mcl.utils.env : parseEnv, optional;
+import argparse : Command, Description, NamedArgument, Placeholder, EnvFallback;
+
 import mcl.utils.json : toJSON;
 import mcl.utils.process : execute, isRoot;
 import mcl.utils.number : humanReadableSize;
 import mcl.utils.array : uniqIfSame;
 import mcl.utils.nix : Literal;
 import mcl.utils.coda : CodaApiClient, RowValues, CodaCell;
-
-struct Params
-{
-    @optional() string codaApiToken;
-    void setup()
-    {
-    }
-}
 
 string[string] cpuinfo;
 
@@ -59,9 +52,21 @@ string[string] getProcInfo(string fileOrData, bool file = true)
     return r;
 }
 
-export void host_info(string[] args)
+@(Command("host-info", "host_info")
+    .Description("Get information about the host machine"))
+struct HostInfoArgs {
+    @(NamedArgument(["coda-api-token"])
+        .Placeholder("token")
+        .EnvFallback("CODA_API_TOKEN"))
+    string codaApiToken;
+
+    @(NamedArgument(["upload-to-coda"])
+        .Description("Upload the host info to Coda"))
+    bool uploadToCoda = false;
+}
+
+export int host_info(HostInfoArgs args)
 {
-    const Params params = parseEnv!Params;
 
     const hostInfo = gatherHostInfo();
 
@@ -70,14 +75,16 @@ export void host_info(string[] args)
         .toPrettyString(JSONOptions.doNotEscapeSlashes)
         .writeln();
 
-    if (!params.codaApiToken) {
+    if (args.uploadToCoda &&!args.codaApiToken) {
         writeln("No Coda API token specified -> not uploading");
-        return;
+        return 1;
     }
 
     writeln("Coda API token specified -> uploading");
-    auto coda = CodaApiClient(params.codaApiToken);
+    auto coda = CodaApiClient(args.codaApiToken);
     coda.uploadHostInfo(hostInfo);
+
+    return 0;
 
 }
 

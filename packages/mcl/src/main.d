@@ -1,73 +1,56 @@
+module mcl.main;
+
 import std.stdio : writefln, writeln, stderr;
 import std.array : replace;
 import std.getopt : getopt;
 import std.logger : infof, errorf, LogLevel;
-
+import std.string : stripRight, stripLeft;
+import std.algorithm : endsWith;
+import std.format : format;
+import std.meta : staticMap;
+import std.traits : Parameters;
 import mcl.utils.path : rootDir;
 import mcl.utils.tui : bold;
 
-import cmds = mcl.commands;
+import mcl.commands : SubCommandFunctions;
 
-alias supportedCommands = imported!`std.traits`.AliasSeq!(
-    cmds.get_fstab,
-    cmds.deploy_spec,
-    cmds.ci_matrix,
-    cmds.print_table,
-    cmds.shard_matrix,
-    cmds.host_info,
-    cmds.ci,
-    cmds.machine,
-    cmds.config,
-);
+import argparse : Command, Description, SubCommand, NamedArgument, Default, CLI, matchCmd;
 
-int main(string[] args)
+@(Command(" ").Description(" "))
+struct UnknownCommandArgs { }
+int unknown_command(UnknownCommandArgs unused)
 {
-    if (args.length < 2)
-        return wrongUsage("no command selected");
-
-    string cmd = args[1];
-    LogLevel logLevel = LogLevel.info;
-    args.getopt("log-level", &logLevel);
-
-    setLogLevel(logLevel);
-
-    infof("Git root: '%s'", rootDir.bold);
-
-    try switch (cmd)
-    {
-        default:
-            return wrongUsage("unknown command: `" ~ cmd ~ "`");
-
-        static foreach (command; supportedCommands)
-            case __traits(identifier, command):
-            {
-
-                infof("Running %s task", cmd.bold);
-                command(args[2..$]);
-                infof("Execution Succesfull");
-                return 0;
-            }
-    }
-    catch (Exception e)
-    {
-        errorf("Task %s failed. Error:\n%s", cmd.bold, e);
-        return 1;
-    }
+    stderr.writeln("Unknown command. Use --help for a list of available commands.");
+    return 1;
 }
+
+struct MCLArgs
+{
+    @NamedArgument(["log-level"])
+    LogLevel logLevel = LogLevel.info;
+
+    SubCommand!(
+        staticMap!(Parameters, SubCommandFunctions),
+        Default!UnknownCommandArgs
+    ) cmd;
+}
+
+alias SumTypeCase(alias func) = (Parameters!func args) => func(args);
+
+mixin CLI!MCLArgs.main!((args)
+{
+    setLogLevel(args.logLevel);
+
+    int result = args.cmd.matchCmd!(
+        staticMap!(SumTypeCase, unknown_command, SubCommandFunctions),
+    );
+
+    return result;
+});
 
 void setLogLevel(LogLevel l)
 {
     import std.logger : globalLogLevel, sharedLog;
     globalLogLevel = l;
     (cast()sharedLog()).logLevel = l;
-}
-
-int wrongUsage(string error)
-{
-    writefln("Error: %s.", error);
-    writeln("Usage:\n");
-    static foreach (cmd; supportedCommands)
-        writefln("    mcl %s", __traits(identifier, cmd));
-
-    return 1;
 }

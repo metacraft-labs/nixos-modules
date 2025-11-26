@@ -1,11 +1,13 @@
 module mcl.commands.machine;
 
 import std;
+
+import argparse : Command, Description, NamedArgument, PositionalArgument, Placeholder, SubCommand, Default, matchCmd;
+
 import mcl.utils.log : prompt;
 import mcl.utils.process : execute;
 import mcl.utils.nix : nix, toNix, Literal, mkDefault;
 import mcl.utils.json : toJSON, fromJSON;
-import mcl.utils.env : optional, parseEnv;
 import mcl.utils.array : uniqArrays;
 import mcl.commands.host_info: Info;
 
@@ -33,7 +35,6 @@ struct User {
 
 struct UserInfo
 {
-    bool isNormalUser;
     string description;
     string[] extraGroups;
     string hashedPassword;
@@ -57,7 +58,6 @@ User getUser(string userName)
     auto userJson = nix.eval!JSONValue("users/" ~ userName ~ "/user-info.nix", ["--file"]);
     User user;
     user.userName = userName;
-    user.userInfo.isNormalUser = userJson["userInfo"]["isNormalUser"].boolean;
     user.userInfo.description = userJson["userInfo"]["description"].str;
     user.userInfo.extraGroups = userJson["userInfo"]["extraGroups"].array.map!(a => a.str).array;
     user.userInfo.hashedPassword = userJson["userInfo"]["hashedPassword"].str;
@@ -173,22 +173,21 @@ string[] getGroups()
     return groups;
 }
 
-User createUser() {
+User createUser(CreateMachineArgs args) {
 
-        auto createUser = params.createUser || prompt!bool("Create new user");
+        auto createUser = args.createUser || prompt!bool("Create new user");
         if (!createUser)
         {
             string[] existingUsers = getExistingUsers();
-            string userName = params.userName != "" ? params.userName : prompt!string("Select an existing username", existingUsers);
+            string userName = args.userName != "" ? args.userName : prompt!string("Select an existing username", existingUsers);
             return getUser(userName);
         }
         else
         {
             User user;
-            user.userName = params.userName != "" ? params.userName : prompt!string("Enter the new username");
-            user.userInfo.description = params.description != "" ? params.description : prompt!string("Enter the user's description/full name");
-            user.userInfo.isNormalUser = params.isNormalUser || prompt!bool("Is this a normal or root user");
-            user.userInfo.extraGroups = (params.extraGroups != "" ? params.extraGroups : prompt!string("Enter the user's extra groups (comma delimited)", getGroups())).split(",").map!(strip).array;
+            user.userName = args.userName != "" ? args.userName : prompt!string("Enter the new username");
+            user.userInfo.description = args.description != "" ? args.description : prompt!string("Enter the user's description/full name");
+            user.userInfo.extraGroups = (args.extraGroups != "" ? args.extraGroups : prompt!string("Enter the user's extra groups (comma delimited)", getGroups())).split(",").map!(strip).array;
             createUserDir(user);
             return user;
         }
@@ -220,8 +219,8 @@ struct MachineConfiguration
     MachineUserInfo users;
 }
 
-void createMachine(MachineType machineType, string machineName, User user) {
-    auto infoJSON = execute(["ssh", params.sshPath, "sudo nix --experimental-features \\'nix-command flakes\\' --refresh --accept-flake-config run github:metacraft-labs/nixos-modules/#mcl host_info"],false, false);
+void createMachine(CreateMachineArgs args, MachineType machineType, string machineName, User user) {
+    auto infoJSON = execute(["ssh", args.sshPath, "sudo nix --experimental-features \\'nix-command flakes\\' --refresh --accept-flake-config run github:metacraft-labs/nixos-modules/#mcl host-info"],false, false);
     auto infoJSONParsed = infoJSON.parseJSON;
     Info info = infoJSONParsed.fromJSON!Info;
 
@@ -273,7 +272,7 @@ void createMachine(MachineType machineType, string machineName, User user) {
     // Disks
     hardwareConfiguration.disko.DISKO.makeZfsPartitions.swapSizeGB = (info.hardwareInfo.memoryInfo.totalGB.to!double*1.5).to!int;
     auto nvmeDevices = info.hardwareInfo.storageInfo.devices.filter!(a => a.dev.indexOf("nvme") != -1 || a.model.indexOf("SSD") != -1).array.map!(a => a.model.replace(" ", "_") ~ "_" ~ a.serial).array;
-    string[] disks = (nvmeDevices.length == 1 ? nvmeDevices[0] : (params.disks != "" ? params.disks : prompt!string("Enter the disks to use (comma delimited)", nvmeDevices))).split(",").map!(strip).array.map!(a => "/dev/disk/by-id/nvme-" ~ a).array;
+    string[] disks = (nvmeDevices.length == 1 ? nvmeDevices[0] : (args.disks != "" ? args.disks : prompt!string("Enter the disks to use (comma delimited)", nvmeDevices))).split(",").map!(strip).array.map!(a => "/dev/disk/by-id/nvme-" ~ a).array;
     hardwareConfiguration.disko.DISKO.makeZfsPartitions.disks = disks;
 
     hardwareConfiguration = hardwareConfiguration.uniqArrays;
@@ -365,43 +364,58 @@ struct HardwareConfiguration {
     Services services;
 }
 
-void createMachineConfiguration()
+int createMachineConfiguration(CreateMachineArgs args)
 {
     checkifNixosMachineConfigRepo();
-    auto machineType = cast(int)params.machineType != 0 ? params.machineType : prompt!MachineType("Machine type");
-    auto machineName = params.machineName != "" ? params.machineName : prompt!string("Enter the name of the machine");
+    auto machineType = cast(int)args.machineType != 0 ? args.machineType : prompt!MachineType("Machine type");
+    auto machineName = args.machineName != "" ? args.machineName : prompt!string("Enter the name of the machine");
     User user;
-    user = createUser();
-    machineType.createMachine( machineName, user);
+    user = createUser(args);
+    args.createMachine(machineType, machineName, user);
+    return 0;
 }
 
-Params params;
 
-export void machine(string[] args)
+export int machine(MachineArgs args)
 {
-    params = parseEnv!Params;
-    switch (args.front)
-    {
-        case "create":
-            createMachineConfiguration();
-            break;
-        default:
-            assert(0, "Unknown machine action: " ~ args.front);
-    }
+    return args.cmd.matchCmd!(
+        (CreateMachineArgs a) => createMachineConfiguration(a),
+        (UnknownCommandArgs a) => unknown_command(a)
+    );
 }
-struct Params
+
+@(Command("create").Description("Create a new machine"))
+struct CreateMachineArgs
 {
+    @(PositionalArgument(0).Placeholder("ssh").Description("SSH path to the machine"))
     string sshPath;
-    @optional() bool createUser;
-    @optional() string userName;
-    @optional() string machineName;
-    @optional() string description;
-    @optional() bool isNormalUser;
-    @optional() string extraGroups;
-    @optional() MachineType machineType = cast(MachineType)0;
-    @optional() string disks;
+    @(NamedArgument(["create-user"]).Placeholder("true/false").Description("Create a new user"))
+    bool createUser;
+    @(NamedArgument(["user-name"]).Placeholder("username").Description("Username"))
+    string userName;
+    @(NamedArgument(["machine-name"]).Placeholder("machine-name").Description("Name of the machine"))
+    string machineName;
+    @(NamedArgument(["description"]).Placeholder("description").Description("Description of the user"))
+    string description;
+    @(NamedArgument(["extra-groups"]).Placeholder("group1,group2").Description("Extra groups for the user"))
+    string extraGroups;
+    @(NamedArgument(["machine-type"]).Placeholder("desktop/server/container").Description("Type of machine"))
+    MachineType machineType = cast(MachineType)0;
+    @(NamedArgument(["disks"]).Placeholder("CT2000P3PSSD8_2402E88C1519,...").Description("Disks to use"))
+    string disks;
+}
 
-    void setup()
-    {
-    }
+@(Command(" ").Description(" "))
+struct UnknownCommandArgs { }
+
+int unknown_command(UnknownCommandArgs unused)
+{
+    stderr.writeln("Unknown machine command. Use --help for a list of available commands.");
+    return 1;
+}
+
+@(Command("machine").Description("Manage machines"))
+struct MachineArgs
+{
+    SubCommand!(CreateMachineArgs,Default!UnknownCommandArgs) cmd;
 }

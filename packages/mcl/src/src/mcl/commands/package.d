@@ -1,10 +1,26 @@
 module mcl.commands;
 
-public import mcl.commands.get_fstab : get_fstab;
-public import mcl.commands.deploy_spec : deploy_spec;
-public import mcl.commands.ci_matrix : ci_matrix, print_table;
-public import mcl.commands.shard_matrix : shard_matrix;
-public import mcl.commands.ci : ci;
-public import mcl.commands.host_info : host_info;
-public import mcl.commands.machine : machine;
-public import mcl.commands.config : config;
+import std.meta : ApplyLeft, staticMap;
+
+private enum commandModulesToExport =
+[
+    "mcl.commands.deploy_spec" : ["deploy_spec"],
+    "mcl.commands.ci_matrix" : ["ci_matrix", "print_table"],
+    "mcl.commands.shard_matrix" : ["shard_matrix"],
+    "mcl.commands.ci" : ["ci"],
+    "mcl.commands.host_info" : ["host_info"],
+    "mcl.commands.machine" : ["machine"],
+    "mcl.commands.config" : ["config"],
+];
+
+template ImportAll(alias aa)
+{
+    import std.meta : AliasSeq;
+    alias A = AliasSeq!();
+    static foreach (moduleName, symbols; aa)
+        static foreach (symbolName; symbols)
+            A = AliasSeq!(A, __traits(getMember, imported!moduleName, symbolName));
+    alias ImportAll = A;
+}
+
+alias SubCommandFunctions = ImportAll!commandModulesToExport;

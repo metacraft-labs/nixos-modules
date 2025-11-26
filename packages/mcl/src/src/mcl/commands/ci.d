@@ -8,31 +8,34 @@ import std.array : array, join;
 import std.conv : to;
 import std.process : ProcessPipes;
 
-import mcl.utils.env : optional, parseEnv;
-import mcl.commands.ci_matrix: nixEvalJobs, SupportedSystem, Params, flakeAttr;
+import argparse : Command, Description;
+
+import mcl.commands.ci_matrix: nixEvalJobs, SupportedSystem, flakeAttr, CiMatrixBaseArgs;
 import mcl.commands.shard_matrix: generateShardMatrix;
 import mcl.utils.path : rootDir, createResultDirs;
 import mcl.utils.process : execute;
 import mcl.utils.nix : nix;
 import mcl.utils.json : toJSON;
 
-Params params;
 
-export void ci(string[] args)
+@(Command("ci").Description("Run CI"))
+struct CiArgs {
+    mixin CiMatrixBaseArgs!();
+}
+
+export int ci(CiArgs args)
 {
-    params = parseEnv!Params;
-
     auto shardMatrix = generateShardMatrix();
     foreach (shard; shardMatrix.include)
     {
-        params.flakePre = shard.prefix;
-        params.flakePost = shard.postfix;
+        args.flakePre = shard.prefix;
+        args.flakePost = shard.postfix;
 
-        if (params.flakePre == "")
+        if (args.flakePre == "")
         {
-            params.flakePre = "checks";
+            args.flakePre = "checks";
         }
-        string cachixUrl = "https://" ~ params.cachixCache ~ ".cachix.org";
+        string cachixUrl = "https://" ~ args.cachixCache ~ ".cachix.org";
         version (AArch64) {
             string arch = "aarch64";
         }
@@ -47,8 +50,8 @@ export void ci(string[] args)
             string os = "darwin";
         }
 
-        auto matrix = flakeAttr(params.flakePre, arch, os, params.flakePost)
-            .nixEvalJobs(cachixUrl, false);
+        auto matrix = flakeAttr(args.flakePre, arch, os, args.flakePost)
+            .nixEvalJobs(cachixUrl, args, false);
 
         foreach (pkg; matrix)
         {
@@ -65,8 +68,9 @@ export void ci(string[] args)
             "".writeln;
             auto json = parseJSON(res.stdout.byLine.join("\n").to!string);
             auto path = json.array[0]["outputs"]["out"].str;
-            execute(["cachix", "push", params.cachixCache, path], false, true).writeln;
+            execute(["cachix", "push", args.cachixCache, path], false, true).writeln;
         }
 
     }
+    return 0;
 }

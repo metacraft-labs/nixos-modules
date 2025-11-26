@@ -13,26 +13,30 @@ import std.regex : matchFirst, regex;
 import std.stdio : writeln;
 import std.string : strip;
 
-import mcl.utils.env : parseEnv, optional;
+import argparse : Command, Description, NamedArgument, Placeholder, EnvFallback;
+
 import mcl.utils.json : toJSON;
 import mcl.utils.nix : nix;
 import mcl.utils.path : createResultDirs, resultDir, rootDir;
 
-export void shard_matrix(string[] args)
+@(Command("shard-matrix", "shard_matrix")
+    .Description("Generate a shard matrix for a flake"))
+struct ShardMatrixArgs
 {
-    const params = parseEnv!Params;
-    auto matrix = generateShardMatrix();
-    saveShardMatrix(matrix, params);
-
+    @(NamedArgument(["github-output"])
+        .Placeholder("output")
+        .Description("Output to GitHub Actions")
+        .EnvFallback("GITHUB_OUTPUT")
+    )
+    string githubOutput;
 }
 
-struct Params
+export int shard_matrix(ShardMatrixArgs args)
 {
-    @optional() string githubOutput;
+    auto matrix = generateShardMatrix();
+    saveShardMatrix(matrix, args);
+    return 0;
 
-    void setup()
-    {
-    }
 }
 
 struct Shard
@@ -138,15 +142,15 @@ unittest
 
 }
 
-void saveShardMatrix(ShardMatrix matrix, Params params)
+void saveShardMatrix(ShardMatrix matrix, ShardMatrixArgs args)
 {
     const matrixJson = matrix.toJSON();
     const matrixString = matrixJson.toString();
     infof("Shard matrix: %s", matrixJson.toPrettyString);
     const envLine = "gen_matrix=" ~ matrixString;
-    if (params.githubOutput != "")
+    if (args.githubOutput != "")
     {
-        params.githubOutput.append(envLine);
+        args.githubOutput.append(envLine);
     }
     else
     {

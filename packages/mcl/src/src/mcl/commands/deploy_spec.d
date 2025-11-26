@@ -5,15 +5,24 @@ import std.logger : infof, warningf;
 import std.file : exists;
 import std.path : buildPath;
 
+import argparse : Command, Description;
+
 import mcl.utils.process : spawnProcessInline;
 import mcl.utils.path : resultDir;
 import mcl.utils.cachix : cachixNixStoreUrl, DeploySpec, createMachineDeploySpec;
 import mcl.utils.tui : bold;
 import mcl.utils.json : tryDeserializeFromJsonFile, writeJsonFile;
 
-import mcl.commands.ci_matrix : flakeAttr, params, nixEvalJobs, SupportedSystem;
+import mcl.commands.ci_matrix : flakeAttr, nixEvalJobs, SupportedSystem,CiMatrixBaseArgs;
 
-export void deploy_spec(string[] args)
+
+@(Command("deploy-spec", "deploy_spec")
+    .Description("Evaluate the Nixos machine configurations in bareMetalMachines and deploy them to cachix."))
+struct DeploySpecArgs {
+    mixin CiMatrixBaseArgs!();
+}
+
+export int deploy_spec(DeploySpecArgs args)
 {
     const deploySpecFile = resultDir.buildPath("cachix-deploy-spec.json");
 
@@ -22,7 +31,7 @@ export void deploy_spec(string[] args)
     if (!exists(deploySpecFile))
     {
         auto nixosConfigs = flakeAttr("legacyPackages", SupportedSystem.x86_64_linux, "serverMachines")
-            .nixEvalJobs(params.cachixCache.cachixNixStoreUrl);
+            .nixEvalJobs(args.cachixCache.cachixNixStoreUrl, args);
 
         auto configsMissingFromCachix = nixosConfigs.filter!(c => !c.isCached);
 
@@ -44,16 +53,18 @@ export void deploy_spec(string[] args)
     else
     {
         warningf("Reusing existing deploy spec at:\n'%s'", deploySpecFile.bold);
-        spec = deploySpecFile.tryDeserializeFromJsonFile!DeploySpec;
+        spec = deploySpecFile.tryDeserializeFromJsonFile!DeploySpec();
     }
 
     infof("\n---\n%s\n---", spec);
     infof("%s machines will be deployed.", spec.agents.length);
 
     if (!spec.agents.length)
-        return;
+        return 0;
 
     spawnProcessInline([
         "cachix", "deploy", "activate", deploySpecFile, "--async"
     ]);
+
+    return 0;
 }
