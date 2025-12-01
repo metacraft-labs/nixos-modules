@@ -13,16 +13,16 @@
   };
 
   inputs = {
-    nixos-2311.url = "github:NixOS/nixpkgs/nixos-23.11";
     nixos-2405.url = "github:NixOS/nixpkgs/nixos-24.05";
     nixos-2411.url = "github:NixOS/nixpkgs/nixos-24.11";
     nixos-2505.url = "github:NixOS/nixpkgs/nixos-25.05";
+    nixos-2511.url = "github:NixOS/nixpkgs/nixos-25.11";
 
-    nixpkgs.follows = "nixos-2505";
+    nixpkgs.follows = "nixos-2511";
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
 
     home-manager = {
-      url = "github:nix-community/home-manager/release-25.05";
+      url = "github:nix-community/home-manager/release-25.11";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
@@ -32,8 +32,8 @@
     };
 
     nix-darwin = {
-      url = "github:nix-darwin/nix-darwin/nix-darwin-25.05";
-      inputs.nixpkgs.follows = "nixos-2505";
+      url = "github:nix-darwin/nix-darwin/nix-darwin-25.11";
+      inputs.nixpkgs.follows = "nixos-2511";
     };
 
     nix-darwin-unstable = {
@@ -135,7 +135,7 @@
     nixos-images = {
       url = "github:nix-community/nixos-images";
       inputs = {
-        nixos-stable.follows = "nixos-2505";
+        nixos-stable.follows = "nixos-2511";
         nixos-unstable.follows = "nixpkgs-unstable";
       };
     };
