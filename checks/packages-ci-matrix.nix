@@ -13,8 +13,7 @@
     }:
     let
       inherit (lib) optionalAttrs;
-      inherit (pkgs) system;
-      inherit (pkgs.hostPlatform) isLinux;
+      inherit (pkgs.stdenv.hostPlatform) system isLinux;
     in
     rec {
       checks =

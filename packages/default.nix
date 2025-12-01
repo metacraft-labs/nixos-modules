@@ -8,21 +8,14 @@
     }:
     let
       inherit (lib) optionalAttrs versionAtLeast;
-      inherit (pkgs) system;
-      inherit (pkgs.hostPlatform) isLinux;
+      inherit (pkgs.stdenv.hostPlatform) system isLinux;
     in
     rec {
       legacyPackages = {
         inputs = {
           nixpkgs = rec {
-            inherit (pkgs) cachix;
-            nix =
-              let
-                nixStable = pkgs.nixVersions.stable;
-              in
-              assert versionAtLeast nixStable.version "2.24.10";
-              nixStable;
-            nix-eval-jobs = pkgs.nix-eval-jobs.override { inherit nix; };
+            inherit (pkgs) cachix nix-eval-jobs;
+            nix = nix-eval-jobs.passthru.nix;
             nix-fast-build = pkgs.nix-fast-build.override { inherit nix-eval-jobs; };
           };
           agenix = inputs'.agenix.packages;

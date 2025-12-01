@@ -7,7 +7,7 @@
   ...
 }:
 let
-  inherit (pkgs.hostPlatform) isLinux isx86;
+  inherit (pkgs.stdenv.hostPlatform) isLinux isx86;
   deps =
     with pkgs;
     [
@@ -30,7 +30,7 @@ let
     ])
     ++ lib.optionals (isLinux && isx86) [
       dmidecode
-      glxinfo
+      mesa-demos
       nixos-install-tools
       systemd
     ];
