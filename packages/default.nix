@@ -47,6 +47,7 @@
       };
 
       packages = {
+        cachix-deploy-metrics = pkgs.callPackage ./cachix-deploy-metrics { };
         lido-withdrawals-automation = pkgs.callPackage ./lido-withdrawals-automation { };
         pyroscope = pkgs.callPackage ./pyroscope { };
         random-alerts = pkgs.callPackage ./random-alerts { };
