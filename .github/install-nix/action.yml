@@ -41,7 +41,7 @@ runs:
       env:
         GH_TOKEN: ${{ github.token }}
       shell: bash
-      run: gh api /rate_limit | jq
+      run: gh api /rate_limit | jq || true
 
     - name: Install Nix
       uses: cachix/install-nix-action@v31
