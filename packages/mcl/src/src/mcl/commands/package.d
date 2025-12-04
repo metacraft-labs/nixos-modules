@@ -8,3 +8,4 @@ public import mcl.commands.ci : ci;
 public import mcl.commands.host_info : host_info;
 public import mcl.commands.machine : machine;
 public import mcl.commands.config : config;
+public import mcl.commands.compare_disko: compare_disko;
