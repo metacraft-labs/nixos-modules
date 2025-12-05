@@ -70,10 +70,14 @@ pkgs.buildDubPackage rec {
 
   doCheck = true;
 
+  checkPhase = ''
+    dub test --skip-registry=all "''${dubFlags[@]}" ''${dubTestFlags[@]}
+  '';
+
   dubTestFlags = [
     "--"
     "-e"
-    (lib.escapeShellArg excludedTests)
+    excludedTests
   ];
 
   installPhase = ''
