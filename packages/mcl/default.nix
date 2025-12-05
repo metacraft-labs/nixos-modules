@@ -86,6 +86,8 @@ pkgs.buildDubPackage rec {
     runHook postInstall
   '';
 
+  dontStrip = true;
+
   postFixup = ''
     wrapProgram $out/bin/${pname} \
       --set PATH "${lib.makeBinPath deps}" \
