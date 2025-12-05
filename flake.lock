@@ -531,7 +531,7 @@
     "nix-darwin": {
       "inputs": {
         "nixpkgs": [
-          "nixos-2511"
+          "nixpkgs"
         ]
       },
       "locked": {
@@ -664,38 +664,6 @@
         "type": "github"
       }
     },
-    "nixos-2405": {
-      "locked": {
-        "lastModified": 1735563628,
-        "narHash": "sha256-OnSAY7XDSx7CtDoqNh8jwVwh4xNL/2HaJxGjryLWzX8=",
-        "owner": "NixOS",
-        "repo": "nixpkgs",
-        "rev": "b134951a4c9f3c995fd7be05f3243f8ecd65d798",
-        "type": "github"
-      },
-      "original": {
-        "owner": "NixOS",
-        "ref": "nixos-24.05",
-        "repo": "nixpkgs",
-        "type": "github"
-      }
-    },
-    "nixos-2411": {
-      "locked": {
-        "lastModified": 1751274312,
-        "narHash": "sha256-/bVBlRpECLVzjV19t5KMdMFWSwKLtb5RyXdjz3LJT+g=",
-        "owner": "NixOS",
-        "repo": "nixpkgs",
-        "rev": "50ab793786d9de88ee30ec4e4c24fb4236fc2674",
-        "type": "github"
-      },
-      "original": {
-        "owner": "NixOS",
-        "ref": "nixos-24.11",
-        "repo": "nixpkgs",
-        "type": "github"
-      }
-    },
     "nixos-2505": {
       "locked": {
         "lastModified": 1764316264,
@@ -767,7 +735,7 @@
     "nixos-images": {
       "inputs": {
         "nixos-stable": [
-          "nixos-2511"
+          "nixpkgs"
         ],
         "nixos-unstable": [
           "nixpkgs-unstable"
@@ -860,8 +828,6 @@
         "nix-topology": "nix-topology",
         "nix2container": "nix2container",
         "nixd": "nixd",
-        "nixos-2405": "nixos-2405",
-        "nixos-2411": "nixos-2411",
         "nixos-2505": "nixos-2505",
         "nixos-2511": "nixos-2511",
         "nixos-anywhere": "nixos-anywhere",
