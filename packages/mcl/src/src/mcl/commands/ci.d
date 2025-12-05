@@ -2,8 +2,8 @@ module mcl.commands.ci;
 
 import std.file : readText;
 import std.json : parseJSON,JSONValue;
-import std.stdio : writeln,write;
-import std.algorithm : map;
+import std.stdio : writefln, writeln, write;
+import std.algorithm : map, filter;
 import std.array : array, join;
 import std.conv : to;
 import std.process : ProcessPipes;
@@ -13,7 +13,7 @@ import argparse : Command, Description;
 import mcl.commands.ci_matrix: nixEvalJobs, SupportedSystem, flakeAttr, CiMatrixBaseArgs;
 import mcl.commands.shard_matrix: generateShardMatrix;
 import mcl.utils.path : rootDir, createResultDirs;
-import mcl.utils.process : execute;
+import mcl.utils.process : execute, spawnProcessInline;
 import mcl.utils.nix : nix;
 import mcl.utils.json : toJSON;
 
@@ -51,26 +51,25 @@ export int ci(CiArgs args)
         }
 
         auto matrix = flakeAttr(args.flakePre, arch, os, args.flakePost)
-            .nixEvalJobs(cachixUrl, args, false);
+            .nixEvalJobs(cachixUrl, args, true);
 
-        foreach (pkg; matrix)
-        {
-            if (pkg.isCached) continue;
+        auto pkgsToBuild = matrix
+            .filter!(pkg => !pkg.isCached)
+            .map!(pkg => ".#" ~ pkg.attrPath)
+            .array;
 
-            writeln("Package ", pkg.name, " is not cached; building...");
-            ProcessPipes res = execute!ProcessPipes(["nix", "build", "--json", ".#" ~ pkg.attrPath]);
+        if (!pkgsToBuild.length) continue;
 
-            foreach (line; res.stderr.byLine)
-            {
-                "\r".write;
-                line.write;
-            }
-            "".writeln;
-            auto json = parseJSON(res.stdout.byLine.join("\n").to!string);
-            auto path = json.array[0]["outputs"]["out"].str;
-            execute(["cachix", "push", args.cachixCache, path], false, true).writeln;
+        writefln!"Building %s packages:\n%-(* %s%|\n%)"(pkgsToBuild.length, pkgsToBuild);
+        ProcessPipes res = execute!ProcessPipes(["nix", "build", "--json"] ~ pkgsToBuild);
+
+        auto json = parseJSON(res.stdout.byLine.join("\n").to!string);
+        try {
+            auto paths = json.array.map!(el => el["outputs"]["out"].str).array;
+            spawnProcessInline(["cachix", "push", args.cachixCache] ~ paths);
+        } catch (Throwable e) {
+            writeln("Unexpected JSON structure: ", json.toPrettyString);
         }
-
     }
     return 0;
 }
