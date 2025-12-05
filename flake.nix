@@ -13,8 +13,6 @@
   };
 
   inputs = {
-    nixos-2405.url = "github:NixOS/nixpkgs/nixos-24.05";
-    nixos-2411.url = "github:NixOS/nixpkgs/nixos-24.11";
     nixos-2505.url = "github:NixOS/nixpkgs/nixos-25.05";
     nixos-2511.url = "github:NixOS/nixpkgs/nixos-25.11";
 
@@ -33,7 +31,7 @@
 
     nix-darwin = {
       url = "github:nix-darwin/nix-darwin/nix-darwin-25.11";
-      inputs.nixpkgs.follows = "nixos-2511";
+      inputs.nixpkgs.follows = "nixpkgs";
     };
 
     nix-darwin-unstable = {
@@ -135,7 +133,7 @@
     nixos-images = {
       url = "github:nix-community/nixos-images";
       inputs = {
-        nixos-stable.follows = "nixos-2511";
+        nixos-stable.follows = "nixpkgs";
         nixos-unstable.follows = "nixpkgs-unstable";
       };
     };
