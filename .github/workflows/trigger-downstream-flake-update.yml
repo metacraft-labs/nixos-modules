@@ -12,6 +12,7 @@ jobs:
     strategy:
       matrix:
         include:
+          - repo: 'metacraft-labs/infra'
           - repo: 'metacraft-labs/nix-blockchain-development'
     steps:
       - uses: tibdex/github-app-token@v2.1.0
