@@ -1,6 +1,6 @@
 {
   inputs = {
-    nixos-modules.url = "../../../../../../../../..";
+    nixos-modules.url = "../../../../../../../..";
     nixpkgs.follows = "nixos-modules/nixpkgs";
     flake-parts.follows = "nixos-modules/flake-parts";
   };
