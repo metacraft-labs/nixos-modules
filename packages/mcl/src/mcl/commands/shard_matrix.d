@@ -91,7 +91,7 @@ unittest
     else
     {
         import mcl.utils.path : rootDir;
-        auto flakeRef = rootDir.buildPath("packages/mcl/src/src/mcl/utils/test/nix/shard-matrix-ok");
+        auto flakeRef = rootDir.buildPath("packages/mcl/src/mcl/utils/test/nix/shard-matrix-ok");
     }
 
     {
