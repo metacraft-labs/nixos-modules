@@ -18,13 +18,27 @@ enum MachineType
     container = 3
 }
 
-enum Group
+enum HostType
 {
-    metacraft,
-    devops,
-    codetracer,
-    dendreth,
-    blocksense
+    notebook,
+    desktop,
+    server
+}
+
+enum PartitioningPreset
+{
+    zfs,
+    zfs_legacy,
+    ext4
+}
+
+enum ZpoolMode
+{
+    mirror,
+    raidz1,
+    raidz2,
+    raidz3,
+    stripe
 }
 
 struct User {
@@ -46,6 +60,10 @@ struct EmailInfo
     string workEmail;
     string personalEmail;
     string gitlabUsername;
+    string descriptionBG;
+    string[] emailAliases;
+    string githubUsername;
+    string discordUsername;
 }
 
 string[] getExistingUsers()
@@ -65,6 +83,10 @@ User getUser(string userName)
     user.emailInfo.personalEmail = ("personalEmail" in userJson["emailInfo"].object) ? userJson["emailInfo"]["personalEmail"].str : "";
     user.emailInfo.workEmail = ("workEmail" in userJson["emailInfo"].object) ? userJson["emailInfo"]["workEmail"].str : user.emailInfo.personalEmail;
     user.emailInfo.gitlabUsername = ("gitlabUsername" in userJson["emailInfo"].object) ? userJson["emailInfo"]["gitlabUsername"].str : "";
+    user.emailInfo.descriptionBG = ("descriptionBG" in userJson["emailInfo"].object) ? userJson["emailInfo"]["descriptionBG"].str : "";
+    user.emailInfo.emailAliases = ("emailAliases" in userJson["emailInfo"].object) ? userJson["emailInfo"]["emailAliases"].array.map!(a => a.str).array : [];
+    user.emailInfo.githubUsername = ("githubUsername" in userJson["emailInfo"].object) ? userJson["emailInfo"]["githubUsername"].str : "";
+    user.emailInfo.discordUsername = ("discordUsername" in userJson["emailInfo"].object) ? userJson["emailInfo"]["discordUsername"].str : "";
     return user;
 }
 
@@ -137,40 +159,52 @@ string generateGitConfig(User user) {
 
 void checkifNixosMachineConfigRepo()
 {
-    if (execute(["git", "config", "--get", "remote.origin.url"], false)
-        .indexOf("metacraft-labs/nixos-machine-config") == -1)
+    auto repoUrl = execute(["git", "config", "--get", "remote.origin.url"], false);
+    if (repoUrl.indexOf("metacraft-labs/nixos-machine-config") == -1 &&
+        repoUrl.indexOf("metacraft-labs/infra") == -1)
     {
-        assert(0, "This is not the repo metacraft-labs/nixos-machine-config");
+        assert(0, "This is not the repo metacraft-labs/nixos-machine-config or metacraft-labs/infra");
     }
 }
 
 string[] getGroups()
 {
-    string[] groups = dirEntries("users", SpanMode.shallow).map!(a => a.name ~ "/user-info.nix").array.map!((a) {
-        if (!std.file.exists(a))
-        {
-            return JSONValue(["metacraft"]).array;
-        }
-        auto userInfoFile = nix.eval!JSONValue(a, ["--file"]);
-        if ("userInfo" !in userInfoFile || userInfoFile["userInfo"].isNull)
-        {
-            return JSONValue(["metacraft"]).array;
-        }
-        if ("extraGroups" !in userInfoFile["userInfo"] || userInfoFile["userInfo"]["extraGroups"].isNull)
-        {
-            return JSONValue(["metacraft"]).array;
-        }
-        return userInfoFile["userInfo"]["extraGroups"].array;
-    }).array
-        .joiner
-        .array
-        .map!(a => a.str)
-        .array
-        .sort
-        .array
-        .uniq
-        .array;
-    return groups;
+    try {
+        // Try to get groups from the users module using nix eval
+        auto groupsJson = nix.eval!JSONValue("", [
+            "--impure",
+            "--expr",
+            "(let lib = (import <nixpkgs> {}).lib; utils = import ./lib { usersDir = ./users; rootDir = ./.; machinesDir = ./machines; }; in lib.attrNames (utils.allAssignedGroups {}))"
+        ]);
+        return groupsJson.array.map!(a => a.str).array.sort.array;
+    } catch (Exception e) {
+        // Fallback to the old method if nix eval fails
+        string[] groups = dirEntries("users", SpanMode.shallow).map!(a => a.name ~ "/user-info.nix").array.map!((a) {
+            if (!std.file.exists(a))
+            {
+                return JSONValue(["metacraft"]).array;
+            }
+            auto userInfoFile = nix.eval!JSONValue(a, ["--file"]);
+            if ("userInfo" !in userInfoFile || userInfoFile["userInfo"].isNull)
+            {
+                return JSONValue(["metacraft"]).array;
+            }
+            if ("extraGroups" !in userInfoFile["userInfo"] || userInfoFile["userInfo"]["extraGroups"].isNull)
+            {
+                return JSONValue(["metacraft"]).array;
+            }
+            return userInfoFile["userInfo"]["extraGroups"].array;
+        }).array
+            .joiner
+            .array
+            .map!(a => a.str)
+            .array
+            .sort
+            .array
+            .uniq
+            .array;
+        return groups;
+    }
 }
 
 User createUser(CreateMachineArgs args) {
@@ -191,6 +225,115 @@ User createUser(CreateMachineArgs args) {
             createUserDir(user);
             return user;
         }
+}
+
+string calculateStateVersion() {
+    import std.datetime : Clock;
+    auto now = Clock.currTime();
+    int year = now.year % 100; // Get last 2 digits
+    int month = now.month;
+
+    // NixOS releases in May (05) and November (11)
+    // If before May, use previous year's November release
+    // If before November, use current year's May release
+    // Otherwise use current year's November release
+    if (month < 5) {
+        return (year == 0 ? 99 : year - 1).to!string ~ ".11";
+    } else if (month < 11) {
+        return year.to!string ~ ".05";
+    } else {
+        return year.to!string ~ ".11";
+    }
+}
+
+string detectPlatform(Info info) {
+    // Map D's architecture to Nix platform strings
+    string arch = info.hardwareInfo.processorInfo.architectureInfo.architecture;
+    string kernel = info.softwareInfo.operatingSystemInfo.kernel.toLower;
+
+    if (arch.indexOf("x86_64") != -1 || arch.indexOf("x86-64") != -1) {
+        if (kernel.indexOf("darwin") != -1) return "x86_64-darwin";
+        return "x86_64-linux";
+    } else if (arch.indexOf("aarch64") != -1 || arch.indexOf("arm64") != -1) {
+        if (kernel.indexOf("darwin") != -1) return "aarch64-darwin";
+        return "aarch64-linux";
+    } else if (arch.indexOf("i686") != -1 || arch.indexOf("i386") != -1) {
+        return "i686-linux";
+    }
+
+    // Default to x86_64-linux if unknown
+    return "x86_64-linux";
+}
+
+string[] getValidUsers() {
+    return getExistingUsers();
+}
+
+string detectElevationCommand(string sshPath) {
+    // Try to detect if sudo or doas is available on the remote machine
+    // First try sudo
+    try {
+        auto sudoCheck = execute(["ssh", sshPath, "command -v sudo"], false, false);
+        if (sudoCheck.strip != "") {
+            return "sudo";
+        }
+    } catch (Exception e) {
+        // sudo not found, continue to check doas
+    }
+
+    // Try doas
+    try {
+        auto doasCheck = execute(["ssh", sshPath, "command -v doas"], false, false);
+        if (doasCheck.strip != "") {
+            return "doas";
+        }
+    } catch (Exception e) {
+        // doas not found
+    }
+
+    // Default to sudo if neither is explicitly found
+    // This maintains backward compatibility
+    return "sudo";
+}
+
+struct MetaConfiguration
+{
+    struct MCL {
+        struct HostInfo {
+            string type;
+            string sshKey;
+        }
+        HostInfo host_info;
+
+        struct Users {
+            string mainUser;
+            string[] includedUsers;
+            string[] includedGroups;
+            bool enableHomeManager;
+        }
+        Users users;
+
+        struct Secrets {
+            string[] extraKeysFromGroups;
+        }
+        Secrets secrets;
+    }
+    MCL mcl;
+
+    struct Nixpkgs {
+        string hostPlatform;
+    }
+    Nixpkgs nixpkgs;
+
+    struct Networking {
+        string hostId;
+    }
+    Networking networking;
+
+    struct System {
+        string stateVersion;
+    }
+    System system;
 }
 
 struct MachineConfiguration
@@ -220,17 +363,56 @@ struct MachineConfiguration
 }
 
 void createMachine(CreateMachineArgs args, MachineType machineType, string machineName, User user) {
-    auto infoJSON = execute(["ssh", args.sshPath, "sudo nix --experimental-features \\'nix-command flakes\\' --refresh --accept-flake-config run github:metacraft-labs/nixos-modules/#mcl host-info"],false, false);
+    auto infoJSON = execute(["ssh", args.sshPath, `nix --experimental-features "nix-command flakes" --refresh --accept-flake-config run /home/monyarm/code/repos/nixos-modules#mcl host-info`],false, false);
     auto infoJSONParsed = infoJSON.parseJSON;
     Info info = infoJSONParsed.fromJSON!Info;
 
+    mkdirRecurse("machines/" ~ machineType.to!string ~ "/" ~ machineName);
+
+    // Generate meta.nix
+    MetaConfiguration metaConfiguration;
+
+    // Determine host type
+    if (args.hostType != "") {
+        metaConfiguration.mcl.host_info.type = args.hostType;
+    } else if (machineType == MachineType.server) {
+        metaConfiguration.mcl.host_info.type = "server";
+    } else {
+        metaConfiguration.mcl.host_info.type = prompt!string("Enter host type (notebook/desktop/server)", ["notebook", "desktop", "server"]);
+    }
+
+    // SSH key - required for servers, optional for desktops/notebooks
+    if (machineType == MachineType.server || metaConfiguration.mcl.host_info.type == "server") {
+        metaConfiguration.mcl.host_info.sshKey = info.softwareInfo.opensshInfo.publicKey;
+    } else if (args.hostType == "desktop" || args.hostType == "notebook") {
+        // Optional for desktops/notebooks
+        metaConfiguration.mcl.host_info.sshKey = "";
+    }
+
+    // Users configuration
+    metaConfiguration.mcl.users.mainUser = args.mainUser != "" ? args.mainUser : user.userName;
+    metaConfiguration.mcl.users.includedUsers = args.includedUsers != "" ? args.includedUsers.split(",").map!(strip).array : [];
+    metaConfiguration.mcl.users.includedGroups = args.includedGroups != "" ? args.includedGroups.split(",").map!(strip).array : [];
+    metaConfiguration.mcl.users.enableHomeManager = args.enableHomeManager || prompt!bool("Enable home-manager?");
+
+    // Secrets configuration
+    metaConfiguration.mcl.secrets.extraKeysFromGroups = args.extraKeysFromGroups != "" ? args.extraKeysFromGroups.split(",").map!(strip).array : [];
+
+    // Platform and versions
+    metaConfiguration.nixpkgs.hostPlatform = detectPlatform(info);
+    metaConfiguration.networking.hostId = executeShell("tr -dc 0-9a-f < /dev/urandom | head -c 8").output.strip;
+    metaConfiguration.system.stateVersion = calculateStateVersion();
+
+    string metaNix = metaConfiguration.toNix(["config", "dots"]).replace("host_info", "host-info");
+    std.file.write("machines/" ~ machineType.to!string ~ "/" ~ machineName ~ "/" ~ "meta.nix", metaNix);
+
+    // Generate simpler configuration.nix (most moved to meta.nix)
     MachineConfiguration machineConfiguration;
     machineConfiguration.users.users[user.userName] = MachineConfiguration.MachineUserInfo.UserData([user.userName] ~ "wheel");
     machineConfiguration.users.mcl.includedUsers = [user.userName];
-    machineConfiguration.networking.hostId = executeShell("tr -dc 0-9a-f < /dev/urandom | head -c 8").output;
-    machineConfiguration.mcl.host_info.sshKey = info.softwareInfo.opensshInfo.publicKey;
+    machineConfiguration.networking.hostId = metaConfiguration.networking.hostId;
+    machineConfiguration.mcl.host_info.sshKey = metaConfiguration.mcl.host_info.sshKey;
     string machineNix = machineConfiguration.toNix(["config", "dots"]).replace("host_info", "host-info");
-    mkdirRecurse("machines/" ~ machineType.to!string ~ "/" ~ machineName);
     std.file.write("machines/" ~ machineType.to!string ~ "/" ~ machineName ~ "/" ~ "configuration.nix", machineNix);
     // writeln(info.toJSON(true).toPrettyString());
 
@@ -269,39 +451,64 @@ void createMachine(CreateMachineArgs args, MachineType machineType, string machi
     // Misc Kernel Modules
     hardwareConfiguration.boot.initrd.availableKernelModules ~= ["nvme", "xhci_pci", "usbhid", "usb_storage", "sd_mod"];
 
-    // Disks
-    hardwareConfiguration.disko.DISKO.makeZfsPartitions.swapSizeGB = (info.hardwareInfo.memoryInfo.totalGB.to!double*1.5).to!int;
+    // Disks - new structure
+    hardwareConfiguration.disko.mcl.enable = true;
+
+    // Parse partitioning preset
+    if (args.partitioningPreset != "") {
+        hardwareConfiguration.disko.mcl.partitioningPreset = args.partitioningPreset.replace("-", "_").to!PartitioningPreset;
+    } else {
+        hardwareConfiguration.disko.mcl.partitioningPreset = PartitioningPreset.zfs;
+    }
+
+    // Parse zpool mode
+    if (args.zpoolMode != "") {
+        hardwareConfiguration.disko.mcl.zpool.mode = args.zpoolMode.to!ZpoolMode;
+    } else {
+        hardwareConfiguration.disko.mcl.zpool.mode = ZpoolMode.stripe;
+    }
+
+    hardwareConfiguration.disko.mcl.espSize = args.espSize != "" ? args.espSize : "4G";
+
+    // Calculate swap size
+    string swapSize = args.swapSize != "" ? args.swapSize : (info.hardwareInfo.memoryInfo.totalGB.to!double*1.5).to!int.to!string ~ "G";
+    hardwareConfiguration.disko.mcl.swap.size = swapSize;
+
+    // Get disks
     auto nvmeDevices = info.hardwareInfo.storageInfo.devices.filter!(a => a.dev.indexOf("nvme") != -1 || a.model.indexOf("SSD") != -1).array.map!(a => a.model.replace(" ", "_") ~ "_" ~ a.serial).array;
     string[] disks = (nvmeDevices.length == 1 ? nvmeDevices[0] : (args.disks != "" ? args.disks : prompt!string("Enter the disks to use (comma delimited)", nvmeDevices))).split(",").map!(strip).array.map!(a => "/dev/disk/by-id/nvme-" ~ a).array;
-    hardwareConfiguration.disko.DISKO.makeZfsPartitions.disks = disks;
+    hardwareConfiguration.disko.mcl.disks = disks;
 
     hardwareConfiguration = hardwareConfiguration.uniqArrays;
 
-
     string hardwareNix = hardwareConfiguration.toNix(["config", "lib", "pkgs", "modulesPath", "dirs", "dots"])
-        .replace("DISKO", "(import \"${dirs.lib}/disko.nix\")")
-        .replace ("makeZfsPartitions = ", "makeZfsPartitions ")
         .replace("SYSTEMDBOOT", "systemd-boot")
         .replace("mcl.host-info.sshKey", "# mcl.host-info.sshKey");
     std.file.write("machines/" ~ machineType.to!string ~ "/" ~ machineName ~ "/" ~ "hw-config.nix", hardwareNix);
+    execute(["alejandra", "machines/" ~ machineType.to!string ~ "/" ~ machineName ~ "/" ~ "meta.nix"], false);
     execute(["alejandra", "machines/" ~ machineType.to!string ~ "/" ~ machineName ~ "/" ~ "configuration.nix"], false);
-    execute(["alejandra", "machines/" ~ machineType.to!string ~ "/" ~ machineName ~ "/" ~ "hw-config..nix"], false);
+    execute(["alejandra", "machines/" ~ machineType.to!string ~ "/" ~ machineName ~ "/" ~ "hw-config.nix"], false);
 }
 
 struct HardwareConfiguration {
     Literal[] _literalAttrs;
     Literal[] imports =  [];
-    struct Disko {
-        struct INNER_DISKO {
-            struct MakeZfsPartition {
-                string[] disks;
-                int swapSizeGB;
-                int espSizeGB = 4;
-                Literal _literalConfig = "inherit config;";
-            }
-            MakeZfsPartition makeZfsPartitions;
+    struct MCLDisko {
+        bool enable = true;
+        PartitioningPreset partitioningPreset = PartitioningPreset.zfs;
+        struct Zpool {
+            ZpoolMode mode = ZpoolMode.stripe;
         }
-        INNER_DISKO DISKO;
+        Zpool zpool;
+        string espSize = "4G";
+        struct Swap {
+            string size;
+        }
+        Swap swap;
+        string[] disks;
+    }
+    struct Disko {
+        MCLDisko mcl;
     }
     Disko disko;
     struct Boot {
@@ -325,7 +532,7 @@ struct HardwareConfiguration {
             }
             Grub grub;
             struct EFI {
-                Literal canTouchEfiVariables = mkDefault(true);;
+                Literal canTouchEfiVariables = mkDefault(true);
             }
             EFI efi;
         }
@@ -403,6 +610,40 @@ struct CreateMachineArgs
     MachineType machineType = cast(MachineType)0;
     @(NamedArgument(["disks"]).Placeholder("CT2000P3PSSD8_2402E88C1519,...").Description("Disks to use"))
     string disks;
+
+    // New meta.nix arguments
+    @(NamedArgument(["host-type"]).Placeholder("notebook/desktop/server").Description("Host type (notebook, desktop, or server)"))
+    string hostType;
+    @(NamedArgument(["main-user"]).Placeholder("username").Description("Main user for the machine"))
+    string mainUser;
+    @(NamedArgument(["included-users"]).Placeholder("user1,user2").Description("Additional users to include"))
+    string includedUsers;
+    @(NamedArgument(["included-groups"]).Placeholder("group1,group2").Description("Groups to include"))
+    string includedGroups;
+    @(NamedArgument(["enable-home-manager"]).Description("Enable home-manager"))
+    bool enableHomeManager;
+    @(NamedArgument(["extra-keys-from-groups"]).Placeholder("group1,group2").Description("Extra SSH keys from groups"))
+    string extraKeysFromGroups;
+
+    // New email/user info arguments
+    @(NamedArgument(["description-bg"]).Placeholder("description").Description("Bulgarian description"))
+    string descriptionBG;
+    @(NamedArgument(["email-aliases"]).Placeholder("email1,email2").Description("Email aliases"))
+    string emailAliases;
+    @(NamedArgument(["github-username"]).Placeholder("username").Description("GitHub username"))
+    string githubUsername;
+    @(NamedArgument(["discord-username"]).Placeholder("username").Description("Discord username"))
+    string discordUsername;
+
+    // New disko arguments
+    @(NamedArgument(["partitioning-preset"]).Placeholder("zfs/zfs-legacy/ext4").Description("Partitioning preset"))
+    string partitioningPreset;
+    @(NamedArgument(["zpool-mode"]).Placeholder("mirror/raidz1/raidz2/raidz3/stripe").Description("ZFS pool mode"))
+    string zpoolMode;
+    @(NamedArgument(["esp-size"]).Placeholder("4G").Description("ESP partition size"))
+    string espSize;
+    @(NamedArgument(["swap-size"]).Placeholder("96G").Description("Swap size (overrides automatic calculation)"))
+    string swapSize;
 }
 
 @(Command(" ").Description(" "))

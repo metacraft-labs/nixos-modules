@@ -75,14 +75,13 @@ export int host_info(HostInfoArgs args)
         .toPrettyString(JSONOptions.doNotEscapeSlashes)
         .writeln();
 
-    if (args.uploadToCoda &&!args.codaApiToken) {
-        writeln("No Coda API token specified -> not uploading");
-        return 1;
+    if (args.uploadToCoda && args.codaApiToken) {
+        writeln("Coda API token specified -> uploading");
+        auto coda = CodaApiClient(args.codaApiToken);
+        coda.uploadHostInfo(hostInfo);
     }
 
-    writeln("Coda API token specified -> uploading");
-    auto coda = CodaApiClient(args.codaApiToken);
-    coda.uploadHostInfo(hostInfo);
+    writeln("No Coda API token specified -> not uploading");
 
     return 0;
 
