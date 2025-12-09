@@ -130,7 +130,7 @@ void uploadHostInfo(CodaApiClient coda, const(Info) info)
     auto hostValues = RowValues([
         CodaCell("Host Name", info.softwareInfo.hostname),
         CodaCell("Host ID", info.softwareInfo.hostid),
-        CodaCell("OpenSSH Public Key", info.softwareInfo.opensshInfo.publicKey),
+        CodaCell("OpenSSH Public Keys", info.softwareInfo.opensshInfo.publicKeys.to!string),
         CodaCell("JSON", info.toJSON(true).toPrettyString(JSONOptions.doNotEscapeSlashes))
     ]);
 
@@ -733,16 +733,15 @@ GraphicsProcessorInfo getGraphicsProcessorInfo()
 
 struct OpenSSHInfo
 {
-    string publicKey;
+    string[] publicKeys;
 }
 
 OpenSSHInfo getOpenSSHInfo()
 {
-    OpenSSHInfo r;
-
-    r.publicKey = readText("/etc/ssh/ssh_host_ed25519_key.pub").strip();
-
-    return r;
+    return dirEntries("/etc/ssh", "*.pub", SpanMode.shallow)
+        .map!(key => key.name.readText().strip())
+        .array()
+        .to!OpenSSHInfo();
 }
 
 struct MachineConfigInfo

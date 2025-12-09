@@ -228,7 +228,7 @@ void createMachine(CreateMachineArgs args, MachineType machineType, string machi
     machineConfiguration.users.users[user.userName] = MachineConfiguration.MachineUserInfo.UserData([user.userName] ~ "wheel");
     machineConfiguration.users.mcl.includedUsers = [user.userName];
     machineConfiguration.networking.hostId = executeShell("tr -dc 0-9a-f < /dev/urandom | head -c 8").output;
-    machineConfiguration.mcl.host_info.sshKey = info.softwareInfo.opensshInfo.publicKey;
+    machineConfiguration.mcl.host_info.sshKey = info.softwareInfo.opensshInfo.publicKeys[0];
     string machineNix = machineConfiguration.toNix(["config", "dots"]).replace("host_info", "host-info");
     mkdirRecurse("machines/" ~ machineType.to!string ~ "/" ~ machineName);
     std.file.write("machines/" ~ machineType.to!string ~ "/" ~ machineName ~ "/" ~ "configuration.nix", machineNix);
