@@ -143,12 +143,12 @@ mixin CLI!CachixDeployMetrics.main!((args)
 
 const string[] CACHIX_DEPLOY_STATES = ["Pending", "InProgress", "Cancelled", "Failed", "Succeeded"];
 
-__gshared Gauge statusGauge;
-__gshared Gauge indexGauge;
-__gshared Gauge startedGauge;
-__gshared Gauge finishedGauge;
-__gshared Gauge inProgressDurationGauge;
-__gshared string gWorkspace;
+Gauge statusGauge;
+Gauge indexGauge;
+Gauge startedGauge;
+Gauge finishedGauge;
+Gauge inProgressDurationGauge;
+string gWorkspace;
 const string[] FINISHED_KEYS = ["endedOn", "finishedOn", "completedOn"];
 
 void promInit() {
