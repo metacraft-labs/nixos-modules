@@ -21,6 +21,7 @@ import vibe.d: HTTPServerSettings,
 import prometheus.counter : Counter;
 import prometheus.gauge : Gauge;
 import prometheus.registry : Registry;
+import prometheus.vibe;
 
 import argparse : CLI,
     Command,
