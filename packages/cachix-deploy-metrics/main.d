@@ -7,7 +7,6 @@ import std.file : readText;
 import std.format : format;
 import std.json : JSONType, JSONValue, parseJSON;
 import std.logger : errorf, logf, tracef, warningf, LogLevel;
-import std.net.curl : HTTP, get;
 import std.string : strip;
 
 import vibe.core.args : setCommandLineArgs;
@@ -176,6 +175,9 @@ void promSetStatus(string agentName, string status, long indexVal) {
 }
 
 auto httpGetJson(string url, string authToken) {
+    import vibe.http.common : HTTPMethod;
+    import vibe.stream.operations : readAllUTF8;
+    import vibe.http.client : requestHTTP, HTTPClientSettings;
     import mcl.utils.json : fromJSON;
 
     struct LastDepoyment {
@@ -190,12 +192,16 @@ auto httpGetJson(string url, string authToken) {
     }
 
     tracef("GET %s", url);
-    auto conn = HTTP();
-    conn.connectTimeout = 10.seconds;
-    conn.operationTimeout = 20.seconds;
-    conn.addRequestHeader("Authorization", "Bearer " ~ authToken);
-    auto bodyArr = get!(HTTP, char)(url, conn);
-    auto body = bodyArr.idup;
+
+    auto settings = new HTTPClientSettings;
+    settings.connectTimeout = 10.seconds;
+    settings.readTimeout = 20.seconds;
+
+    auto res = requestHTTP(url, (scope req) {
+        req.headers["Authorization"] = "Bearer " ~ authToken;
+    }, settings);
+
+    string body = res.bodyReader.readAllUTF8();
     return fromJSON!AgentMetrics(parseJSON(body));
 }
 
