@@ -11,3 +11,5 @@ dependency "prometheus2:vibe" version="~>1.1.0"
 dependency "vibe-d" version="~>0.10.2"
 
 versions "VibeDisableCommandLineParsing"
+
+importPaths "../mcl/src/src"

@@ -175,7 +175,20 @@ void promSetStatus(string agentName, string status, long indexVal) {
     }
 }
 
-JSONValue httpGetJson(string url, string authToken) {
+auto httpGetJson(string url, string authToken) {
+    import mcl.utils.json : fromJSON;
+
+    struct LastDepoyment {
+        string status;
+        int index;
+        string startedOn;
+        string finishedOn;
+    }
+
+    struct AgentMetrics {
+        LastDepoyment lastDeployment;
+    }
+
     tracef("GET %s", url);
     auto conn = HTTP();
     conn.connectTimeout = 10.seconds;
@@ -183,7 +196,7 @@ JSONValue httpGetJson(string url, string authToken) {
     conn.addRequestHeader("Authorization", "Bearer " ~ authToken);
     auto bodyArr = get!(HTTP, char)(url, conn);
     auto body = bodyArr.idup;
-    return parseJSON(body);
+    return fromJSON!AgentMetrics(parseJSON(body));
 }
 
 private:
@@ -226,43 +239,21 @@ void promSetInProgressDuration(string agentName, string status, string startedOn
 void fetchAgentMetricsForHostname(string workspace, string authToken, string hostname) {
     auto url = format("%s/api/v1/deploy/agent/%s/%s", "https://app.cachix.org", workspace, hostname);
     try {
-        auto data = httpGetJson(url, authToken);
-        JSONValue last;
-        if (data.type == JSONType.object && "lastDeployment" in data.object) {
-            last = data["lastDeployment"];
-        }
+        auto jsonData = httpGetJson(url, authToken);
+        auto last = jsonData.lastDeployment;
 
-        string status;
-        long indexVal = long.min;
-        string startedOn;
-        string finishedOn;
+        promSetStatus(hostname, last.status, last.index);
+        promSetTimes(hostname, last.startedOn, last.finishedOn);
+        promSetInProgressDuration(hostname, last.status, last.startedOn);
 
-        if (last.type == JSONType.object) {
-            if ("status" in last.object && last["status"].type == JSONType.string) {
-                status = last["status"].str;
-            }
-            if ("index" in last.object && (last["index"].type == JSONType.integer || last["index"].type == JSONType.uinteger)) {
-                indexVal = last["index"].integer;
-            }
-            if ("startedOn" in last.object && last["startedOn"].type == JSONType.string) {
-                startedOn = last["startedOn"].str;
-            }
-            foreach (k; FINISHED_KEYS) {
-                if (k in last.object && last[k].type == JSONType.string) {
-                    finishedOn = last[k].str;
-                    break;
-                }
-            }
-        }
-
-        promSetStatus(hostname, status, indexVal);
-        promSetTimes(hostname, startedOn, finishedOn);
-        promSetInProgressDuration(hostname, status, startedOn);
-
-        auto started = startedOn.length ? startedOn : "";
-        auto finished = finishedOn.length ? finishedOn : "";
-        auto idx = (indexVal == long.min) ? "" : to!string(indexVal);
-        tracef("Agent %s startedOn=%s finishedOn=%s index=%s status=%s", hostname, started, finished, idx, (status.length ? status : ""));
+        tracef(
+            "Agent %s startedOn=%s finishedOn=%s index=%s status=%s",
+            hostname,
+            last.startedOn,
+            last.finishedOn,
+            last.index,
+            last.status
+        );
     } catch (Exception e) {
         errorf("Error fetching metrics for agent '%s' (%s): %s", hostname, url, e.msg);
     }
