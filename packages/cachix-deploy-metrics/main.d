@@ -11,6 +11,7 @@ import std.net.curl : HTTP, get;
 import std.string : strip;
 
 import vibe.core.args : setCommandLineArgs;
+import vibe.core.core : setTimer;
 import vibe.d: HTTPServerSettings,
     URLRouter,
     listenHTTP,
@@ -126,13 +127,14 @@ mixin CLI!CachixDeployMetrics.main!((args)
 
     router.get("/metrics", handleMetrics(Registry.global));
 
-    if (args.agents.length) {
-        auto t = new Thread({ scrapeLoop(args.workspace, args.cachixAuthToken, args.agents, args.scrapeInterval); });
-        t.isDaemon = true;
-        t.start();
-    } else {
-        warningf("No --agent-names provided; only /metrics with static counters will be served.");
-    }
+    // Fetch the metrics once at startup
+    fetchAgentMetrics(args.workspace, args.cachixAuthToken, args.agents);
+
+    setTimer(
+        args.scrapeInterval.seconds,
+        () => fetchAgentMetrics(args.workspace, args.cachixAuthToken, args.agents),
+        true
+    );
 
     listenHTTP(settings, router);
     runApplication;
@@ -221,8 +223,8 @@ void promSetInProgressDuration(string agentName, string status, string startedOn
     inProgressDurationGauge.set(0, [ws, agentName]);
 }
 
-void fetchAgentMetrics(string workspace, string authToken, string agentName) {
-    auto url = format("%s/api/v1/deploy/agent/%s/%s", "https://app.cachix.org", workspace, agentName);
+void fetchAgentMetricsForHostname(string workspace, string authToken, string hostname) {
+    auto url = format("%s/api/v1/deploy/agent/%s/%s", "https://app.cachix.org", workspace, hostname);
     try {
         auto data = httpGetJson(url, authToken);
         JSONValue last;
@@ -253,24 +255,21 @@ void fetchAgentMetrics(string workspace, string authToken, string agentName) {
             }
         }
 
-        promSetStatus(agentName, status, indexVal);
-        promSetTimes(agentName, startedOn, finishedOn);
-        promSetInProgressDuration(agentName, status, startedOn);
+        promSetStatus(hostname, status, indexVal);
+        promSetTimes(hostname, startedOn, finishedOn);
+        promSetInProgressDuration(hostname, status, startedOn);
 
         auto started = startedOn.length ? startedOn : "";
         auto finished = finishedOn.length ? finishedOn : "";
         auto idx = (indexVal == long.min) ? "" : to!string(indexVal);
-        tracef("Agent %s startedOn=%s finishedOn=%s index=%s status=%s", agentName, started, finished, idx, (status.length ? status : ""));
+        tracef("Agent %s startedOn=%s finishedOn=%s index=%s status=%s", hostname, started, finished, idx, (status.length ? status : ""));
     } catch (Exception e) {
-        errorf("Error fetching metrics for agent '%s' (%s): %s", agentName, url, e.msg);
+        errorf("Error fetching metrics for agent '%s' (%s): %s", hostname, url, e.msg);
     }
 }
 
-void scrapeLoop(string workspace, string authToken, string[] agents, int scrapeIntervalSec) {
-    while (true) {
-        foreach (agentName; agents) {
-            fetchAgentMetrics(workspace, authToken, agentName);
-        }
-        Thread.sleep(scrapeIntervalSec.seconds);
+void fetchAgentMetrics(string workspace, string cachixAuthToken, string[] agents) {
+    foreach (hostname; agents) {
+        fetchAgentMetricsForHostname(workspace, cachixAuthToken, hostname);
     }
 }
