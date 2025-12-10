@@ -1,5 +1,5 @@
 import core.thread : Thread;
-import core.time : dur;
+import core.time : seconds;
 
 import std.conv : to;
 import std.datetime : SysTime, Clock;
@@ -174,8 +174,8 @@ void promSetStatus(string agentName, string status, long indexVal) {
 JSONValue httpGetJson(string url, string authToken) {
     tracef("GET %s", url);
     auto conn = HTTP();
-    conn.connectTimeout = dur!"seconds"(10);
-    conn.operationTimeout = dur!"seconds"(20);
+    conn.connectTimeout = 10.seconds;
+    conn.operationTimeout = 20.seconds;
     conn.addRequestHeader("Authorization", "Bearer " ~ authToken);
     auto bodyArr = get!(HTTP, char)(url, conn);
     auto body = bodyArr.idup;
@@ -269,6 +269,6 @@ void scrapeLoop(string workspace, string authToken, string[] agents, int scrapeI
         foreach (agentName; agents) {
             fetchAgentMetrics(workspace, authToken, agentName);
         }
-        Thread.sleep(dur!"seconds"(scrapeIntervalSec));
+        Thread.sleep(scrapeIntervalSec.seconds);
     }
 }
