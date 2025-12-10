@@ -21,7 +21,7 @@ import vibe.d: HTTPServerSettings,
 import prometheus.counter : Counter;
 import prometheus.gauge : Gauge;
 import prometheus.registry : Registry;
-import prometheus.vibe;
+import prometheus.vibe : handleMetrics;
 
 import argparse : CLI,
     Command,
@@ -123,14 +123,8 @@ mixin CLI!CachixDeployMetrics.main!((args)
     if (args.bindAddresses.length) settings.bindAddresses = args.bindAddresses;
 
     auto router = new URLRouter;
-    router.get("/metrics", (HTTPServerRequest req, HTTPServerResponse res) {
-        string buf;
-        foreach (m; Registry.global.metrics) {
-            auto snap = m.collect();
-            buf ~= snap.encode();
-        }
-        res.writeBody(cast(ubyte[])buf, "text/plain; version=0.0.4; charset=utf-8");
-    });
+
+    router.get("/metrics", handleMetrics(Registry.global));
 
     if (args.agents.length) {
         auto t = new Thread({ scrapeLoop(args.workspace, args.cachixAuthToken, args.agents, args.scrapeInterval); });
