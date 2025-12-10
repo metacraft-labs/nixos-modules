@@ -1,8 +1,8 @@
 {
   "dependencies": {
     "argparse": {
-      "version": "1.4.1",
-      "sha256": "1hwpc9y9jqcw849g77pxbz6rvvpslgaxwid1rxpaz4nyhi93fq4g"
+      "version": "2.0.2",
+      "sha256": "1p3496rcndgaf68mxizfi4wrkf5frgzzfpp9frlvbjnkinizb2q9"
     },
     "diet-ng": {
       "version": "1.8.4",
@@ -13,8 +13,8 @@
       "sha256": "1xkfwhvnr67k0vy664sadj0hjifbs0257cbfjw86jp7rvjkn0myi"
     },
     "eventcore": {
-      "version": "0.9.37",
-      "sha256": "17fs8lsm1l3nf26k9a21jr7chmzs5ryl926nppzh6a1i2k4jmia4"
+      "version": "0.9.38",
+      "sha256": "00hk3n75c7vvzggxlr9zclhy6n4fdjkm0f1jj5riymhznm3prmqi"
     },
     "mir-linux-kernel": {
       "version": "1.2.1",
@@ -45,28 +45,28 @@
       "sha256": "1xwczhidhb4d6lw342fwx8da4vdwryv9gq8p41bh7184300aafl9"
     },
     "vibe-container": {
-      "version": "1.7.0",
-      "sha256": "04m3yvrhjq231m71yvk0wc4n2y4bwpd7nvivnbvc65sqjxipqpgf"
+      "version": "1.7.1",
+      "sha256": "1fll4lwf2lrjwqlhgdfzwbnw1x3fk8r49329jj1clch6acspzf3m"
     },
     "vibe-core": {
-      "version": "2.13.1",
-      "sha256": "0fcl1n9lsw2gg5flbjv9wimb18jxby40iip2zdzh1zksis2rg9b5"
+      "version": "2.13.3",
+      "sha256": "0iq65j0wan812lpq4d1zsqd2fjwbz8fnl3cagghqq4iq0wl3xlrv"
     },
     "vibe-d": {
       "version": "0.10.2",
       "sha256": "1vb2alzvvlmn4gjycsgcjjj57gv2mh5faci57qvkxhs73x818rc8"
     },
     "vibe-http": {
-      "version": "1.3.1",
-      "sha256": "0w01qw3ajnwij3pflv77brik0gf5qhla0wkcq8gcj79hj7gkf49c"
+      "version": "1.3.2",
+      "sha256": "1zgkr7d59qbpykqifcp97xlkp574wrklh24wq6rmwqpb3zn3q0w9"
     },
     "vibe-inet": {
       "version": "1.2.0",
       "sha256": "11qdm5qyv95flfrdm32xscjsx0khhpin7jvrk9v43hsvyy8lzrvf"
     },
     "vibe-serialization": {
-      "version": "1.1.2",
-      "sha256": "1mlqd7z5b3qdr7crj7ci76whqrnz2bahndp3fxn5k8zsd1yl294x"
+      "version": "1.1.3",
+      "sha256": "188c7yx7z17zfvfa5izab08jxvhkawlnj8hswxrbrvxmcw5kqy8b"
     },
     "vibe-stream": {
       "version": "1.3.0",
