@@ -6,7 +6,7 @@ import std.datetime : SysTime, Clock;
 import std.file : readText;
 import std.format : format;
 import std.json : JSONType, JSONValue, parseJSON;
-import std.logger : errorf, logf, tracef, warningf;
+import std.logger : errorf, logf, tracef, warningf, LogLevel;
 import std.net.curl : HTTP, get;
 import std.string : strip;
 
@@ -50,6 +50,9 @@ struct CachixDeployMetrics
     @(NamedArgument(["scrape-interval"]).Description("Scrape interval in seconds"))
     int scrapeInterval = 10;
 
+    @NamedArgument(["log-level"])
+    LogLevel logLevel = LogLevel.info;
+
     @(ArgumentGroup("Cachix configuration"))
     {
         @(MutuallyExclusive.Required())
@@ -83,6 +86,10 @@ struct CachixDeployMetrics
 
 mixin CLI!CachixDeployMetrics.main!((args)
 {
+    import std.logger : globalLogLevel, sharedLog;
+    globalLogLevel = args.logLevel;
+    (cast()sharedLog()).logLevel = args.logLevel;
+
     try
     {
         if (!args.cachixAuthToken.length)
