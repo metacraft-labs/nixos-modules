@@ -1,6 +1,8 @@
-# Nix build artifacts
+# build artifacts
+build/
+.result/
 result
-.result
+result-*
 
 # Direnv
 .direnv
