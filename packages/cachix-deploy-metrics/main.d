@@ -1,21 +1,142 @@
-import prometheus.registry : Registry;
-import prometheus.gauge : Gauge;
-
 import core.thread : Thread;
 import core.time : dur;
+
 import std.conv : to;
-import std.process : environment;
-import std.exception : ErrnoException;
+import std.datetime : SysTime, Clock;
 import std.file : readText;
 import std.format : format;
-import argparse; // Andrey Zherikov's argparse (UDA-based)
 import std.json : JSONType, JSONValue, parseJSON;
-import std.logger : LogLevel, logf;
-import std.string : strip;
-import std.datetime : SysTime, Clock;
-import vibe.core.args : setCommandLineArgs;
-import vibe.d: HTTPServerSettings, URLRouter, listenHTTP, runApplication, HTTPServerRequest, HTTPServerResponse;
+import std.logger : errorf, logf, tracef, warningf;
 import std.net.curl : HTTP, get;
+import std.string : strip;
+
+import vibe.core.args : setCommandLineArgs;
+import vibe.d: HTTPServerSettings,
+    URLRouter,
+    listenHTTP,
+    runApplication,
+    HTTPServerRequest,
+    HTTPServerResponse;
+
+import prometheus.counter : Counter;
+import prometheus.gauge : Gauge;
+import prometheus.registry : Registry;
+
+import argparse : CLI,
+    Command,
+    ArgumentGroup,
+    NamedArgument,
+    Description,
+    EnvFallback,
+    MutuallyExclusive,
+    Required;
+
+@(Command("cachix-deploy-metric")
+.Description(
+"A Prometheus exporter for Cachix Deploy agent metrics. It scrapes agent
+status, deployment times, and indices from the Cachix API and exposes them via
+an HTTP endpoint."))
+struct CachixDeployMetrics
+{
+    @(ArgumentGroup("Server configuration"))
+    {
+        @(NamedArgument.Description("Port to listen on").EnvFallback("PORT"))
+        ushort port = 9160;
+
+        @(NamedArgument(["listen-address"]).Description("Address to bind").EnvFallback("HOST"))
+        string listenAddress = "127.0.0.1";
+    }
+
+    @(NamedArgument(["scrape-interval"]).Description("Scrape interval in seconds"))
+    int scrapeInterval = 10;
+
+    @(ArgumentGroup("Cachix configuration"))
+    {
+        @(MutuallyExclusive.Required())
+        {
+            @(NamedArgument(["auth-token"])
+                .Description("Cachix auth token")
+                .EnvFallback("CACHIX_AUTH_TOKEN")
+            )
+            string cachixAuthToken;
+
+            @(NamedArgument(["auth-token-path"])
+                .Description("Path to Cachix auth token")
+                .EnvFallback("CACHIX_AUTH_TOKEN_PATH")
+            )
+            string cachixAuthTokenPath;
+        }
+
+        @(NamedArgument(["workspace"])
+            .Description("Cachix workspace name (required)")
+            .Required()
+        )
+        string workspace;
+
+        @(NamedArgument(["agent-names", "a"])
+            .Description("Agent names (one or more)")
+            .Required()
+        )
+        string[] agents;
+    }
+}
+
+mixin CLI!CachixDeployMetrics.main!((args)
+{
+    try
+    {
+        if (!args.cachixAuthToken.length)
+        {
+            logf("Cachix auth token was not specified directly. Reading token from: %s", args.cachixAuthTokenPath);
+            args.cachixAuthToken = readText(args.cachixAuthTokenPath).strip();
+        }
+        if (!args.cachixAuthToken.length)
+        {
+            errorf("Token file '%s' was empty.", args.cachixAuthTokenPath);
+            return 2;
+        }
+    }
+    catch (Exception e)
+    {
+        errorf("Token file '%s' not found or unreadable.", args.cachixAuthTokenPath);
+        return 2;
+    }
+
+    gWorkspace = args.workspace;
+    promInit();
+    foreach (agentName; args.agents) {
+        foreach (s; CACHIX_DEPLOY_STATES) {
+            promSetStatus(agentName, s, long.min);
+        }
+    }
+
+    auto settings = new HTTPServerSettings;
+    settings.port = args.port;
+    if (args.listenAddress) settings.bindAddresses = [args.listenAddress];
+
+    auto router = new URLRouter;
+    router.get("/metrics", (HTTPServerRequest req, HTTPServerResponse res) {
+        string buf;
+        foreach (m; Registry.global.metrics) {
+            auto snap = m.collect();
+            buf ~= snap.encode();
+        }
+        res.writeBody(cast(ubyte[])buf, "text/plain; version=0.0.4; charset=utf-8");
+    });
+
+    if (args.agents.length) {
+        auto t = new Thread({ scrapeLoop(args.workspace, args.cachixAuthToken, args.agents, args.scrapeInterval); });
+        t.isDaemon = true;
+        t.start();
+    } else {
+        warningf("No --agent-names provided; only /metrics with static counters will be served.");
+    }
+
+    listenHTTP(settings, router);
+    runApplication;
+
+    return 0;
+});
 
 const string[] CACHIX_DEPLOY_STATES = ["Pending", "InProgress", "Cancelled", "Failed", "Succeeded"];
 
@@ -51,7 +172,7 @@ void promSetStatus(string agentName, string status, long indexVal) {
 }
 
 JSONValue httpGetJson(string url, string authToken) {
-    logf(LogLevel.trace, "GET %s", url);
+    tracef("GET %s", url);
     auto conn = HTTP();
     conn.connectTimeout = dur!"seconds"(10);
     conn.operationTimeout = dur!"seconds"(20);
@@ -137,9 +258,9 @@ void fetchAgentMetrics(string workspace, string authToken, string agentName) {
         auto started = startedOn.length ? startedOn : "";
         auto finished = finishedOn.length ? finishedOn : "";
         auto idx = (indexVal == long.min) ? "" : to!string(indexVal);
-        logf(LogLevel.trace, "Agent %s startedOn=%s finishedOn=%s index=%s status=%s", agentName, started, finished, idx, (status.length ? status : ""));
+        tracef("Agent %s startedOn=%s finishedOn=%s index=%s status=%s", agentName, started, finished, idx, (status.length ? status : ""));
     } catch (Exception e) {
-        logf(LogLevel.error, "Error fetching metrics for agent '%s' (%s): %s", agentName, url, e.msg);
+        errorf("Error fetching metrics for agent '%s' (%s): %s", agentName, url, e.msg);
     }
 }
 
@@ -150,83 +271,4 @@ void scrapeLoop(string workspace, string authToken, string[] agents, int scrapeI
         }
         Thread.sleep(dur!"seconds"(scrapeIntervalSec));
     }
-}
-
-int main(string[] args) {
-    struct CliArgs {
-        @(NamedArgument(["port"])
-            .Description("Port to listen on (default: 9160)"))
-        int port = 9160;
-
-        @(NamedArgument(["listen-address"])
-            .Description("Address to bind (default: 127.0.0.1)"))
-        string listenAddress = "127.0.0.1";
-
-        @(NamedArgument(["scrape-interval"])
-            .Description("Scrape interval in seconds (default: 10)"))
-        int scrapeInterval = 10;
-
-        @(NamedArgument(["auth-token-path"])
-            .Description("Path to Cachix auth token (required if CACHIX_AUTH_TOKEN is unset)"))
-        string tokenPath;
-
-        @(NamedArgument(["workspace"])
-            .Description("Cachix workspace name (required)")
-            .Required())
-        string workspace;
-
-        @(NamedArgument(["agent-names", "a"])
-            .Description("Agent names (repeatable)")
-            .Required())
-        string[] agents;
-    }
-
-    CliArgs opts;
-    auto res = CLI!(Config.init, CliArgs).parseArgs(opts, args.length > 1 ? args[1 .. $] : []);
-    if (!res) return res.resultCode;
-
-    if (args.length > 0) setCommandLineArgs([args[0]]);
-
-    string authToken = environment.get("CACHIX_AUTH_TOKEN");
-    try {
-        if (!authToken) authToken = readText(opts.tokenPath).strip();
-    } catch (Exception e) {
-        logf(LogLevel.error, "Token file '%s' not found or unreadable.", opts.tokenPath);
-        return 2;
-    }
-
-    gWorkspace = opts.workspace;
-    promInit();
-    foreach (agentName; opts.agents) {
-        foreach (s; CACHIX_DEPLOY_STATES) {
-            promSetStatus(agentName, s, long.min);
-        }
-    }
-
-    auto settings = new HTTPServerSettings;
-    settings.port = cast(ushort)opts.port;
-    bool listenSpecified = opts.listenAddress.length != 0;
-    if (listenSpecified) settings.bindAddresses = [opts.listenAddress];
-
-    auto router = new URLRouter;
-    router.get("/metrics", (HTTPServerRequest req, HTTPServerResponse res) {
-        string buf;
-        foreach (m; Registry.global.metrics) {
-            auto snap = m.collect();
-            buf ~= snap.encode();
-        }
-        res.writeBody(cast(ubyte[])buf, "text/plain; version=0.0.4; charset=utf-8");
-    });
-
-    if (opts.agents.length) {
-        auto t = new Thread({ scrapeLoop(opts.workspace, authToken, opts.agents, opts.scrapeInterval); });
-        t.isDaemon = true;
-        t.start();
-    } else {
-        logf(LogLevel.warning, "No --agent-names provided; only /metrics with static counters will be served.");
-    }
-
-    listenHTTP(settings, router);
-    runApplication;
-    return 0;
 }
