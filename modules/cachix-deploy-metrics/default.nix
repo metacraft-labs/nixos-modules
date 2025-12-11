@@ -76,6 +76,13 @@
           default = 9160;
           description = "Port number of Cachix Deployments Exporter service.";
         };
+
+        bind-addresses = mkOption {
+          type = types.listOf types.str;
+          default = [ "127.0.0.1" ];
+          description = "List of addresses to bind to.";
+          example = [ "127.0.0.1" "::1" ];
+        };
       };
 
       config = mkIf cfg.enable {
@@ -88,6 +95,7 @@
               ${lib.getExe cfg.package} \
                 --log-level ${cfg.log-level} \
                 --port ${toString cfg.port} \
+                --bind-addresses ${builtins.concatStringsSep "," cfg.bind-addresses} \
                 --scrape-interval ${toString cfg.scrape-interval} \
                 --auth-token-path ${cfg.auth-token-path} \
                 --workspace ${cfg.workspace} \
