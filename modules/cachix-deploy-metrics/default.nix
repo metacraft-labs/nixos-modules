@@ -81,7 +81,10 @@
           type = types.listOf types.str;
           default = [ "127.0.0.1" ];
           description = "List of addresses to bind to.";
-          example = [ "127.0.0.1" "::1" ];
+          example = [
+            "127.0.0.1"
+            "::1"
+          ];
         };
       };
 
