@@ -43,8 +43,8 @@ struct CachixDeployMetrics
         @(NamedArgument.Description("Port to listen on").EnvFallback("PORT"))
         ushort port = 9160;
 
-        @(NamedArgument(["listen-address"]).Description("Address to bind").EnvFallback("HOST"))
-        string listenAddress = "127.0.0.1";
+        @(NamedArgument(["bind-addresses"]).Description("Addresses to bind (one or more)").EnvFallback("HOST"))
+        string[] bindAddresses = ["127.0.0.1"];
     }
 
     @(NamedArgument(["scrape-interval"]).Description("Scrape interval in seconds"))
@@ -119,7 +119,7 @@ mixin CLI!CachixDeployMetrics.main!((args)
 
     auto settings = new HTTPServerSettings;
     settings.port = args.port;
-    if (args.listenAddress) settings.bindAddresses = [args.listenAddress];
+    if (args.bindAddresses.length) settings.bindAddresses = args.bindAddresses;
 
     auto router = new URLRouter;
     router.get("/metrics", (HTTPServerRequest req, HTTPServerResponse res) {
