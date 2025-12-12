@@ -51,6 +51,10 @@
         lido-withdrawals-automation = pkgs.callPackage ./lido-withdrawals-automation { };
         pyroscope = pkgs.callPackage ./pyroscope { };
         random-alerts = pkgs.callPackage ./random-alerts { };
+        mcl = pkgs.callPackage ./mcl {
+          dCompiler = inputs'.dlang-nix.packages."ldc-binary-1_38_0";
+          inherit (legacyPackages.inputs.nixpkgs) cachix nix nix-eval-jobs;
+        };
       }
       // optionalAttrs (system == "x86_64-linux" || system == "aarch64-darwin") {
         secret = import ./secret { inherit inputs' pkgs; };
@@ -58,12 +62,6 @@
       }
       // optionalAttrs isLinux {
         folder-size-metrics = pkgs.callPackage ./folder-size-metrics { };
-      }
-      // optionalAttrs (system == "x86_64-linux") {
-        mcl = pkgs.callPackage ./mcl {
-          dCompiler = inputs'.dlang-nix.packages."ldc-binary-1_38_0";
-          inherit (legacyPackages.inputs.nixpkgs) cachix nix nix-eval-jobs;
-        };
       };
     };
 }
