@@ -27,6 +27,54 @@ import mcl.utils.nix : nix;
 import mcl.commands.ci: CiArgs;
 import mcl.commands.deploy_spec: DeploySpecArgs;
 
+version (OSX)
+{
+    import core.sys.darwin.mach.kern_return : KERN_SUCCESS;
+    import core.sys.darwin.mach.port : mach_port_t;
+
+    private alias vm_size_t = ulong;
+    private alias natural_t = uint;
+    private alias integer_t = int;
+    private alias mach_msg_type_number_t = natural_t;
+
+    private struct vm_statistics64_data_t
+    {
+        natural_t free_count;
+        natural_t active_count;
+        natural_t inactive_count;
+        natural_t wire_count;
+        ulong zero_fill_count;
+        ulong reactivations;
+        ulong pageins;
+        ulong pageouts;
+        ulong faults;
+        ulong cow_faults;
+        ulong lookups;
+        ulong hits;
+        ulong purges;
+        natural_t purgeable_count;
+        natural_t speculative_count;
+        ulong decompressions;
+        ulong compressions;
+        ulong swapins;
+        ulong swapouts;
+        natural_t compressor_page_count;
+        natural_t throttled_count;
+        natural_t external_page_count;
+        natural_t internal_page_count;
+        ulong total_uncompressed_pages_in_compressor;
+    }
+
+    private enum HOST_VM_INFO64 = 4;
+    private enum HOST_VM_INFO64_COUNT = cast(mach_msg_type_number_t)(
+        vm_statistics64_data_t.sizeof / integer_t.sizeof);
+
+    private extern (C) mach_port_t mach_host_self() nothrow @nogc;
+    private extern (C) int host_statistics64(mach_port_t host, int flavor,
+        void* host_info, mach_msg_type_number_t* count) nothrow @nogc;
+    private extern (C) int host_page_size(mach_port_t host, vm_size_t* page_size) nothrow @nogc;
+}
+
 enum GitHubOS
 {
     @StringRepresentation("ubuntu-latest") ubuntuLatest,
@@ -499,32 +547,58 @@ unittest
 int getAvailableMemoryMB(T)(auto ref T args)
     if (is(T == CiMatrixArgs) || is(T == PrintTableArgs) || is(T == CiArgs) || is(T == DeploySpecArgs))
 {
-    int free = "/proc/meminfo".readText
-        .splitLines
-        .find!(a => a.indexOf("MemFree") != -1)
-        .front
-        .split[1].to!int;
-    int cached = "/proc/meminfo".readText
-        .splitLines
-        .find!(a => a.indexOf("Cached") != -1 && a.indexOf("SwapCached") == -1)
-        .front
-        .split[1].to!int;
-    int buffers = "/proc/meminfo".readText
-        .splitLines
-        .find!(a => a.indexOf("Buffers") != -1)
-        .front
-        .split[1].to!int;
-    int shmem = "/proc/meminfo".readText
-        .splitLines
-        .find!(a => a.indexOf("Shmem:") != -1)
-        .front
-        .split[1].to!int;
-    int maxMemoryMB = args.maxMemory == 0 ? ((free + cached + buffers + shmem) / 1024)
-        : args.maxMemory;
-    return maxMemoryMB;
+    if (args.maxMemory != 0)
+        return args.maxMemory;
+
+    version (linux)
+    {
+        int free = "/proc/meminfo".readText
+            .splitLines
+            .find!(a => a.indexOf("MemFree") != -1)
+            .front
+            .split[1].to!int;
+        int cached = "/proc/meminfo".readText
+            .splitLines
+            .find!(a => a.indexOf("Cached") != -1 && a.indexOf("SwapCached") == -1)
+            .front
+            .split[1].to!int;
+        int buffers = "/proc/meminfo".readText
+            .splitLines
+            .find!(a => a.indexOf("Buffers") != -1)
+            .front
+            .split[1].to!int;
+        int shmem = "/proc/meminfo".readText
+            .splitLines
+            .find!(a => a.indexOf("Shmem:") != -1)
+            .front
+            .split[1].to!int;
+        return (free + cached + buffers - shmem) / 1024;
+    }
+    else version (OSX)
+    {
+        vm_statistics64_data_t vmStats;
+        mach_msg_type_number_t count = HOST_VM_INFO64_COUNT;
+        vm_size_t pageSize;
+
+        auto host = mach_host_self();
+
+        if (host_page_size(host, &pageSize) != KERN_SUCCESS)
+            throw new Exception("Failed to get page size");
+
+        if (host_statistics64(host, HOST_VM_INFO64, &vmStats, &count) != KERN_SUCCESS)
+            throw new Exception("Failed to get VM statistics");
+
+        // Available memory: free + inactive + speculative (pages that can be reclaimed)
+        ulong availablePages = vmStats.free_count + vmStats.inactive_count + vmStats.purgeable_count + vmStats.speculative_count;
+        ulong availableBytes = availablePages * pageSize;
+        return cast(int)(availableBytes / (1024 * 1024));
+    }
+    else
+    {
+        static assert(false, "getAvailableMemoryMB not implemented for this platform");
+    }
 }
 
-version(linux)
 @("getAvailableMemoryMB")
 unittest
 {
