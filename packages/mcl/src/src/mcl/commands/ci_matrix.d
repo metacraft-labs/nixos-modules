@@ -524,6 +524,7 @@ int getAvailableMemoryMB(T)(auto ref T args)
     return maxMemoryMB;
 }
 
+version(linux)
 @("getAvailableMemoryMB")
 unittest
 {

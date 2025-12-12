@@ -18,7 +18,6 @@ let
       gitMinimal
       gawk
       jc
-      edid-decode
       coreutils-full
       util-linux
       xorg.xrandr
@@ -29,6 +28,7 @@ let
       curl
     ])
     ++ lib.optionals (isLinux && isx86) [
+      v4l-utils
       dmidecode
       mesa-demos
       nixos-install-tools
@@ -94,5 +94,8 @@ pkgs.buildDubPackage rec {
       --set LD_LIBRARY_PATH "${lib.makeLibraryPath deps}"
   '';
 
-  meta.mainProgram = pname;
+  meta = {
+    platforms = lib.platforms.linux ++ lib.platforms.darwin;
+    mainProgram = pname;
+  };
 }
