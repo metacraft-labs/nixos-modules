@@ -130,6 +130,8 @@ import std.ascii : isUpper;
 
     static if (is(T == Literal))
         res ~= value;
+    else static if (is(T == enum))
+        res ~= JSONValue(value.to!string).toString(JSONOptions.doNotEscapeSlashes);
     else static if (is(T == bool) || isSomeString!T || isNumeric!T)
         res ~=JSONValue(value).toString(JSONOptions.doNotEscapeSlashes);
     else static if (is(T == struct))
