@@ -53,9 +53,23 @@ Nullable!gid_t getGroupId(in char[] groupName)
 @("getGroupId")
 unittest
 {
-    import std.exception : assertThrown;
+    import core.sys.posix.grp : getgrgid;
+    import std.string : fromStringz;
+    auto currentGid = getgid();
+    auto currentGroup = getgrgid(currentGid);
+    assert(currentGroup !is null);
 
-    assert(getGroupId("root").get == 0);
-    assert(getGroupId("nogroup").get == 65534);
+    auto currentGroupName = currentGroup.gr_name.fromStringz;
+    auto lookedUpGid = getGroupId(currentGroupName);
+
+    assert(!lookedUpGid.isNull);
+    assert(lookedUpGid.get == currentGid);
+
+    version (OSX)
+        assert(getGroupId("wheel").get == cast(gid_t)0);
+    else
+        assert(getGroupId("root").get == cast(gid_t)0);
+
+    assert(!getGroupId("nogroup").isNull);
     assert(getGroupId("non-existant-group-12313123123123123123123").isNull);
 }
