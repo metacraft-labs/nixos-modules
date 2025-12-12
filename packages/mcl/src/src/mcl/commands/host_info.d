@@ -67,7 +67,6 @@ struct HostInfoArgs {
 
 export int host_info(HostInfoArgs args)
 {
-
     const hostInfo = gatherHostInfo();
 
     hostInfo
@@ -75,17 +74,20 @@ export int host_info(HostInfoArgs args)
         .toPrettyString(JSONOptions.doNotEscapeSlashes)
         .writeln();
 
-    if (args.uploadToCoda &&!args.codaApiToken) {
-        writeln("No Coda API token specified -> not uploading");
-        return 1;
+    if (args.uploadToCoda)
+    {
+        if (!args.codaApiToken)
+        {
+            writeln("No Coda API token specified.");
+            return 1;
+        }
+
+        writeln("Uploading results to Coda");
+        auto coda = CodaApiClient(args.codaApiToken);
+        coda.uploadHostInfo(hostInfo);
     }
 
-    writeln("Coda API token specified -> uploading");
-    auto coda = CodaApiClient(args.codaApiToken);
-    coda.uploadHostInfo(hostInfo);
-
     return 0;
-
 }
 
 Info gatherHostInfo()
