@@ -1,6 +1,7 @@
 {
   inputs = {
-    nixos-modules.url = "path:../../../../../../../../../";
+    # nixos-modules.url = "path:../../../../../../../../../";
+    nixos-modules.url = "github:metacraft-labs/nixos-modules?rev=5a74e7c75fe50d89daf05a73450262ee24b45c79";
     nixpkgs.follows = "nixos-modules/nixpkgs";
     flake-parts.follows = "nixos-modules/flake-parts";
   };
