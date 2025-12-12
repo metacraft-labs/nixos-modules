@@ -80,17 +80,40 @@ enum GitHubOS
     @StringRepresentation("ubuntu-latest") ubuntuLatest,
     @StringRepresentation("self-hosted") selfHosted,
 
-    @StringRepresentation("macos-14") macos14
+    @StringRepresentation("macos-14") macos14,
 }
 
 enum SupportedSystem
 {
     @StringRepresentation("x86_64-linux") x86_64_linux,
 
+    @StringRepresentation("aarch64-linux") aarch64_linux,
+
     @StringRepresentation("x86_64-darwin") x86_64_darwin,
 
-    @StringRepresentation("aarch64-darwin") aarch64_darwin
+    @StringRepresentation("aarch64-darwin") aarch64_darwin,
 }
+
+version (linux)
+{
+    version (X86_64)
+        enum currentSystem = SupportedSystem.x86_64_linux;
+    else version (AArch64)
+        enum currentSystem = SupportedSystem.aarch64_linux;
+    else
+        static assert (0, "Unsupported architecture");
+}
+else version (OSX)
+{
+    version (X86_64)
+        enum currentSystem = SupportedSystem.x86_64_darwin;
+    else version (AArch64)
+        enum currentSystem = SupportedSystem.aarch64_darwin;
+    else
+        static assert (0, "Unsupported architecture");
+}
+else
+    static assert (0, "Unsupported OS");
 
 GitHubOS getGHOS(string os)
 {

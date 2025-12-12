@@ -18,6 +18,8 @@ import argparse : Command, Description, NamedArgument, Placeholder, EnvFallback;
 import mcl.utils.json : toJSON;
 import mcl.utils.nix : nix;
 import mcl.utils.path : createResultDirs, resultDir, rootDir;
+import mcl.utils.string : enumToString;
+import mcl.commands.ci_matrix : currentSystem;
 
 @(Command("shard-matrix", "shard_matrix")
     .Description("Generate a shard matrix for a flake"))
@@ -59,10 +61,11 @@ ShardMatrix generateShardMatrix(string flakeRef = ".")
         flakeRef = flakeRef.absolutePath.buildNormalizedPath;
     }
 
+    currentSystem.enumToString.writeln;
     const shardCountOutput = nix.eval("", [
         "--impure",
         "--expr",
-        `(builtins.getFlake "` ~ flakeRef ~ `").outputs.legacyPackages.x86_64-linux.mcl.matrix.shardCount or 0`
+        `(builtins.getFlake "` ~ flakeRef ~ `").outputs.legacyPackages.` ~ currentSystem.enumToString ~ `.mcl.matrix.shardCount or 0`
     ]);
 
     infof("shardCount: '%s'", shardCountOutput);
@@ -83,6 +86,7 @@ ShardMatrix generateShardMatrix(string flakeRef = ".")
 @("generateShardMatrix.ok")
 unittest
 {
+    // TODO(reo101): banica
     version (none)
     {
         // See: https://github.com/metacraft-labs/nixos-modules/blob/b70f5bf556a0afc25d45ff5abd9d4eeae58d2647/flake.nix
