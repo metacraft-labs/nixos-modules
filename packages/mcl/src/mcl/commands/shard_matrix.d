@@ -62,7 +62,8 @@ ShardMatrix generateShardMatrix(string flakeRef = ".", SupportedSystem system = 
 
     const shardCountOutput = nix.eval(
         "%s#mcl-matrices.%s.shardCount".fmt(flakeRef, system.enumToString)
-    );
+    )
+    .ifThrown("");
 
     infof("shardCount: '%s'", shardCountOutput);
 

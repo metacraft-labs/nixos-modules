@@ -84,7 +84,7 @@ struct NixCommand
                 commandName,
             ] ~ args ~ path;
 
-            auto output = command.execute(true).strip();
+            auto output = command.execute(printCommand: true, throwOnError: true).strip();
 
             static if (is(T == JSONValue))
                 return parseJSON(output);
