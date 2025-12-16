@@ -262,6 +262,12 @@
             config.allowUnfree = true;
           };
         };
+
+      flake.mcl.shard-matrix.systemsToBuild = [
+        "x86_64-linux"
+        "aarch64-darwin"
+      ];
+
       flake.lib.create =
         {
           rootDir,
