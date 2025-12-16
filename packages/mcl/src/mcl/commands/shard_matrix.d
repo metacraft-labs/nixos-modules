@@ -11,6 +11,7 @@ import std.path : buildPath;
 import std.range : iota;
 import std.regex : matchFirst, regex;
 import std.string : strip;
+import std.typecons : Nullable, nullable;
 
 import argparse : Command, Description, NamedArgument, Placeholder, EnvFallback;
 
@@ -37,13 +38,11 @@ export int shard_matrix(ShardMatrixArgs args)
     auto matrix = generateShardMatrix();
     saveShardMatrix(matrix, args);
     return 0;
-
 }
 
 struct Shard
 {
-    string prefix;
-    string postfix;
+    string flakeAttrPath;
     int digit;
 }
 
@@ -52,7 +51,7 @@ struct ShardMatrix
     Shard[] include;
 }
 
-ShardMatrix generateShardMatrix(string flakeRef = ".", SupportedSystem system = currentSystem)
+ShardMatrix generateShardMatrix(string flakeRef = ".", Nullable!SupportedSystem system = Nullable!SupportedSystem.init)
 {
     import std.path : isValidPath, absolutePath, buildNormalizedPath;
 
@@ -61,7 +60,12 @@ ShardMatrix generateShardMatrix(string flakeRef = ".", SupportedSystem system = 
     }
 
     const shardCountOutput = nix.eval(
-        "%s#mcl-matrices.%s.shardCount".fmt(flakeRef, system.enumToString)
+        "%s#mcl.shard-matrix.result.%s".fmt(
+            flakeRef,
+            system.isNull
+                ? "shardCount"
+                : "shardCountPerSystem.%s".fmt(system.get.enumToString),
+        )
     )
     .ifThrown("");
 
@@ -75,7 +79,7 @@ ShardMatrix generateShardMatrix(string flakeRef = ".", SupportedSystem system = 
     if (shardCount == 0)
     {
         warningf("No shards found, exiting");
-        return ShardMatrix([Shard("", "", -1)]);
+        return ShardMatrix([Shard("", -1)]);
     }
 
     return splitToShards(shardCount);
@@ -96,16 +100,19 @@ unittest
     }
 
     {
-        auto shards = generateShardMatrix(flakeRef, SupportedSystem.aarch64_linux);
-        assert(shards.include == [Shard(prefix: "", postfix: "", digit: -1)]);
+        auto shards = generateShardMatrix(flakeRef);
+        assert(shards.include.length == 21);
     }
 
     {
-        auto shards = generateShardMatrix(flakeRef, SupportedSystem.x86_64_linux);
+        auto shards = generateShardMatrix(flakeRef, nullable(SupportedSystem.x86_64_linux));
         assert(shards.include.length == 11);
-        assert(shards.include[0].prefix == "mcl-matrices");
-        assert(shards.include[0].postfix == "shards.0");
-        assert(shards.include[0].digit == 0);
+        assert(shards.include[0] == Shard(flakeAttrPath: "mcl.shard-matrix.result.shards", digit: 0));
+    }
+
+    {
+        auto shards = generateShardMatrix(flakeRef, nullable(SupportedSystem.aarch64_linux));
+        assert(shards.include == [Shard(flakeAttrPath: "", digit: -1)]);
     }
 }
 
@@ -116,18 +123,23 @@ unittest
     auto flakeRef = rootDir.buildPath("packages/mcl/src/src/mcl/utils/test/nix/shard-matrix-no-shards");
 
     auto shards = generateShardMatrix(flakeRef);
-    assert(shards.include == [Shard(prefix: "", postfix: "", digit: -1)]);
+    assert(shards.include == [Shard(flakeAttrPath: "", digit: -1)]);
 }
 
-ShardMatrix splitToShards(int shardCount)
+ShardMatrix splitToShards(int shardCount, Nullable!SupportedSystem system = Nullable!SupportedSystem.init)
 {
-    ShardMatrix shards;
-    shards.include = shardCount
+    return shardCount
         .iota
-        .map!(i => Shard("mcl-matrices", "shards.%s".fmt(i), i))
-        .array;
-
-    return shards;
+        .map!(i => Shard(
+            "mcl.shard-matrix.result.%s".fmt(
+                system.isNull
+                    ? "shards"
+                    : "shardsPerSystem.%s".fmt(system.get),
+            ),
+            i,
+        ))
+        .array
+        .ShardMatrix;
 }
 
 @("splitToShards")
@@ -135,16 +147,9 @@ unittest
 {
     auto shards = splitToShards(3);
     assert(shards.include.length == 3);
-    assert(shards.include[0].prefix == "mcl-matrices");
-    assert(shards.include[0].postfix == "shards.0");
-    assert(shards.include[0].digit == 0);
-    assert(shards.include[1].prefix == "mcl-matrices");
-    assert(shards.include[1].postfix == "shards.1");
-    assert(shards.include[1].digit == 1);
-    assert(shards.include[2].prefix == "mcl-matrices");
-    assert(shards.include[2].postfix == "shards.2");
-    assert(shards.include[2].digit == 2);
-
+    assert(shards.include[0] == Shard(flakeAttrPath: "mcl.shard-matrix.result.shards", digit: 0));
+    assert(shards.include[1] == Shard(flakeAttrPath: "mcl.shard-matrix.result.shards", digit: 1));
+    assert(shards.include[2] == Shard(flakeAttrPath: "mcl.shard-matrix.result.shards", digit: 2));
 }
 
 void saveShardMatrix(ShardMatrix matrix, ShardMatrixArgs args)

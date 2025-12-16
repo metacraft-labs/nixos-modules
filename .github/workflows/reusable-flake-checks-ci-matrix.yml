@@ -90,6 +90,12 @@ jobs:
 
       - uses: actions/checkout@v5
 
+      - name: Conditionally export `FLAKE_ATTR_PATH`
+        run: |
+          if [ "${{ matrix.flakeAttrPath }}" != '' ]; then
+            echo "FLAKE_ATTR_PATH=${{ matrix.flakeAttrPath }}" >> $GITHUB_ENV
+          fi
+
       - name: Generate CI Matrix
         id: generate-matrix
         shell: bash
@@ -97,8 +103,6 @@ jobs:
           IS_INITIAL: 'true'
           CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          FLAKE_PRE: ${{ matrix.prefix }}
-          FLAKE_POST: ${{ matrix.postfix }}
           MCL_BRANCH: ${{ github.repository == 'metacraft-labs/nixos-modules' && github.sha || 'main' }}
         run: nix run --accept-flake-config github:metacraft-labs/nixos-modules/${{ env.MCL_BRANCH }}#mcl ci-matrix
 

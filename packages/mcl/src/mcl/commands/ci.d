@@ -10,7 +10,7 @@ import std.process : ProcessPipes;
 
 import argparse : Command, Description;
 
-import mcl.commands.ci_matrix: nixEvalJobs, SupportedSystem, flakeAttr, CiMatrixBaseArgs;
+import mcl.commands.ci_matrix: nixEvalJobs, SupportedSystem, CiMatrixBaseArgs;
 import mcl.commands.shard_matrix: generateShardMatrix;
 import mcl.utils.path : rootDir, createResultDirs;
 import mcl.utils.process : execute, spawnProcessInline;
@@ -28,30 +28,9 @@ export int ci(CiArgs args)
     auto shardMatrix = generateShardMatrix();
     foreach (shard; shardMatrix.include)
     {
-        args.flakePre = shard.prefix;
-        args.flakePost = shard.postfix;
-
-        if (args.flakePre == "")
-        {
-            args.flakePre = "checks";
-        }
         string cachixUrl = "https://" ~ args.cachixCache ~ ".cachix.org";
-        version (AArch64) {
-            string arch = "aarch64";
-        }
-        version (X86_64) {
-            string arch = "x86_64";
-        }
 
-        version (linux) {
-            string os = "linux";
-        }
-        version (OSX) {
-            string os = "darwin";
-        }
-
-        auto matrix = flakeAttr(args.flakePre, arch, os, args.flakePost)
-            .nixEvalJobs(cachixUrl, args, true);
+        auto matrix = args.flakeAttrPath.nixEvalJobs(cachixUrl, args, true);
 
         auto pkgsToBuild = matrix
             .filter!(pkg => !pkg.isCached)

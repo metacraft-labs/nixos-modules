@@ -15,48 +15,17 @@ in
   flake.modules.flake.shardSplit =
     { config, ... }:
     let
-      cfg = config.flake.mcl.matrix.shard;
+      cfg = config.flake.mcl.shard-matrix;
+
+      systemsToBuildErrorMessage = throw "Provided `systemsToBuild` ${builtins.toString cfg.systemsToBuild} does not yield a reuslt from the flake outputs";
     in
     {
-      imports = [
-        (flake-parts-lib.mkTransposedPerSystemModule {
-          file = ./default.nix;
-          name = "mcl-matrices";
-          option = mkOption {
-            description = ''
-              Configuration options for `mcl shard-matrix`.
-            '';
-            default = { };
-            type = types.submodule (
-              { config, ... }:
-              {
-                options = {
-                  shards = mkOption {
-                    type = types.attrsOf (types.attrsOf types.package);
-                    description = ''
-                      An attribute set of attribute sets of derivations to be built by `nix-eval-jobs` for checking purposes
-                    '';
-                  };
-                  shardCount = mkOption {
-                    type = types.ints.unsigned;
-                    default = builtins.length (builtins.attrNames config.shards);
-                  };
-                  perSystemAttributePath = mkOption {
-                    type = types.listOf types.str;
-                  };
-                };
-              }
-            );
-          };
-        })
-      ];
-
       options = {
-        flake.mcl.matrix.shard = {
-          size = mkOption {
+        flake.mcl.shard-matrix = {
+          shardSize = mkOption {
             type = types.numbers.positive;
             default = 1;
-            description = "Number of shards to use for parallel builds";
+            description = "Number of items per shard";
           };
           perSystemAttributePath = mkOption {
             type = types.listOf types.str;
@@ -80,29 +49,92 @@ in
               "aarch64-darwin"
             ];
           };
-        };
-      };
 
-      config = {
-        perSystem =
-          {
-            config,
-            self',
-            system,
-            ...
-          }:
-          let
-            attrs = lib.attrByPath cfg.perSystemAttributePath { } self';
-
-            systemIsEnabled = lib.elem system cfg.systemsToBuild;
-            shards = lib.optionalAttrs systemIsEnabled (shardAttrs attrs cfg.size);
-          in
-          {
-            mcl-matrices = {
-              shards = lib.mkOptionDefault shards;
-              perSystemAttributePath = lib.mkOptionDefault cfg.perSystemAttributePath;
+          result = {
+            shards = mkOption {
+              type = types.attrsOf (types.attrsOf types.package);
+              readOnly = true;
+              description = ''
+                An attribute set of attribute sets of derivations to be built
+                by `nix-eval-jobs` for checking purposes
+              '';
+              example = {
+                "0" = {
+                  "hello-0.0.1/aarch64-darwin" = "derivation";
+                  "hello-0.0.1/x86_64-linux" = "derivation";
+                  "hello-0.0.2/aarch64-darwin" = "derivation";
+                  "hello-0.0.2/x86_64-linux" = "derivation";
+                };
+                "1" = {
+                  "bye-0.0.1/aarch64-darwin" = "derivation";
+                  "bye-0.0.1/x86_64-linux" = "derivation";
+                  "bye-0.0.2/aarch64-darwin" = "derivation";
+                  "bye-0.0.2/x86_64-linux" = "derivation";
+                };
+              };
+              default = lib.pipe cfg.systemsToBuild [
+                (lib.flip lib.genAttrs (
+                  system:
+                  lib.attrByPath cfg.perSystemAttributePath systemsToBuildErrorMessage config.allSystems.${system}
+                ))
+                (lib.concatMapAttrs (system: lib.mapAttrs' (name: lib.nameValuePair "${name}/${system}")))
+                (lib.flip shardAttrs cfg.shardSize)
+              ];
+            };
+            shardsPerSystem = mkOption {
+              type = types.attrsOf (types.attrsOf (types.attrsOf types.package));
+              readOnly = true;
+              description = ''
+                An `system`-indexed attribute set of attribute sets of
+                attribute sets of derivations to be built by `nix-eval-jobs`
+                for checking purposes
+              '';
+              example = {
+                "aarch64-darwin" = {
+                  "0" = {
+                    "hello-0.0.1" = "derivation";
+                    "hello-0.0.2" = "derivation";
+                  };
+                  "1" = {
+                    "bye-0.0.1" = "derivation";
+                    "bye-0.0.2" = "derivation";
+                  };
+                };
+                "x86_64-linux" = {
+                  "0" = {
+                    "hello-0.0.1" = "derivation";
+                    "hello-0.0.2" = "derivation";
+                  };
+                  "1" = {
+                    "bye-0.0.1" = "derivation";
+                    "bye-0.0.2" = "derivation";
+                  };
+                };
+              };
+              default = lib.genAttrs cfg.systemsToBuild (
+                system:
+                let
+                  attrs =
+                    lib.attrByPath cfg.perSystemAttributePath systemsToBuildErrorMessage
+                      config.allSystems.${system};
+                in
+                shardAttrs attrs cfg.shardSize
+              );
+            };
+            shardCount = mkOption {
+              type = types.ints.unsigned;
+              readOnly = true;
+              default = builtins.length (builtins.attrNames cfg.result.shards);
+            };
+            shardCountPerSystem = mkOption {
+              type = types.attrsOf types.ints.unsigned;
+              readOnly = true;
+              default = lib.genAttrs cfg.systemsToBuild (
+                system: builtins.length (builtins.attrNames cfg.result.shardsPerSystem.${system})
+              );
             };
           };
+        };
       };
     };
 }
