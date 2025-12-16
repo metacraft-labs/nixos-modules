@@ -15,7 +15,7 @@ in
   flake.modules.flake.shardSplit =
     { config, ... }:
     let
-      cfg = config.mcl.matrix.shard;
+      cfg = config.flake.mcl.matrix.shard;
     in
     {
       imports = [
@@ -52,7 +52,7 @@ in
       ];
 
       options = {
-        mcl.matrix.shard = {
+        flake.mcl.matrix.shard = {
           size = mkOption {
             type = types.numbers.positive;
             default = 1;
