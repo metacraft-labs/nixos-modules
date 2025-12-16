@@ -41,7 +41,7 @@ jobs:
 
             This comment will be updated automatically with the status of each package.
 
-  generate-matrix-matrix:
+  shard-matrix:
     name: Generate Matrix of Matrices
     runs-on: ${{ fromJSON(inputs.runner) }}
     steps:
@@ -69,11 +69,11 @@ jobs:
     outputs:
       gen_matrix: ${{ steps.generate-matrix.outputs.gen_matrix }}
 
-  generate-matrix:
-    needs: generate-matrix-matrix
+  eval-matrix:
+    needs: shard-matrix
     runs-on: ${{ fromJSON(inputs.runner) }}
     strategy:
-      matrix: ${{fromJSON(needs.generate-matrix-matrix.outputs.gen_matrix)}}
+      matrix: ${{fromJSON(needs.shard-matrix.outputs.gen_matrix)}}
     name: Generate Matrix ${{ matrix.digit != -1 && matrix.digit || '' }}
     steps:
       - name: Install Nix
@@ -109,9 +109,9 @@ jobs:
     outputs:
       matrix: ${{ steps.generate-matrix.outputs.matrix }}
 
-  slurp-matrix:
+  merge-matrices:
     runs-on: ${{ fromJSON(inputs.runner) }}
-    needs: generate-matrix
+    needs: eval-matrix
     name: Merge matrices
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
@@ -187,12 +187,12 @@ jobs:
           nix-gitlab-domain: ${{ vars.NIX_GITLAB_DOMAIN }}
 
   build:
-    needs: slurp-matrix
-    if: needs.slurp-matrix.outputs.matrix != '{"include":[]}'
+    needs: merge-matrices
+    if: needs.merge-matrices.outputs.matrix != '{"include":[]}'
 
     strategy:
       fail-fast: false
-      matrix: ${{fromJSON( needs.slurp-matrix.outputs.matrix )}}
+      matrix: ${{fromJSON( needs.merge-matrices.outputs.matrix )}}
 
     name: ${{ matrix.name }} | ${{ matrix.system }}
     runs-on: ${{ matrix.os }}
@@ -226,7 +226,7 @@ jobs:
   results:
     runs-on: ${{ fromJSON(inputs.runner) }}
     name: Final Results
-    needs: [build, slurp-matrix]
+    needs: [build, merge-matrices]
     if: always()
     steps:
       - name: Post Comment
@@ -237,7 +237,7 @@ jobs:
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
-          precalc_matrix: ${{ needs.slurp-matrix.outputs.fullMatrix }}
+          precalc_matrix: ${{ needs.merge-matrices.outputs.fullMatrix }}
           pr-comment-github-token: ${{ secrets.GITHUB_TOKEN }}
           nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
           nix-gitlab-token: ${{ secrets.NIX_GITLAB_TOKEN }}
@@ -245,7 +245,7 @@ jobs:
 
       - run: exit 1
         if: >-
-          needs.slurp-matrix.outputs.matrix != '{"include":[]}'
+          needs.merge-matrices.outputs.matrix != '{"include":[]}'
             && contains(needs.*.result, 'failure')
             || contains(needs.*.result, 'cancelled')
 
