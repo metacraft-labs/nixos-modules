@@ -15,7 +15,7 @@ T execute(T = string)(string args, bool printCommand = true, bool returnErr = fa
 {
     return execute!T(args.strip.split(" "), printCommand, returnErr, redirect);
 }
-T execute(T = string)(string[] args, bool printCommand = true, bool returnErr = false, Redirect redirect = Redirect.all) if (is(T == string) || is(T == ProcessPipes) || is(T == JSONValue))
+T execute(T = string)(string[] args, bool printCommand = true, bool returnErr = false, Redirect redirect = Redirect.all, bool throwOnError = false) if (is(T == string) || is(T == ProcessPipes) || is(T == JSONValue))
 {
     import std.exception : enforce;
     import std.format : format;
@@ -52,6 +52,8 @@ T execute(T = string)(string[] args, bool printCommand = true, bool returnErr = 
             stdout: `%s`
             stderr: `%s`
             ---", cmd.bold, stdout.bold, stderr.bold);
+            if (throwOnError)
+                enforce(0, "Process failed.");
         }
         else
         {
