@@ -13,7 +13,7 @@ import mcl.utils.cachix : cachixNixStoreUrl, DeploySpec, createMachineDeploySpec
 import mcl.utils.tui : bold;
 import mcl.utils.json : tryDeserializeFromJsonFile, writeJsonFile;
 
-import mcl.commands.ci_matrix : flakeAttr, nixEvalJobs, SupportedSystem,CiMatrixBaseArgs;
+import mcl.commands.ci_matrix : nixEvalJobs, SupportedSystem,CiMatrixBaseArgs;
 
 
 @(Command("deploy-spec", "deploy_spec")
@@ -30,7 +30,7 @@ export int deploy_spec(DeploySpecArgs args)
 
     if (!exists(deploySpecFile))
     {
-        auto nixosConfigs = flakeAttr("legacyPackages", SupportedSystem.x86_64_linux, "serverMachines")
+        auto nixosConfigs = "legacyPackages.x86_64-linux.serverMachines"
             .nixEvalJobs(args.cachixCache.cachixNixStoreUrl, args);
 
         auto configsMissingFromCachix = nixosConfigs.filter!(c => !c.isCached);

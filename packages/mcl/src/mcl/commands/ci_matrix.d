@@ -5,7 +5,8 @@ import std.traits : EnumMembers;
 import std.string : indexOf, splitLines, strip;
 import std.algorithm : map, filter, reduce, chunkBy, find, any, sort, startsWith, each, canFind, fold;
 import std.file : write, readText;
-import std.range : array, front, join, split;
+import std.range : array, front, join, chain, split;
+import std.exception : ifThrown;
 import std.conv : to;
 import std.json : JSONValue, parseJSON, JSONOptions;
 import std.regex : matchFirst;
@@ -220,22 +221,11 @@ mixin template CiMatrixBaseArgs()
 {
     import argparse : Command, Description, NamedArgument, Required, Placeholder, EnvFallback;
 
-    @(NamedArgument(["flake-pre"])
-        .Placeholder("prefix")
-        .EnvFallback("FLAKE_PRE")
+    @(NamedArgument(["flake-attribute-path"])
+        .Placeholder("flake.attr.path")
+        .EnvFallback("FLAKE_ATTR_PATH")
     )
-    string _flakePre = "checks";
-
-    @property {
-        string flakePre() => _flakePre == "" ? "checks" : _flakePre;
-        void flakePre(string v) => cast(void)(_flakePre = v);
-    }
-
-    @(NamedArgument(["flake-post"])
-        .Placeholder("postfix")
-        .EnvFallback("FLAKE_POST")
-    )
-    string flakePost;
+    string flakeAttrPath = "checks";
 
     @(NamedArgument(["max-workers"])
         .Placeholder("count")
@@ -306,16 +296,9 @@ export int print_table(PrintTableArgs args)
     return 0;
 }
 
-string flakeAttr(string prefix, SupportedSystem system, string postfix)
+string flakeAttr(string prefix, SupportedSystem system, string[] attrs...)
 {
-    postfix = postfix == "" ? "" : "." ~ postfix;
-    return "%s.%s%s".fmt(prefix, system.enumToString, postfix);
-}
-
-string flakeAttr(string prefix, string arch, string os, string postfix)
-{
-    postfix = postfix == "" ? "" : "." ~ postfix;
-    return "%s.%s-%s%s".fmt(prefix, arch, os, postfix);
+    return [prefix, system.enumToString].chain(attrs).join(".");
 }
 
 Package[] checkCacheStatus(T)(Package[] packages, auto ref T args)
@@ -375,14 +358,14 @@ static immutable string[] uselessWarnings =
 
 Package packageFromNixEvalJobsJson(
     JSONValue json,
-    string flakeAttrPrefix,
+    string flakeAttrPath,
     string binaryCacheHttpEndpoint = "https://cache.nixos.org"
 )
 {
     return Package(
         name: json["attr"].str,
         allowedToFail: false,
-        attrPath: flakeAttrPrefix ~ "." ~ json["attr"].str,
+        attrPath: flakeAttrPath ~ "." ~ json["attr"].str,
         isCached: json["isCached"].boolean,
         system: getSystem(json["system"].str),
         os: systemToGHPlatform(getSystem(json["system"].str)),
@@ -435,7 +418,7 @@ unittest
         ));
     }
 }
-Package[] nixEvalJobs(T)(string flakeAttrPrefix, string cachixUrl, auto ref T args, bool doCheck = true)
+Package[] nixEvalJobs(T)(string flakeAttrPath, string cachixUrl, auto ref T args, bool doCheck = true)
     if (is(T == CiMatrixArgs) || is(T == PrintTableArgs) || is(T == CiArgs) || is(T == DeploySpecArgs))
 {
     Package[] result = [];
@@ -449,7 +432,7 @@ Package[] nixEvalJobs(T)(string flakeAttrPrefix, string cachixUrl, auto ref T ar
         "nix-eval-jobs", "--quiet", "--option", "warn-dirty", "false",
         "--check-cache-status", "--gc-roots-dir", gcRootsDir, "--workers",
         maxWorkers.to!string, "--max-memory-size", maxMemoryMB.to!string,
-        "--flake", rootDir ~ "#" ~ flakeAttrPrefix
+        "--flake", rootDir ~ "#" ~ flakeAttrPath
     ];
 
     const commandString = nixArgs.join(" ");
@@ -478,7 +461,7 @@ Package[] nixEvalJobs(T)(string flakeAttrPrefix, string cachixUrl, auto ref T ar
         }
 
         Package pkg = json.packageFromNixEvalJobsJson(
-            flakeAttrPrefix, cachixUrl);
+            flakeAttrPath, cachixUrl);
 
         if (doCheck)pkg = pkg.checkPackage(args);
 
@@ -523,11 +506,12 @@ SupportedSystem[] getSupportedSystems(string flakeRef = ".")
         flakeRef = flakeRef.absolutePath.buildNormalizedPath;
     }
 
-    const json = nix.eval!JSONValue("", [
-        "--impure",
-        "--expr",
-        `builtins.attrNames (builtins.getFlake "` ~ flakeRef ~ `").outputs.legacyPackages`
-    ]);
+    const json = nix.eval!JSONValue(flakeRef ~ `#mcl.shard-matrix.systemsToBuild`)
+        .ifThrown(nix.eval!JSONValue(flakeRef ~ `#legacyPackages`, [
+            "--apply",
+            `builtins.attrNames`
+        ]))
+        .ifThrown(JSONValue([ currentSystem.enumToString ]));
 
     return json.array.map!(system => getSystem(system.str)).array;
 }
@@ -541,7 +525,7 @@ Package[] nixEvalForAllSystems(T)(auto ref T args)
     infof("Evaluating flake for: %s", systems);
 
     return systems.map!(system =>
-            flakeAttr(args.flakePre, system, args.flakePost)
+            flakeAttr(args.flakeAttrPath, system)
                 .nixEvalJobs(cachixUrl, args)
         )
         .reduce!((a, b) => a ~ b)

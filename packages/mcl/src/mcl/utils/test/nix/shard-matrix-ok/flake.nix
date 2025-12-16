@@ -22,8 +22,8 @@
         ];
         imports = [ nixos-modules.modules.flake.shardSplit ];
 
-        mcl.matrix.shard = {
-          size = 10;
+        flake.mcl.shard-matrix = {
+          shardSize = 10;
           perSystemAttributePath = [
             "legacyPackages"
             "ci-checks"
@@ -44,7 +44,7 @@
           }:
           {
             legacyPackages.ci-checks = lib.pipe (lib.range 0 100) [
-              (map (i: "test-${builtins.toString i}"))
+              (map (i: "test-${lib.fixedWidthNumber 3 i}"))
               (
                 x:
                 lib.genAttrs x (
