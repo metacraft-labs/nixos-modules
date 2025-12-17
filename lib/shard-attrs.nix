@@ -7,10 +7,14 @@ lib: {
       attrNameShards = lib.pipe (lib.range 0 (shardCount - 1)) [
         (builtins.map (i: lib.sublist (i * shardSize) shardSize attrNames))
       ];
+      padWidth = lib.pipe shardCount [
+        builtins.toString
+        builtins.stringLength
+      ];
       shards = lib.pipe attrNameShards [
         (lib.imap0 (
           i: shard: {
-            name = builtins.toString i;
+            name = "shard-${lib.fixedWidthNumber padWidth i}";
             value = lib.genAttrs shard (key: attrs.${key});
           }
         ))

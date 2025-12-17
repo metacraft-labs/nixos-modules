@@ -74,7 +74,7 @@ jobs:
     runs-on: ${{ fromJSON(inputs.runner) }}
     strategy:
       matrix: ${{fromJSON(needs.shard-matrix.outputs.gen_matrix)}}
-    name: Generate Matrix ${{ matrix.digit != -1 && matrix.digit || '' }}
+    name: Generate Matrix ${{ matrix.flakeAttrPath }}
     steps:
       - name: Setup Nix
         uses: metacraft-labs/nixos-modules/.github/setup-nix@main
@@ -108,7 +108,7 @@ jobs:
 
       - uses: actions/upload-artifact@v6
         with:
-          name: matrix-pre${{ matrix.digit != -1 && format('-{0}', matrix.digit) || '' }}
+          name: ${{ matrix.filename }}
           path: matrix-pre.json
     outputs:
       matrix: ${{ steps.generate-matrix.outputs.matrix }}
