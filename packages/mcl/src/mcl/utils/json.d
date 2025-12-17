@@ -10,6 +10,7 @@ import std.algorithm: map;
 import std.array: join, array, replace, split;
 import std.datetime: SysTime;
 import std.sumtype: SumType, isSumType;
+import std.typecons: Ternary;
 import core.stdc.string: strlen;
 
 bool tryDeserializeJson(T)(in JSONValue value, out T result)
@@ -201,6 +202,15 @@ JSONValue toJSON(T)(in T value, bool simplify = false)
     static if (is(T == enum))
     {
         return JSONValue(value.enumToString);
+    }
+    else static if (is(T == Ternary))
+    {
+        if (value == Ternary.unknown)
+            return JSONValue(null);
+        else if (value == Ternary.yes)
+            return JSONValue(true);
+        else
+            return JSONValue(false);
     }
     else static if (is(T == bool) || is(T == string) || isSomeChar!T || isNumeric!T)
         return JSONValue(value);
