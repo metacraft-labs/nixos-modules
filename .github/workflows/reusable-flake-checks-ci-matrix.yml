@@ -121,60 +121,26 @@ jobs:
       matrix: ${{ steps.matrix.outputs.matrix }}
       fullMatrix: ${{ steps.matrix.outputs.fullMatrix }}
     steps:
+      - name: Install Nix
+        uses: metacraft-labs/nixos-modules/.github/install-nix@main
+        with:
+          push-to-cache: false
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+          nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
+          nix-gitlab-token: ${{ secrets.NIX_GITLAB_TOKEN }}
+          nix-gitlab-domain: ${{ vars.NIX_GITLAB_DOMAIN }}
+
       - uses: actions/download-artifact@v7
+
       - name: Merge matrices
-        run: |
-          # Check if jq is installed
-          if ! command -v jq &> /dev/null; then
-            PATH="$(nix build --print-out-paths 'nixpkgs#jq^bin')/bin:$PATH"
-            export PATH
-          fi
-
-          matrix_files=()
-          while IFS= read -r -d '' file; do
-            matrix_files+=("$file")
-          done < <(find . -type f -name 'matrix-pre.json' -print0 | sort -z)
-
-          if [[ "${#matrix_files[@]}" -eq 0 ]]; then
-            echo "No matrix-pre.json artifacts found" >&2
-            exit 1
-          fi
-
-          echo "Found matrix-pre.json files:"
-          for file in "${matrix_files[@]}"; do
-            ls "$file"
-          done
-
-          matrix="$(jq -sc '
-            [.[].include[]? | select(.isCached == false)] as $filtered
-            | {include: $filtered}
-          ' "${matrix_files[@]}")"
-
-          if [[ "$matrix" == '' ]] || [[ "$matrix" == '{}' ]] || [[ "$matrix" == '{"include":null}' ]] || [[ "$matrix" == '{"include":[]}' ]]; then
-            matrix='{"include":[]}'
-          fi
-
-          echo "---"
-          echo "Matrix:"
-          echo "$matrix" | jq
-          echo "---"
-          echo
-          echo
-
-          fullMatrix="$(jq -sc '
-            [.[].include[]?] as $all
-            | {include: $all}
-          ' "${matrix_files[@]}")"
-
-          echo "---"
-          echo "Full Matrix:"
-          echo "$fullMatrix" | jq
-          echo "---"
-
-          echo "matrix=$matrix" >> $GITHUB_OUTPUT
-          echo "fullMatrix=$fullMatrix" >> $GITHUB_OUTPUT
-
         id: matrix
+        env:
+          MCL_BRANCH: ${{ github.repository == 'metacraft-labs/nixos-modules' && github.sha || 'main' }}
+        run: nix run --accept-flake-config github:metacraft-labs/nixos-modules/${{ env.MCL_BRANCH }}#mcl merge-ci-matrices
+
       - name: Post Comment
         id: print-matrix
         uses: metacraft-labs/nixos-modules/.github/print-matrix@main
