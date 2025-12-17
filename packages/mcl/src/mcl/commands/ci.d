@@ -1,12 +1,13 @@
 module mcl.commands.ci;
 
-import std.file : readText;
-import std.json : parseJSON,JSONValue;
-import std.stdio : writefln, writeln, write;
 import std.algorithm : map, filter;
 import std.array : array, join;
 import std.conv : to;
+import std.file : readText;
+import std.json : parseJSON,JSONValue;
 import std.process : ProcessPipes;
+import std.range : empty;
+import std.stdio : writefln, writeln, write;
 
 import argparse : Command, Description;
 
@@ -28,12 +29,10 @@ export int ci(CiArgs args)
     auto shardMatrix = generateShardMatrix();
     foreach (shard; shardMatrix.include)
     {
-        string cachixUrl = "https://" ~ args.cachixCache ~ ".cachix.org";
-
-        auto matrix = args.flakeAttrPath.nixEvalJobs(cachixUrl, args);
+        auto matrix = args.flakeAttrPath.nixEvalJobs(args);
 
         auto pkgsToBuild = matrix
-            .filter!(pkg => !pkg.isCached)
+            .filter!(pkg => pkg.cachedAt.empty)
             .map!(pkg => ".#" ~ pkg.attrPath)
             .array;
 
