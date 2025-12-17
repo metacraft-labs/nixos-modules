@@ -241,7 +241,7 @@ mixin template CiMatrixBaseArgs()
         .Description("Is this the initial run of the CI?")
         .EnvFallback("IS_INITIAL")
     )
-    bool isInitial;
+    bool isInitial = true;
 
     @(NamedArgument(["cachix-cache"])
         .Placeholder("cache")
