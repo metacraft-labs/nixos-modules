@@ -30,7 +30,7 @@ export int ci(CiArgs args)
     {
         string cachixUrl = "https://" ~ args.cachixCache ~ ".cachix.org";
 
-        auto matrix = args.flakeAttrPath.nixEvalJobs(cachixUrl, args, true);
+        auto matrix = args.flakeAttrPath.nixEvalJobs(cachixUrl, args);
 
         auto pkgsToBuild = matrix
             .filter!(pkg => !pkg.isCached)

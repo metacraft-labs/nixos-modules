@@ -415,7 +415,7 @@ unittest
         ));
     }
 }
-Package[] nixEvalJobs(T)(string flakeAttrPath, string cachixUrl, auto ref T args, bool doCheck = true)
+Package[] nixEvalJobs(T)(string flakeAttrPath, string cachixUrl, auto ref T args)
     if (is(T == CiMatrixArgs) || is(T == PrintTableArgs) || is(T == CiArgs) || is(T == DeploySpecArgs))
 {
     Package[] result = [];
@@ -460,7 +460,7 @@ Package[] nixEvalJobs(T)(string flakeAttrPath, string cachixUrl, auto ref T args
         Package pkg = json.packageFromNixEvalJobsJson(
             flakeAttrPath, cachixUrl);
 
-        if (doCheck)pkg = pkg.checkPackage(args);
+        pkg = pkg.checkPackage(args);
 
         result ~= pkg;
 
