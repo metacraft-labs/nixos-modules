@@ -228,3 +228,84 @@ unittest
     t.writeRecordAsTable!false(result);
     assert(result.data == "│ num: 1 │ otherNum: 20   │ bool1: true  │ bool2: false │ someString: test       │\n");
 }
+
+import std.string : chomp, stripLeft;
+
+/**
+ * Appends a path segment to a base URL string.
+ *
+ * This function ensures that exactly one forward slash separator exists between
+ * the `baseUrl` and the `path`. It handles cases where either string may or
+ * may not already contain a slash, preventing double slashes (e.g., `//`).
+ *
+ * Params:
+ * baseUrl = The starting URL (e.g., "https://api.example.com").
+ * path    = The path segment to append (e.g., "/v1/users").
+ *
+ * Returns:
+ * A new string containing the combined URL.
+ *
+ * Example:
+ * ---
+ * string url = appendUrlPath("https://dlang.org", "/spec");
+ * assert(url == "https://dlang.org/spec");
+ *
+ * // Handles redundant slashes gracefully
+ * assert(appendUrlPath("http://site.com/", "/api") == "http://site.com/api");
+ * ---
+ */
+string appendUrlPath(string baseUrl, string path)
+{
+    if (baseUrl.length == 0)
+    {
+        return path;
+    }
+    if (path.length == 0)
+    {
+        return baseUrl;
+    }
+
+    return baseUrl.chomp("/") ~ "/" ~ path.stripLeft("/");
+}
+
+@("appendUrlPath.standardJoining")
+unittest
+{
+    assert(appendUrlPath("https://dlang.org", "spec") == "https://dlang.org/spec");
+    assert(appendUrlPath("localhost:8080", "api/v1") == "localhost:8080/api/v1");
+}
+
+@("appendUrlPath.slashNormalization")
+unittest
+{
+    // Test trailing slash on base
+    assert(appendUrlPath("http://example.com/", "path") == "http://example.com/path");
+
+    // Test leading slash on path
+    assert(appendUrlPath("http://example.com", "/path") == "http://example.com/path");
+
+    // Test both slashes present
+    assert(appendUrlPath("http://example.com/", "/path") == "http://example.com/path");
+}
+
+@("appendUrlPath.emptyInputs")
+unittest
+{
+    assert(appendUrlPath("", "only-path") == "only-path");
+    assert(appendUrlPath("only-base", "") == "only-base");
+    assert(appendUrlPath("", "") == "");
+}
+
+@("appendUrlPath.multipleLeadingSlashes")
+unittest
+{
+    // Ensure it cleans up accidental triple slashes in the path segment
+    assert(appendUrlPath("http://api.com", "///v1/user") == "http://api.com/v1/user");
+}
+
+@("appendUrlPath.rootPath")
+unittest
+{
+    // Ensure appending a single slash results in a valid trailing slash URL
+    assert(appendUrlPath("http://site.com", "/") == "http://site.com/");
+}
