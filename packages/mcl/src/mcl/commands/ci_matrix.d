@@ -4,11 +4,11 @@ import std.stdio : writeln, stderr, stdout;
 import std.traits : EnumMembers;
 import std.string : indexOf, splitLines, strip;
 import std.algorithm : map, filter, reduce, chunkBy, find, any, sort, startsWith, each, canFind, fold;
-import std.file : write, readText;
+import std.file : write, readText, dirEntries, SpanMode, append;
 import std.range : array, front, join, chain, split;
 import std.exception : ifThrown;
 import std.conv : to;
-import std.json : JSONValue, parseJSON, JSONOptions;
+import std.json : JSONValue, parseJSON, JSONOptions, JSONType;
 import std.regex : matchFirst;
 import core.cpuid : threadsPerCPU;
 import std.path : buildPath;
@@ -860,4 +860,89 @@ Package[] getPrecalcMatrix(PrintTableArgs args)
             output: pkg["output"].str};
             return result;
         }).array;
+}
+
+@(Command("merge-ci-matrices", "merge_ci_matrices")
+    .Description("Merge downloaded matrix-pre.json artifacts and emit GitHub outputs"))
+struct MergeMatricesArgs
+{
+    @(NamedArgument(["github-output"])
+        .Placeholder("output")
+        .EnvFallback("GITHUB_OUTPUT")
+    )
+    string githubOutput;
+}
+
+export int merge_ci_matrices(MergeMatricesArgs args)
+{
+    import std.algorithm : sort;
+    import std.file : isFile;
+
+    auto matrixFiles = dirEntries(".", "matrix-pre.json", SpanMode.depth)
+        .filter!(entry => entry.isFile)
+        .array
+        .sort!((a, b) => a.name < b.name);
+
+    if (matrixFiles.length == 0)
+    {
+        stderr.writeln("No matrix-pre.json artifacts found");
+        return 1;
+    }
+
+    JSONValue[] filteredInclude;
+    JSONValue[] fullInclude;
+
+    foreach (entry; matrixFiles)
+    {
+        infof("Found matrix file: %s", entry.name);
+        auto json = entry.name.readText.parseJSON;
+
+        if (json.type != JSONType.object || !("include" in json) || json["include"].type != JSONType.array)
+        {
+            warningf("Skipping file with unexpected shape: %s", entry.name);
+            continue;
+        }
+
+        foreach (pkg; json["include"].array)
+        {
+            fullInclude ~= pkg;
+            if (pkg.type == JSONType.object && ("isCached" in pkg) && pkg["isCached"].type == JSONType.false_)
+            {
+                filteredInclude ~= pkg;
+            }
+        }
+    }
+
+    auto matrix = JSONValue([
+        "include": JSONValue(filteredInclude)
+    ]);
+
+    auto fullMatrix = JSONValue([
+        "include": JSONValue(fullInclude)
+    ]);
+
+    const matrixStr = matrix.toString(JSONOptions.doNotEscapeSlashes);
+    const fullMatrixStr = fullMatrix.toString(JSONOptions.doNotEscapeSlashes);
+
+    auto outputPath = args.githubOutput;
+    if (outputPath == "")
+    {
+        createResultDirs();
+        outputPath = resultDir.buildPath("gh-output.env");
+    }
+
+    outputPath.append("build_matrix=" ~ matrixStr ~ "\n");
+    outputPath.append("full_matrix=" ~ fullMatrixStr ~ "\n");
+
+    writeln("---");
+    writeln("Matrix:");
+    writeln(matrixStr);
+    writeln("---\n");
+
+    writeln("---");
+    writeln("Full Matrix:");
+    writeln(fullMatrixStr);
+    writeln("---");
+
+    return 0;
 }
