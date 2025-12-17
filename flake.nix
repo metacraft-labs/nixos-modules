@@ -228,6 +228,22 @@
         nixpkgs.follows = "nixpkgs";
       };
     };
+
+    nix-bundlers = {
+      url = "github:NixOS/bundlers";
+      inputs.nixpkgs.follows = "nixpkgs";
+      # TODO: re-add when CI's `nix` starts supporting transitive overrides
+      # inputs.nix-utils.inputs.nixpkgs.follows = "nixpkgs";
+      # inputs.nix-utils.inputs.flake-utils.follows = "flake-utils";
+      # inputs.nix-bundle.inputs.utils.follows = "flake-utils";
+    };
+
+    nix-appimage = {
+      url = "github:ralismark/nix-appimage";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.flake-utils.follows = "flake-utils";
+      inputs.flake-compat.follows = "flake-compat";
+    };
   };
 
   outputs =
