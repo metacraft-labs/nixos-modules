@@ -38,7 +38,7 @@ let
     lib.concatStringsSep "|" [
       "(nix\\.(build|run|eval))"
       "fetchJson|(coda\.)"
-      "checkPackage"
+      "isPackageCached"
       "generateShardMatrix"
     ]
   );
