@@ -57,7 +57,7 @@ jobs:
           nix-gitlab-token: ${{ secrets.NIX_GITLAB_TOKEN }}
           nix-gitlab-domain: ${{ vars.NIX_GITLAB_DOMAIN }}
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Generate Matrix for Matrix
         id: generate-matrix
@@ -88,7 +88,7 @@ jobs:
           nix-gitlab-token: ${{ secrets.NIX_GITLAB_TOKEN }}
           nix-gitlab-domain: ${{ vars.NIX_GITLAB_DOMAIN }}
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Conditionally export `FLAKE_ATTR_PATH`
         run: |
@@ -106,7 +106,7 @@ jobs:
           MCL_BRANCH: ${{ github.repository == 'metacraft-labs/nixos-modules' && github.sha || 'main' }}
         run: nix run --accept-flake-config github:metacraft-labs/nixos-modules/${{ env.MCL_BRANCH }}#mcl ci-matrix
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         with:
           name: matrix-pre${{ matrix.digit != -1 && format('-{0}', matrix.digit) || '' }}
           path: matrix-pre.json
@@ -121,7 +121,7 @@ jobs:
       matrix: ${{ steps.matrix.outputs.matrix }}
       fullMatrix: ${{ steps.matrix.outputs.fullMatrix }}
     steps:
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@v7
       - name: Merge matrices
         run: |
           # Check if jq is installed
@@ -203,7 +203,7 @@ jobs:
     continue-on-error: ${{ matrix.allowedToFail }}
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Install Nix
         uses: metacraft-labs/nixos-modules/.github/install-nix@main
@@ -253,7 +253,7 @@ jobs:
             && contains(needs.*.result, 'failure')
             || contains(needs.*.result, 'cancelled')
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         if: inputs.run-cachix-deploy
 
       - name: Deploy
