@@ -33,6 +33,10 @@
 
               # Enable commonly used formatters
               settings = {
+                # Use Rust-based alternative to pre-commit:
+                # https://github.com/j178/prek
+                package = pkgs.prek;
+
                 excludes = [ "^.*\.age$" ];
 
                 hooks = {
