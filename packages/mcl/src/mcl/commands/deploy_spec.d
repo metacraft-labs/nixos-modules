@@ -4,12 +4,13 @@ import std.algorithm : filter;
 import std.logger : infof, warningf;
 import std.file : exists;
 import std.path : buildPath;
+import std.range : empty;
 
 import argparse : Command, Description;
 
 import mcl.utils.process : spawnProcessInline;
 import mcl.utils.path : resultDir;
-import mcl.utils.cachix : cachixNixStoreUrl, DeploySpec, createMachineDeploySpec;
+import mcl.utils.cachix : DeploySpec, createMachineDeploySpec;
 import mcl.utils.tui : bold;
 import mcl.utils.json : tryDeserializeFromJsonFile, writeJsonFile;
 
@@ -31,20 +32,20 @@ export int deploy_spec(DeploySpecArgs args)
     if (!exists(deploySpecFile))
     {
         auto nixosConfigs = "legacyPackages.x86_64-linux.serverMachines"
-            .nixEvalJobs(args.cachixCache.cachixNixStoreUrl, args);
+            .nixEvalJobs(args);
 
-        auto configsMissingFromCachix = nixosConfigs.filter!(c => !c.isCached);
+        auto pkgsNotFoundInCache = nixosConfigs.filter!(c => c.cachedAt.empty);
 
-        foreach (config; configsMissingFromCachix.save())
+        foreach (pkg; pkgsNotFoundInCache.save())
         {
             warningf(
                 "Nixos configuration '%s' is not in cachix.\nExpected Cachix URL: %s\n",
-                config.name.bold,
-                config.cacheUrl.bold
+                pkg.name.bold,
+                pkg.getNarInfoUrl(args.binaryCacheUrls[0]).bold
             );
         }
 
-        if (!configsMissingFromCachix.empty)
+        if (!pkgsNotFoundInCache.empty)
             throw new Exception("Some Nixos configurations are not in cachix. Please cache them first.");
 
         spec = nixosConfigs.createMachineDeploySpec();

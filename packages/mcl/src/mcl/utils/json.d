@@ -1,7 +1,7 @@
 module mcl.utils.json;
 import mcl.utils.test;
 import mcl.utils.string;
-import std.traits: isNumeric, isArray, isSomeChar, ForeachType, isBoolean, isAssociativeArray;
+import std.traits: isNumeric, isArray, isSomeChar, EnumMembers, ForeachType, isBoolean, isAssociativeArray;
 import std.json: parseJSON, JSONValue, JSONOptions, JSONType;
 import std.conv: to;
 import std.string: strip;
@@ -10,6 +10,7 @@ import std.algorithm: map;
 import std.array: join, array, replace, split;
 import std.datetime: SysTime;
 import std.sumtype: SumType, isSumType;
+import std.typecons: Ternary;
 import core.stdc.string: strlen;
 
 bool tryDeserializeJson(T)(in JSONValue value, out T result)
@@ -29,7 +30,15 @@ T fromJSON(T)(in JSONValue value) {
     static if (is(T == JSONValue)) {
         return value;
     }
-    else static if (is(T == bool) || is(T == string) || isSomeChar!T || isNumeric!T || is(T == enum)) {
+    else static if (is(T == enum)) {
+        switch (value.get!string) {
+            static foreach (variant; EnumMembers!T)
+                case variant.enumToString: return variant;
+            default:
+                assert(0, "Expected JSON string, actual: " ~ value.toPrettyString() ~ " while deserializing type " ~ T.stringof);
+        }
+    }
+    else static if (is(T == bool) || is(T == string) || isSomeChar!T || isNumeric!T) {
         return value.get!T;
     }
     else static if (isSumType!T) {
@@ -201,6 +210,15 @@ JSONValue toJSON(T)(in T value, bool simplify = false)
     static if (is(T == enum))
     {
         return JSONValue(value.enumToString);
+    }
+    else static if (is(T == Ternary))
+    {
+        if (value == Ternary.unknown)
+            return JSONValue(null);
+        else if (value == Ternary.yes)
+            return JSONValue(true);
+        else
+            return JSONValue(false);
     }
     else static if (is(T == bool) || is(T == string) || isSomeChar!T || isNumeric!T)
         return JSONValue(value);

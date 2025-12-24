@@ -7,8 +7,9 @@ import std.exception : ifThrown;
 import std.file : append, write;
 import std.format : fmt = format;
 import std.logger : warningf, infof;
+import std.stdio : stdout;
 import std.path : buildPath;
-import std.range : iota;
+import std.range : iota, empty;
 import std.regex : matchFirst, regex;
 import std.string : strip;
 import std.typecons : Nullable, nullable;
@@ -18,8 +19,8 @@ import argparse : Command, Description, NamedArgument, Placeholder, EnvFallback;
 import mcl.utils.json : toJSON;
 import mcl.utils.nix : nix;
 import mcl.utils.path : createResultDirs, resultDir, rootDir;
-import mcl.utils.string : enumToString;
-import mcl.commands.ci_matrix : SupportedSystem, currentSystem;
+import mcl.utils.string : enumToString, writeRecordAsTable;
+import mcl.commands.ci_matrix : SupportedSystem, currentSystem, ci_matrix, CiMatrixArgs, CiMatrixBaseArgs;
 
 @(Command("shard-matrix", "shard_matrix")
     .Description("Generate a shard matrix for a flake"))
@@ -31,19 +32,39 @@ struct ShardMatrixArgs
         .EnvFallback("GITHUB_OUTPUT")
     )
     string githubOutput;
+
+    mixin CiMatrixBaseArgs!();
 }
 
 export int shard_matrix(ShardMatrixArgs args)
 {
+    args.writeRecordAsTable(stdout.lockingTextWriter);
+
     auto matrix = generateShardMatrix();
     saveShardMatrix(matrix, args);
+
+    // if the matrix is empty, directly run ci-matrix
+    if (matrix.include.empty && false)
+    {
+        ci_matrix(CiMatrixArgs(
+            maxWorkers: args.maxWorkers,
+            maxMemory: args.maxMemory,
+            isInitial: true,
+            cachixCache: args.cachixCache,
+            extraCachixCaches: args.extraCachixCaches,
+            extraCacheUrls: args.extraCacheUrls,
+            cachixAuthToken: args.cachixAuthToken,
+            precalcMatrix: null,
+        ));
+    }
+
     return 0;
 }
 
 struct Shard
 {
     string flakeAttrPath;
-    int digit;
+    string filename;
 }
 
 struct ShardMatrix
@@ -77,12 +98,9 @@ ShardMatrix generateShardMatrix(string flakeRef = ".", Nullable!SupportedSystem 
         .ifThrown!ConvException(0);
 
     if (shardCount == 0)
-    {
-        warningf("No shards found, exiting");
-        return ShardMatrix([Shard("", -1)]);
-    }
+        warningf("No shards found");
 
-    return splitToShards(shardCount);
+    return splitToShards(shardCount, system);
 }
 
 @("generateShardMatrix.ok")
@@ -107,12 +125,14 @@ unittest
     {
         auto shards = generateShardMatrix(flakeRef, nullable(SupportedSystem.x86_64_linux));
         assert(shards.include.length == 11);
-        assert(shards.include[0] == Shard(flakeAttrPath: "mcl.shard-matrix.result.shards", digit: 0));
+        assert(shards.include[0] == Shard(flakeAttrPath: "mcl.shard-matrix.result.shardsPerSystem.x86_64_linux.shard-00", filename: "matrix-pre-shard-00.json"));
     }
 
     {
+        // `aarch64_linux` is not in `flake.mcl.shard-matrix.systemsToBuild`,
+        // so no shards should be generated
         auto shards = generateShardMatrix(flakeRef, nullable(SupportedSystem.aarch64_linux));
-        assert(shards.include == [Shard(flakeAttrPath: "", digit: -1)]);
+        assert(shards.include == []);
     }
 }
 
@@ -123,20 +143,24 @@ unittest
     auto flakeRef = rootDir.buildPath("packages/mcl/src/src/mcl/utils/test/nix/shard-matrix-no-shards");
 
     auto shards = generateShardMatrix(flakeRef);
-    assert(shards.include == [Shard(flakeAttrPath: "", digit: -1)]);
+    assert(shards.include == []);
 }
 
 ShardMatrix splitToShards(int shardCount, Nullable!SupportedSystem system = Nullable!SupportedSystem.init)
 {
+    import core.internal.string : numDigits;
+    const padWidth = shardCount.numDigits;
     return shardCount
         .iota
         .map!(i => Shard(
-            "mcl.shard-matrix.result.%s".fmt(
+            flakeAttrPath: "mcl.shard-matrix.result.%s.shard-%0*s".fmt(
                 system.isNull
                     ? "shards"
                     : "shardsPerSystem.%s".fmt(system.get),
+                padWidth,
+                i,
             ),
-            i,
+            filename: "matrix-pre-shard-%0*s.json".fmt(padWidth, i)
         ))
         .array
         .ShardMatrix;
@@ -147,9 +171,9 @@ unittest
 {
     auto shards = splitToShards(3);
     assert(shards.include.length == 3);
-    assert(shards.include[0] == Shard(flakeAttrPath: "mcl.shard-matrix.result.shards", digit: 0));
-    assert(shards.include[1] == Shard(flakeAttrPath: "mcl.shard-matrix.result.shards", digit: 1));
-    assert(shards.include[2] == Shard(flakeAttrPath: "mcl.shard-matrix.result.shards", digit: 2));
+    assert(shards.include[0] == Shard(flakeAttrPath: "mcl.shard-matrix.result.shards.shard-0", filename: "matrix-pre-shard-0.json"));
+    assert(shards.include[1] == Shard(flakeAttrPath: "mcl.shard-matrix.result.shards.shard-1", filename: "matrix-pre-shard-1.json"));
+    assert(shards.include[2] == Shard(flakeAttrPath: "mcl.shard-matrix.result.shards.shard-2", filename: "matrix-pre-shard-2.json"));
 }
 
 void saveShardMatrix(ShardMatrix matrix, ShardMatrixArgs args)
