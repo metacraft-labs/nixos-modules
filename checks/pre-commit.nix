@@ -20,7 +20,7 @@
               pkgs.mkShell {
                 packages = enabledPackages ++ [ package ];
                 shellHook = ''
-                  ln -fs ${configFile} .pre-commit-config.yaml
+                  ln -fvs ${configFile} .pre-commit-config.yaml
                   echo "Running Pre-commit checks"
                   echo "========================="
                 '';
