@@ -43,6 +43,7 @@
               dub
               dub-to-nix
               ldc
+              act
             ]
             ++ pkgs.lib.optionals (pkgs.stdenv.system == "x86_64-linux") [
               dmd
