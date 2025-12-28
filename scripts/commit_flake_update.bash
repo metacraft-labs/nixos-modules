@@ -22,7 +22,10 @@ if running_in_github_actions; then
 fi
 
 current_commit="$(git rev-parse HEAD)"
-export PRE_COMMIT_ALLOW_NO_CONFIG=1
+
+export GIT_CONFIG_COUNT=1
+export GIT_CONFIG_KEY_0=core.hooksPath
+export GIT_CONFIG_VALUE_0="$RUNNER_TEMP/empty-git-hooks"
 
 nix flake update $FLAKE_INPUT --accept-flake-config --commit-lock-file
 commit_after_update="$(git rev-parse HEAD)"
