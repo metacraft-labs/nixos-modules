@@ -8,6 +8,7 @@
   nix,
   coreutils,
   bashInteractive,
+  cacert,
 }:
 rec {
   # Based on:
@@ -90,6 +91,7 @@ rec {
           paths = [
             coreutils
             nix
+            cacert
             bashInteractive
           ]
           ++ packages;
@@ -126,6 +128,9 @@ rec {
           "HOME=${homeDir}"
           "USER=${userName}"
           "NIX_PAGER=cat"
+          "SSL_CERT_FILE=${cacert}/etc/ssl/certs/ca-bundle.crt"
+          # NOTE: for Haskell's TLS library (used by `cachix`) library
+          "SYSTEM_CERTIFICATE_PATH=${cacert}/etc/ssl/certs/ca-bundle.crt"
         ];
       };
     };
