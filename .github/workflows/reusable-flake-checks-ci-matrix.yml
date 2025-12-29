@@ -71,6 +71,7 @@ jobs:
     outputs:
       eval_matrix: ${{ steps.generate-matrix.outputs.eval_matrix }}
       build_matrix: ${{ steps.generate-matrix.outputs.build_matrix }}
+      full_matrix: ${{ steps.generate-matrix.outputs.full_matrix }}
 
   eval-matrix:
     needs: shard-matrix
@@ -212,7 +213,7 @@ jobs:
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
-          precalc_matrix: ${{ needs.merge-matrices.result == 'success' && needs.merge-matrices.outputs.full_matrix || needs.shard-matrix.outputs.eval_matrix != '{"include":[]}' && needs.merge-matrices.outputs.full_matrix || needs.shard-matrix.outputs.build_matrix }}
+          precalc_matrix: ${{ needs.merge-matrices.result == 'success' && needs.merge-matrices.outputs.full_matrix || needs.shard-matrix.outputs.full_matrix }}
           pr-comment-github-token: ${{ secrets.GITHUB_TOKEN }}
           nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
           nix-gitlab-token: ${{ secrets.NIX_GITLAB_TOKEN }}
