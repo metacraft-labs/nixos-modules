@@ -62,6 +62,9 @@
       }
       // optionalAttrs isLinux {
         folder-size-metrics = pkgs.callPackage ./folder-size-metrics { };
+        ci-image = pkgs.callPackage ./ci-image {
+          inherit (inputs'.nix2container.packages) nix2container;
+        };
       };
     };
 }
