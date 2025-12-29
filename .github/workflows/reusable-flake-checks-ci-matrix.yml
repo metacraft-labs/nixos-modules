@@ -47,7 +47,7 @@ jobs:
     steps:
       - name: Setup Nix
         uses: metacraft-labs/nixos-modules/.github/setup-nix@main
-        with:
+        with: &setup-nix-no-push
           push-to-cache: false
           cachix-cache: ${{ vars.CACHIX_CACHE }}
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
@@ -83,15 +83,7 @@ jobs:
     steps:
       - name: Setup Nix
         uses: metacraft-labs/nixos-modules/.github/setup-nix@main
-        with:
-          push-to-cache: false
-          cachix-cache: ${{ vars.CACHIX_CACHE }}
-          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
-          substituters: ${{ vars.SUBSTITUTERS }}
-          nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
-          nix-gitlab-token: ${{ secrets.NIX_GITLAB_TOKEN }}
-          nix-gitlab-domain: ${{ vars.NIX_GITLAB_DOMAIN }}
+        with: *setup-nix-no-push
 
       - uses: actions/checkout@v6
 
@@ -127,17 +119,9 @@ jobs:
       full_matrix: ${{ steps.merge.outputs.full_matrix }}
     if: needs.shard-matrix.outputs.eval_matrix != '{"include":[]}' && needs.eval-matrix.result == 'success'
     steps:
-      - name: Install Nix
-        uses: metacraft-labs/nixos-modules/.github/install-nix@main
-        with:
-          push-to-cache: false
-          cachix-cache: ${{ vars.CACHIX_CACHE }}
-          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
-          substituters: ${{ vars.SUBSTITUTERS }}
-          nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
-          nix-gitlab-token: ${{ secrets.NIX_GITLAB_TOKEN }}
-          nix-gitlab-domain: ${{ vars.NIX_GITLAB_DOMAIN }}
+      - name: Setup Nix
+        uses: metacraft-labs/nixos-modules/.github/setup-nix@main
+        with: *setup-nix-no-push
 
       - uses: actions/download-artifact@v7
         if: needs.eval-matrix.result == 'success'
@@ -210,15 +194,7 @@ jobs:
     steps:
       - name: Setup Nix
         uses: metacraft-labs/nixos-modules/.github/setup-nix@main
-        with:
-          push-to-cache: false
-          cachix-cache: ${{ vars.CACHIX_CACHE }}
-          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
-          substituters: ${{ vars.SUBSTITUTERS }}
-          nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
-          nix-gitlab-token: ${{ secrets.NIX_GITLAB_TOKEN }}
-          nix-gitlab-domain: ${{ vars.NIX_GITLAB_DOMAIN }}
+        with: *setup-nix-no-push
 
       - name: Print CI Matrix
         id: print-matrix
