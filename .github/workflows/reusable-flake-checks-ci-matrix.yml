@@ -42,7 +42,7 @@ jobs:
             This comment will be updated automatically with the status of each package.
 
   shard-matrix:
-    name: Generate Matrix of Matrices
+    name: Shard Matrix
     runs-on: ${{ fromJSON(inputs.runner) }}
     steps:
       - name: Setup Nix
@@ -59,22 +59,26 @@ jobs:
 
       - uses: actions/checkout@v6
 
-      - name: Generate Matrix for Matrix
+      - name: Generate Shard Matrix
         id: generate-matrix
         env:
           CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
           MCL_BRANCH: ${{ github.repository == 'metacraft-labs/nixos-modules' && github.sha || 'main' }}
-        run: nix run --accept-flake-config github:metacraft-labs/nixos-modules/${{ env.MCL_BRANCH }}#mcl shard-matrix
+        run: |
+          nix run --accept-flake-config github:metacraft-labs/nixos-modules/${{ env.MCL_BRANCH }}#mcl shard-matrix
+
     outputs:
-      gen_matrix: ${{ steps.generate-matrix.outputs.gen_matrix }}
+      eval_matrix: ${{ steps.generate-matrix.outputs.eval_matrix }}
+      build_matrix: ${{ steps.generate-matrix.outputs.build_matrix }}
 
   eval-matrix:
     needs: shard-matrix
     runs-on: ${{ fromJSON(inputs.runner) }}
     strategy:
-      matrix: ${{fromJSON(needs.shard-matrix.outputs.gen_matrix)}}
+      matrix: ${{fromJSON(needs.shard-matrix.outputs.eval_matrix)}}
     name: Generate Matrix ${{ matrix.flakeAttrPath }}
+    if: needs.shard-matrix.outputs.eval_matrix != '{"include":[]}'
     steps:
       - name: Setup Nix
         uses: metacraft-labs/nixos-modules/.github/setup-nix@main
@@ -115,11 +119,12 @@ jobs:
 
   merge-matrices:
     runs-on: ${{ fromJSON(inputs.runner) }}
-    needs: eval-matrix
+    needs: [shard-matrix, eval-matrix]
     name: Merge matrices
     outputs:
-      matrix: ${{ steps.matrix.outputs.matrix }}
-      fullMatrix: ${{ steps.matrix.outputs.fullMatrix }}
+      build_matrix: ${{ steps.merge.outputs.build_matrix }}
+      full_matrix: ${{ steps.merge.outputs.full_matrix }}
+    if: needs.shard-matrix.outputs.eval_matrix != '{"include":[]}' && needs.eval-matrix.result == 'success'
     steps:
       - name: Install Nix
         uses: metacraft-labs/nixos-modules/.github/install-nix@main
@@ -134,15 +139,16 @@ jobs:
           nix-gitlab-domain: ${{ vars.NIX_GITLAB_DOMAIN }}
 
       - uses: actions/download-artifact@v7
+        if: needs.eval-matrix.result == 'success'
 
       - name: Merge matrices
-        id: matrix
+        if: needs.eval-matrix.result == 'success'
+        id: merge
         env:
           MCL_BRANCH: ${{ github.repository == 'metacraft-labs/nixos-modules' && github.sha || 'main' }}
         run: nix run --accept-flake-config github:metacraft-labs/nixos-modules/${{ env.MCL_BRANCH }}#mcl merge-ci-matrices
 
       - name: Post Comment
-        id: print-matrix
         uses: metacraft-labs/nixos-modules/.github/print-matrix@main
         with:
           is-initial: 'true'
@@ -150,19 +156,18 @@ jobs:
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
-          precalc_matrix: ${{ steps.matrix.outputs.fullMatrix }}
+          precalc_matrix: ${{ steps.merge.outputs.full_matrix }}
           pr-comment-github-token: ${{ secrets.GITHUB_TOKEN }}
           nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
           nix-gitlab-token: ${{ secrets.NIX_GITLAB_TOKEN }}
           nix-gitlab-domain: ${{ vars.NIX_GITLAB_DOMAIN }}
 
   build:
-    needs: merge-matrices
-    if: needs.merge-matrices.outputs.matrix != '{"include":[]}'
-
+    needs: [shard-matrix, merge-matrices]
+    if: always()
     strategy:
       fail-fast: false
-      matrix: ${{fromJSON( needs.merge-matrices.outputs.matrix )}}
+      matrix: ${{fromJSON( (needs.merge-matrices.result == 'success' && needs.merge-matrices.outputs.build_matrix) || needs.shard-matrix.outputs.build_matrix )}}
 
     name: ${{ matrix.name }} | ${{ matrix.system }}
     runs-on: ${{ matrix.os }}
@@ -196,7 +201,7 @@ jobs:
   results:
     runs-on: ${{ fromJSON(inputs.runner) }}
     name: Final Results
-    needs: [build, merge-matrices]
+    needs: [build, shard-matrix, merge-matrices]
     if: always()
     steps:
       - name: Post Comment
@@ -207,7 +212,7 @@ jobs:
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
-          precalc_matrix: ${{ needs.merge-matrices.outputs.fullMatrix }}
+          precalc_matrix: ${{ needs.merge-matrices.result == 'success' && needs.merge-matrices.outputs.full_matrix || needs.shard-matrix.outputs.eval_matrix != '{"include":[]}' && needs.merge-matrices.outputs.full_matrix || needs.shard-matrix.outputs.build_matrix }}
           pr-comment-github-token: ${{ secrets.GITHUB_TOKEN }}
           nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
           nix-gitlab-token: ${{ secrets.NIX_GITLAB_TOKEN }}
@@ -215,9 +220,8 @@ jobs:
 
       - run: exit 1
         if: >-
-          needs.merge-matrices.outputs.matrix != '{"include":[]}'
-            && contains(needs.*.result, 'failure')
-            || contains(needs.*.result, 'cancelled')
+          (needs.merge-matrices.result == 'success' && needs.merge-matrices.outputs.build_matrix != '{"include":[]}' || needs.shard-matrix.outputs.build_matrix != '{"include":[]}')
+          && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled'))
 
       - uses: actions/checkout@v6
         if: inputs.run-cachix-deploy

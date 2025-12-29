@@ -4,10 +4,10 @@ import std.algorithm : map;
 import std.array : array;
 import std.conv : ConvException, to, parse;
 import std.exception : ifThrown;
-import std.file : append, write;
+import std.file : append, write, readText;
 import std.format : fmt = format;
 import std.logger : warningf, infof;
-import std.stdio : stdout;
+import std.stdio : stdout, stderr;
 import std.path : buildPath;
 import std.range : iota, empty;
 import std.regex : matchFirst, regex;
@@ -26,26 +26,19 @@ import mcl.commands.ci_matrix : SupportedSystem, currentSystem, ci_matrix, CiMat
     .Description("Generate a shard matrix for a flake"))
 struct ShardMatrixArgs
 {
-    @(NamedArgument(["github-output"])
-        .Placeholder("output")
-        .Description("Output to GitHub Actions")
-        .EnvFallback("GITHUB_OUTPUT")
-    )
-    string githubOutput;
-
     mixin CiMatrixBaseArgs!();
 }
 
 export int shard_matrix(ShardMatrixArgs args)
 {
-    args.writeRecordAsTable(stdout.lockingTextWriter);
+    args.writeRecordAsTable(stderr.lockingTextWriter);
 
-    auto matrix = generateShardMatrix();
-    saveShardMatrix(matrix, args);
+    auto evalMatrix = generateShardMatrix();
 
-    // if the matrix is empty, directly run ci-matrix
-    if (matrix.include.empty && false)
+    // if the matrix is empty, directly run ci-matrix to generate build_matrix
+    if (evalMatrix.include.empty)
     {
+        infof("No shards found, running ci-matrix directly for build matrix");
         ci_matrix(CiMatrixArgs(
             maxWorkers: args.maxWorkers,
             maxMemory: args.maxMemory,
@@ -55,7 +48,12 @@ export int shard_matrix(ShardMatrixArgs args)
             extraCacheUrls: args.extraCacheUrls,
             cachixAuthToken: args.cachixAuthToken,
             precalcMatrix: null,
+            githubOutput: args.githubOutput,
         ));
+    }
+    else
+    {
+        saveShardMatrix(evalMatrix, args);
     }
 
     return 0;
@@ -176,21 +174,27 @@ unittest
     assert(shards.include[2] == Shard(flakeAttrPath: "mcl.shard-matrix.result.shards.shard-2", filename: "matrix-pre-shard-2.json"));
 }
 
-void saveShardMatrix(ShardMatrix matrix, ShardMatrixArgs args)
+void saveShardMatrix(ShardMatrix evalMatrix, ShardMatrixArgs args)
 {
-    const matrixJson = matrix.toJSON();
-    const matrixString = matrixJson.toString();
-    infof("Shard matrix: %s", matrixJson.toPrettyString);
-    const envLine = "gen_matrix=" ~ matrixString;
+    import std.json : JSONValue;
+
+    const evalMatrixJson = evalMatrix.toJSON();
+    const evalMatrixString = evalMatrixJson.toString();
+    infof("Eval matrix: %s", evalMatrixJson.toPrettyString);
+
+    const evalMatrixLine = "eval_matrix=" ~ evalMatrixString ~ "\n";
+    const buildMatrixLine = "build_matrix={\"include\":[]}\n";
+
     if (args.githubOutput != "")
     {
-        args.githubOutput.append(envLine);
+        args.githubOutput.append(evalMatrixLine);
+        args.githubOutput.append(buildMatrixLine);
     }
     else
     {
         createResultDirs();
-        resultDir.buildPath("gh-output.env").append(envLine);
+        resultDir.buildPath("gh-output.env").append(evalMatrixLine);
+        resultDir.buildPath("gh-output.env").append(buildMatrixLine);
     }
-    rootDir.buildPath("shardMatrix.json").write(matrixString);
-
+    rootDir.buildPath("shardMatrix.json").write(evalMatrixString);
 }
