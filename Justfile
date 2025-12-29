@@ -16,7 +16,7 @@ image:
 exec: image
   docker run -it {{image}}
 
-act: image
+act workflow_name="ci": image
   #!/usr/bin/env bash
   set -euo pipefail
   if [ ! -f .gh-vars.env ]; then
@@ -30,13 +30,26 @@ act: image
     exit 1
   fi
 
+  # Map workflow names to their files and job names
+  case "{{workflow_name}}" in
+    lint)
+      workflow_file="reusable-lint"
+      job_name="lint"
+      ;;
+    *)
+      workflow_file="{{workflow_name}}"
+      job_name="{{workflow_name}}"
+      ;;
+  esac
+
   set -x
   DOCKER_HOST="{{docker-socket}}" \
   act workflow_dispatch \
-    -W '.github/workflows/ci.yml' \
-    -j ci \
+    -W ".github/workflows/${workflow_file}.yml" \
+    -j "${job_name}" \
     --var-file './.gh-vars.env' \
     --secret-file './.gh-secrets.env' \
     --concurrent-jobs 1 \
     --pull=false \
+    --input "runner=[\"self-hosted\"]" \
     -P self-hosted={{image}}
