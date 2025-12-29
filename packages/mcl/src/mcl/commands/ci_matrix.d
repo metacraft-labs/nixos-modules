@@ -355,10 +355,14 @@ Package[] checkCacheStatus(T)(Package[] packages, auto ref T args)
     ];
 
     foreach (idx; packages.length.iota.parallel) {
-        packages[idx].cachedAt ~= args.binaryCacheUrls
-            .filter!(url => isPackageCached(packages[idx], url, cachixAuthHeaders))
-            .map!(url => packages[idx].getNarInfoUrl(url))
-            .array;
+        // Skip cache check if already has cached URLs
+        if (packages[idx].cachedAt.empty)
+        {
+            packages[idx].cachedAt ~= args.binaryCacheUrls
+                .filter!(url => isPackageCached(packages[idx], url, cachixAuthHeaders))
+                .map!(url => packages[idx].getNarInfoUrl(url))
+                .array;
+        }
 
         struct Output { string isCached, name, storePath; }
         auto stringWriter = appender!string;
@@ -519,7 +523,7 @@ Package[] nixEvalJobs(T)(string flakeAttrPath, auto ref T args)
 
         Package pkg = json.packageFromNixEvalJobsJson(flakeAttrPath);
 
-        checkCacheStatus([pkg], args);
+        pkg = checkCacheStatus([pkg], args)[0];
 
         result ~= pkg;
 
@@ -871,17 +875,23 @@ void printTableForCacheStatus(T)(Package[] packages, auto ref T args)
     saveGHCIComment(convertNixEvalToTableSummary(packages, args.isInitial));
 
     const buildMatrixLine = "build_matrix=" ~ JSONValue([
+        "include": JSONValue(packages.filter!(pkg => pkg.cachedAt.empty).map!toJSON.array)
+    ]).toString(JSONOptions.doNotEscapeSlashes) ~ "\n";
+
+    const fullMatrixLine = "full_matrix=" ~ JSONValue([
         "include": JSONValue(packages.map!toJSON.array)
     ]).toString(JSONOptions.doNotEscapeSlashes) ~ "\n";
 
     if (args.githubOutput != "")
     {
         args.githubOutput.append(buildMatrixLine);
+        args.githubOutput.append(fullMatrixLine);
     }
     else
     {
         createResultDirs();
         resultDir.buildPath("gh-output.env").append(buildMatrixLine);
+        resultDir.buildPath("gh-output.env").append(fullMatrixLine);
     }
 }
 
@@ -985,9 +995,16 @@ export int merge_ci_matrices(MergeMatricesArgs args)
         foreach (pkg; json["include"].array)
         {
             fullInclude ~= pkg;
-            if (pkg.type == JSONType.object && ("isCached" in pkg) && pkg["isCached"].type == JSONType.false_)
+            if (pkg.type == JSONType.object)
             {
-                filteredInclude ~= pkg;
+                bool isCached = false;
+                if (auto cachedAtPtr = "cachedAt" in pkg)
+                {
+                    if (cachedAtPtr.type == JSONType.array && cachedAtPtr.array.length > 0)
+                        isCached = true;
+                }
+                if (!isCached)
+                    filteredInclude ~= pkg;
             }
         }
     }
