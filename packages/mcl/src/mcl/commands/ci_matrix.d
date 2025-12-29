@@ -296,6 +296,13 @@ mixin template CiMatrixBaseArgs()
         .EnvFallback("PRECALC_MATRIX")
     )
     string precalcMatrix = "";
+
+    @(NamedArgument(["github-output"])
+        .Placeholder("output")
+        .Description("Output to GitHub Actions")
+        .EnvFallback("GITHUB_OUTPUT")
+    )
+    string githubOutput;
 }
 
 @(Command("ci-matrix", "ci_matrix")
@@ -843,6 +850,20 @@ void printTableForCacheStatus(T)(Package[] packages, auto ref T args)
     }
     saveCachixDeploySpec(packages);
     saveGHCIComment(convertNixEvalToTableSummary(packages, args.isInitial));
+
+    const buildMatrixLine = "build_matrix=" ~ JSONValue([
+        "include": JSONValue(packages.map!toJSON.array)
+    ]).toString(JSONOptions.doNotEscapeSlashes) ~ "\n";
+
+    if (args.githubOutput != "")
+    {
+        args.githubOutput.append(buildMatrixLine);
+    }
+    else
+    {
+        createResultDirs();
+        resultDir.buildPath("gh-output.env").append(buildMatrixLine);
+    }
 }
 
 bool isPackageCached(in Package pkg, string binaryCacheHttpEndpoint, in string[string] httpHeaders = null)
@@ -906,6 +927,7 @@ struct MergeMatricesArgs
 {
     @(NamedArgument(["github-output"])
         .Placeholder("output")
+        .Description("Output to GitHub Actions")
         .EnvFallback("GITHUB_OUTPUT")
     )
     string githubOutput;
