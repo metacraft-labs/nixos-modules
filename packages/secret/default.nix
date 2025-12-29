@@ -21,6 +21,7 @@ pkgs.writeShellApplication {
     reEncryptAll=false
     export RULES=""
     secretsFolder=""
+    nixFlags=()
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -32,6 +33,7 @@ pkgs.writeShellApplication {
             --vm) vm=true;;
             -r) reEncrypt=true;;
             --re-encrypt-all) reEncryptAll=true;;
+            --impure) nixFlags+=("''${1#*=}");;
             --help)
                 echo -e "NAME\n\
         secret\n\n\
@@ -52,6 +54,7 @@ pkgs.writeShellApplication {
         --service - Service for which you want to create a secret.\n\
         --secret  - Secret you want to encrypt.\n\
         --vm - Make secret for the vmVariant.\n\
+        --impure - Use impure nix for the evaluations.\n\
         -r - Re-encrypt the secret."
                 exit 0
                 ;;
@@ -62,6 +65,10 @@ pkgs.writeShellApplication {
         esac
         shift
     done
+
+    nix() {
+      command nix "$1" "''${nixFlags[@]}" "''${@:2}"
+    }
 
     case "$configurationType" in
       (nixos)
