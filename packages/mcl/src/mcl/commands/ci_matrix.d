@@ -5,7 +5,7 @@ import std.traits : EnumMembers;
 import std.string : indexOf, splitLines, strip;
 import std.algorithm : map, filter, reduce, chunkBy, find, any, sort, startsWith, each, canFind, fold;
 import std.file : write, readText, dirEntries, SpanMode, append;
-import std.range : array, enumerate, empty, front, indexed, join, chain, split;
+import std.range : array, enumerate, empty, front, indexed, iota, join, chain, split;
 import std.exception : ifThrown;
 import std.conv : to;
 import std.json : JSONValue, parseJSON, JSONOptions, JSONType;
@@ -354,13 +354,16 @@ Package[] checkCacheStatus(T)(Package[] packages, auto ref T args)
         "Authorization": "Bearer " ~ args.cachixAuthToken
     ];
 
-    foreach (pkg; packages.parallel) {
-        pkg.cachedAt ~= args.binaryCacheUrls.filter!(url => isPackageCached(pkg, url, cachixAuthHeaders)).array;
+    foreach (idx; packages.length.iota.parallel) {
+        packages[idx].cachedAt ~= args.binaryCacheUrls
+            .filter!(url => isPackageCached(packages[idx], url, cachixAuthHeaders))
+            .map!(url => packages[idx].getNarInfoUrl(url))
+            .array;
 
         struct Output { string isCached, name, storePath; }
         auto stringWriter = appender!string;
         writeRecordAsTable(
-            Output(!pkg.cachedAt.empty ? "✅" : "❌", pkg.name, pkg.output),
+            Output(!packages[idx].cachedAt.empty ? "✅" : "❌", packages[idx].name, packages[idx].output),
             stringWriter,
         );
         tracef("%s", stringWriter.data);
@@ -757,14 +760,29 @@ unittest
 
 string getStatus(JSONValue pkg, string key, bool isInitial)
 {
+    auto pkgName = ("name" in pkg) ? pkg["name"].str : "unknown";
+
     if (key in pkg)
     {
-        if (auto cachedAt = pkg[key]["cachedAt"].array)
-            return fmt!"✅ Cached at %-(%s%||%)"(
-                cachedAt
-                    .enumerate()
-                    .map!(t => "[<%s>](%s)".fmt(t.index, t.value.str))
-            );
+        if (auto pkgOnSys = "cachedAt" in pkg[key])
+        {
+            if (auto cachedAt = (*pkgOnSys).array)
+            {
+                if (!cachedAt.empty)
+                {
+                    auto status = fmt!"✅ Cached at %-(%s%||%)"(
+                        cachedAt
+                            .enumerate()
+                            .map!(t => "[<%s>](%s)".fmt(t.index, t.value.str))
+                    );
+                    infof("Package %s key %s has cachedAt: %s", pkgName, key, status);
+                    return status;
+                }
+            }
+        }
+
+        infof("Package %s key %s missing cachedAt, isInitial=%s, pkg content: %s",
+            pkgName, key, isInitial, pkg[key].toPrettyString);
 
         if (isInitial)
             return "⏳ building...";
@@ -773,6 +791,7 @@ string getStatus(JSONValue pkg, string key, bool isInitial)
     }
     else
     {
+        infof("Package %s missing key %s", pkgName, key);
         return "🚫 not supported";
     }
 }
