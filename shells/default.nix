@@ -22,6 +22,10 @@
               nix repl --file "$REPO_ROOT/repl.nix";
             '';
           };
+
+          podman-as-docker = pkgs.writeShellScriptBin "docker" ''
+            exec podman "$@"
+          '';
         in
         pkgs.mkShell {
           packages =
@@ -44,6 +48,7 @@
               dub-to-nix
               ldc
               act
+              podman-as-docker
             ]
             ++ pkgs.lib.optionals (pkgs.stdenv.system == "x86_64-linux") [
               dmd
