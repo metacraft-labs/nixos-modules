@@ -33,6 +33,10 @@ inputs:
     description: GitLab domain to add as access-token in nix.conf
     default: 'gitlab.com'
     required: false
+  nix-version:
+    description: Nix version to install
+    default: ''
+    required: false
 
 runs:
   using: 'composite'
@@ -46,6 +50,8 @@ runs:
     - name: Install Nix
       uses: cachix/install-nix-action@v31
       if: ${{ runner.environment == 'github-hosted' }}
+      with:
+        install_url: ${{ inputs.nix-version != '' && format('https://releases.nixos.org/nix/nix-{0}/install', inputs.nix-version) || '' }}
 
     - name: Configure Nix
       shell: bash
