@@ -47,13 +47,13 @@ msg_file=./commit_msg_body.txt
 } > $msg_file
 
 if [[ "$FLAKE_INPUT" = "" ]]; then
-  git commit --amend -F - <<EOF
+  cat <<EOF | sed 's/^  //' | git commit --amend -F -
   chore(flake.lock): Update all Flake inputs ($(date -I))
 
   $(cat $msg_file)
 EOF
 else
-  git commit --amend -F - <<EOF
+  cat <<EOF | sed 's/^  //' | git commit --amend -F -
   chore(flake.lock): Update \`$FLAKE_INPUT\` Flake input ($(date -I))
 
   $(cat $msg_file)
