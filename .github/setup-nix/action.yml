@@ -103,7 +103,7 @@ runs:
         authToken: ${{ inputs.cachix-auth-token }}
 
     - name: Build & activate the Nix Dev Shell
-      if: ${{ inputs.use-direnv || inputs.devshell != '' }}
+      if: ${{ inputs.use-direnv == true || inputs.devshell != '' }}
       shell: bash
       run: |
         direnv() { nix run --inputs-from . nixpkgs#direnv -- "$@"; }
