@@ -49,7 +49,7 @@ runs:
   using: 'composite'
   steps:
     - name: Setup Nix
-      uses: metacraft-labs/nixos-modules/.github/install-nix@main
+      uses: metacraft-labs/nixos-modules/.github/setup-nix@main
       with:
         push-to-cache: false
         cachix-cache: ${{ inputs.cachix-cache }}
