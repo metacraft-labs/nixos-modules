@@ -48,7 +48,7 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    - name: Install Nix
+    - name: Setup Nix
       uses: metacraft-labs/nixos-modules/.github/install-nix@main
       with:
         push-to-cache: false

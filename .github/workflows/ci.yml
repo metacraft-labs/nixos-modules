@@ -41,7 +41,7 @@ jobs:
       - name: Checkout first to use locally defined actions
         uses: actions/checkout@v6
 
-      - name: Install Nix
+      - name: Setup Nix
         uses: ./.github/install-nix
         with:
           nix-version: ${{ matrix.nix-version }}
