@@ -1,5 +1,5 @@
-name: Install Nix
-description: Installs Nix and configures substituters and trusted public keys
+name: Setup Nix
+description: Installs Nix, configures binary caches, and optionally builds/activates a development environment using direnv or a specific Nix devShell.
 
 inputs:
   push-to-cache:
