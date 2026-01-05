@@ -37,6 +37,15 @@ inputs:
     description: Nix version to install
     default: ''
     required: false
+  use-direnv:
+    description: Whether to use direnv to load the environment
+    type: boolean
+    required: false
+    default: false
+  devshell:
+    description: The name of the devShell to build and export to GITHUB_ENV (e.g. 'default' for .#devShells.default)
+    required: false
+    default: ''
 
 runs:
   using: 'composite'
@@ -92,3 +101,39 @@ runs:
       with:
         name: ${{ inputs.cachix-cache }}
         authToken: ${{ inputs.cachix-auth-token }}
+
+    - name: Build & activate the Nix Dev Shell
+      if: ${{ inputs.use-direnv || inputs.devshell != '' }}
+      shell: bash
+      run: |
+        direnv() { nix run nixpkgs#direnv -- "$@"; }
+
+        if [ "${{ inputs.devshell }}" != "" ] && [ "${{ inputs.use-direnv }}" == "true" ]; then
+          echo "Error: 'devshell' and 'use-direnv' are mutually exclusive."
+          exit 1
+        fi
+
+        if [ "${{ inputs.devshell }}" != "" ]; then
+          # Function to restore .envrc
+          restore_envrc() {
+            if git ls-files --error-unmatch .envrc > /dev/null 2>&1; then
+              git restore .envrc
+            else
+              rm -f .envrc
+            fi
+          }
+          # Set trap to restore .envrc on exit (success or failure)
+          trap restore_envrc EXIT
+
+          echo "use flake .#${{ inputs.devshell }}" > .envrc
+        elif [ "${{ inputs.use-direnv }}" == "true" ]; then
+          if [ ! -f .envrc ]; then
+            echo "Error: 'use-direnv' is enabled but .envrc does not exist."
+            exit 1
+          fi
+        fi
+
+        direnv allow .
+        echo "::group::Building Nix DevShell"
+        direnv export gha >> "$GITHUB_ENV"
+        echo "::endgroup::"
