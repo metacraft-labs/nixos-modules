@@ -106,7 +106,7 @@ runs:
       if: ${{ inputs.use-direnv || inputs.devshell != '' }}
       shell: bash
       run: |
-        direnv() { nix run nixpkgs#direnv -- "$@"; }
+        direnv() { nix run --inputs-from . nixpkgs#direnv -- "$@"; }
 
         if [ "${{ inputs.devshell }}" != "" ] && [ "${{ inputs.use-direnv }}" == "true" ]; then
           echo "Error: 'devshell' and 'use-direnv' are mutually exclusive."
