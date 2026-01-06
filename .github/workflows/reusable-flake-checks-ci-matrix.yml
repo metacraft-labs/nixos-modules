@@ -29,6 +29,35 @@ on:
         required: false
 
 jobs:
+  compute-mcl-ref:
+    name: Compute MCL Reference
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    outputs:
+      workflow_sha: ${{ steps.compute.outputs.workflow_sha }}
+      mcl_flake_cmd: ${{ steps.compute.outputs.mcl_flake_cmd }}
+    steps:
+      - name: Compute reusable workflow SHA and set mcl nix run command
+        id: compute
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -x
+          if [[ "${{ github.repository }}" == "metacraft-labs/nixos-modules" ]]; then
+            # Testing in the reusable workflow's own repo
+            WORKFLOW_SHA="${{ github.sha }}"
+          else
+            # Try to get from referenced_workflows
+            WORKFLOW_SHA=$(gh api /repos/${{ github.repository }}/actions/runs/${{ github.run_id }} \
+              --jq '[.referenced_workflows[] | select(.path | contains("reusable-flake-checks-ci-matrix")) | .sha] | first' 2>/dev/null || true)
+
+            if [[ -z "$WORKFLOW_SHA" ]]; then
+              # Fallback to main
+              WORKFLOW_SHA="main"
+            fi
+          fi
+          echo "workflow_sha=$WORKFLOW_SHA" >> "$GITHUB_OUTPUT"
+          echo "mcl_flake_cmd=nix run --accept-flake-config github:metacraft-labs/nixos-modules/${WORKFLOW_SHA}#mcl" >> $GITHUB_OUTPUT
+
   post-initial-comment:
     runs-on: ${{ fromJSON(inputs.runner) }}
     steps:
@@ -43,6 +72,7 @@ jobs:
 
   shard-matrix:
     name: Shard Matrix
+    needs: compute-mcl-ref
     runs-on: ${{ fromJSON(inputs.runner) }}
     steps:
       - name: Setup Nix
@@ -64,9 +94,7 @@ jobs:
         env:
           CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          MCL_BRANCH: ${{ github.repository == 'metacraft-labs/nixos-modules' && github.sha || 'main' }}
-        run: |
-          nix run --accept-flake-config github:metacraft-labs/nixos-modules/${{ env.MCL_BRANCH }}#mcl shard-matrix
+        run: ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} shard-matrix
 
     outputs:
       eval_matrix: ${{ steps.generate-matrix.outputs.eval_matrix }}
@@ -74,7 +102,7 @@ jobs:
       full_matrix: ${{ steps.generate-matrix.outputs.full_matrix }}
 
   eval-matrix:
-    needs: shard-matrix
+    needs: [compute-mcl-ref, shard-matrix]
     runs-on: ${{ fromJSON(inputs.runner) }}
     strategy:
       matrix: ${{fromJSON(needs.shard-matrix.outputs.eval_matrix)}}
@@ -100,8 +128,7 @@ jobs:
           IS_INITIAL: 'true'
           CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          MCL_BRANCH: ${{ github.repository == 'metacraft-labs/nixos-modules' && github.sha || 'main' }}
-        run: nix run --accept-flake-config github:metacraft-labs/nixos-modules/${{ env.MCL_BRANCH }}#mcl ci-matrix
+        run: ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} ci-matrix
 
       - uses: actions/upload-artifact@v6
         with:
@@ -112,7 +139,7 @@ jobs:
 
   merge-matrices:
     runs-on: ${{ fromJSON(inputs.runner) }}
-    needs: [shard-matrix, eval-matrix]
+    needs: [compute-mcl-ref, shard-matrix, eval-matrix]
     name: Merge matrices
     outputs:
       build_matrix: ${{ steps.merge.outputs.build_matrix }}
@@ -129,23 +156,18 @@ jobs:
       - name: Merge matrices
         if: needs.eval-matrix.result == 'success'
         id: merge
-        env:
-          MCL_BRANCH: ${{ github.repository == 'metacraft-labs/nixos-modules' && github.sha || 'main' }}
-        run: nix run --accept-flake-config github:metacraft-labs/nixos-modules/${{ env.MCL_BRANCH }}#mcl merge-ci-matrices
+        run: ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} merge-ci-matrices
 
       - name: Print CI Matrix
-        id: print-matrix
-        shell: bash
         env:
           IS_INITIAL: 'true'
           CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
           PRECALC_MATRIX: ${{ steps.merge.outputs.full_matrix }}
-          MCL_BRANCH: ${{ github.repository == 'metacraft-labs/nixos-modules' && github.sha || 'main' }}
-        run: nix run --accept-flake-config github:metacraft-labs/nixos-modules/${{ env.MCL_BRANCH }}#mcl print-table
+        run: ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} print-table
 
       - name: Update GitHub Comment
-        uses: marocchino/sticky-pull-request-comment@v2.9.0
+        uses: marocchino/sticky-pull-request-comment@v2.9.4
         with:
           recreate: true
           path: comment.md
@@ -189,7 +211,7 @@ jobs:
   results:
     runs-on: ${{ fromJSON(inputs.runner) }}
     name: Final Results
-    needs: [build, shard-matrix, merge-matrices]
+    needs: [compute-mcl-ref, build, shard-matrix, merge-matrices]
     if: always()
     steps:
       - name: Setup Nix
@@ -197,18 +219,15 @@ jobs:
         with: *setup-nix-no-push
 
       - name: Print CI Matrix
-        id: print-matrix
-        shell: bash
         env:
           IS_INITIAL: 'false'
           CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
           PRECALC_MATRIX: ${{ needs.merge-matrices.result == 'success' && needs.merge-matrices.outputs.full_matrix || needs.shard-matrix.outputs.full_matrix }}
-          MCL_BRANCH: ${{ github.repository == 'metacraft-labs/nixos-modules' && github.sha || 'main' }}
-        run: nix run --accept-flake-config github:metacraft-labs/nixos-modules/${{ env.MCL_BRANCH }}#mcl print-table
+        run: ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} print-table
 
       - name: Update GitHub Comment
-        uses: marocchino/sticky-pull-request-comment@v2.9.0
+        uses: marocchino/sticky-pull-request-comment@v2.9.4
         with:
           recreate: true
           path: comment.md
@@ -227,5 +246,4 @@ jobs:
           CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
           CACHIX_ACTIVATE_TOKEN: '${{ secrets.CACHIX_ACTIVATE_TOKEN }}'
-          MCL_BRANCH: ${{ github.repository == 'metacraft-labs/nixos-modules' && github.sha || 'main' }}
-        run: nix run --accept-flake-config github:metacraft-labs/nixos-modules/${{ env.MCL_BRANCH }}#mcl deploy-spec
+        run: ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} deploy-spec
