@@ -61,3 +61,32 @@ jobs:
     with:
       runner: '["self-hosted", "Linux", "x86-64-v2"]'
       run-cachix-deploy: false
+
+  test-act:
+    runs-on: [self-hosted, nixos, x86-64-v3, bare-metal]
+    steps:
+      - name: Checkout first to use locally defined actions
+        uses: actions/checkout@v6
+
+      - name: Setup Nix
+        uses: ./.github/setup-nix
+        with:
+          push-to-cache: true
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+          devshell: default
+
+      - name: Create `.gh-vars.env` and `.gh-secrets.env` files
+        run: |
+          {
+            echo 'CACHIX_CACHE=${{ vars.CACHIX_CACHE }}'
+          } > .gh-vars.env
+
+          {
+            echo 'CACHIX_AUTH_TOKEN=${{ secrets.CACHIX_AUTH_TOKEN }}'
+          } > .gh-secrets.env
+
+      - name: Build `ci-image` and run the `lint` workflow inside it with `act`
+        run: just act lint
