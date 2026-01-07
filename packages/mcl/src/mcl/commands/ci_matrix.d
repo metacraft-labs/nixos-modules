@@ -882,17 +882,12 @@ void printTableForCacheStatus(T)(Package[] packages, auto ref T args)
         "include": JSONValue(packages.map!toJSON.array)
     ]).toString(JSONOptions.doNotEscapeSlashes) ~ "\n";
 
-    if (args.githubOutput != "")
-    {
-        args.githubOutput.append(buildMatrixLine);
-        args.githubOutput.append(fullMatrixLine);
-    }
-    else
-    {
-        createResultDirs();
-        resultDir.buildPath("gh-output.env").append(buildMatrixLine);
-        resultDir.buildPath("gh-output.env").append(fullMatrixLine);
-    }
+    const outputPath = args.githubOutput
+        ? args.githubOutput
+        : resultDir.buildPath("gh-output.env");
+
+    outputPath.append(buildMatrixLine);
+    outputPath.append(fullMatrixLine);
 }
 
 bool isPackageCached(in Package pkg, string binaryCacheHttpEndpoint, in string[string] httpHeaders = null)
