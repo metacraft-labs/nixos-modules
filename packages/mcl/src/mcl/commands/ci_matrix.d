@@ -280,15 +280,12 @@ struct PrintTableArgs
 
 export int ci_matrix(CiMatrixArgs args)
 {
-    createResultDirs();
     nixEvalForAllSystems(args).array.printTableForCacheStatus(args);
     return 0;
 }
 
 export int print_table(PrintTableArgs args)
 {
-    createResultDirs();
-
     getPrecalcMatrix(args)
         .checkCacheStatus(args)
         .printTableForCacheStatus(args);
@@ -788,6 +785,8 @@ unittest
 void printTableForCacheStatus(T)(Package[] packages, auto ref T args)
     if (is(T == CiMatrixArgs) || is(T == PrintTableArgs) || is(T == CiArgs) || is(T == DeploySpecArgs))
 {
+    createResultDirs();
+
     if (args.precalcMatrix == "")
     {
         saveGHCIMatrix(packages, args);
