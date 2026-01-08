@@ -3,6 +3,7 @@ image := `nix eval --raw .#ci-image.imageRefUnsafe`
 is-podman-available := `if command -v podman &> /dev/null; then echo true; else echo false; fi`
 copy-to-docker := if is-podman-available == "true" { "copyToPodman" } else { "copyToDockerDaemon" }
 docker-socket := if is-podman-available == "true" { "unix://${XDG_RUNTIME_DIR}/podman/podman.sock" } else { "unix:///var/run/docker.sock" }
+do-offline-nix-build := if env("CI", "false") == "false" { "--offline" } else { "" }
 
 show:
   @echo image: {{image}}
@@ -11,7 +12,7 @@ show:
   @echo container engine: `docker --version 2>&1 | grep -v 'Switching default driver'`
 
 image:
-  nix run --offline .#ci-image.{{copy-to-docker}}
+  nix run --accept-flake-config {{do-offline-nix-build}} .#ci-image.{{copy-to-docker}}
 
 exec: image
   docker run -it {{image}}
