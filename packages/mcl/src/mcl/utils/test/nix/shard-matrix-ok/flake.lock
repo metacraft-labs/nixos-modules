@@ -860,7 +860,7 @@
       "inputs": {
         "nixpkgs": [
           "nixos-modules",
-          "nixpkgs"
+          "nixpkgs-unstable"
         ]
       },
       "locked": {
