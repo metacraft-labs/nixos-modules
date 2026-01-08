@@ -59,7 +59,20 @@ jobs:
     uses: ./.github/workflows/reusable-flake-checks-ci-matrix.yml
     secrets: inherit
     with:
-      runner: '["self-hosted", "Linux", "x86-64-v2"]'
+      runners: |
+        {
+          "x86_64-linux": [
+            "self-hosted",
+            "nixos",
+            "x86-64-v3",
+            "bare-metal"
+          ],
+          "aarch64-darwin": [
+            "self-hosted",
+            "macOS",
+            "aarch64-darwin"
+          ]
+        }
       run-cachix-deploy: false
 
   test-act:

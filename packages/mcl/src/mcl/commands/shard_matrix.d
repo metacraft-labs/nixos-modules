@@ -48,6 +48,7 @@ export int shard_matrix(ShardMatrixArgs args)
             extraCacheUrls: args.extraCacheUrls,
             cachixAuthToken: args.cachixAuthToken,
             precalcMatrix: null,
+            nixSystemToGHRunner: args.nixSystemToGHRunner,
             githubOutput: args.githubOutput,
         ));
     }
