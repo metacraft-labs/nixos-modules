@@ -1,4 +1,4 @@
-name: 'CI'
+name: 'ci-matrix'
 
 on:
   # Allow this workflow to be reused by other workflows:
@@ -71,7 +71,6 @@ jobs:
             This comment will be updated automatically with the status of each package.
 
   shard-matrix:
-    name: Shard Matrix
     needs: compute-mcl-ref
     runs-on: ${{ fromJSON(inputs.runner) }}
     steps:
@@ -97,7 +96,7 @@ jobs:
         run: ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} shard-matrix
 
       - name: Post CI matrix comment
-        if: ${{ contains(steps.generate-matrix.outputs.full_matrix, 'attrPath') }}
+        if: steps.generate-matrix.outputs.full_matrix
         uses: marocchino/sticky-pull-request-comment@v2.9.4
         with:
           recreate: true
@@ -111,10 +110,9 @@ jobs:
   eval-matrix:
     needs: [compute-mcl-ref, shard-matrix]
     runs-on: ${{ fromJSON(inputs.runner) }}
+    if: needs.shard-matrix.outputs.eval_matrix
     strategy:
       matrix: ${{fromJSON(needs.shard-matrix.outputs.eval_matrix)}}
-    name: Generate Matrix ${{ matrix.flakeAttrPath }}
-    if: needs.shard-matrix.outputs.eval_matrix != '{"include":[]}'
     steps:
       - name: Setup Nix
         uses: metacraft-labs/nixos-modules/.github/setup-nix@main
@@ -122,20 +120,16 @@ jobs:
 
       - uses: actions/checkout@v6
 
-      - name: Conditionally export `FLAKE_ATTR_PATH`
-        run: |
-          if [ "${{ matrix.flakeAttrPath }}" != '' ]; then
-            echo "FLAKE_ATTR_PATH=${{ matrix.flakeAttrPath }}" >> $GITHUB_ENV
-          fi
-
       - name: Generate CI Matrix
         id: generate-matrix
         shell: bash
         env:
-          IS_INITIAL: 'true'
           CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
-        run: ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} ci-matrix
+        run: |
+          ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} -- ci-matrix \
+            --flake-attribute-path "${{ matrix.flakeAttrPath }}" \
+            --is-initial
 
       - uses: actions/upload-artifact@v6
         with:
@@ -151,7 +145,8 @@ jobs:
     outputs:
       build_matrix: ${{ steps.merge.outputs.build_matrix }}
       full_matrix: ${{ steps.merge.outputs.full_matrix }}
-    if: needs.shard-matrix.outputs.eval_matrix != '{"include":[]}' && needs.eval-matrix.result == 'success'
+    if: needs.shard-matrix.outputs.eval_matrix != '{"include":[]}' &&
+      needs.eval-matrix.result == 'success'
     steps:
       - name: Setup Nix
         uses: metacraft-labs/nixos-modules/.github/setup-nix@main
@@ -181,10 +176,15 @@ jobs:
 
   build:
     needs: [shard-matrix, merge-matrices]
-    if: always()
+    if: needs.shard-matrix.outputs.build_matrix ||
+      needs.merge-matrices.outputs.build_matrix
     strategy:
       fail-fast: false
-      matrix: ${{fromJSON( (needs.merge-matrices.result == 'success' && needs.merge-matrices.outputs.build_matrix) || needs.shard-matrix.outputs.build_matrix )}}
+      matrix: >-
+        ${{fromJSON(
+          needs.merge-matrices.outputs.build_matrix ||
+          needs.shard-matrix.outputs.build_matrix
+        )}}
 
     name: ${{ matrix.name }} | ${{ matrix.system }}
     runs-on: ${{ matrix.os }}
@@ -230,7 +230,11 @@ jobs:
           IS_INITIAL: 'false'
           CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          PRECALC_MATRIX: ${{ needs.merge-matrices.result == 'success' && needs.merge-matrices.outputs.full_matrix || needs.shard-matrix.outputs.full_matrix }}
+          PRECALC_MATRIX: ${{
+            needs.merge-matrices.result == 'success' &&
+            needs.merge-matrices.outputs.full_matrix ||
+            needs.shard-matrix.outputs.full_matrix
+            }}
         run: ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} print-table
 
       - name: Update GitHub Comment
@@ -241,8 +245,16 @@ jobs:
 
       - run: exit 1
         if: >-
-          (needs.merge-matrices.result == 'success' && needs.merge-matrices.outputs.build_matrix != '{"include":[]}' || needs.shard-matrix.outputs.build_matrix != '{"include":[]}')
-          && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled'))
+          (
+            (
+              needs.merge-matrices.result == 'success' &&
+              needs.merge-matrices.outputs.build_matrix != '{"include":[]}'
+            ) ||
+              needs.shard-matrix.outputs.build_matrix != '{"include":[]}'
+          ) && (
+            contains(needs.*.result, 'failure') ||
+            contains(needs.*.result, 'cancelled')
+          )
 
       - uses: actions/checkout@v6
         if: inputs.run-cachix-deploy
