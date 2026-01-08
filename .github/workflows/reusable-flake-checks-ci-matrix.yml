@@ -149,19 +149,22 @@ jobs:
           MCL_BRANCH: ${{ github.repository == 'metacraft-labs/nixos-modules' && github.sha || 'main' }}
         run: nix run --accept-flake-config github:metacraft-labs/nixos-modules/${{ env.MCL_BRANCH }}#mcl merge-ci-matrices
 
-      - name: Post Comment
-        uses: metacraft-labs/nixos-modules/.github/print-matrix@main
+      - name: Print CI Matrix
+        id: print-matrix
+        shell: bash
+        env:
+          IS_INITIAL: 'true'
+          CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          PRECALC_MATRIX: ${{ steps.merge.outputs.full_matrix }}
+          MCL_BRANCH: ${{ github.repository == 'metacraft-labs/nixos-modules' && github.sha || 'main' }}
+        run: nix run --accept-flake-config github:metacraft-labs/nixos-modules/${{ env.MCL_BRANCH }}#mcl print-table
+
+      - name: Update GitHub Comment
+        uses: marocchino/sticky-pull-request-comment@v2.9.0
         with:
-          is-initial: 'true'
-          cachix-cache: ${{ vars.CACHIX_CACHE }}
-          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
-          substituters: ${{ vars.SUBSTITUTERS }}
-          precalc_matrix: ${{ steps.merge.outputs.full_matrix }}
-          pr-comment-github-token: ${{ secrets.GITHUB_TOKEN }}
-          nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
-          nix-gitlab-token: ${{ secrets.NIX_GITLAB_TOKEN }}
-          nix-gitlab-domain: ${{ vars.NIX_GITLAB_DOMAIN }}
+          recreate: true
+          path: comment.md
 
   build:
     needs: [shard-matrix, merge-matrices]
@@ -205,19 +208,34 @@ jobs:
     needs: [build, shard-matrix, merge-matrices]
     if: always()
     steps:
-      - name: Post Comment
-        uses: metacraft-labs/nixos-modules/.github/print-matrix@main
+      - name: Setup Nix
+        uses: metacraft-labs/nixos-modules/.github/setup-nix@main
         with:
-          is-initial: 'false'
+          push-to-cache: false
           cachix-cache: ${{ vars.CACHIX_CACHE }}
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
-          precalc_matrix: ${{ needs.merge-matrices.result == 'success' && needs.merge-matrices.outputs.full_matrix || needs.shard-matrix.outputs.full_matrix }}
-          pr-comment-github-token: ${{ secrets.GITHUB_TOKEN }}
           nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
           nix-gitlab-token: ${{ secrets.NIX_GITLAB_TOKEN }}
           nix-gitlab-domain: ${{ vars.NIX_GITLAB_DOMAIN }}
+
+      - name: Print CI Matrix
+        id: print-matrix
+        shell: bash
+        env:
+          IS_INITIAL: 'false'
+          CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          PRECALC_MATRIX: ${{ needs.merge-matrices.result == 'success' && needs.merge-matrices.outputs.full_matrix || needs.shard-matrix.outputs.full_matrix }}
+          MCL_BRANCH: ${{ github.repository == 'metacraft-labs/nixos-modules' && github.sha || 'main' }}
+        run: nix run --accept-flake-config github:metacraft-labs/nixos-modules/${{ env.MCL_BRANCH }}#mcl print-table
+
+      - name: Update GitHub Comment
+        uses: marocchino/sticky-pull-request-comment@v2.9.0
+        with:
+          recreate: true
+          path: comment.md
 
       - run: exit 1
         if: >-
