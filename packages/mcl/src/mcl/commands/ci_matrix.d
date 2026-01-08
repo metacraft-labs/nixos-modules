@@ -19,7 +19,7 @@ import std.logger : tracef, infof, errorf, warningf;
 
 import argparse : Command, Description, NamedArgument, Placeholder, EnvFallback;
 
-import mcl.utils.string : enumToString, StringRepresentation, MaxWidth, writeRecordAsTable;
+import mcl.utils.string : enumToString, enumFromString, StringRepresentation, MaxWidth, writeRecordAsTable;
 import mcl.utils.json : toJSON, fromJSON;
 import mcl.utils.path : rootDir, resultDir, gcRootsDir, createResultDirs;
 import mcl.utils.process : execute;
@@ -76,12 +76,18 @@ version (OSX)
     private extern (C) int host_page_size(mach_port_t host, vm_size_t* page_size) nothrow @nogc;
 }
 
-enum GitHubOS
-{
-    @StringRepresentation("ubuntu-latest") ubuntuLatest,
-    @StringRepresentation("self-hosted") selfHosted,
+alias GHRunner = string[];
 
-    @StringRepresentation("macos-14") macos14,
+struct NixSystemToGHRunner
+{
+    GHRunner[NixSystem] inner;
+
+    this(string json)
+    {
+        this.inner = json.parseJSON.fromJSON!(typeof(this.inner));
+    }
+
+    GHRunner opIndex(NixSystem system) => this.inner[system];
 }
 
 enum NixSystem
@@ -116,36 +122,13 @@ else version (OSX)
 else
     static assert (0, "Unsupported OS");
 
-GitHubOS getGHOS(string os)
-{
-    switch (os)
-    {
-    case "self-hosted":
-        return GitHubOS.selfHosted;
-    case "ubuntu-latest":
-        return GitHubOS.ubuntuLatest;
-    case "macos-14":
-        return GitHubOS.macos14;
-    default:
-        return GitHubOS.selfHosted;
-    }
-}
-
-@("getGHOS")
-unittest
-{
-    assert(getGHOS("ubuntu-latest") == GitHubOS.ubuntuLatest);
-    assert(getGHOS("macos-14") == GitHubOS.macos14);
-    assert(getGHOS("crazyos-inator-2000") == GitHubOS.selfHosted);
-}
-
 struct Package
 {
     string name;
     bool allowedToFail = false;
     string attrPath;
     string[] cachedAt = [];
-    GitHubOS os;
+    GHRunner ghRunner;
     NixSystem system;
     string derivation;
     string output;
@@ -163,8 +146,8 @@ struct Package
 version (unittest)
 {
     static immutable Package[] testPackageArray = [
-        Package("testPackage", false, "testPackagePath", ["https://testPackage.com"], GitHubOS.ubuntuLatest, NixSystem.x86_64_linux, "testPackageOutput"),
-        Package("testPackage2", true, "testPackagePath2", [], GitHubOS.macos14, NixSystem.aarch64_darwin, "testPackageOutput2")
+        Package("testPackage", false, "testPackagePath", ["https://testPackage.com"], ["ubuntu-latest"], NixSystem.x86_64_linux, "testPackageOutput"),
+        Package("testPackage2", true, "testPackagePath2", [], ["macos"], NixSystem.aarch64_darwin, "testPackageOutput2")
     ];
 }
 
@@ -203,10 +186,14 @@ version (unittest)
 mixin template CiMatrixBaseArgs()
 {
     import std.conv : to;
+    import std.json : parseJSON;
+    import std.stdio : writeln, stderr, stdout;
 
-    import argparse : Command, Description, NamedArgument, Required, Placeholder, EnvFallback;
+    import argparse : Command, Description, NamedArgument, Required, Parse, Placeholder, EnvFallback;
 
+    import mcl.utils.json : fromJSON;
     import mcl.utils.cachix : cachixNixStoreUrl;
+    import mcl.commands.ci_matrix : NixSystemToGHRunner;
 
     @(NamedArgument(["flake-attribute-path"])
         .Placeholder("flake.attr.path")
@@ -273,6 +260,13 @@ mixin template CiMatrixBaseArgs()
     )
     string precalcMatrix = "";
 
+    @(NamedArgument(["system-to-github-runner-labels"])
+        .Placeholder("json")
+        .Description("Mapping of Nix Systems to GitHub Runner Labels")
+        .EnvFallback("SYSTEM_TO_GITHUB_RUNNER_LABELS")
+    )
+    string nixSystemToGHRunner;
+
     @(NamedArgument(["github-output"])
         .Placeholder("output")
         .Description("Output to GitHub Actions")
@@ -336,6 +330,7 @@ Package[] checkCacheStatus(T)(Package[] packages, auto ref T args)
 
     struct Output {
         string ok;
+        string runner;
         @MaxWidth(3) string at;
         @MaxWidth(50) string attr;
         @MaxWidth(80) string output;
@@ -358,6 +353,7 @@ Package[] checkCacheStatus(T)(Package[] packages, auto ref T args)
 
         Output(
             ok: !pkg.cachedAt.empty ? "✅" : "❌",
+            runner: pkg.ghRunner.join(", "),
             at: pkg.cachedAt
                 .enumerate
                 .map!(t => formatCachedAtLink(t.index, t.value, useOscLinks))
@@ -368,21 +364,6 @@ Package[] checkCacheStatus(T)(Package[] packages, auto ref T args)
     }
 
     return packages;
-}
-
-
-
-GitHubOS systemToGHPlatform(NixSystem os)
-{
-    return os == NixSystem.x86_64_linux ? GitHubOS.selfHosted : GitHubOS.macos14;
-}
-
-@("systemToGHPlatform")
-unittest
-{
-    assert(systemToGHPlatform(NixSystem.x86_64_linux) == GitHubOS.selfHosted);
-    assert(systemToGHPlatform(NixSystem.x86_64_darwin) == GitHubOS.macos14);
-    assert(systemToGHPlatform(NixSystem.aarch64_darwin) == GitHubOS.macos14);
 }
 
 static immutable string[] uselessWarnings =
@@ -408,6 +389,7 @@ static immutable string[] uselessWarnings =
 Package packageFromNixEvalJobsJson(
     JSONValue json,
     string flakeAttrPath,
+    NixSystemToGHRunner nixSystemToRunnerLabels,
 )
 {
     auto sys = json["system"].fromJSON!NixSystem;
@@ -421,7 +403,7 @@ Package packageFromNixEvalJobsJson(
         attrPath: flakeAttrPath ~ "." ~ json["attr"].str,
         cachedAt: [],
         system: sys,
-        os: systemToGHPlatform(sys),
+        ghRunner: nixSystemToRunnerLabels[sys],
         derivation: json["drvPath"].str,
         output: json["outputs"]["out"].str,
     );
@@ -454,13 +436,16 @@ unittest
 
         auto testPackage = testJSON.packageFromNixEvalJobsJson(
             "legacyPackages.x86_64-linux.mcl.matrix.shards.0",
+            // TODO: uncomment when `NixSystemToGHRunner` stops being a `string`
+            // [NixSystem.x86_64_linux: ["self-hosted"]],
+            NixSystemToGHRunner("{ \"x86_64-linux\": [\"self-hosted\"] }"),
         );
         assert(testPackage == Package(
             name: "home/bean-desktop",
             allowedToFail: false,
             attrPath: "legacyPackages.x86_64-linux.mcl.matrix.shards.0.home/bean-desktop",
             system: NixSystem.x86_64_linux,
-            os: GitHubOS.selfHosted,
+            ghRunner: ["self-hosted"],
             derivation: "/nix/store/jp7qgm9mgikksypzljrbhmxa31xmmq1x-home-manager-generation.drv",
             output: "/nix/store/30qrziyj0vbg6n43bbh08ql0xbnsy76d-home-manager-generation",
         ));
@@ -517,7 +502,7 @@ Package[] nixEvalJobs(T)(string flakeAttrPath, auto ref T args)
             return true;
         }
 
-        Package pkg = json.packageFromNixEvalJobsJson(flakeAttrPath);
+        Package pkg = json.packageFromNixEvalJobsJson(flakeAttrPath, NixSystemToGHRunner(args.nixSystemToGHRunner));
 
         pkg = checkCacheStatus([pkg], args)[0];
 

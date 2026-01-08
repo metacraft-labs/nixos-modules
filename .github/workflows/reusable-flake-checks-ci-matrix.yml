@@ -4,16 +4,29 @@ on:
   # Allow this workflow to be reused by other workflows:
   workflow_call:
     inputs:
-      runner:
-        description: 'JSON-encoded list of runner labels'
-        default: '["self-hosted"]'
+      runners:
+        description: 'JSON-encoded map of nix system to a list of runner labels'
+        default: | # json
+          {
+            "x86_64-linux": [
+              "self-hosted",
+              "nixos",
+              "x86-64-v3",
+              "bare-metal"
+            ],
+            "aarch64-darwin": [
+              "self-hosted",
+              "macOS",
+              "aarch64-darwin"
+            ]
+          }
         required: false
         type: string
       run-cachix-deploy:
         description: 'Deploy to cachix'
-        type: 'boolean'
         default: false
         required: false
+        type: 'boolean'
     secrets:
       CACHIX_AUTH_TOKEN:
         description: 'Cachix auth token'
@@ -31,7 +44,7 @@ on:
 jobs:
   compute-mcl-ref:
     name: Compute MCL Reference
-    runs-on: ${{ fromJSON(inputs.runner) }}
+    runs-on: ${{ fromJSON(inputs.runners).x86_64-linux }}
     outputs:
       workflow_sha: ${{ steps.compute.outputs.workflow_sha }}
       mcl_flake_cmd: ${{ steps.compute.outputs.mcl_flake_cmd }}
@@ -59,7 +72,7 @@ jobs:
           echo "mcl_flake_cmd=nix run --accept-flake-config github:metacraft-labs/nixos-modules/${WORKFLOW_SHA}#mcl" >> $GITHUB_OUTPUT
 
   post-initial-comment:
-    runs-on: ${{ fromJSON(inputs.runner) }}
+    runs-on: ${{ fromJSON(inputs.runners).x86_64-linux }}
     steps:
       - name: 'Post initial package status comment'
         uses: marocchino/sticky-pull-request-comment@v2.9.4
@@ -72,7 +85,7 @@ jobs:
 
   shard-matrix:
     needs: compute-mcl-ref
-    runs-on: ${{ fromJSON(inputs.runner) }}
+    runs-on: ${{ fromJSON(inputs.runners).x86_64-linux }}
     steps:
       - name: Setup Nix
         uses: metacraft-labs/nixos-modules/.github/setup-nix@main
@@ -93,6 +106,7 @@ jobs:
         env:
           CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          SYSTEM_TO_GITHUB_RUNNER_LABELS: ${{ inputs.runners }}
         run: ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} shard-matrix
 
       - name: Post CI matrix comment
@@ -109,7 +123,7 @@ jobs:
 
   eval-matrix:
     needs: [compute-mcl-ref, shard-matrix]
-    runs-on: ${{ fromJSON(inputs.runner) }}
+    runs-on: ${{ fromJSON(inputs.runners).x86_64-linux }}
     if: needs.shard-matrix.outputs.eval_matrix
     strategy:
       matrix: ${{fromJSON(needs.shard-matrix.outputs.eval_matrix)}}
@@ -139,7 +153,7 @@ jobs:
       matrix: ${{ steps.generate-matrix.outputs.matrix }}
 
   merge-matrices:
-    runs-on: ${{ fromJSON(inputs.runner) }}
+    runs-on: ${{ fromJSON(inputs.runners).x86_64-linux }}
     needs: [compute-mcl-ref, shard-matrix, eval-matrix]
     name: Merge matrices
     outputs:
@@ -216,7 +230,7 @@ jobs:
           cachix push ${{ vars.CACHIX_CACHE }} ${{ matrix.output }}
 
   results:
-    runs-on: ${{ fromJSON(inputs.runner) }}
+    runs-on: ${{ fromJSON(inputs.runners).x86_64-linux }}
     name: Final Results
     needs: [compute-mcl-ref, build, shard-matrix, merge-matrices]
     if: always()
