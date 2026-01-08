@@ -364,13 +364,16 @@ Package[] checkCacheStatus(T)(Package[] packages, auto ref T args)
                 .array;
         }
 
-        struct Output { string isCached, name, storePath; }
-        auto stringWriter = appender!string;
+        static struct Output { string ok, name, storePath, cachedAt; }
         writeRecordAsTable(
-            Output(!packages[idx].cachedAt.empty ? "✅" : "❌", packages[idx].name, packages[idx].output),
-            stringWriter,
+            Output(
+                ok: !packages[idx].cachedAt.empty ? "✅" : "❌",
+                name: packages[idx].name,
+                storePath: packages[idx].output,
+                cachedAt: packages[idx].cachedAt.join(", "),
+            ),
+            stderr.lockingTextWriter,
         );
-        tracef("%s", stringWriter.data);
     }
 
     return packages;
@@ -779,14 +782,10 @@ string getStatus(JSONValue pkg, string key, bool isInitial)
                             .enumerate()
                             .map!(t => "[<%s>](%s)".fmt(t.index, t.value.str))
                     );
-                    infof("Package %s key %s has cachedAt: %s", pkgName, key, status);
                     return status;
                 }
             }
         }
-
-        infof("Package %s key %s missing cachedAt, isInitial=%s, pkg content: %s",
-            pkgName, key, isInitial, pkg[key].toPrettyString);
 
         if (isInitial)
             return "⏳ building...";
@@ -795,7 +794,6 @@ string getStatus(JSONValue pkg, string key, bool isInitial)
     }
     else
     {
-        infof("Package %s missing key %s", pkgName, key);
         return "🚫 not supported";
     }
 }
