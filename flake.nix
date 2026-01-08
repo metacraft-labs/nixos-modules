@@ -153,7 +153,7 @@
     nix2container = {
       url = "github:nlewo/nix2container";
       inputs = {
-        nixpkgs.follows = "nixpkgs";
+        nixpkgs.follows = "nixpkgs-unstable";
       };
     };
 
