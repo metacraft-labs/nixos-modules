@@ -20,7 +20,7 @@ import mcl.utils.json : toJSON;
 import mcl.utils.nix : nix;
 import mcl.utils.path : createResultDirs, resultDir, rootDir;
 import mcl.utils.string : enumToString, writeRecordAsTable;
-import mcl.commands.ci_matrix : SupportedSystem, currentSystem, ci_matrix, CiMatrixArgs, CiMatrixBaseArgs;
+import mcl.commands.ci_matrix : NixSystem, currentSystem, ci_matrix, CiMatrixArgs, CiMatrixBaseArgs;
 
 @(Command("shard-matrix", "shard_matrix")
     .Description("Generate a shard matrix for a flake"))
@@ -70,7 +70,7 @@ struct ShardMatrix
     Shard[] include;
 }
 
-ShardMatrix generateShardMatrix(string flakeRef = ".", Nullable!SupportedSystem system = Nullable!SupportedSystem.init)
+ShardMatrix generateShardMatrix(string flakeRef = ".", Nullable!NixSystem system = Nullable!NixSystem.init)
 {
     import std.path : isValidPath, absolutePath, buildNormalizedPath;
 
@@ -121,7 +121,7 @@ unittest
     }
 
     {
-        auto shards = generateShardMatrix(flakeRef, nullable(SupportedSystem.x86_64_linux));
+        auto shards = generateShardMatrix(flakeRef, nullable(NixSystem.x86_64_linux));
         assert(shards.include.length == 11);
         assert(shards.include[0] == Shard(flakeAttrPath: "mcl.shard-matrix.result.shardsPerSystem.x86_64_linux.shard-00", filename: "matrix-pre-shard-00.json"));
     }
@@ -129,7 +129,7 @@ unittest
     {
         // `aarch64_linux` is not in `flake.mcl.shard-matrix.systemsToBuild`,
         // so no shards should be generated
-        auto shards = generateShardMatrix(flakeRef, nullable(SupportedSystem.aarch64_linux));
+        auto shards = generateShardMatrix(flakeRef, nullable(NixSystem.aarch64_linux));
         assert(shards.include == []);
     }
 }
@@ -144,7 +144,7 @@ unittest
     assert(shards.include == []);
 }
 
-ShardMatrix splitToShards(int shardCount, Nullable!SupportedSystem system = Nullable!SupportedSystem.init)
+ShardMatrix splitToShards(int shardCount, Nullable!NixSystem system = Nullable!NixSystem.init)
 {
     import core.internal.string : numDigits;
     const padWidth = shardCount.numDigits;

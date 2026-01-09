@@ -11,7 +11,7 @@ import std.stdio : writefln, writeln, write;
 
 import argparse : Command, Description;
 
-import mcl.commands.ci_matrix: nixEvalJobs, SupportedSystem, CiMatrixBaseArgs;
+import mcl.commands.ci_matrix: nixEvalJobs, NixSystem, CiMatrixBaseArgs;
 import mcl.commands.shard_matrix: generateShardMatrix;
 import mcl.utils.path : rootDir, createResultDirs;
 import mcl.utils.process : execute, spawnProcessInline;
