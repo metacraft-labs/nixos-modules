@@ -335,7 +335,7 @@ Package[] checkCacheStatus(T)(Package[] packages, auto ref T args)
         if (packages[idx].cachedAt.empty)
         {
             packages[idx].cachedAt ~= args.binaryCacheUrls
-                .filter!(url => isPackageCached(packages[idx], url, cachixAuthHeaders))
+                .filter!(url => isCached(packages[idx], url, cachixAuthHeaders))
                 .map!(url => packages[idx].getNarInfoUrl(url))
                 .array;
         }
@@ -865,7 +865,7 @@ void printTableForCacheStatus(T)(Package[] packages, auto ref T args)
     outputPath.append(fullMatrixLine);
 }
 
-bool isPackageCached(in Package pkg, string binaryCacheHttpEndpoint, in string[string] httpHeaders = null)
+bool isCached(in Package pkg, string binaryCacheHttpEndpoint, in string[string] httpHeaders = null)
 {
     import std.algorithm : canFind;
     import std.string : lineSplitter;
@@ -891,7 +891,7 @@ bool isPackageCached(in Package pkg, string binaryCacheHttpEndpoint, in string[s
     }
 }
 
-@("isPackageCached")
+@("isCached")
 unittest
 {
     const nixosCacheEndpoint = "https://cache.nixos.org/";
@@ -902,13 +902,13 @@ unittest
         output: storePath,
     );
 
-    assert(testPackage.isPackageCached(
+    assert(testPackage.isCached(
         binaryCacheHttpEndpoint: nixosCacheEndpoint,
         httpHeaders: string[string].init,
     ));
 
     testPackage.output ~= "non-existant";
-    assert(!testPackage.isPackageCached(
+    assert(!testPackage.isCached(
         binaryCacheHttpEndpoint: nixosCacheEndpoint,
         httpHeaders: string[string].init,
     ));
