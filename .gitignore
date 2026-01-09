@@ -16,6 +16,7 @@ result-*
 comment.md
 matrix-*.json
 shardMatrix.json
+precalc-matrix.json
 
 .vscode
 
