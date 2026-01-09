@@ -84,7 +84,7 @@ enum GitHubOS
     @StringRepresentation("macos-14") macos14,
 }
 
-enum SupportedSystem
+enum NixSystem
 {
     @StringRepresentation("x86_64-linux") x86_64_linux,
 
@@ -98,18 +98,18 @@ enum SupportedSystem
 version (linux)
 {
     version (X86_64)
-        enum currentSystem = SupportedSystem.x86_64_linux;
+        enum currentSystem = NixSystem.x86_64_linux;
     else version (AArch64)
-        enum currentSystem = SupportedSystem.aarch64_linux;
+        enum currentSystem = NixSystem.aarch64_linux;
     else
         static assert (0, "Unsupported architecture");
 }
 else version (OSX)
 {
     version (X86_64)
-        enum currentSystem = SupportedSystem.x86_64_darwin;
+        enum currentSystem = NixSystem.x86_64_darwin;
     else version (AArch64)
-        enum currentSystem = SupportedSystem.aarch64_darwin;
+        enum currentSystem = NixSystem.aarch64_darwin;
     else
         static assert (0, "Unsupported architecture");
 }
@@ -146,7 +146,7 @@ struct Package
     string attrPath;
     string[] cachedAt = [];
     GitHubOS os;
-    SupportedSystem system;
+    NixSystem system;
     string derivation;
     string output;
 
@@ -163,8 +163,8 @@ struct Package
 version (unittest)
 {
     static immutable Package[] testPackageArray = [
-        Package("testPackage", false, "testPackagePath", ["https://testPackage.com"], GitHubOS.ubuntuLatest, SupportedSystem.x86_64_linux, "testPackageOutput"),
-        Package("testPackage2", true, "testPackagePath2", [], GitHubOS.macos14, SupportedSystem.aarch64_darwin, "testPackageOutput2")
+        Package("testPackage", false, "testPackagePath", ["https://testPackage.com"], GitHubOS.ubuntuLatest, NixSystem.x86_64_linux, "testPackageOutput"),
+        Package("testPackage2", true, "testPackagePath2", [], GitHubOS.macos14, NixSystem.aarch64_darwin, "testPackageOutput2")
     ];
 }
 
@@ -315,7 +315,7 @@ export int print_table(PrintTableArgs args)
     return 0;
 }
 
-string flakeAttr(string prefix, SupportedSystem system, string[] attrs...)
+string flakeAttr(string prefix, NixSystem system, string[] attrs...)
 {
     return [prefix, system.enumToString].chain(attrs).join(".");
 }
@@ -357,17 +357,17 @@ Package[] checkCacheStatus(T)(Package[] packages, auto ref T args)
 
 
 
-GitHubOS systemToGHPlatform(SupportedSystem os)
+GitHubOS systemToGHPlatform(NixSystem os)
 {
-    return os == SupportedSystem.x86_64_linux ? GitHubOS.selfHosted : GitHubOS.macos14;
+    return os == NixSystem.x86_64_linux ? GitHubOS.selfHosted : GitHubOS.macos14;
 }
 
 @("systemToGHPlatform")
 unittest
 {
-    assert(systemToGHPlatform(SupportedSystem.x86_64_linux) == GitHubOS.selfHosted);
-    assert(systemToGHPlatform(SupportedSystem.x86_64_darwin) == GitHubOS.macos14);
-    assert(systemToGHPlatform(SupportedSystem.aarch64_darwin) == GitHubOS.macos14);
+    assert(systemToGHPlatform(NixSystem.x86_64_linux) == GitHubOS.selfHosted);
+    assert(systemToGHPlatform(NixSystem.x86_64_darwin) == GitHubOS.macos14);
+    assert(systemToGHPlatform(NixSystem.aarch64_darwin) == GitHubOS.macos14);
 }
 
 static immutable string[] uselessWarnings =
@@ -395,7 +395,7 @@ Package packageFromNixEvalJobsJson(
     string flakeAttrPath,
 )
 {
-    auto sys = json["system"].fromJSON!SupportedSystem;
+    auto sys = json["system"].fromJSON!NixSystem;
 
     // WARN: The `isCached` property coming from `nix-eval-jobs` is
     //       insufficient as it just says if the package is cached
@@ -444,7 +444,7 @@ unittest
             name: "home/bean-desktop",
             allowedToFail: false,
             attrPath: "legacyPackages.x86_64-linux.mcl.matrix.shards.0.home/bean-desktop",
-            system: SupportedSystem.x86_64_linux,
+            system: NixSystem.x86_64_linux,
             os: GitHubOS.selfHosted,
             derivation: "/nix/store/jp7qgm9mgikksypzljrbhmxa31xmmq1x-home-manager-generation.drv",
             output: "/nix/store/30qrziyj0vbg6n43bbh08ql0xbnsy76d-home-manager-generation",
@@ -539,7 +539,7 @@ Package[] nixEvalJobs(T)(string flakeAttrPath, auto ref T args)
     return result;
 }
 
-SupportedSystem[] getSupportedSystems(string flakeRef = ".")
+NixSystem[] getSupportedSystems(string flakeRef = ".")
 {
     import std.path : isValidPath, absolutePath, buildNormalizedPath;
 
@@ -553,7 +553,7 @@ SupportedSystem[] getSupportedSystems(string flakeRef = ".")
             `builtins.attrNames`
         ]))
         .ifThrown(JSONValue([ currentSystem.enumToString ]))
-        .fromJSON!(SupportedSystem[]);
+        .fromJSON!(NixSystem[]);
 }
 
 Package[] nixEvalForAllSystems(T)(auto ref T args)

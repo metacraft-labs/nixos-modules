@@ -14,7 +14,7 @@ import mcl.utils.cachix : DeploySpec, createMachineDeploySpec;
 import mcl.utils.tui : bold;
 import mcl.utils.json : tryDeserializeFromJsonFile, writeJsonFile;
 
-import mcl.commands.ci_matrix : nixEvalJobs, SupportedSystem,CiMatrixBaseArgs;
+import mcl.commands.ci_matrix : nixEvalJobs, NixSystem,CiMatrixBaseArgs;
 
 
 @(Command("deploy-spec", "deploy_spec")
