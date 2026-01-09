@@ -1,6 +1,5 @@
 module mcl.utils.json;
-import mcl.utils.test;
-import mcl.utils.string;
+
 import std.traits: isNumeric, isArray, isSomeChar, EnumMembers, ForeachType, isBoolean, isAssociativeArray;
 import std.json: parseJSON, JSONValue, JSONOptions, JSONType;
 import std.conv: to;
@@ -12,6 +11,9 @@ import std.datetime: SysTime;
 import std.sumtype: SumType, isSumType;
 import std.typecons: Ternary;
 import core.stdc.string: strlen;
+
+import mcl.utils.test;
+import mcl.utils.string: enumToString, enumFromString, StringRepresentation;
 
 bool tryDeserializeJson(T)(in JSONValue value, out T result)
 {
@@ -31,12 +33,7 @@ T fromJSON(T)(in JSONValue value) {
         return value;
     }
     else static if (is(T == enum)) {
-        switch (value.get!string) {
-            static foreach (variant; EnumMembers!T)
-                case variant.enumToString: return variant;
-            default:
-                assert(0, "Expected JSON string, actual: " ~ value.toPrettyString() ~ " while deserializing type " ~ T.stringof);
-        }
+        return value.get!string.enumFromString!T;
     }
     else static if (is(T == bool) || is(T == string) || isSomeChar!T || isNumeric!T) {
         return value.get!T;

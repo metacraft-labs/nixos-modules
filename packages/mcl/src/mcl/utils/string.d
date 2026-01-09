@@ -1,6 +1,5 @@
 module mcl.utils.string;
 
-import mcl.utils.test;
 import std.conv : to;
 import std.exception : assertThrown;
 
@@ -139,6 +138,46 @@ unittest
     assert(enumToString(TestEnumWithRepr.a) == "field1");
     assert(enumToString(TestEnumWithRepr.b) == "field_2");
     assert(enumToString(TestEnumWithRepr.c) == "field-3");
+}
+
+E enumFromString(E)(in string value) if (is(E == enum))
+{
+    import std.traits : EnumMembers;
+
+    switch (value) {
+        static foreach (variant; EnumMembers!E)
+            case variant.enumToString: return variant;
+        default:
+            assert(0, "Expected JSON string, actual: " ~ value ~ " while deserializing type " ~ E.stringof);
+    }
+}
+
+@("enumFromString")
+unittest
+{
+    enum TestEnum
+    {
+        a1,
+        b2,
+        c3
+    }
+
+    assert(enumFromString!TestEnum("a1") == TestEnum.a1);
+    assert(enumFromString!TestEnum("b2") == TestEnum.b2);
+    assert(enumFromString!TestEnum("c3") == TestEnum.c3);
+
+    enum TestEnumWithRepr
+    {
+        @StringRepresentation("field1") a,
+        @StringRepresentation("field_2") b,
+        @StringRepresentation("field-3") c
+    }
+
+    assert(enumFromString!TestEnumWithRepr("field1") == TestEnumWithRepr.a);
+    assert(enumFromString!TestEnumWithRepr("field_2") == TestEnumWithRepr.b);
+    assert(enumFromString!TestEnumWithRepr("field-3") == TestEnumWithRepr.c);
+
+    assertThrown!Error(enumFromString!TestEnum("invalid"));
 }
 
 enum size_t getMaxEnumMemberNameLength(E) = ()
