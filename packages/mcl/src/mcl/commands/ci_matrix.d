@@ -7,7 +7,7 @@ import std.algorithm : map, filter, reduce, chunkBy, find, any, sort, startsWith
 import std.file : write, readText, dirEntries, SpanMode, append;
 import std.range : array, enumerate, empty, front, indexed, iota, join, chain, split;
 import std.exception : ifThrown;
-import std.conv : to;
+import std.conv : to, text;
 import std.json : JSONValue, parseJSON, JSONOptions, JSONType;
 import std.regex : matchFirst;
 import core.cpuid : threadsPerCPU;
@@ -325,11 +325,27 @@ Package[] checkCacheStatus(T)(Package[] packages, auto ref T args)
 {
     import std.array : appender;
     import std.parallelism : parallel;
+    import mcl.utils.tui : supportsOscLinks;
+
+    string formatCachedAtLink(size_t index, string url, bool useOscLinks)
+    {
+        return useOscLinks
+            ? i"\033]8;;$(url)\033\\<$(index)>\033]8;;\033\\".text
+            : url;
+    }
+
+    struct Output {
+        string ok;
+        @MaxWidth(3) string at;
+        @MaxWidth(50) string attr;
+        @MaxWidth(80) string output;
+    }
 
     immutable string[string] cachixAuthHeaders = [
         "Authorization": "Bearer " ~ args.cachixAuthToken
     ];
 
+    const useOscLinks = supportsOscLinks();
     foreach (ref pkg; packages.parallel) {
         // Skip cache check if already has cached URLs
         if (pkg.cachedAt.empty)
@@ -340,16 +356,15 @@ Package[] checkCacheStatus(T)(Package[] packages, auto ref T args)
                 .array;
         }
 
-        static struct Output { string ok, name, storePath, cachedAt; }
-        writeRecordAsTable(
-            Output(
-                ok: !pkg.cachedAt.empty ? "✅" : "❌",
-                name: pkg.name,
-                storePath: pkg.output,
-                cachedAt: pkg.cachedAt.join(", "),
-            ),
-            stderr.lockingTextWriter,
-        );
+        Output(
+            ok: !pkg.cachedAt.empty ? "✅" : "❌",
+            at: pkg.cachedAt
+                .enumerate
+                .map!(t => formatCachedAtLink(t.index, t.value, useOscLinks))
+                .join(", "),
+            attr: pkg.attrPath,
+            output: pkg.output,
+        ).writeRecordAsTable(stderr.lockingTextWriter);
     }
 
     return packages;
@@ -507,20 +522,6 @@ Package[] nixEvalJobs(T)(string flakeAttrPath, auto ref T args)
         pkg = checkCacheStatus([pkg], args)[0];
 
         result ~= pkg;
-
-        struct Output {
-            bool isCached;
-            GitHubOS os;
-            @MaxWidth(50) string attr;
-            @MaxWidth(80) string output;
-        }
-
-        Output(
-            isCached: !pkg.cachedAt.empty,
-            os: pkg.os,
-            attr: pkg.attrPath,
-            output: pkg.output
-        ).writeRecordAsTable(stderr.lockingTextWriter);
 
         return errorsReported;
     })(false);
