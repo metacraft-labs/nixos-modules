@@ -74,10 +74,16 @@ T fromJSON(T)(in JSONValue value) {
         }
         return result;
     }
-    else static if (is(immutable T == immutable V[K], V, K)) {
+    else static if (is(T == V[K], V, K)) {
         V[K] result;
-        foreach (key, val; value.object)
-            result[key] = val.fromJSON!V;
+        foreach (key, val; value.object) {
+            static if (is(K == enum)) {
+                result[key.enumFromString!K] = val.fromJSON!V;
+            } else {
+                static assert(is(K == string), "Associated arrays can only be indexed by strings (because JSON)");
+                result[key] = val.fromJSON!V;
+            }
+        }
         return result;
     }
     else {
@@ -192,6 +198,24 @@ unittest {
         ];
 
         assert(json.fromJSON!Type == expectedValue);
+    }
+
+    {
+        enum Kind
+        {
+            @StringRepresentation("first-kind") first,
+            second
+        }
+
+        auto json = parseJSON(`{
+            "first-kind": 1,
+            "second": 2
+        }`);
+
+        assert(json.fromJSON!(int[Kind]) == [
+            Kind.first: 1,
+            Kind.second: 2
+        ]);
     }
 }
 
