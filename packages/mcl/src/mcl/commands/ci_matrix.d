@@ -330,23 +330,23 @@ Package[] checkCacheStatus(T)(Package[] packages, auto ref T args)
         "Authorization": "Bearer " ~ args.cachixAuthToken
     ];
 
-    foreach (idx; packages.length.iota.parallel) {
+    foreach (ref pkg; packages.parallel) {
         // Skip cache check if already has cached URLs
-        if (packages[idx].cachedAt.empty)
+        if (pkg.cachedAt.empty)
         {
-            packages[idx].cachedAt ~= args.binaryCacheUrls
-                .filter!(url => isCached(packages[idx], url, cachixAuthHeaders))
-                .map!(url => packages[idx].getNarInfoUrl(url))
+            pkg.cachedAt ~= args.binaryCacheUrls
+                .filter!(url => pkg.isCached(url, cachixAuthHeaders))
+                .map!(url => pkg.getNarInfoUrl(url))
                 .array;
         }
 
         static struct Output { string ok, name, storePath, cachedAt; }
         writeRecordAsTable(
             Output(
-                ok: !packages[idx].cachedAt.empty ? "✅" : "❌",
-                name: packages[idx].name,
-                storePath: packages[idx].output,
-                cachedAt: packages[idx].cachedAt.join(", "),
+                ok: !pkg.cachedAt.empty ? "✅" : "❌",
+                name: pkg.name,
+                storePath: pkg.output,
+                cachedAt: pkg.cachedAt.join(", "),
             ),
             stderr.lockingTextWriter,
         );
