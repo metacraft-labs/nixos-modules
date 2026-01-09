@@ -139,30 +139,6 @@ unittest
     assert(getGHOS("crazyos-inator-2000") == GitHubOS.selfHosted);
 }
 
-SupportedSystem getSystem(string system)
-{
-    switch (system)
-    {
-    case "x86_64-linux":
-        return SupportedSystem.x86_64_linux;
-    case "x86_64-darwin":
-        return SupportedSystem.x86_64_darwin;
-    case "aarch64-darwin":
-        return SupportedSystem.aarch64_darwin;
-    default:
-        return SupportedSystem.x86_64_linux;
-    }
-}
-
-@("getSystem")
-unittest
-{
-    assert(getSystem("x86_64-linux") == SupportedSystem.x86_64_linux);
-    assert(getSystem("x86_64-darwin") == SupportedSystem.x86_64_darwin);
-    assert(getSystem("aarch64-darwin") == SupportedSystem.aarch64_darwin);
-    assert(getSystem("bender-bending-rodriguez-os") == SupportedSystem.x86_64_linux);
-}
-
 struct Package
 {
     string name;
@@ -419,16 +395,18 @@ Package packageFromNixEvalJobsJson(
     string flakeAttrPath,
 )
 {
+    auto sys = json["system"].fromJSON!SupportedSystem;
+
+    // WARN: The `isCached` property coming from `nix-eval-jobs` is
+    //       insufficient as it just says if the package is cached
+    //       "somewhere" (including in the local store)
     return Package(
         name: json["attr"].str,
         allowedToFail: false,
         attrPath: flakeAttrPath ~ "." ~ json["attr"].str,
-        // WARN: The `isCached` property coming from `nix-eval-jobs` is
-        //       insufficient as it just says if the package is cached
-        //       "somewhere" (including in the local store)
         cachedAt: [],
-        system: getSystem(json["system"].str),
-        os: systemToGHPlatform(getSystem(json["system"].str)),
+        system: sys,
+        os: systemToGHPlatform(sys),
         derivation: json["drvPath"].str,
         output: json["outputs"]["out"].str,
     );
@@ -569,14 +547,13 @@ SupportedSystem[] getSupportedSystems(string flakeRef = ".")
         flakeRef = flakeRef.absolutePath.buildNormalizedPath;
     }
 
-    const json = nix.eval!JSONValue(flakeRef ~ `#mcl.shard-matrix.systemsToBuild`)
+    return nix.eval!JSONValue(flakeRef ~ `#mcl.shard-matrix.systemsToBuild`)
         .ifThrown(nix.eval!JSONValue(flakeRef ~ `#legacyPackages`, [
             "--apply",
             `builtins.attrNames`
         ]))
-        .ifThrown(JSONValue([ currentSystem.enumToString ]));
-
-    return json.array.map!(system => getSystem(system.str)).array;
+        .ifThrown(JSONValue([ currentSystem.enumToString ]))
+        .fromJSON!(SupportedSystem[]);
 }
 
 Package[] nixEvalForAllSystems(T)(auto ref T args)
