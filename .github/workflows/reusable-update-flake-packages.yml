@@ -6,7 +6,7 @@ on:
     inputs:
       runner:
         description: 'JSON-encoded list of runner labels'
-        default: '["self-hosted"]'
+        default: '["self-hosted", "nixos", "x86-64-v2", "bare-metal"]'
         required: false
         type: string
 
