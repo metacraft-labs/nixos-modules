@@ -20,8 +20,6 @@ jobs:
   lint:
     uses: ./.github/workflows/reusable-lint.yml
     secrets: inherit
-    with:
-      runner: '["self-hosted", "Linux", "x86-64-v2"]'
 
   test-mcl:
     strategy:
@@ -30,7 +28,7 @@ jobs:
       # on github-hosted runners
       matrix:
         include:
-          - runner: self-hosted
+          - runner: ['self-hosted', 'nixos', 'x86-64-v2', 'bare-metal']
             nix-version: ''
           - runner: ubuntu-latest
             nix-version: 2.28.5
