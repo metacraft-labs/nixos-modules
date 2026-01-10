@@ -208,7 +208,7 @@ jobs:
         )}}
 
     name: ${{ matrix.name }} | ${{ matrix.system }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.ghRunner }}
     continue-on-error: ${{ matrix.allowedToFail }}
 
     steps:
