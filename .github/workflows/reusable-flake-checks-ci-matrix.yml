@@ -190,8 +190,15 @@ jobs:
 
   build:
     needs: [shard-matrix, merge-matrices]
-    if: needs.shard-matrix.outputs.build_matrix ||
-      needs.merge-matrices.outputs.build_matrix
+    if: >-
+      always() &&
+      (
+        needs.shard-matrix.outputs.build_matrix ||
+        (
+          needs.merge-matrices.result == 'success' &&
+          needs.merge-matrices.outputs.build_matrix
+        )
+      )
     strategy:
       fail-fast: false
       matrix: >-
