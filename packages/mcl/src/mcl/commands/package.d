@@ -11,6 +11,7 @@ private enum commandModulesToExport =
     "mcl.commands.host_info" : ["host_info"],
     "mcl.commands.machine" : ["machine"],
     "mcl.commands.config" : ["config"],
+    "mcl.commands.hosts" : ["hosts"],
 ];
 
 template ImportAll(alias aa)
