@@ -1,8 +1,5 @@
 module mcl.commands.host_info;
 
-import cpuid.x86_any;
-import cpuid.unified;
-import core.cpuid;
 import std.system;
 
 import std.stdio : writeln;
@@ -17,13 +14,12 @@ import std.process : ProcessPipes, environment;
 import std.bitmanip : peek;
 import std.format : format;
 import std.system : nativeEndian = endian;
-import core.stdc.string : strlen;
 
 import argparse : Command, Description, NamedArgument, Placeholder, EnvFallback;
 
 import mcl.utils.json : toJSON;
 import mcl.utils.process : execute, isRoot;
-import mcl.utils.number : humanReadableSize;
+import mcl.utils.number : humanReadableSize, roundToPowerOf2;
 import mcl.utils.array : uniqIfSame;
 import mcl.utils.nix : Literal;
 import mcl.utils.coda : CodaApiClient, RowValues, CodaCell;
@@ -157,16 +153,16 @@ void uploadHostInfo(CodaApiClient coda, const(Info) info)
     ]);
     coda.upsertRow(docId, cpuTableId, cpuValues);
 
+    auto mem = info.hardwareInfo.memoryInfo;
     auto memoryValues = RowValues([
         CodaCell("Host Name", info.softwareInfo.hostname),
-        CodaCell("Vendor", info.hardwareInfo.memoryInfo.vendor),
-        CodaCell("Part Number", info.hardwareInfo.memoryInfo.partNumber),
-        CodaCell("Serial", info.hardwareInfo.memoryInfo.serial),
-        CodaCell("Generation", info.hardwareInfo.memoryInfo.type),
-        CodaCell("Slots", info.hardwareInfo.memoryInfo.slots == 0 ? "Soldered" : info.hardwareInfo.memoryInfo
-                .count.to!string ~ "/" ~ info.hardwareInfo.memoryInfo.slots.to!string),
-        CodaCell("Total", info.hardwareInfo.memoryInfo.total),
-        CodaCell("Speed", info.hardwareInfo.memoryInfo.speed),
+        CodaCell("Vendor", mem.modules.map!(m => m.vendor).array.uniqIfSame.join("/")),
+        CodaCell("Part Number", mem.modules.map!(m => m.partNumber).array.uniqIfSame.join("/")),
+        CodaCell("Serial", mem.modules.map!(m => m.serial).array.uniqIfSame.join("/")),
+        CodaCell("Generation", mem.type),
+        CodaCell("Slots", mem.slots == 0 ? "Soldered" : mem.count.to!string ~ "/" ~ mem.slots.to!string),
+        CodaCell("Total", mem.totalGiB.to!string ~ " GiB"),
+        CodaCell("Speed", mem.modules.map!(m => m.speed).array.uniqIfSame.join("/")),
     ]);
     coda.upsertRow(docId, memoryTableId, memoryValues);
 
@@ -254,8 +250,8 @@ ArchitectureInfo getArchitectureInfo()
 
     version (linux)
     {
-        r.addressSizes = cpuinfo["address sizes"];
-        r.flags = cpuinfo["flags"].split(" ").map!(a => a.strip).join(", ");
+        r.addressSizes = cpuinfo.get("address sizes", "");
+        r.flags = cpuinfo.get("flags", "").split(" ").map!(a => a.strip).join(", ");
     }
     version (OSX)
     {
@@ -355,18 +351,14 @@ ProcessorInfo getProcessorInfo()
         }
         r.architectureInfo = getArchitectureInfo();
     }
-    else
+    else version (linux)
     {
-        version (X86)
-        {
-            r.vendor = cpuid.x86_any.vendor;
-            char[48] modelCharArr;
-            cpuid.x86_any.brand(modelCharArr);
-            r.model = modelCharArr.idup[0 .. (strlen(modelCharArr.ptr) - 1)];
-        }
-        r.cpus = cpuid.unified.cpus();
-        r.cores = [r.cpus * cpuid.unified.cores()];
-        r.threads = [cpuid.unified.threads()];
+        // Get CPU info from /proc/cpuinfo
+        r.vendor = cpuinfo.get("vendor_id", "");
+        r.model = cpuinfo.get("model name", "");
+        r.cores = [cpuinfo.get("cpu cores", "1").to!size_t];
+        r.threads = [cpuinfo.get("siblings", r.cores[0].to!string).to!size_t];
+        r.cpus = 1; // Default to 1 physical CPU
         r.architectureInfo = getArchitectureInfo();
 
         if (isRoot)
@@ -538,18 +530,26 @@ string getDistributionVersion()
     }
 }
 
+struct MemoryModule
+{
+    string vendor;
+    string partNumber;
+    string serial;
+    string size;
+    string speed;
+    string dataWidth;
+    string totalWidth;
+    string errorCorrectionType;
+}
+
 struct MemoryInfo
 {
-    string total;
-    int totalGB;
-    size_t count;
-    size_t slots;
-    string type = "ROOT PERMISSIONS REQUIRED";
-    bool[] ecc;
-    string speed = "ROOT PERMISSIONS REQUIRED";
-    string vendor = "ROOT PERMISSIONS REQUIRED";
-    string partNumber = "ROOT PERMISSIONS REQUIRED";
-    string serial = "ROOT PERMISSIONS REQUIRED";
+    ushort totalGiB;
+    ushort count;
+    ushort slots;
+    bool ecc;
+    string type;
+    MemoryModule[] modules;
 }
 
 string[] getFromDmi(string[] dmi, string key)
@@ -567,53 +567,118 @@ MemoryInfo getMemoryInfo()
     {
         auto memInfo = execute!JSONValue("system_profiler SPMemoryDataType -json", false);
         auto mem = memInfo["SPMemoryDataType"].array[0];
-        // Get memory size from sysctl for accuracy
         auto memTotal = execute("sysctl -n hw.memsize", false).to!size_t;
-        r.total = memTotal.humanReadableSize;
-        r.totalGB = cast(int)(memTotal / (1024 * 1024 * 1024));
+        r.totalGiB = (memTotal / (1024 * 1024 * 1024)).to!ushort;
+        r.count = 1;
+        r.slots = 0;
+        r.ecc = false;
         r.type = mem["dimm_type"].str;
-        r.vendor = mem["dimm_manufacturer"].str;
-        r.count = 1; // Apple Silicon has unified memory
-        r.slots = 0; // Soldered memory
-        r.speed = "Unified Memory";
-        r.partNumber = "";
-        r.serial = "";
+        r.modules ~= MemoryModule(
+            vendor: mem["dimm_manufacturer"].str,
+            size: memTotal.humanReadableSize,
+            speed: "Unified Memory",
+        );
     }
     else
     {
-        auto memTotal = (meminfo["MemTotal"].split(" ")[0].to!size_t) * 1024;
-        r.total = memTotal.humanReadableSize;
-        r.totalGB = r.total.split(" ")[0].to!int;
+        auto memTotal = meminfo.get("MemTotal", "0 kB").split(" ")[0].to!ulong * 1024;
+        // /proc/meminfo reports usable RAM, round up to installed RAM
+        r.totalGiB = roundToPowerOf2((memTotal / (1024 * 1024 * 1024)).to!int).to!ushort;
+
+        // Check ECC via EDAC (doesn't require root)
+        r.ecc = exists("/sys/devices/system/edac/mc/mc0");
+
         if (isRoot)
         {
-            string[] dmi = execute("dmidecode -t memory", false).split("\n");
-            r.type = dmi.getFromDmi("Type:").uniqIfSame.join("/");
-            r.count = dmi.getFromDmi("Type:").length;
-            r.slots = dmi.getFromDmi("Memory Device")
-                .filter!(a => a.indexOf("DMI type 17") != -1).array.length;
-            r.totalGB = dmi.getFromDmi("Size:").map!(a => a.split(" ")[0])
-                .array
-                .filter!(isNumeric)
-                .array
+            auto dmiOutput = execute("dmidecode -t memory", false);
+            auto dmiResult = parseDmiMemoryModules(dmiOutput);
+            r.modules = dmiResult.modules;
+            r.type = dmiResult.type;
+            r.slots = dmiOutput.split("\n")
+                .filter!(a => a.indexOf("DMI type 17") != -1)
+                .array.length.to!ushort;
+            r.count = r.modules.length.to!ushort;
+            r.totalGiB = r.modules
+                .map!(m => m.size.split(" ")[0])
+                .filter!isNumeric
                 .map!(to!int)
-                .array
-                .sum();
-            r.total = r.totalGB.to!string ~ " GB (" ~ dmi.getFromDmi("Size:")
-                .map!(a => a.split(" ")[0]).join("/") ~ ")";
-            auto totalWidth = dmi.getFromDmi("Total Width");
-            auto dataWidth = dmi.getFromDmi("Data Width");
-            foreach (i, width; totalWidth)
+                .sum.to!ushort;
+        }
+    }
+    return r;
+}
+
+struct DmiMemoryResult
+{
+    MemoryModule[] modules;
+    string type;
+}
+
+DmiMemoryResult parseDmiMemoryModules(string dmiOutput)
+{
+    MemoryModule[] modules;
+    MemoryModule current;
+    string currentType;
+    string resultType;
+    bool inDevice = false;
+
+    foreach (line; dmiOutput.split("\n"))
+    {
+        auto stripped = line.strip;
+
+        if (stripped.startsWith("Memory Device"))
+        {
+            if (inDevice && current.size != "" && current.size != "No Module Installed")
             {
-                r.ecc ~= dataWidth[i] != width;
+                modules ~= current;
+                if (resultType == "")
+                    resultType = currentType;
+                else
+                    assert(resultType == currentType, "Memory modules have different types: " ~ resultType ~ " vs " ~ currentType);
             }
-            r.speed = dmi.getFromDmi("Speed:").uniqIfSame.join("/");
-            r.vendor = dmi.getFromDmi("Manufacturer:").uniqIfSame.join("/");
-            r.partNumber = dmi.getFromDmi("Part Number:").uniqIfSame.join("/");
-            r.serial = dmi.getFromDmi("Serial Number:").uniqIfSame.join("/");
+            current = MemoryModule.init;
+            currentType = "";
+            inDevice = true;
+            continue;
+        }
+
+        if (!inDevice || stripped.indexOf(":") == -1)
+            continue;
+
+        auto parts = stripped.split(":");
+        if (parts.length < 2)
+            continue;
+
+        auto key = parts[0].strip;
+        auto value = parts[1].strip;
+        if (value == "Unknown" || value == "Not Specified" || value == "None")
+            value = "";
+
+        switch (key)
+        {
+            case "Size": current.size = value; break;
+            case "Type": currentType = value; break;
+            case "Speed": current.speed = value; break;
+            case "Manufacturer": current.vendor = value; break;
+            case "Part Number": current.partNumber = value; break;
+            case "Serial Number": current.serial = value; break;
+            case "Data Width": current.dataWidth = value; break;
+            case "Total Width": current.totalWidth = value; break;
+            case "Error Correction Type": current.errorCorrectionType = value; break;
+            default: break;
         }
     }
 
-    return r;
+    if (inDevice && current.size != "" && current.size != "No Module Installed")
+    {
+        modules ~= current;
+        if (resultType == "")
+            resultType = currentType;
+        else
+            assert(resultType == currentType, "Memory modules have different types: " ~ resultType ~ " vs " ~ currentType);
+    }
+
+    return DmiMemoryResult(modules, resultType);
 }
 
 struct Partition
