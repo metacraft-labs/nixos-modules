@@ -4,7 +4,7 @@ import std.system;
 
 import std.stdio : writeln;
 import std.conv : to;
-import std.string : strip, indexOf, isNumeric;
+import std.string : strip, indexOf, isNumeric, toUpper;
 import std.array : split, join, array, replace;
 import std.algorithm : map, filter, startsWith, joiner, any, sum, find;
 import std.file : exists, write, read, readText, readLink, dirEntries, SpanMode;
@@ -15,9 +15,9 @@ import std.bitmanip : peek;
 import std.format : format;
 import std.system : nativeEndian = endian;
 
-import argparse : Command, Description, NamedArgument, Placeholder, EnvFallback;
+import argparse : Command, Description, NamedArgument, Placeholder, EnvFallback, SubCommand, Default, matchCmd;
 
-import mcl.utils.json : toJSON;
+import mcl.utils.json : toJSON, fromJSON;
 import mcl.utils.process : execute, isRoot;
 import mcl.utils.number : humanReadableSize, roundToPowerOf2;
 import mcl.utils.array : uniqIfSame;
@@ -52,7 +52,18 @@ string[string] getProcInfo(string fileOrData, bool file = true)
 
 @(Command("host-info", "host_info")
     .Description("Get information about the host machine"))
-struct HostInfoArgs {
+struct HostInfoArgs
+{
+    SubCommand!(
+        PartsArgs,
+        Default!ShowArgs
+    ) cmd;
+}
+
+@(Command("show")
+    .Description("Show full host information (default)"))
+struct ShowArgs
+{
     @(NamedArgument(["coda-api-token"])
         .Placeholder("token")
         .EnvFallback("CODA_API_TOKEN"))
@@ -63,7 +74,25 @@ struct HostInfoArgs {
     bool uploadToCoda = false;
 }
 
+@(Command("parts")
+    .Description("List purchasable hardware components for invoice matching"))
+struct PartsArgs
+{
+    @(NamedArgument(["input", "i"])
+        .Placeholder("FILE")
+        .Description("Process existing host-info JSON file instead of current machine"))
+    string inputFile;
+}
+
 export int host_info(HostInfoArgs args)
+{
+    return args.cmd.matchCmd!(
+        (ShowArgs a) => showHostInfo(a),
+        (PartsArgs a) => showParts(a)
+    );
+}
+
+int showHostInfo(ShowArgs args)
 {
     const hostInfo = gatherHostInfo();
 
@@ -86,6 +115,146 @@ export int host_info(HostInfoArgs args)
     }
 
     return 0;
+}
+
+// =============================================================================
+// Purchasable Parts - Data Structures
+// =============================================================================
+
+struct HostParts
+{
+    string hostname;
+    Part[] parts;
+}
+
+// Matches invoice CSV format: name, mark, model, sn
+struct Part
+{
+    string name;  // Category: CPU, MB, RAM, SSD, GPU
+    string mark;  // Manufacturer/brand
+    string model; // Product model
+    string sn;    // Serial number
+}
+
+// =============================================================================
+// Purchasable Parts - Implementation
+// =============================================================================
+
+int showParts(PartsArgs args)
+{
+    Info hostInfo;
+
+    if (args.inputFile)
+    {
+        if (!exists(args.inputFile))
+        {
+            writeln("Error: File not found: ", args.inputFile);
+            return 1;
+        }
+        auto jsonText = readText(args.inputFile);
+        auto json = parseJSON(jsonText);
+        hostInfo = json.fromJSON!Info;
+    }
+    else
+    {
+        hostInfo = gatherHostInfo();
+    }
+
+    extractParts(hostInfo)
+        .toJSON(true)
+        .toPrettyString(JSONOptions.doNotEscapeSlashes)
+        .writeln();
+
+    return 0;
+}
+
+HostParts extractParts(const(Info) info)
+{
+    auto hw = info.hardwareInfo;
+    Part[] parts;
+
+    // CPU
+    parts ~= Part(
+        name: "CPU",
+        mark: hw.processorInfo.vendor,
+        model: hw.processorInfo.model,
+        sn: "",
+    );
+
+    // Motherboard
+    parts ~= Part(
+        name: "MB",
+        mark: hw.motherboardInfo.vendor,
+        model: hw.motherboardInfo.model,
+        sn: hw.motherboardInfo.serial.cleanValue,
+    );
+
+    // RAM - use individual modules if available, otherwise fall back to aggregate
+    if (hw.memoryInfo.modules.length > 0)
+    {
+        foreach (mod; hw.memoryInfo.modules)
+        {
+            parts ~= Part(
+                name: "RAM",
+                mark: mod.vendor,
+                model: mod.partNumber,
+                sn: mod.serial,
+            );
+        }
+    }
+    else
+    {
+        // No detailed info available - add aggregate entry for review
+        // Round up to nearest power of 2 since /proc/meminfo reports usable, not installed RAM
+        parts ~= Part(
+            name: "RAM",
+            mark: "NEEDS REVIEW",
+            model: roundToPowerOf2(hw.memoryInfo.totalGiB).to!string ~ " GB",
+            sn: "",
+        );
+    }
+
+    // Storage devices
+    foreach (dev; hw.storageInfo.devices)
+    {
+        parts ~= Part(
+            name: dev.type == "disk" ? "SSD" : dev.type.toUpper,
+            mark: dev.vendor.cleanValue,
+            model: dev.model,
+            sn: dev.serial,
+        );
+    }
+
+    // GPU (discrete only)
+    if (hw.graphicsProcessorInfo.isDiscrete)
+    {
+        parts ~= Part(
+            name: "GPU",
+            mark: hw.graphicsProcessorInfo.vendor,
+            model: hw.graphicsProcessorInfo.model,
+            sn: "",
+        );
+    }
+
+    return HostParts(
+        hostname: info.softwareInfo.hostname,
+        parts: parts,
+    );
+}
+
+// Clean placeholder values that aren't useful for matching
+string cleanValue(string s)
+{
+    if (s == "ROOT PERMISSIONS REQUIRED" || s == "Unknown Vendor" ||
+        s == "Unknown" || s == "Not Specified" || s == "Missing Serial Number")
+        return "";
+    return s.strip;
+}
+
+bool isDiscrete(const(GraphicsProcessorInfo) gpu)
+{
+    return gpu.vendor != "" && gpu.model != "" &&
+        gpu.vram != "" && gpu.vram != "Unified Memory" && gpu.vram != "Unknown";
 }
 
 Info gatherHostInfo()
