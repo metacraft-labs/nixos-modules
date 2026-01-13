@@ -90,8 +90,8 @@ pkgs.buildDubPackage rec {
 
   postFixup = ''
     wrapProgram $out/bin/${pname} \
-      --set PATH "${lib.makeBinPath deps}" \
-      --set LD_LIBRARY_PATH "${lib.makeLibraryPath deps}"
+      --prefix PATH : "${lib.makeBinPath deps}" \
+      --prefix LD_LIBRARY_PATH : "${lib.makeLibraryPath deps}"
   '';
 
   meta = {
