@@ -18,3 +18,12 @@ string humanReadableSize(T)(T size) if (isNumeric!T)
     }
     return size.to!string ~ "B";
 }
+
+// Round up to nearest power of 2
+int roundToPowerOf2(int n)
+{
+    import core.bitop : bsr;
+    if (n <= 1) return 1;
+    auto highBit = bsr(n);
+    return (1 << highBit) == n ? n : 1 << (highBit + 1);
+}
