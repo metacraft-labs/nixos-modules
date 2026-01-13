@@ -270,7 +270,7 @@ void createMachine(CreateMachineArgs args, MachineType machineType, string machi
     hardwareConfiguration.boot.initrd.availableKernelModules ~= ["nvme", "xhci_pci", "usbhid", "usb_storage", "sd_mod"];
 
     // Disks
-    hardwareConfiguration.disko.DISKO.makeZfsPartitions.swapSizeGB = (info.hardwareInfo.memoryInfo.totalGB.to!double*1.5).to!int;
+    hardwareConfiguration.disko.DISKO.makeZfsPartitions.swapSizeGB = (info.hardwareInfo.memoryInfo.totalGiB.to!double*1.5).to!int;
     auto nvmeDevices = info.hardwareInfo.storageInfo.devices.filter!(a => a.dev.indexOf("nvme") != -1 || a.model.indexOf("SSD") != -1).array.map!(a => a.model.replace(" ", "_") ~ "_" ~ a.serial).array;
     string[] disks = (nvmeDevices.length == 1 ? nvmeDevices[0] : (args.disks != "" ? args.disks : prompt!string("Enter the disks to use (comma delimited)", nvmeDevices))).split(",").map!(strip).array.map!(a => "/dev/disk/by-id/nvme-" ~ a).array;
     hardwareConfiguration.disko.DISKO.makeZfsPartitions.disks = disks;
