@@ -23,6 +23,7 @@ import mcl.utils.number : humanReadableSize, roundToPowerOf2;
 import mcl.utils.array : uniqIfSame;
 import mcl.utils.nix : Literal;
 import mcl.utils.coda : CodaApiClient, RowValues, CodaCell;
+import mcl.commands.match_invoices : MatchInvoicesArgs, matchInvoices;
 
 version (linux)
 {
@@ -56,6 +57,7 @@ struct HostInfoArgs
 {
     SubCommand!(
         PartsArgs,
+        MatchInvoicesArgs,
         Default!ShowArgs
     ) cmd;
 }
@@ -88,7 +90,8 @@ export int host_info(HostInfoArgs args)
 {
     return args.cmd.matchCmd!(
         (ShowArgs a) => showHostInfo(a),
-        (PartsArgs a) => showParts(a)
+        (PartsArgs a) => showParts(a),
+        (MatchInvoicesArgs a) => matchInvoices(a)
     );
 }
 
