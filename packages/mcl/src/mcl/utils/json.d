@@ -9,7 +9,7 @@ import std.algorithm: map;
 import std.array: join, array, replace, split;
 import std.datetime: SysTime;
 import std.sumtype: SumType, isSumType;
-import std.typecons: Ternary;
+import std.typecons: Ternary, Nullable;
 import core.stdc.string: strlen;
 
 import mcl.utils.test;
@@ -64,6 +64,12 @@ T fromJSON(T)(in JSONValue value) {
     }
     else static if (is(T == SysTime)) {
         return SysTime.fromISOExtString(value.toString(JSONOptions.doNotEscapeSlashes).strip("\""));
+    }
+    else static if (is(T : Nullable!U, U)) {
+        if (value.isNull) {
+            return T.init;
+        }
+        return Nullable!U(value.fromJSON!U);
     }
     else static if (is(T == struct)) {
         T result;
@@ -226,6 +232,19 @@ unittest {
     assert("test".JSONValue.fromJSON!NumOrString == NumOrString("test"));
 }
 
+@("fromJSON.Nullable")
+unittest {
+    auto jsonNull = JSONValue(null);
+    auto jsonInt = JSONValue(42);
+
+    auto nullValue = jsonNull.fromJSON!(Nullable!int);
+    auto intValue = jsonInt.fromJSON!(Nullable!int);
+
+    assert(nullValue.isNull);
+    assert(!intValue.isNull);
+    assert(intValue.get == 42);
+}
+
 JSONValue toJSON(T)(in T value, bool simplify = false)
 {
     static if (is(T == enum))
@@ -265,6 +284,12 @@ JSONValue toJSON(T)(in T value, bool simplify = false)
     }
     else static if (is(T == SysTime)) {
         return JSONValue(value.toISOExtString());
+    }
+    else static if (is(T : Nullable!U, U)) {
+        if (value.isNull)
+            return JSONValue(null);
+        else
+            return value.get.toJSON!U(simplify);
     }
     else static if (is(T == struct))
     {
@@ -332,6 +357,11 @@ unittest
     assert(testStruct2.toJSON == JSONValue(["a": JSONValue(1), "b": JSONValue(["a": JSONValue(1), "b": JSONValue("test"), "c": JSONValue(true)])]));
     TestStruct3 testStruct3 = { 1, testStruct2 };
     assert(testStruct3.toJSON == JSONValue(["a": JSONValue(1), "b": JSONValue(["a": JSONValue(1), "b": JSONValue(["a": JSONValue(1), "b": JSONValue("test"), "c": JSONValue(true)])])]));
+
+    Nullable!int nullValue = Nullable!int.init;
+    Nullable!int intValue = Nullable!int(42);
+    assert(nullValue.toJSON == JSONValue(null));
+    assert(intValue.toJSON == JSONValue(42));
 }
 
 
