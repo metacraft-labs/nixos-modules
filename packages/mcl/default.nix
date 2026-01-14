@@ -16,22 +16,15 @@ let
     ]
     ++ (with pkgs; [
       gitMinimal
-      gawk
       jc
-      coreutils-full
       util-linux
       xorg.xrandr
-      perl
       alejandra
       openssh
       cachix
-      curl
     ])
     ++ lib.optionals (isLinux && isx86) [
-      v4l-utils
       dmidecode
-      mesa-demos
-      nixos-install-tools
       systemd
     ];
   excludedTests = (

@@ -272,10 +272,12 @@ Info gatherHostInfo()
 
     version (linux)
     {
-        info.softwareInfo.hostid = (cast(ubyte[])read("/etc/hostid"))
-            .peek!(int, nativeEndian)
-            .format!"%08x";
-        info.softwareInfo.hostname = readText("/etc/hostname").strip();
+        if (exists("/etc/hostid"))
+            info.softwareInfo.hostid = (cast(ubyte[])read("/etc/hostid"))
+                .peek!(int, nativeEndian)
+                .format!"%08x";
+        if (exists("/etc/hostname"))
+            info.softwareInfo.hostname = readText("/etc/hostname").strip();
     }
     version (OSX)
     {
@@ -538,15 +540,34 @@ ProcessorInfo getProcessorInfo()
 
         if (isRoot)
         {
-            auto dmi = execute("dmidecode -t 4", false).split("\n");
-            r.voltage = dmi.getFromDmi("Voltage:").map!(a => a.split(" ")[0]).array.uniqIfSame[0];
-            r.frequency = dmi.getFromDmi("Current Speed:")
-                .map!(a => a.split(" ")[0].to!size_t).array.uniqIfSame;
-            r.maxFrequency = dmi.getFromDmi("Max Speed:")
-                .map!(a => a.split(" ")[0].to!size_t).array.uniqIfSame;
-            r.cpus = dmi.getFromDmi("Processor Information").length;
-            r.cores = dmi.getFromDmi("Core Count").map!(a => a.to!size_t).array.uniqIfSame;
-            r.threads = dmi.getFromDmi("Thread Count").map!(a => a.to!size_t).array.uniqIfSame;
+            try
+            {
+                auto dmi = execute("dmidecode -t 4", false).split("\n");
+                auto voltages = dmi.getFromDmi("Voltage:").map!(a => a.split(" ")[0]).array.uniqIfSame;
+                if (voltages.length > 0)
+                    r.voltage = voltages[0];
+                auto freqs = dmi.getFromDmi("Current Speed:")
+                    .map!(a => a.split(" ")[0].to!size_t).array.uniqIfSame;
+                if (freqs.length > 0)
+                    r.frequency = freqs;
+                auto maxFreqs = dmi.getFromDmi("Max Speed:")
+                    .map!(a => a.split(" ")[0].to!size_t).array.uniqIfSame;
+                if (maxFreqs.length > 0)
+                    r.maxFrequency = maxFreqs;
+                auto cpuCount = dmi.getFromDmi("Processor Information").length;
+                if (cpuCount > 0)
+                    r.cpus = cpuCount;
+                auto coreCount = dmi.getFromDmi("Core Count").map!(a => a.to!size_t).array.uniqIfSame;
+                if (coreCount.length > 0)
+                    r.cores = coreCount;
+                auto threadCount = dmi.getFromDmi("Thread Count").map!(a => a.to!size_t).array.uniqIfSame;
+                if (threadCount.length > 0)
+                    r.threads = threadCount;
+            }
+            catch (Exception e)
+            {
+                // dmidecode may fail in containers or without /dev/mem access
+            }
         }
     }
 
@@ -570,6 +591,20 @@ struct BiosInfo
     string vendor;
 }
 
+string safeReadText(string path, string defaultValue = "")
+{
+    try
+    {
+        if (exists(path))
+            return readText(path).strip;
+    }
+    catch (Exception e)
+    {
+        // Permission denied or other read errors
+    }
+    return defaultValue;
+}
+
 MotherboardInfo getMotherboardInfo()
 {
     MotherboardInfo r;
@@ -586,12 +621,12 @@ MotherboardInfo getMotherboardInfo()
     }
     else
     {
-        r.vendor = readText("/sys/devices/virtual/dmi/id/board_vendor").strip;
-        r.model = readText("/sys/devices/virtual/dmi/id/board_name").strip;
-        r.version_ = readText("/sys/devices/virtual/dmi/id/board_version").strip;
+        r.vendor = safeReadText("/sys/devices/virtual/dmi/id/board_vendor");
+        r.model = safeReadText("/sys/devices/virtual/dmi/id/board_name");
+        r.version_ = safeReadText("/sys/devices/virtual/dmi/id/board_version");
         if (isRoot)
         {
-            r.serial = readText("/sys/devices/virtual/dmi/id/board_serial").strip;
+            r.serial = safeReadText("/sys/devices/virtual/dmi/id/board_serial", "ROOT PERMISSIONS REQUIRED");
         }
         r.biosInfo = getBiosInfo();
     }
@@ -613,10 +648,10 @@ BiosInfo getBiosInfo()
     }
     else
     {
-        r.date = readText("/sys/devices/virtual/dmi/id/bios_date").strip;
-        r.version_ = readText("/sys/devices/virtual/dmi/id/bios_version").strip;
-        r.release = readText("/sys/devices/virtual/dmi/id/bios_release").strip;
-        r.vendor = readText("/sys/devices/virtual/dmi/id/bios_vendor").strip;
+        r.date = safeReadText("/sys/devices/virtual/dmi/id/bios_date");
+        r.version_ = safeReadText("/sys/devices/virtual/dmi/id/bios_version");
+        r.release = safeReadText("/sys/devices/virtual/dmi/id/bios_release");
+        r.vendor = safeReadText("/sys/devices/virtual/dmi/id/bios_vendor");
     }
 
     return r;
@@ -644,12 +679,41 @@ OperatingSystemInfo getOperatingSystemInfo()
 
 string getKernel()
 {
-    return execute("uname -s", false);
-};
+    version (linux)
+        return readText("/proc/sys/kernel/ostype").strip;
+    else version (OSX)
+        return "Darwin";
+    else
+        return "Unknown";
+}
 
 string getKernelVersion()
 {
-    return execute("uname -r", false);
+    version (linux)
+        return readText("/proc/sys/kernel/osrelease").strip;
+    else version (OSX)
+        return execute("uname -r", false);
+    else
+        return "Unknown";
+}
+
+// Parse /etc/os-release or similar KEY=VALUE files
+string getOsReleaseValue(string filePath, string key)
+{
+    import std.algorithm : findSplitAfter;
+    import std.range : front, empty;
+    import std.string : lineSplitter;
+
+    if (!exists(filePath))
+        return "";
+
+    auto result = readText(filePath)
+        .lineSplitter
+        .map!strip
+        .filter!(line => line.startsWith(key ~ "="))
+        .map!(line => line.findSplitAfter("=")[1].strip("\""));
+
+    return result.empty ? "" : result.front;
 }
 
 string getDistribution()
@@ -660,21 +724,22 @@ string getDistribution()
     }
     else
     {
-        auto distribution = execute("uname -o", false);
+        // Try /etc/os-release first (standard on modern Linux)
         if (exists("/etc/os-release"))
         {
-            foreach (line; execute([
-                    "awk", "-F", "=", "/^NAME=/ {print $2}", "/etc/os-release"
-                ], false).split("\n"))
-            {
-                distribution = line;
-            }
+            auto name = getOsReleaseValue("/etc/os-release", "NAME");
+            if (name != "")
+                return name;
         }
-        else if (exists("/etc/lsb-release"))
+        // Fallback to /etc/lsb-release
+        if (exists("/etc/lsb-release"))
         {
-            distribution = execute("lsb_release -i", false);
+            auto name = getOsReleaseValue("/etc/lsb-release", "DISTRIB_ID");
+            if (name != "")
+                return name;
         }
-        return distribution;
+        // Default fallback
+        return "GNU/Linux";
     }
 }
 
@@ -687,21 +752,22 @@ string getDistributionVersion()
     }
     else
     {
-        auto distributionVersion = execute("uname -r", false);
+        // Try /etc/os-release first
         if (exists("/etc/os-release"))
         {
-            foreach (line; execute([
-                    "awk", "-F", "=", "/^VERSION=/ {print $2}", "/etc/os-release"
-                ], false).split("\n"))
-            {
-                distributionVersion = line.strip("\"");
-            }
+            auto ver = getOsReleaseValue("/etc/os-release", "VERSION");
+            if (ver != "")
+                return ver;
         }
-        else if (exists("/etc/lsb-release"))
+        // Fallback to /etc/lsb-release
+        if (exists("/etc/lsb-release"))
         {
-            distributionVersion = execute("lsb_release -r", false);
+            auto ver = getOsReleaseValue("/etc/lsb-release", "DISTRIB_RELEASE");
+            if (ver != "")
+                return ver;
         }
-        return distributionVersion;
+        // Fallback to kernel version
+        return getKernelVersion();
     }
 }
 
@@ -1502,28 +1568,6 @@ GraphicsProcessorInfo[] getGraphicsProcessors()
             // Ignore sysfs errors
         }
 
-        // If we have results, return them
-        if (results.length > 0)
-            return results;
-
-        // Fall back to glxinfo if DISPLAY is available and no GPUs found
-        if ("DISPLAY" in environment)
-        {
-            try
-            {
-                auto glxinfo = getProcInfo(execute("glxinfo", false), false);
-                GraphicsProcessorInfo r;
-                r.vendor = ("OpenGL vendor string" in glxinfo) ? glxinfo["OpenGL vendor string"] : "Unknown";
-                r.model = ("OpenGL renderer string" in glxinfo) ? glxinfo["OpenGL renderer string"] : "Unknown";
-                r.coreProfile = ("OpenGL core profile version string" in glxinfo) ? glxinfo["OpenGL core profile version string"] : "Unknown";
-                r.vram = ("Video memory" in glxinfo) ? glxinfo["Video memory"] : "Unknown";
-                results ~= r;
-            }
-            catch (Exception e)
-            {
-                // Ignore
-            }
-        }
     }
 
     return results;
@@ -1536,6 +1580,8 @@ struct OpenSSHInfo
 
 OpenSSHInfo getOpenSSHInfo()
 {
+    if (!exists("/etc/ssh"))
+        return OpenSSHInfo.init;
     return dirEntries("/etc/ssh", "*.pub", SpanMode.shallow)
         .map!(key => key.name.readText().strip())
         .array()
