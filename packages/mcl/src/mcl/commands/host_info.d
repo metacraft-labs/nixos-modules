@@ -4,11 +4,11 @@ import std.system;
 
 import std.stdio : writeln;
 import std.conv : to;
-import std.string : strip, indexOf, isNumeric, toUpper;
+import std.string : strip, indexOf, isNumeric, toUpper, toLower, capitalize;
 import std.array : split, join, array, replace;
-import std.algorithm : map, filter, startsWith, joiner, any, sum, find;
+import std.algorithm : map, filter, startsWith, joiner, any, sum, find, canFind;
 import std.file : exists, write, read, readText, readLink, dirEntries, SpanMode;
-import std.path : baseName;
+import std.path : baseName, buildNormalizedPath;
 import std.json;
 import std.process : ProcessPipes, environment;
 import std.bitmanip : peek;
@@ -242,6 +242,17 @@ HostParts extractParts(const(Info) info)
         }
     }
 
+    // Periphery devices (keyboards, mice, webcams)
+    foreach (peripheral; hw.peripheryInfo.devices)
+    {
+        parts ~= Part(
+            name: peripheral.type.capitalize,
+            mark: peripheral.vendor,
+            model: peripheral.name,
+            sn: peripheral.serial,
+        );
+    }
+
     return HostParts(
         hostname: info.softwareInfo.hostname,
         parts: parts,
@@ -297,6 +308,7 @@ Info gatherHostInfo()
     info.hardwareInfo.storageInfo = getStorageInfo();
     info.hardwareInfo.displayInfo = getDisplayInfo();
     info.hardwareInfo.graphicsProcessors = getGraphicsProcessors();
+    info.hardwareInfo.peripheryInfo = getPeripheryInfo();
 
     return info;
 }
@@ -410,6 +422,7 @@ struct HardwareInfo
     StorageInfo storageInfo;
     DisplayInfo displayInfo;
     GraphicsProcessorInfo[] graphicsProcessors;
+    PeripheryInfo peripheryInfo;
 }
 
 struct ArchitectureInfo
@@ -1214,6 +1227,22 @@ string pciVendorName(string vendorId)
     }
 }
 
+string usbVendorName(string vendorId)
+{
+    switch (vendorId)
+    {
+        case "046d": return "Logitech";
+        case "045e": return "Microsoft";
+        case "04f2": return "Chicony";
+        case "0bda": return "Realtek";
+        case "1bcf": return "Sunplus";
+        case "05ac": return "Apple";
+        case "1e4e": return "Cubeternet";
+        case "0c45": return "Microdia";
+        default: return vendorId;
+    }
+}
+
 string pciDeviceName(string vendorId, string deviceId)
 {
     // Common GPU device IDs - full PCI ID database would be too large
@@ -1574,6 +1603,183 @@ GraphicsProcessorInfo[] getGraphicsProcessors()
     }
 
     return results;
+}
+
+struct Peripheral
+{
+    string type;        // "keyboard", "mouse", "webcam"
+    string name;        // Device name
+    string vendor;      // Vendor ID or name
+    string product;     // Product ID or name
+    string serial;      // Serial number/unique ID
+}
+
+struct PeripheryInfo
+{
+    Peripheral[] devices;
+}
+
+PeripheryInfo getPeripheryInfo()
+{
+    PeripheryInfo r;
+
+    version (OSX)
+    {
+        // TODO: macOS peripheral detection via system_profiler SPUSBDataType
+        return r;
+    }
+    else
+    {
+        // Parse /proc/bus/input/devices for keyboards and mice
+        if (exists("/proc/bus/input/devices"))
+        {
+            try
+            {
+                auto content = readText("/proc/bus/input/devices");
+                Peripheral current;
+                bool hasHandlers = false;
+                string handlers;
+
+                foreach (line; content.split("\n"))
+                {
+                    if (line.length == 0)
+                    {
+                        // End of device block - determine type and add if relevant
+                        if (current.name.length > 0 && hasHandlers)
+                        {
+                            // Skip system devices
+                            if (!current.name.canFind("Button") &&
+                                !current.name.canFind("Video Bus") &&
+                                !current.name.canFind("PC Speaker") &&
+                                !current.name.canFind("HDA ") &&
+                                !current.name.canFind("ALSA"))
+                            {
+                                // Determine type from handlers
+                                bool hasMouse = handlers.canFind("mouse");
+                                bool hasKbd = handlers.canFind("kbd");
+
+                                if (hasMouse && hasKbd)
+                                {
+                                    // Combo device - check name for hints
+                                    auto nameLower = current.name.toLower;
+                                    if (nameLower.canFind("mouse") ||
+                                        nameLower.canFind("trackpad") ||
+                                        nameLower.canFind("touchpad") ||
+                                        nameLower.canFind("mx master") ||
+                                        nameLower.canFind("mx anywhere") ||
+                                        nameLower.canFind("trackball"))
+                                        current.type = "mouse";
+                                    else if (nameLower.canFind("keyboard"))
+                                        current.type = "keyboard";
+                                    else
+                                        current.type = "keyboard";  // Default to keyboard for combo
+                                }
+                                else if (hasMouse)
+                                    current.type = "mouse";
+                                else if (hasKbd)
+                                    current.type = "keyboard";
+
+                                if (current.type.length > 0)
+                                    r.devices ~= current;
+                            }
+                        }
+                        current = Peripheral.init;
+                        hasHandlers = false;
+                        handlers = "";
+                        continue;
+                    }
+
+                    if (line.startsWith("N: Name="))
+                        current.name = line[9 .. $].strip("\"");
+                    else if (line.startsWith("U: Uniq="))
+                        current.serial = line[8 .. $];
+                    else if (line.startsWith("I: Bus="))
+                    {
+                        // Parse "Bus=0003 Vendor=046d Product=c52b Version=0111"
+                        foreach (part; line[3 .. $].split(" "))
+                        {
+                            auto kv = part.split("=");
+                            if (kv.length == 2)
+                            {
+                                if (kv[0] == "Vendor")
+                                    current.vendor = usbVendorName(kv[1]);
+                                else if (kv[0] == "Product")
+                                    current.product = kv[1];
+                            }
+                        }
+                    }
+                    else if (line.startsWith("H: Handlers="))
+                    {
+                        handlers = line[12 .. $];
+                        hasHandlers = true;
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                // Ignore parsing errors
+            }
+        }
+
+        // Check for webcams in /sys/class/video4linux
+        if (exists("/sys/class/video4linux"))
+        {
+            string[] seenSerials;  // Deduplicate by serial
+            try
+            {
+                foreach (entry; dirEntries("/sys/class/video4linux", SpanMode.shallow))
+                {
+                    auto namePath = entry.name ~ "/name";
+                    if (!exists(namePath))
+                        continue;
+
+                    auto name = readText(namePath).strip;
+                    // Skip dummy/virtual devices
+                    if (name.canFind("Dummy") || name.canFind("virtual"))
+                        continue;
+
+                    Peripheral cam;
+                    cam.type = "webcam";
+                    cam.name = name;
+
+                    // Walk up directory tree to find USB device with idVendor
+                    auto currentPath = entry.name ~ "/device";
+                    for (int depth = 0; depth < 10 && exists(currentPath); depth++)
+                    {
+                        auto vendorPath = currentPath ~ "/idVendor";
+                        if (exists(vendorPath))
+                        {
+                            cam.vendor = usbVendorName(safeReadText(vendorPath));
+                            cam.product = safeReadText(currentPath ~ "/idProduct");
+                            cam.serial = safeReadText(currentPath ~ "/serial");
+                            // Use manufacturer name if available
+                            auto mfg = safeReadText(currentPath ~ "/manufacturer");
+                            if (mfg.length > 0)
+                                cam.vendor = mfg;
+                            break;
+                        }
+                        currentPath = currentPath ~ "/..";
+                    }
+
+                    // Deduplicate by serial (multiple v4l2 nodes for same device)
+                    if (cam.serial.length > 0)
+                    {
+                        if (seenSerials.canFind(cam.serial))
+                            continue;
+                        seenSerials ~= cam.serial;
+                    }
+
+                    r.devices ~= cam;
+                }
+            }
+            catch (Exception e)
+            {
+                // Ignore errors
+            }
+        }
+    }
+
+    return r;
 }
 
 struct OpenSSHInfo
