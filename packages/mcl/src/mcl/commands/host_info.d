@@ -225,15 +225,18 @@ HostParts extractParts(const(Info) info)
         );
     }
 
-    // GPU (discrete only)
-    if (hw.graphicsProcessorInfo.isDiscrete)
+    // GPUs (discrete only)
+    foreach (gpu; hw.graphicsProcessors)
     {
-        parts ~= Part(
-            name: "GPU",
-            mark: hw.graphicsProcessorInfo.vendor,
-            model: hw.graphicsProcessorInfo.model,
-            sn: "",
-        );
+        if (gpu.isDiscrete)
+        {
+            parts ~= Part(
+                name: "GPU",
+                mark: gpu.vendor,
+                model: gpu.model,
+                sn: "",
+            );
+        }
     }
 
     return HostParts(
@@ -288,7 +291,7 @@ Info gatherHostInfo()
     info.hardwareInfo.memoryInfo = getMemoryInfo();
     info.hardwareInfo.storageInfo = getStorageInfo();
     info.hardwareInfo.displayInfo = getDisplayInfo();
-    info.hardwareInfo.graphicsProcessorInfo = getGraphicsProcessorInfo();
+    info.hardwareInfo.graphicsProcessors = getGraphicsProcessors();
 
     return info;
 }
@@ -348,13 +351,16 @@ void uploadHostInfo(CodaApiClient coda, const(Info) info)
     ]);
     coda.upsertRow(docId, motherboardTableId, motherboardValues);
 
-    auto gpuValues = RowValues([
-        CodaCell("Host Name", info.softwareInfo.hostname),
-        CodaCell("Vendor", info.hardwareInfo.graphicsProcessorInfo.vendor),
-        CodaCell("Model", info.hardwareInfo.graphicsProcessorInfo.model),
-        CodaCell("VRam", info.hardwareInfo.graphicsProcessorInfo.vram)
-    ]);
-    coda.upsertRow(docId, gpuTableId, gpuValues);
+    foreach (gpu; info.hardwareInfo.graphicsProcessors)
+    {
+        auto gpuValues = RowValues([
+            CodaCell("Host Name", info.softwareInfo.hostname),
+            CodaCell("Vendor", gpu.vendor),
+            CodaCell("Model", gpu.model),
+            CodaCell("VRam", gpu.vram)
+        ]);
+        coda.upsertRow(docId, gpuTableId, gpuValues);
+    }
 
     auto osValues = RowValues([
         CodaCell("Host Name", info.softwareInfo.hostname),
@@ -398,7 +404,7 @@ struct HardwareInfo
     MemoryInfo memoryInfo;
     StorageInfo storageInfo;
     DisplayInfo displayInfo;
-    GraphicsProcessorInfo graphicsProcessorInfo;
+    GraphicsProcessorInfo[] graphicsProcessors;
 }
 
 struct ArchitectureInfo
@@ -1128,9 +1134,272 @@ struct GraphicsProcessorInfo
     string vram;
 }
 
-GraphicsProcessorInfo getGraphicsProcessorInfo()
+string pciVendorName(string vendorId)
 {
-    GraphicsProcessorInfo r;
+    switch (vendorId)
+    {
+        case "0x10de": return "NVIDIA";
+        case "0x1002": return "AMD";
+        case "0x8086": return "Intel";
+        default: return vendorId;
+    }
+}
+
+string pciDeviceName(string vendorId, string deviceId)
+{
+    // Common GPU device IDs - full PCI ID database would be too large
+    // NVIDIA GPUs get their names from /proc/driver/nvidia/gpus/*/information
+    if (vendorId == "0x8086") // Intel
+    {
+        switch (deviceId)
+        {
+            // Alder Lake (12th Gen)
+            case "0x4680": return "UHD Graphics 770";
+            case "0x4682": return "UHD Graphics 730";
+            case "0x4688": return "UHD Graphics";
+            case "0x468a": return "UHD Graphics";
+            // Raptor Lake (13th/14th Gen)
+            case "0xa780": return "UHD Graphics 770";
+            case "0xa788": return "UHD Graphics";
+            // Tiger Lake
+            case "0x9a49": return "Iris Xe Graphics";
+            case "0x9a40": return "Iris Xe Graphics";
+            // Ice Lake
+            case "0x8a56": return "Iris Plus Graphics";
+            case "0x8a52": return "Iris Plus Graphics";
+            default: break;
+        }
+    }
+    else if (vendorId == "0x1002") // AMD
+    {
+        switch (deviceId)
+        {
+            // RDNA 3
+            case "0x744c": return "Radeon RX 7900 XTX";
+            case "0x7448": return "Radeon RX 7900 XT";
+            // RDNA 2
+            case "0x73bf": return "Radeon RX 6900 XT";
+            case "0x73af": return "Radeon RX 6800 XT";
+            case "0x73df": return "Radeon RX 6700 XT";
+            // APUs
+            case "0x1638": return "Radeon Graphics (Renoir)";
+            case "0x164c": return "Radeon Graphics (Rembrandt)";
+            case "0x15e7": return "Radeon Graphics (Phoenix)";
+            default: break;
+        }
+    }
+
+    // Fallback to vendor:device ID
+    return vendorId ~ ":" ~ deviceId;
+}
+
+// Dynamic library loading for GPU detection
+version (linux)
+{
+    import core.sys.posix.dlfcn : dlopen, dlsym, dlclose, RTLD_LAZY;
+
+    // OpenCL types and constants
+    alias cl_int = int;
+    alias cl_uint = uint;
+    alias cl_ulong = ulong;
+    alias cl_platform_id = void*;
+    alias cl_device_id = void*;
+    alias cl_device_info = uint;
+    alias cl_platform_info = uint;
+
+    enum : cl_int { CL_SUCCESS = 0 }
+    enum : cl_device_info {
+        CL_DEVICE_NAME = 0x102B,
+        CL_DEVICE_VENDOR = 0x102C,
+        CL_DEVICE_GLOBAL_MEM_SIZE = 0x101F,
+        CL_DEVICE_TYPE = 0x1000,
+    }
+    enum : cl_ulong { CL_DEVICE_TYPE_GPU = 1 << 2 }
+
+    // OpenCL function signatures
+    alias clGetPlatformIDs_t = extern(C) cl_int function(cl_uint, cl_platform_id*, cl_uint*);
+    alias clGetDeviceIDs_t = extern(C) cl_int function(cl_platform_id, cl_ulong, cl_uint, cl_device_id*, cl_uint*);
+    alias clGetDeviceInfo_t = extern(C) cl_int function(cl_device_id, cl_device_info, size_t, void*, size_t*);
+
+    // NVML types and constants
+    alias nvmlReturn_t = int;
+    alias nvmlDevice_t = void*;
+    struct nvmlMemory_t { ulong total; ulong free; ulong used; }
+
+    enum : nvmlReturn_t { NVML_SUCCESS = 0 }
+
+    // NVML function signatures
+    alias nvmlInit_t = extern(C) nvmlReturn_t function();
+    alias nvmlShutdown_t = extern(C) nvmlReturn_t function();
+    alias nvmlDeviceGetCount_t = extern(C) nvmlReturn_t function(uint*);
+    alias nvmlDeviceGetHandleByIndex_t = extern(C) nvmlReturn_t function(uint, nvmlDevice_t*);
+    alias nvmlDeviceGetName_t = extern(C) nvmlReturn_t function(nvmlDevice_t, char*, uint);
+    alias nvmlDeviceGetMemoryInfo_t = extern(C) nvmlReturn_t function(nvmlDevice_t, nvmlMemory_t*);
+
+    // Try to load a library from multiple paths
+    void* tryLoadLibrary(string[] names)
+    {
+        import std.string : toStringz;
+        foreach (name; names)
+        {
+            auto lib = dlopen(name.toStringz, RTLD_LAZY);
+            if (lib !is null)
+                return lib;
+        }
+        return null;
+    }
+
+    // Try to get GPU info via OpenCL (works for NVIDIA, AMD, Intel)
+    GraphicsProcessorInfo[] getGpuInfoViaOpenCL()
+    {
+        GraphicsProcessorInfo[] results;
+
+        // Try different library names and paths (including NixOS locations)
+        void* lib = tryLoadLibrary([
+            "libOpenCL.so.1",
+            "libOpenCL.so",
+            "/run/opengl-driver/lib/libOpenCL.so.1",
+            "/run/opengl-driver/lib/libOpenCL.so",
+        ]);
+        if (lib is null)
+            return results;
+
+        scope(exit) dlclose(lib);
+
+        // Load functions
+        auto clGetPlatformIDs = cast(clGetPlatformIDs_t) dlsym(lib, "clGetPlatformIDs");
+        auto clGetDeviceIDs = cast(clGetDeviceIDs_t) dlsym(lib, "clGetDeviceIDs");
+        auto clGetDeviceInfo = cast(clGetDeviceInfo_t) dlsym(lib, "clGetDeviceInfo");
+
+        if (clGetPlatformIDs is null || clGetDeviceIDs is null || clGetDeviceInfo is null)
+            return results;
+
+        // Get platforms
+        cl_uint numPlatforms;
+        if (clGetPlatformIDs(0, null, &numPlatforms) != CL_SUCCESS || numPlatforms == 0)
+            return results;
+
+        auto platforms = new cl_platform_id[numPlatforms];
+        if (clGetPlatformIDs(numPlatforms, platforms.ptr, null) != CL_SUCCESS)
+            return results;
+
+        // Collect all GPU devices from all platforms
+        foreach (platform; platforms)
+        {
+            cl_uint numDevices;
+            if (clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, 0, null, &numDevices) != CL_SUCCESS || numDevices == 0)
+                continue;
+
+            auto devices = new cl_device_id[numDevices];
+            if (clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, numDevices, devices.ptr, null) != CL_SUCCESS)
+                continue;
+
+            // Get info for all GPUs on this platform
+            foreach (device; devices)
+            {
+                GraphicsProcessorInfo gpu;
+                char[256] nameBuf, vendorBuf;
+                cl_ulong memSize;
+                size_t retSize;
+
+                if (clGetDeviceInfo(device, CL_DEVICE_NAME, nameBuf.length, nameBuf.ptr, &retSize) == CL_SUCCESS)
+                    gpu.model = cast(string) nameBuf[0 .. retSize - 1].idup;
+
+                if (clGetDeviceInfo(device, CL_DEVICE_VENDOR, vendorBuf.length, vendorBuf.ptr, &retSize) == CL_SUCCESS)
+                    gpu.vendor = cast(string) vendorBuf[0 .. retSize - 1].idup;
+
+                if (clGetDeviceInfo(device, CL_DEVICE_GLOBAL_MEM_SIZE, cl_ulong.sizeof, &memSize, null) == CL_SUCCESS)
+                    gpu.vram = humanReadableSize(memSize);
+
+                if (gpu.model != "")
+                    results ~= gpu;
+            }
+        }
+
+        return results;
+    }
+
+    // Try to get GPU info via NVML (NVIDIA-specific, more detailed)
+    GraphicsProcessorInfo[] getGpuInfoViaNVML()
+    {
+        GraphicsProcessorInfo[] results;
+
+        // Try different library names and paths (including NixOS locations)
+        void* lib = tryLoadLibrary([
+            "libnvidia-ml.so.1",
+            "libnvidia-ml.so",
+            "/run/opengl-driver/lib/libnvidia-ml.so.1",
+            "/run/opengl-driver/lib/libnvidia-ml.so",
+        ]);
+        if (lib is null)
+            return results;
+
+        scope(exit) dlclose(lib);
+
+        // Load functions
+        auto nvmlInit = cast(nvmlInit_t) dlsym(lib, "nvmlInit_v2");
+        if (nvmlInit is null)
+            nvmlInit = cast(nvmlInit_t) dlsym(lib, "nvmlInit");
+        auto nvmlShutdown = cast(nvmlShutdown_t) dlsym(lib, "nvmlShutdown");
+        auto nvmlDeviceGetCount = cast(nvmlDeviceGetCount_t) dlsym(lib, "nvmlDeviceGetCount_v2");
+        if (nvmlDeviceGetCount is null)
+            nvmlDeviceGetCount = cast(nvmlDeviceGetCount_t) dlsym(lib, "nvmlDeviceGetCount");
+        auto nvmlDeviceGetHandleByIndex = cast(nvmlDeviceGetHandleByIndex_t) dlsym(lib, "nvmlDeviceGetHandleByIndex_v2");
+        if (nvmlDeviceGetHandleByIndex is null)
+            nvmlDeviceGetHandleByIndex = cast(nvmlDeviceGetHandleByIndex_t) dlsym(lib, "nvmlDeviceGetHandleByIndex");
+        auto nvmlDeviceGetName = cast(nvmlDeviceGetName_t) dlsym(lib, "nvmlDeviceGetName");
+        auto nvmlDeviceGetMemoryInfo = cast(nvmlDeviceGetMemoryInfo_t) dlsym(lib, "nvmlDeviceGetMemoryInfo");
+
+        if (nvmlInit is null || nvmlShutdown is null || nvmlDeviceGetCount is null ||
+            nvmlDeviceGetHandleByIndex is null || nvmlDeviceGetName is null || nvmlDeviceGetMemoryInfo is null)
+            return results;
+
+        // Initialize NVML
+        if (nvmlInit() != NVML_SUCCESS)
+            return results;
+
+        scope(exit) nvmlShutdown();
+
+        // Get device count
+        uint deviceCount;
+        if (nvmlDeviceGetCount(&deviceCount) != NVML_SUCCESS || deviceCount == 0)
+            return results;
+
+        // Get info for all devices
+        foreach (i; 0 .. deviceCount)
+        {
+            nvmlDevice_t device;
+            if (nvmlDeviceGetHandleByIndex(i, &device) != NVML_SUCCESS)
+                continue;
+
+            GraphicsProcessorInfo gpu;
+            gpu.vendor = "NVIDIA";
+
+            char[256] nameBuf;
+            if (nvmlDeviceGetName(device, nameBuf.ptr, cast(uint) nameBuf.length) == NVML_SUCCESS)
+            {
+                import core.stdc.string : strlen;
+                gpu.model = cast(string) nameBuf[0 .. strlen(nameBuf.ptr)].idup;
+                // Remove "NVIDIA " prefix if present
+                if (gpu.model.startsWith("NVIDIA "))
+                    gpu.model = gpu.model[7 .. $];
+            }
+
+            nvmlMemory_t memory;
+            if (nvmlDeviceGetMemoryInfo(device, &memory) == NVML_SUCCESS)
+                gpu.vram = humanReadableSize(memory.total);
+
+            results ~= gpu;
+        }
+
+        return results;
+    }
+}
+
+GraphicsProcessorInfo[] getGraphicsProcessors()
+{
+    GraphicsProcessorInfo[] results;
+
     version (OSX)
     {
         try
@@ -1138,38 +1407,126 @@ GraphicsProcessorInfo getGraphicsProcessorInfo()
             auto displayData = execute!JSONValue("system_profiler SPDisplaysDataType -json", false);
             foreach (JSONValue gpu; displayData["SPDisplaysDataType"].array)
             {
+                GraphicsProcessorInfo r;
                 r.vendor = ("spdisplays_vendor" in gpu) ? gpu["spdisplays_vendor"].str.replace("sppci_vendor_", "") : "Apple";
                 r.model = ("sppci_model" in gpu) ? gpu["sppci_model"].str : gpu["_name"].str;
                 r.coreProfile = ("spdisplays_mtlgpufamilysupport" in gpu) ? gpu["spdisplays_mtlgpufamilysupport"].str.replace("spdisplays_", "") : "";
                 r.vram = ("sppci_cores" in gpu) ? gpu["sppci_cores"].str ~ " GPU cores" : "Unified Memory";
-                break; // Only first GPU
+                results ~= r;
             }
         }
         catch (Exception e)
         {
-            return r;
+            return results;
         }
     }
     else
     {
-        if ("DISPLAY" !in environment)
-            return r;
+        // Try NVML first (NVIDIA-specific, provides accurate VRAM)
+        results = getGpuInfoViaNVML();
+
+        // Try OpenCL to find additional GPUs (cross-vendor: NVIDIA, AMD, Intel)
+        auto openclGpus = getGpuInfoViaOpenCL();
+
+        // Merge OpenCL results, avoiding duplicates by model name
+        foreach (oclGpu; openclGpus)
+        {
+            bool isDuplicate = false;
+            foreach (existing; results)
+            {
+                if (existing.model == oclGpu.model)
+                {
+                    isDuplicate = true;
+                    break;
+                }
+            }
+            if (!isDuplicate)
+                results ~= oclGpu;
+        }
+
+        // Always check sysfs/procfs to find GPUs not detected via NVML/OpenCL (e.g., Intel iGPUs)
         try
         {
-            auto glxinfo = getProcInfo(execute("glxinfo", false), false);
-            r.vendor = ("OpenGL vendor string" in glxinfo) ? glxinfo["OpenGL vendor string"] : "Unknown";
-            r.model = ("OpenGL renderer string" in glxinfo) ? glxinfo["OpenGL renderer string"]
-                : "Unknown";
-            r.coreProfile = ("OpenGL core profile version string" in glxinfo) ? glxinfo["OpenGL core profile version string"] : "Unknown";
-            r.vram = ("Video memory" in glxinfo) ? glxinfo["Video memory"] : "Unknown";
+            // Also check PCI sysfs for any GPU (works for AMD, Intel, etc.)
+            foreach (pciDevice; dirEntries("/sys/bus/pci/devices", SpanMode.shallow))
+            {
+                auto classPath = pciDevice.name ~ "/class";
+                if (!exists(classPath))
+                    continue;
+
+                auto deviceClass = readText(classPath).strip;
+                // Class 0x03xxxx = Display controller
+                if (!deviceClass.startsWith("0x03"))
+                    continue;
+
+                auto vendorId = readText(pciDevice.name ~ "/vendor").strip;
+                auto deviceId = readText(pciDevice.name ~ "/device").strip;
+
+                // Try to get model name from NVIDIA proc if available
+                string model;
+                auto pciSlot = baseName(pciDevice.name);
+                auto nvidiaProcPath = "/proc/driver/nvidia/gpus/" ~ pciSlot ~ "/information";
+                if (exists(nvidiaProcPath))
+                {
+                    auto gpuInfo = getProcInfo(nvidiaProcPath);
+                    model = gpuInfo.get("Model", "").replace("NVIDIA ", "");
+                }
+                else
+                {
+                    model = pciDeviceName(vendorId, deviceId);
+                }
+
+                // Check if already found via NVML/OpenCL
+                bool isDuplicate = false;
+                foreach (existing; results)
+                {
+                    // Match by model name or by vendor:device ID pattern
+                    if (existing.model == model ||
+                        (model.startsWith("0x") && existing.vendor == pciVendorName(vendorId)))
+                    {
+                        isDuplicate = true;
+                        break;
+                    }
+                }
+                if (!isDuplicate)
+                {
+                    GraphicsProcessorInfo r;
+                    r.vendor = pciVendorName(vendorId);
+                    r.model = model;
+                    results ~= r;
+                }
+            }
         }
         catch (Exception e)
         {
-            return r;
+            // Ignore sysfs errors
+        }
+
+        // If we have results, return them
+        if (results.length > 0)
+            return results;
+
+        // Fall back to glxinfo if DISPLAY is available and no GPUs found
+        if ("DISPLAY" in environment)
+        {
+            try
+            {
+                auto glxinfo = getProcInfo(execute("glxinfo", false), false);
+                GraphicsProcessorInfo r;
+                r.vendor = ("OpenGL vendor string" in glxinfo) ? glxinfo["OpenGL vendor string"] : "Unknown";
+                r.model = ("OpenGL renderer string" in glxinfo) ? glxinfo["OpenGL renderer string"] : "Unknown";
+                r.coreProfile = ("OpenGL core profile version string" in glxinfo) ? glxinfo["OpenGL core profile version string"] : "Unknown";
+                r.vram = ("Video memory" in glxinfo) ? glxinfo["Video memory"] : "Unknown";
+                results ~= r;
+            }
+            catch (Exception e)
+            {
+                // Ignore
+            }
         }
     }
 
-    return r;
+    return results;
 }
 
 struct OpenSSHInfo
