@@ -177,9 +177,14 @@ struct ExecuteArgs
         .Description("Save output of each host to a separate file in this directory"))
     string outputDir;
 
+    @(NamedArgument(["output-zip", "z"])
+        .Placeholder("FILE")
+        .Description("Save output of each host to a zip archive"))
+    string outputZip;
+
     @(NamedArgument(["file-extension", "e"])
         .Placeholder("EXT")
-        .Description("File extension for output files (default: txt, requires --output-dir)"))
+        .Description("File extension for output files (default: txt, requires --output-dir or --output-zip)"))
     string fileExtension = "txt";
 
     @(NamedArgument(["suppress-warnings", "q"])
@@ -360,6 +365,7 @@ int executeOnHosts(ExecuteArgs args)
         continueOnError: args.continueOnError,
         useParallel: args.parallel > 1,
         outputDir: args.outputDir,
+        outputZip: args.outputZip,
         fileExtension: args.fileExtension,
     );
 }
@@ -566,10 +572,10 @@ private void saveHostKeysParallel(HostEntry[] hosts, string filename)
 }
 
 /// Execute a command on a list of hosts via SSH
-private int executeCommandOnHosts(HostEntry[] hosts, SshOptions opts, bool continueOnError, bool useParallel, string outputDir, string fileExtension)
+private int executeCommandOnHosts(HostEntry[] hosts, SshOptions opts, bool continueOnError, bool useParallel, string outputDir, string outputZip, string fileExtension)
 {
     import std.parallelism : parallel;
-    import core.atomic : atomicOp;
+    import std.zip : ZipArchive, ArchiveMember;
 
     // In parallel mode with stop-on-error, fall back to sequential to ensure proper stopping
     if (useParallel && !continueOnError)
@@ -593,6 +599,7 @@ private int executeCommandOnHosts(HostEntry[] hosts, SshOptions opts, bool conti
     writeln("─".repeat(60).join);
 
     SshCommandResult[] failures;
+    SshCommandResult[] successes;
 
     if (useParallel)
     {
@@ -603,8 +610,6 @@ private int executeCommandOnHosts(HostEntry[] hosts, SshOptions opts, bool conti
         foreach (idx, host; parallel(hosts))
         {
             results[idx] = executeSshCommand(host, opts, suppressOutput: true);
-            if (results[idx].success && outputDir.length > 0)
-                saveHostOutput(outputDir, results[idx].host, results[idx].output, fileExtension);
             updateProgress(completed, hosts.length, "hosts completed");
         }
 
@@ -614,7 +619,12 @@ private int executeCommandOnHosts(HostEntry[] hosts, SshOptions opts, bool conti
         foreach (result; results)
         {
             if (result.success)
+            {
                 successCount++;
+                successes ~= result;
+                if (outputDir.length > 0)
+                    saveHostOutput(outputDir, result.host, result.output, fileExtension);
+            }
             else
                 failures ~= result;
         }
@@ -630,6 +640,7 @@ private int executeCommandOnHosts(HostEntry[] hosts, SshOptions opts, bool conti
             if (result.success)
             {
                 successCount++;
+                successes ~= result;
                 if (outputDir.length > 0)
                     saveHostOutput(outputDir, result.host, result.output, fileExtension);
             }
@@ -671,7 +682,27 @@ private int executeCommandOnHosts(HostEntry[] hosts, SshOptions opts, bool conti
         }
     }
 
-    if (outputDir.length > 0)
+    // Create zip archive if requested
+    if (outputZip.length > 0 && successes.length > 0)
+    {
+        import std.file : write;
+
+        auto archive = new ZipArchive();
+        foreach (result; successes)
+        {
+            auto filename = result.host.description.length > 0
+                ? result.host.description ~ "." ~ fileExtension
+                : result.host.ipv4 ~ "." ~ fileExtension;
+
+            auto member = new ArchiveMember();
+            member.name = filename;
+            member.expandedData = cast(ubyte[]) result.output.dup;
+            archive.addMember(member);
+        }
+        write(outputZip, archive.build());
+        writefln("\nResults saved to: %s (%d files)", outputZip, successes.length);
+    }
+    else if (outputDir.length > 0)
         writefln("Output saved to: %s/", outputDir);
 
     return failureCount > 0 ? 1 : 0;
