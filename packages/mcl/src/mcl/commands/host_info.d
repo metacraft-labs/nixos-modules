@@ -569,7 +569,7 @@ ProcessorInfo getProcessorInfo()
     else version (linux)
     {
         // Get CPU info from /proc/cpuinfo
-        r.vendor = cpuinfo.get("vendor_id", "");
+        r.vendor = cpuinfo.get("vendor_id", "").cpuVendorName;
         r.model = cpuinfo.get("model name", "");
         r.cores = [cpuinfo.get("cpu cores", "1").to!size_t];
         r.threads = [cpuinfo.get("siblings", r.cores[0].to!string).to!size_t];
@@ -1245,6 +1245,16 @@ string pciVendorName(string vendorId)
         case "0x10de": return "NVIDIA";
         case "0x1002": return "AMD";
         case "0x8086": return "Intel";
+        default: return vendorId;
+    }
+}
+
+string cpuVendorName(string vendorId)
+{
+    switch (vendorId)
+    {
+        case "AuthenticAMD": return "AMD";
+        case "GenuineIntel": return "Intel";
         default: return vendorId;
     }
 }
