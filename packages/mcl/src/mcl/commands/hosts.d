@@ -174,10 +174,17 @@ struct NixRunArgs
         .Description("SSH user (default: root)"))
     string sshUser = "root";
 
-    @(NamedArgument(["parallel", "P"])
-        .Placeholder("COUNT")
-        .Description("Number of parallel connections (default: 16)"))
-    ushort parallel = 16;
+    @(MutuallyExclusive())
+    {
+        @(NamedArgument(["parallel", "P"])
+            .Placeholder("COUNT")
+            .Description("Number of parallel connections (default: 1)"))
+        ushort parallel = 1;
+
+        @(NamedArgument(["sudo"])
+            .Description("Run command with sudo (requires TTY)"))
+        bool sudo = false;
+    }
 
     @(NamedArgument(["timeout", "t"])
         .Placeholder("SECONDS")
@@ -223,10 +230,17 @@ struct ExecuteArgs
         .Description("SSH user (default: root)"))
     string sshUser = "root";
 
-    @(NamedArgument(["parallel", "P"])
-        .Placeholder("COUNT")
-        .Description("Number of parallel connections (default: 1)"))
-    ushort parallel = 1;
+    @(MutuallyExclusive())
+    {
+        @(NamedArgument(["parallel", "P"])
+            .Placeholder("COUNT")
+            .Description("Number of parallel connections (default: 1)"))
+        ushort parallel = 1;
+
+        @(NamedArgument(["sudo"])
+            .Description("Run command with sudo (requires TTY)"))
+        bool sudo = false;
+    }
 
     @(NamedArgument(["timeout", "t"])
         .Placeholder("SECONDS")
@@ -421,6 +435,8 @@ int executeOnHosts(ExecuteArgs args)
     // Apply CLI defaults to hosts
     hosts = hosts.map!(h => h.withDefaults(args.sshUser, args.port)).array;
 
+    bool useParallel = args.parallel > 1;
+
     return executeCommandOnHosts(
         hosts,
         SshOptions(
@@ -430,10 +446,11 @@ int executeOnHosts(ExecuteArgs args)
             acceptNewKeys: true,
         ),
         continueOnError: args.continueOnError,
-        useParallel: args.parallel > 1,
+        useParallel: useParallel,
         outputDir: args.outputDir,
         outputZip: args.outputZip,
         fileExtension: args.fileExtension,
+        useSudo: args.sudo,
     );
 }
 
@@ -466,6 +483,7 @@ int nixRun(NixRunArgs args)
         outputZip: args.outputFile,
         fileExtension: args.fileExtension,
         suppressWarnings: args.suppressWarnings,
+        sudo: args.sudo,
     ));
 }
 
@@ -608,8 +626,10 @@ private string[] buildSshArgs(HostEntry host, SshOptions opts)
     ) ~ (opts.suppressWarnings
         ? ["-o", "LogLevel=ERROR"]
         : []
+    ) ~ (opts.allocateTty
+        ? ["-t"]  // Allocate TTY for interactive input (e.g., sudo password)
+        : ["-o", "BatchMode=yes"]  // Non-interactive mode
     ) ~ [
-        "-o", "BatchMode=yes",
         "-p", host.port.to!string,
         host.user ~ "@" ~ host.ipv4,
         opts.command,
@@ -671,7 +691,7 @@ private void saveHostKeysParallel(HostEntry[] hosts, string filename)
 }
 
 /// Execute a command on a list of hosts via SSH
-private int executeCommandOnHosts(HostEntry[] hosts, SshOptions opts, bool continueOnError, bool useParallel, string outputDir, string outputZip, string fileExtension)
+private int executeCommandOnHosts(HostEntry[] hosts, SshOptions opts, bool continueOnError, bool useParallel, string outputDir, string outputZip, string fileExtension, bool useSudo = false)
 {
     import std.parallelism : parallel;
     import std.zip : ZipArchive, ArchiveMember;
@@ -694,7 +714,7 @@ private int executeCommandOnHosts(HostEntry[] hosts, SshOptions opts, bool conti
     int successCount = 0;
 
     writefln("Executing command on %d host(s)...\n", hosts.length);
-    writefln("Command: %s\n", opts.command);
+    writefln("Command: %s%s\n", useSudo ? "sudo " : "", opts.command);
     writeln("─".repeat(60).join);
 
     SshCommandResult[] failures;
@@ -734,7 +754,15 @@ private int executeCommandOnHosts(HostEntry[] hosts, SshOptions opts, bool conti
         // Sequential execution
         foreach (host; hosts)
         {
-            auto result = executeSshCommand(host, opts, suppressOutput: false);
+            // If sudo is enabled, prepend sudo and allocate TTY for password input
+            auto hostOpts = opts;
+            if (useSudo)
+            {
+                hostOpts.command = "sudo " ~ opts.command;
+                hostOpts.allocateTty = true;
+            }
+
+            auto result = executeSshCommand(host, hostOpts, suppressOutput: false);
 
             if (result.success)
             {
@@ -826,6 +854,7 @@ private struct SshOptions
     Duration timeout;
     bool suppressWarnings;  // suppress SSH warnings (LogLevel=ERROR)
     bool acceptNewKeys;     // use StrictHostKeyChecking=accept-new (safer for commands)
+    bool allocateTty;       // allocate pseudo-TTY (-t flag) for interactive input
 }
 
 private struct SshCommandResult
