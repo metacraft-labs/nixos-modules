@@ -2,7 +2,7 @@ module mcl.commands.hosts;
 
 import core.time : Duration, seconds;
 import std.algorithm : filter, map;
-import std.array : array, join;
+import std.array : array, assocArray, join;
 import std.conv : to;
 import std.file : exists, readText;
 import std.format : format;
@@ -10,6 +10,7 @@ import std.json : JSONValue, parseJSON, JSONType;
 import std.range : empty, iota, repeat, zip;
 import std.stdio : stdout, writef, writeln, writefln, stderr;
 import std.string : split, strip, startsWith, endsWith;
+import std.typecons : tuple;
 
 import argparse : Command, Description, SubCommand, Default, PositionalArgument,
     Placeholder, Optional, matchCmd, NamedArgument, Required, Parse, MutuallyExclusive;
@@ -113,6 +114,11 @@ struct ScanArgs
         .Description("Output file path for results (JSON format)"))
     string outputFile;
 
+    @(NamedArgument(["merge-file", "m"])
+        .Placeholder("FILE")
+        .Description("Merge with existing hosts file (CSV/JSON). Known hosts keep their description, new hosts get hostname via SSH"))
+    string mergeFile;
+
     @(NamedArgument(["suppress-warnings", "q"])
         .Description("Suppress SSH warnings (e.g., post-quantum key exchange)"))
     bool suppressWarnings = false;
@@ -215,6 +221,16 @@ int scan(ScanArgs args)
 
     defaultPoolThreads = args.parallel;
 
+    // Load merge file if provided (for merging with existing hosts)
+    HostEntry[string] mergeHosts;
+    if (args.mergeFile.length > 0)
+    {
+        writefln("=== Loading merge file: %s ===\n", args.mergeFile);
+        auto existingHosts = loadHostsFromFile(args.mergeFile);
+        mergeHosts = existingHosts.map!(h => tuple(h.ipv4, h)).assocArray;
+        writefln("Loaded %d host(s) from merge file.\n", existingHosts.length);
+    }
+
     writefln("=== Pass 1: Port scanning %s.[%s-%s] on port %s (parallel: %s) ===\n",
         args.network, args.start, args.end, args.port, args.parallel);
 
@@ -246,6 +262,22 @@ int scan(ScanArgs args)
         suppressWarnings: args.suppressWarnings,
         acceptNewKeys: false,
     ));
+
+    // Apply merge file descriptions (prefer merge file description over hostname)
+    if (args.mergeFile.length > 0)
+    {
+        hosts = hosts.map!((host) {
+            if (auto merged = host.ipv4 in mergeHosts)
+                return HostEntry(
+                    host.ipv4,
+                    merged.description.length > 0 ? merged.description : host.description,
+                    merged.user.length > 0 ? merged.user : host.user,
+                    merged.port > 0 ? merged.port : host.port,
+                    host.sshSuccess,
+                );
+            return host;
+        }).array;
+    }
 
     // Pass 3: Parallel SSH key collection (if requested)
     if (args.saveKeysFile.length > 0)
