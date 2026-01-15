@@ -28,6 +28,7 @@ struct HostEntry
     string description;
     string user;
     ushort port;
+    bool sshSuccess;
 
     string toString() const
     {
@@ -41,6 +42,7 @@ struct HostEntry
             description,
             user.length > 0 ? user : defaultUser,
             port > 0 ? port : defaultPort,
+            sshSuccess,
         );
     }
 }
@@ -236,7 +238,7 @@ int scan(ScanArgs args)
     // Apply CLI defaults to hosts
     hosts = hosts.map!(h => h.withDefaults(args.sshUser, args.port)).array;
 
-    // Pass 2: Parallel hostname fetching (always done to get actual hostnames)
+    // Pass 2: Fetch hostnames via SSH for all hosts (to verify SSH connectivity)
     writefln("=== Pass 2: Fetching hostnames via SSH (parallel: %s) ===\n", args.parallel);
     hosts = fetchHostnamesParallel(hosts, SshOptions(
         command: "hostname",
@@ -492,9 +494,9 @@ private HostEntry[] fetchHostnamesParallel(HostEntry[] hosts, SshOptions opts)
 
     writeln();
 
-    // Build result with hostnames as description
+    // Build result with hostnames as description and SSH success status
     return zip(hosts, results)
-        .map!(pair => HostEntry(pair[0].ipv4, pair[1].success ? pair[1].output : "", pair[0].user, pair[0].port))
+        .map!(pair => HostEntry(pair[0].ipv4, pair[1].success ? pair[1].output : "", pair[0].user, pair[0].port, pair[1].success))
         .array;
 }
 
