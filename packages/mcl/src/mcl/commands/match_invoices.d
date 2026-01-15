@@ -255,9 +255,73 @@ bool brandsMatch(string brand1, string brand2)
 string normalizeModel(string model)
 {
     return model.toUpper.strip
+        // Remove trademark symbols
+        .replace("(R)", "")
+        .replace("(TM)", "")
+        .replace("®", "")
+        .replace("™", "")
+        // Remove common prefixes that add noise
+        .replace("INTEL", "")
+        .replace("AMD", "")
+        .replace("CORE", "")
+        .replace("RYZEN", "")
+        // Remove generation prefixes
+        .replace("14TH GEN", "")
+        .replace("13TH GEN", "")
+        .replace("12TH GEN", "")
+        .replace("11TH GEN", "")
+        .replace("10TH GEN", "")
+        // Remove separators
         .replace(" ", "")
         .replace("-", "")
         .replace("_", "");
+}
+
+// Extract key identifying tokens from a model string (e.g., "i9", "13900K")
+string[] extractModelTokens(string model)
+{
+    import std.regex : regex, matchAll;
+    import std.uni : toUpper;
+
+    string[] tokens;
+    auto normalized = model.toUpper;
+
+    // Match CPU model identifiers like i9, i7, i5, i3
+    auto cpuTierPattern = regex(`\b(I[3579])\b`);
+    foreach (m; normalized.matchAll(cpuTierPattern))
+        tokens ~= m[1].to!string;
+
+    // Match CPU SKU numbers like 13900K, 7950X, 5800X3D
+    auto skuPattern = regex(`\b(\d{4,5}[A-Z]*\d*[A-Z]*)\b`);
+    foreach (m; normalized.matchAll(skuPattern))
+        tokens ~= m[1].to!string;
+
+    // Match GPU identifiers like RTX4090, GTX1080, RX7900
+    auto gpuPattern = regex(`\b(RTX|GTX|RX|RADEON|GEFORCE)?\s*(\d{3,4})\s*(TI|XT|XTX|SUPER)?\b`);
+    foreach (m; normalized.matchAll(gpuPattern))
+    {
+        string token = m[2].to!string;
+        if (m[1].length > 0)
+            token = m[1].to!string ~ token;
+        if (m[3].length > 0)
+            token ~= m[3].to!string;
+        if (token.length > 0)
+            tokens ~= token;
+    }
+
+    // Match peripheral product names (words 3+ chars, alphanumeric with optional version suffix)
+    // e.g., "Ornata", "V2", "K120", "MX Master", "G502"
+    auto productPattern = regex(`\b([A-Z][A-Z0-9]{2,}|V\d+)\b`);
+    foreach (m; normalized.matchAll(productPattern))
+    {
+        auto token = m[1].to!string;
+        // Skip common noise words
+        if (token != "USB" && token != "RECEIVER" && token != "KEYBOARD" &&
+            token != "MOUSE" && token != "GAMING" && token != "RGB")
+            tokens ~= token;
+    }
+
+    return tokens;
 }
 
 bool modelsMatch(string model1, string model2)
@@ -268,7 +332,33 @@ bool modelsMatch(string model1, string model2)
     auto norm1 = normalizeModel(model1);
     auto norm2 = normalizeModel(model2);
 
-    return norm1 == norm2 || norm1.canFind(norm2) || norm2.canFind(norm1);
+    // Direct match after normalization
+    if (norm1 == norm2 || norm1.canFind(norm2) || norm2.canFind(norm1))
+        return true;
+
+    // Token-based matching: check if key identifiers match
+    auto tokens1 = extractModelTokens(model1);
+    auto tokens2 = extractModelTokens(model2);
+
+    if (tokens1.length > 0 && tokens2.length > 0)
+    {
+        // Check if all tokens from the shorter list are in the longer one
+        auto shorter = tokens1.length <= tokens2.length ? tokens1 : tokens2;
+        auto longer = tokens1.length > tokens2.length ? tokens1 : tokens2;
+
+        size_t matchCount = 0;
+        foreach (t; shorter)
+        {
+            if (longer.canFind(t))
+                matchCount++;
+        }
+
+        // If at least half of the shorter tokens match, consider it a match
+        if (matchCount > 0 && matchCount >= (shorter.length + 1) / 2)
+            return true;
+    }
+
+    return false;
 }
 
 // =============================================================================
@@ -293,6 +383,12 @@ bool categoriesMatch(string partCat, string invoiceCat)
     if (p == "ssd" && (i.canFind("ssd") || i.canFind("disk") || i.canFind("drive")))
         return true;
     if (p == "gpu" && (i.canFind("gpu") || i.canFind("video") || i.canFind("graphics")))
+        return true;
+    if (p == "keyboard" && (i.canFind("kbd") || i.canFind("keyboard")))
+        return true;
+    if (p == "mouse" && (i.canFind("mouse") || i.canFind("mice")))
+        return true;
+    if (p == "webcam" && (i.canFind("camera") || i.canFind("webcam")))
         return true;
 
     return false;
@@ -333,7 +429,13 @@ MatchResult matchPartsToInvoices(HostParts parts, Invoice[] invoices)
         }
 
         // Try model + brand match (medium confidence)
-        if (match.invoice.isNull && part.model.length > 0)
+        // Skip generic receivers - they're bundled accessories without individual invoices
+        auto modelLower = part.model.toLower;
+        bool isGenericReceiver = modelLower.canFind("usb receiver") ||
+            modelLower.canFind("unifying receiver") ||
+            modelLower.canFind("nano receiver");
+
+        if (match.invoice.isNull && part.model.length > 0 && !isGenericReceiver)
         {
             foreach (i, inv; invoices)
             {

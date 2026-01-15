@@ -243,11 +243,33 @@ HostParts extractParts(const(Info) info)
     }
 
     // Periphery devices (keyboards, mice, webcams)
+    // Deduplicate by vendor+product to consolidate multiple HID interfaces
+    // from the same physical device (e.g., USB receiver as keyboard + mouse + consumer control)
+    bool[string] seenPeripherals;
     foreach (peripheral; hw.peripheryInfo.devices)
     {
+        // Create a key from vendor+product to identify the physical device
+        auto key = peripheral.vendor ~ "|" ~ peripheral.product;
+
+        // Skip if we've already seen this device (same vendor+product)
+        if (key in seenPeripherals && peripheral.vendor.length > 0 && peripheral.vendor != "0000")
+            continue;
+
+        // Skip generic system HID devices
+        auto nameLower = peripheral.name.toLower;
+        if (nameLower.canFind("consumer control") ||
+            nameLower.canFind("system control") ||
+            peripheral.name == "Intel HID events")
+            continue;
+
+        // Convert USB vendor ID to brand name if not already resolved
+        // (handles saved JSON files that have raw vendor IDs)
+        auto vendor = usbVendorName(peripheral.vendor);
+
+        seenPeripherals[key] = true;
         parts ~= Part(
             name: peripheral.type.capitalize,
-            mark: peripheral.vendor,
+            mark: vendor,
             model: peripheral.name,
             sn: peripheral.serial,
         );
@@ -1239,6 +1261,16 @@ string usbVendorName(string vendorId)
         case "05ac": return "Apple";
         case "1e4e": return "Cubeternet";
         case "0c45": return "Microdia";
+        case "1532": return "Razer";
+        case "1b1c": return "Corsair";
+        case "2516": return "Cooler Master";
+        case "258a": return "HORI";
+        case "0951": return "Kingston";
+        case "1038": return "SteelSeries";
+        case "04d9": return "Holtek";
+        case "413c": return "Dell";
+        case "17ef": return "Lenovo";
+        case "03f0": return "HP";
         default: return vendorId;
     }
 }
