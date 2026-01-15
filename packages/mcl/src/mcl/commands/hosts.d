@@ -59,6 +59,7 @@ struct HostsArgs
     SubCommand!(
         ScanArgs,
         ExecuteArgs,
+        NixRunArgs,
         Default!UnknownCommandArgs
     ) cmd;
 }
@@ -118,6 +119,71 @@ struct ScanArgs
         .Placeholder("FILE")
         .Description("Merge with existing hosts file (CSV/JSON). Known hosts keep their description, new hosts get hostname via SSH"))
     string mergeFile;
+
+    @(NamedArgument(["suppress-warnings", "q"])
+        .Description("Suppress SSH warnings (e.g., post-quantum key exchange)"))
+    bool suppressWarnings = false;
+}
+
+@(Command("nix-run")
+    .Description("Run a nix flake output on multiple remote hosts"))
+struct NixRunArgs
+{
+    @(MutuallyExclusive.Required)
+    {
+        @(NamedArgument(["hosts-file", "f"])
+            .Placeholder("FILE")
+            .Description("Path to JSON or CSV file with hosts"))
+        string hostsFile;
+
+        @(NamedArgument(["scan", "s"])
+            .Placeholder("NETWORK-ID")
+            .Description("Scan this network for hosts instead of using a file"))
+        string scanNetwork;
+    }
+
+    @(NamedArgument(["flake"])
+        .Required()
+        .Placeholder("REF")
+        .Description("Flake reference (e.g., github:owner/repo#output, .#package)"))
+    string flakeRef;
+
+    @(PositionalArgument(0)
+        .Optional()
+        .Placeholder("ARGS")
+        .Description("Arguments to pass to the flake output"))
+    string[] flakeArgs;
+
+    @(NamedArgument(["output", "o"])
+        .Placeholder("FILE")
+        .Description("Output zip file path"))
+    string outputFile;
+
+    @(NamedArgument(["file-extension", "e"])
+        .Placeholder("EXT")
+        .Description("File extension for output files (default: txt)"))
+    string fileExtension = "txt";
+
+    @(NamedArgument(["port", "p"])
+        .Placeholder("PORT")
+        .Description("SSH port (default: 22)"))
+    ushort port = 22;
+
+    @(NamedArgument(["ssh-user", "u"])
+        .Placeholder("USER")
+        .Description("SSH user (default: root)"))
+    string sshUser = "root";
+
+    @(NamedArgument(["parallel", "P"])
+        .Placeholder("COUNT")
+        .Description("Number of parallel connections (default: 16)"))
+    ushort parallel = 16;
+
+    @(NamedArgument(["timeout", "t"])
+        .Placeholder("SECONDS")
+        .Description("SSH connection timeout in seconds (default: 120)")
+        .Parse((string s) => s.to!ushort.seconds))
+    Duration timeout = 120.seconds;
 
     @(NamedArgument(["suppress-warnings", "q"])
         .Description("Suppress SSH warnings (e.g., post-quantum key exchange)"))
@@ -205,6 +271,7 @@ export int hosts(HostsArgs args)
     return args.cmd.matchCmd!(
         (ScanArgs a) => scan(a),
         (ExecuteArgs a) => executeOnHosts(a),
+        (NixRunArgs a) => nixRun(a),
         (UnknownCommandArgs a) => unknownCommand(a)
     );
 }
@@ -368,6 +435,38 @@ int executeOnHosts(ExecuteArgs args)
         outputZip: args.outputZip,
         fileExtension: args.fileExtension,
     );
+}
+
+/// Run a nix flake output on multiple remote hosts
+int nixRun(NixRunArgs args)
+{
+    import std.process : escapeShellCommand;
+
+    // Build the nix run command (escape for remote shell execution)
+    // Wrap in 'bash -l -c' to ensure login scripts are sourced (for PATH setup)
+    // Use double quotes for outer wrapper since inner command uses single quotes
+    auto innerCommand = escapeShellCommand(
+        ["nix",
+        "--extra-experimental-features", "flakes nix-command",
+        "run", "--accept-flake-config", "--refresh",
+        args.flakeRef,
+        "--"] ~ args.flakeArgs
+    );
+    auto nixCommand = `bash -l -c "` ~ innerCommand ~ `"`;
+
+    return executeOnHosts(ExecuteArgs(
+        command: nixCommand,
+        hostsFile: args.hostsFile,
+        scanNetwork: args.scanNetwork,
+        port: args.port,
+        sshUser: args.sshUser,
+        parallel: args.parallel,
+        timeout: args.timeout,
+        continueOnError: true,
+        outputZip: args.outputFile,
+        fileExtension: args.fileExtension,
+        suppressWarnings: args.suppressWarnings,
+    ));
 }
 
 int unknownCommand(UnknownCommandArgs)
