@@ -195,6 +195,10 @@ struct NixRunArgs
     @(NamedArgument(["suppress-warnings", "q"])
         .Description("Suppress SSH warnings (e.g., post-quantum key exchange)"))
     bool suppressWarnings = false;
+
+    @(NamedArgument(["json-output", "j"])
+        .Description("Treat command output as JSON and embed it in the output file"))
+    bool jsonOutput = false;
 }
 
 @(Command("execute")
@@ -270,6 +274,10 @@ struct ExecuteArgs
     @(NamedArgument(["suppress-warnings", "q"])
         .Description("Suppress SSH warnings (e.g., post-quantum key exchange)"))
     bool suppressWarnings = false;
+
+    @(NamedArgument(["json-output", "j"])
+        .Description("Treat command output as JSON and embed it in the output file"))
+    bool jsonOutput = false;
 }
 
 @(Command(" ").Description(" "))
@@ -451,6 +459,7 @@ int executeOnHosts(ExecuteArgs args)
         outputZip: args.outputZip,
         fileExtension: args.fileExtension,
         useSudo: args.sudo,
+        jsonOutput: args.jsonOutput,
     );
 }
 
@@ -484,6 +493,7 @@ int nixRun(NixRunArgs args)
         fileExtension: args.fileExtension,
         suppressWarnings: args.suppressWarnings,
         sudo: args.sudo,
+        jsonOutput: args.jsonOutput,
     ));
 }
 
@@ -691,7 +701,7 @@ private void saveHostKeysParallel(HostEntry[] hosts, string filename)
 }
 
 /// Execute a command on a list of hosts via SSH
-private int executeCommandOnHosts(HostEntry[] hosts, SshOptions opts, bool continueOnError, bool useParallel, string outputDir, string outputZip, string fileExtension, bool useSudo = false)
+private int executeCommandOnHosts(HostEntry[] hosts, SshOptions opts, bool continueOnError, bool useParallel, string outputDir, string outputZip, string fileExtension, bool useSudo = false, bool jsonOutput = false)
 {
     import std.parallelism : parallel;
     import std.zip : ZipArchive, ArchiveMember;
@@ -742,7 +752,7 @@ private int executeCommandOnHosts(HostEntry[] hosts, SshOptions opts, bool conti
                 successCount++;
                 successes ~= result;
                 if (outputDir.length > 0)
-                    saveHostOutput(outputDir, result.host, result.output, fileExtension);
+                    saveHostOutput(outputDir, result.host, result.output, fileExtension, jsonOutput);
             }
             else
                 failures ~= result;
@@ -769,7 +779,7 @@ private int executeCommandOnHosts(HostEntry[] hosts, SshOptions opts, bool conti
                 successCount++;
                 successes ~= result;
                 if (outputDir.length > 0)
-                    saveHostOutput(outputDir, result.host, result.output, fileExtension);
+                    saveHostOutput(outputDir, result.host, result.output, fileExtension, jsonOutput);
             }
             else
             {
@@ -823,7 +833,10 @@ private int executeCommandOnHosts(HostEntry[] hosts, SshOptions opts, bool conti
 
             auto member = new ArchiveMember();
             member.name = filename;
-            member.expandedData = cast(ubyte[]) result.output.dup;
+            auto content = fileExtension == "json"
+                ? formatHostOutput(result.host, result.output, jsonOutput)
+                : result.output;
+            member.expandedData = cast(ubyte[]) content.dup;
             archive.addMember(member);
         }
         write(outputZip, archive.build());
@@ -836,7 +849,7 @@ private int executeCommandOnHosts(HostEntry[] hosts, SshOptions opts, bool conti
 }
 
 /// Save command output for a host to a file
-private void saveHostOutput(string outputDir, HostEntry host, string output, string fileExtension)
+private void saveHostOutput(string outputDir, HostEntry host, string output, string fileExtension, bool jsonOutput)
 {
     import std.file : write;
     import std.path : buildPath;
@@ -845,7 +858,25 @@ private void saveHostOutput(string outputDir, HostEntry host, string output, str
         ? host.ipv4 ~ "_" ~ host.description ~ "." ~ fileExtension
         : host.ipv4 ~ "." ~ fileExtension;
 
-    write(buildPath(outputDir, filename), output);
+    auto content = fileExtension == "json"
+        ? formatHostOutput(host, output, jsonOutput)
+        : output;
+
+    write(buildPath(outputDir, filename), content);
+}
+
+/// Format host output as JSON
+private string formatHostOutput(HostEntry host, string output, bool jsonOutput)
+{
+    import std.json : JSONOptions;
+
+    auto json = JSONValue([
+        "ipv4": JSONValue(host.ipv4),
+        "description": JSONValue(host.description),
+        "output": jsonOutput ? parseJSON(output) : JSONValue(output),
+    ]);
+
+    return json.toPrettyString(JSONOptions.doNotEscapeSlashes);
 }
 
 private struct SshOptions
