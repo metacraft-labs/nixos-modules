@@ -52,7 +52,7 @@ in
 
           result = {
             shards = mkOption {
-              type = types.attrsOf (types.attrsOf types.package);
+              type = types.lazyAttrsOf (types.lazyAttrsOf types.package);
               readOnly = true;
               description = ''
                 An attribute set of attribute sets of derivations to be built
@@ -82,7 +82,7 @@ in
               ];
             };
             shardsPerSystem = mkOption {
-              type = types.attrsOf (types.attrsOf (types.attrsOf types.package));
+              type = types.lazyAttrsOf (types.lazyAttrsOf (types.lazyAttrsOf types.package));
               readOnly = true;
               description = ''
                 An `system`-indexed attribute set of attribute sets of
