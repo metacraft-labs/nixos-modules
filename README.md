@@ -2,9 +2,15 @@
 
 This repository contains a collection of Nix packages and NixOS modules, commonly used by the Metacraft Labs development team.
 
-## Use CI workflow
+## Documentation
 
-In order to reuse a ci workflow from this repo (ci/update-flake-lock/update-flake-packages), you must have the following in your yml file in your repository:
+- [Shard Splitting Architecture](docs/shard-splitting-architecture.md) — Distributed CI/CD evaluation with the `shardSplit` flake module
+
+## GitHub Workflows
+
+### CI Workflow
+
+To use this repo's CI workflow, add the following to your repository:
 
 ```yml
 jobs:
@@ -13,92 +19,88 @@ jobs:
     secrets: inherit
 ```
 
-## MCL command
+### Reusable Workflows
 
-The mcl tool contained in this repository has a number of commands which can be given to it as a commandline argument. They are:
+The following reusable workflows are available in `.github/workflows/`:
 
-### ci_matrix
+#### [`reusable-flake-checks-ci-matrix.yml`](.github/workflows/reusable-flake-checks-ci-matrix.yml)
 
-Evaluates each package, and compares it to it's last cached version, creating a table listing which packages are cached, which aren't, and which failed.
-This command is not meant to be run manually, but rather to be ran by the CI.
+Runs flake checks with shard-based parallelization. See [Shard Splitting Architecture](docs/shard-splitting-architecture.md).
 
-ENV Variables:
+```yml
+jobs:
+  ci:
+    uses: metacraft-labs/nixos-modules/.github/workflows/reusable-flake-checks-ci-matrix.yml@main
+    secrets:
+      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      CACHIX_ACTIVATE_TOKEN: ${{ secrets.CACHIX_ACTIVATE_TOKEN }}
+    with:
+      runners: | # json
+        {
+          "x86_64-linux": ["self-hosted", "nixos", "x86-64-v3", "bare-metal"],
+          "aarch64-darwin": ["self-hosted", "macOS", "aarch64-darwin"]
+        }
+```
 
-- IS_INITIAL: `true` or `false`
-- CACHIX_CACHE: Which cachix cache to search
-- CACHIX_AUTH_TOKEN: The auth token for the cache
-- FLAKE_PRE: Flake path prefix
-- FLAKE_POST: Flake path postfix
+#### [`reusable-lint.yml`](.github/workflows/reusable-lint.yml)
 
-Usage: Use `mcl ci` instead
+Runs pre-commit hooks for linting and formatting checks.
 
-### ci
+```yml
+jobs:
+  lint:
+    uses: metacraft-labs/nixos-modules/.github/workflows/reusable-lint.yml@main
+    secrets:
+      NIX_GITHUB_TOKEN: ${{ secrets.NIX_GITHUB_TOKEN }}
+      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+```
 
-Evaluates each package, and compares it to it's last cached version, creating a table listing which packages are cached, which aren't, and which failed.
+#### [`reusable-update-flake-lock.yml`](.github/workflows/reusable-update-flake-lock.yml)
 
-ENV Variables:
+Updates `flake.lock` and creates a PR. Supports GPG-signed commits.
 
-- IS_INITIAL: `true` or `false`
-- CACHIX_CACHE: Which cachix cache to search
-- CACHIX_AUTH_TOKEN: The auth token for the cache
-- FLAKE_PRE: Flake path prefix
-- FLAKE_POST: Flake path postfix
+```yml
+jobs:
+  update-flake-lock:
+    uses: metacraft-labs/nixos-modules/.github/workflows/reusable-update-flake-lock.yml@main
+    secrets:
+      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      CREATE_PR_APP_ID: ${{ secrets.APP_ID }}
+      CREATE_PR_APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
+      NIX_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GIT_GPG_SIGNING_SECRET_KEY: ${{ secrets.GIT_GPG_SIGNING_SECRET_KEY }}
+    with:
+      runner: '["self-hosted", "Linux", "x86-64-v2"]'
+      sign-commits: true
+```
 
-Usage: `mcl ci`
+#### [`reusable-update-flake-packages.yml`](.github/workflows/reusable-update-flake-packages.yml)
 
-### deploy_spec
+Updates individual flake packages using [`nix-update-action`](https://github.com/metacraft-labs/nix-update-action) and creates PRs.
 
-Deploys machine specs to cachix.
+```yml
+jobs:
+  update-packages:
+    uses: metacraft-labs/nixos-modules/.github/workflows/reusable-update-flake-packages.yml@main
+    secrets:
+      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      CREATE_PR_APP_ID: ${{ secrets.APP_ID }}
+      CREATE_PR_APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
+```
 
-Usage: `mcl deploy_spec`
+## MCL CLI Tool
 
-### get_fstab
+The `mcl` tool is a Swiss-knife CLI for managing NixOS deployments. For development best practices, see [packages/mcl/AGENTS.md](packages/mcl/AGENTS.md).
 
-ENV Variables:
+### Available Commands
 
-- IS_INITIAL: `true` or `false`
-- CACHIX_CACHE: Which cachix cache to search
-- CACHIX_AUTH_TOKEN: The auth token for the cache
-- [Optional] CACHIX_STORE_URL: URL for the cachix store
-- [Optional] CACHIX_DEPLOY_WORKSPACE: Workspace for cachix deploy (defaults to CACHIX_CACHE if not set)
-- MACHINE_NAME: Which machine to serach
-- DEPLOYMENT_ID: Id of cachix deployment
+| Command        | Description                                                                                                              |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `host-info`    | Returns system information (OS, BIOS, CPU, GPU, RAM, disks) as JSON                                                      |
+| `hosts`        | Remote host management and network scanning                                                                              |
+| `ci`           | Evaluates packages and compares to cached versions                                                                       |
+| `shard-matrix` | Splits packages into shards for distributed CI. See [Shard Splitting Architecture](docs/shard-splitting-architecture.md) |
+| `deploy-spec`  | Deploys machine specs to Cachix                                                                                          |
+| `machine`      | Create and manage NixOS machine configurations                                                                           |
 
-Usage: `mcl get_fstab`
-
-### host_info
-
-Returns system information, software (OS, Bios) and hardware (CPU, GPU, Ram, MB, Disks) as json.
-
-Usage: `mcl host_info`
-
-### machine_create
-
-Create a starting nix configuration for target machine.
-
-ENV Variables:
-
-- SSH_PATH: SSH path of target machine
-
-The remaining ENV variables are optional, and if missing will be prompted at runtime.
-
-- CREATE_USER: bool
-- USER_NAME: string
-- MACHINE_NAME: string
-- DESCRIPTION: string
-- IS_NORMAL_USER: bool
-- EXTRA_GROUPS: comma-delimited list of additional groups to add to the created user
-- MACHINE_TYPE: enum (desktop, server, container)
-- DISKS: comma-delimited list of device names (as per /dev) to add to the nix configuration
-
-Usage: `mcl machine_create`
-
-### shard_matrix
-
-Splits the list of packages under `checks` into n number of shards. Requires manual configuration using modules/shard-split. See this repo and `nix-blockchain-development`
-
-ENV Variables:
-
-- [Optional] GITHUB_OUTPUT: If set, exports results to GITHUB_INPUT env variable
-
-Usage: `mcl shard_matrix`
+Run `mcl --help` or `mcl <command> --help` for usage details and environment variables.
