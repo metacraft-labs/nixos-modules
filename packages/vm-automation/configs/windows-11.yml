@@ -1,0 +1,131 @@
+# Copyright 2026 Schelling Point Labs Inc
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# Windows 11 OOBE (Out-of-Box Experience) Automation
+# This is a simplified example for testing the automation engine
+
+boot_wait: 60
+
+boot_commands:
+  # Windows 11 OOBE startup
+  - '<delay 10>'
+
+  # Country/Region selection
+  - "<wait 'Is this the right country or region?', timeout=300>"
+  - '<delay 2>'
+  - "<click 'Yes'>"
+  - '<delay 2>'
+
+  # Keyboard layout
+  - "<wait 'Is this the right keyboard layout?'>"
+  - "<click 'Yes'>"
+  - '<delay 2>'
+
+  # Skip second keyboard layout
+  - "<wait 'Want to add a second keyboard layout?'>"
+  - "<click 'Skip'>"
+  - '<delay 5>'
+
+  # Network connection - skip for now
+  # Windows 11 Home requires network, but Pro allows "I don't have internet"
+  - "<wait 'Let''s connect you to a network'>"
+  - '<delay 2>'
+  - "<click 'I don''t have internet'>"
+  - '<delay 2>'
+  - "<click 'Continue with limited setup'>"
+  - '<delay 5>'
+
+  # License agreement
+  - "<wait 'License agreement'>"
+  - "<click 'Accept'>"
+  - '<delay 2>'
+
+  # Create local account
+  - "<wait 'Who''s going to use this PC?'>"
+  - "<type 'Administrator'>"
+  - "<click 'Next'>"
+  - '<delay 2>'
+
+  # Password
+  - "<wait 'Create a password'>"
+  - "<type 'password'>"
+  - "<click 'Next'>"
+  - '<delay 2>'
+
+  # Confirm password
+  - "<wait 'Confirm your password'>"
+  - "<type 'password'>"
+  - "<click 'Next'>"
+  - '<delay 2>'
+
+  # Security questions (3 questions)
+  - "<wait 'Choose a security question'>"
+  - '<click_at 960,540>'
+  - '<enter>'
+  - "<type 'answer'>"
+  - "<click 'Next'>"
+  - '<delay 2>'
+
+  - '<click_at 960,540>'
+  - '<enter>'
+  - "<type 'answer'>"
+  - "<click 'Next'>"
+  - '<delay 2>'
+
+  - '<click_at 960,540>'
+  - '<enter>'
+  - "<type 'answer'>"
+  - "<click 'Next'>"
+  - '<delay 5>'
+
+  # Privacy settings - decline all
+  - "<wait 'Choose privacy settings'>"
+  - '<delay 2>'
+  # Activity history
+  - "<click 'No'>"
+  - '<delay 1>'
+  # Location
+  - "<click 'No'>"
+  - '<delay 1>'
+  # Find my device
+  - "<click 'No'>"
+  - '<delay 1>'
+  # Diagnostic data (required, can't disable)
+  - '<delay 1>'
+  # Inking and typing
+  - "<click 'No'>"
+  - '<delay 1>'
+  # Advertising ID
+  - "<click 'No'>"
+  - '<delay 1>'
+  - "<click 'Accept'>"
+  - '<delay 30>'
+
+  # Desktop should now be visible
+  - '<delay 10>'
+
+  # Enable Remote Desktop via PowerShell
+  - '<cmd+r>'
+  - '<delay 2>'
+  - "<type 'powershell'>"
+  - '<ctrl+shift+enter>' # Run as Administrator
+  - '<delay 3>'
+  - '<left>' # Select "Yes" in UAC prompt
+  - '<enter>'
+  - '<delay 3>'
+
+  # Enable Remote Desktop
+  - "<type 'Set-ItemProperty -Path ''HKLM:\\System\\CurrentControlSet\\Control\\Terminal Server'' -Name \"fDenyTSConnections\" -Value 0'>"
+  - '<enter>'
+  - '<delay 2>'
+
+  # Enable firewall rule
+  - '<type ''Enable-NetFirewallRule -DisplayGroup "Remote Desktop"''>'
+  - '<enter>'
+  - '<delay 2>'
+
+  # Exit PowerShell
+  - "<type 'exit'>"
+  - '<enter>'
+# Note: Windows RDP health check would require a different approach
+# For now, we assume setup completed successfully if no errors occurred
