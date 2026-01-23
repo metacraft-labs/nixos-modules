@@ -51,6 +51,7 @@
         lido-withdrawals-automation = pkgs.callPackage ./lido-withdrawals-automation { };
         pyroscope = pkgs.callPackage ./pyroscope { };
         random-alerts = pkgs.callPackage ./random-alerts { };
+        yaml-automation-runner = pkgs.callPackage ./vm-automation { };
         mcl = pkgs.callPackage ./mcl {
           dCompiler = inputs'.dlang-nix.packages."ldc-binary-1_38_0";
           inherit (legacyPackages.inputs.nixpkgs) cachix nix nix-eval-jobs;
@@ -66,5 +67,3 @@
           inherit (inputs'.nix2container.packages) nix2container;
         };
       };
-    };
-}
