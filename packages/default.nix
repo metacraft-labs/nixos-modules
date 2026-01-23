@@ -52,6 +52,12 @@
         pyroscope = pkgs.callPackage ./pyroscope { };
         random-alerts = pkgs.callPackage ./random-alerts { };
         yaml-automation-runner = pkgs.callPackage ./vm-automation { };
+        # Ubuntu VM builders for multi-OS testing
+        # Import the builders which export { makeLinuxVM = ...; }
+        ubuntu-vm-builder = import ../vm-images/ubuntu {
+          pkgs = pkgs;
+          lib = lib;
+        };
         mcl = pkgs.callPackage ./mcl {
           dCompiler = inputs'.dlang-nix.packages."ldc-binary-1_38_0";
           inherit (legacyPackages.inputs.nixpkgs) cachix nix nix-eval-jobs;
