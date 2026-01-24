@@ -13,6 +13,7 @@ private enum commandModulesToExport =
     "mcl.commands.config" : ["config"],
     "mcl.commands.hosts" : ["hosts"],
     "mcl.commands.secret" : ["secret"],
+    "mcl.commands.match_invoices" : ["matchInvoices"],
 ];
 
 template ImportAll(alias aa)
