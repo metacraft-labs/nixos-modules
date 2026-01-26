@@ -9,6 +9,11 @@ This script implements the Lume unattended setup pattern for cross-platform
 VM automation. It parses YAML configuration files and executes automation
 commands via VNC, using OCR for text recognition.
 
+Supports two command formats:
+1. Native YAML (recommended) - Uses native YAML structures for type safety
+2. Legacy string format (deprecated) - Angle-bracket strings for backwards compatibility
+
+Schema: nix/vm-recipes/configs/YAML-AUTOMATION-SCHEMA.md
 Architecture: specs/Internal/Multi-OS-VM-Infrastructure-Architecture.md
 Reference: vendor/vm-research/cua/libs/lume/src/Unattended/*.swift
 """
@@ -20,10 +25,11 @@ import os
 import re
 import sys
 import time
+import warnings
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import yaml
 from PIL import Image, ImageDraw
@@ -147,11 +153,16 @@ class UnattendedSetup:
             boot_commands = self.config.get('boot_commands', [])
             print(f"Executing {len(boot_commands)} boot commands")
 
-            for i, cmd_str in enumerate(boot_commands):
+            for i, cmd_input in enumerate(boot_commands):
                 self.command_index = i
-                print(f"[{i+1}/{len(boot_commands)}] {cmd_str}")
+                # Show a summary for logging (native YAML or legacy string)
+                if isinstance(cmd_input, dict):
+                    cmd_summary = f"{list(cmd_input.keys())[0]}: ..."
+                else:
+                    cmd_summary = str(cmd_input)
+                print(f"[{i+1}/{len(boot_commands)}] {cmd_summary}")
 
-                cmd = self.parse_command(cmd_str)
+                cmd = self.parse_command(cmd_input)
                 await self.execute_command(cmd)
 
                 # Inter-command delay for stability
@@ -173,9 +184,185 @@ class UnattendedSetup:
             if self.vnc is not None:
                 self.vnc.disconnect()
 
-    def parse_command(self, cmd_str: str) -> Dict[str, Any]:
+    def parse_command(self, cmd: Union[str, Dict[str, Any]]) -> Dict[str, Any]:
         """
-        Parse a command string into a structured command dict.
+        Parse a command into a structured command dict.
+
+        Supports two formats:
+        1. Native YAML format (dict) - RECOMMENDED
+        2. Legacy string format (angle brackets) - DEPRECATED
+
+        Native YAML Examples:
+            {'wait': {'text': 'Continue', 'timeout': 300}}
+            {'delay': 5}
+            {'hotkey': {'modifiers': ['shift', 'cmd'], 'key': 't'}}
+            {'type': 'hello'}
+            {'key': 'enter'}
+            {'click': 'Agree'} or {'click': {'text': 'Agree', 'index': -1}}
+            {'click_at': {'x': 960, 'y': 540}}
+
+        Legacy String Examples (DEPRECATED):
+            <wait 'Continue', timeout=300>
+            <delay 5>
+            <shift+cmd+t>
+            <type 'hello'>
+            <enter>
+
+        Args:
+            cmd: Command as dict (native YAML) or string (legacy format)
+
+        Returns:
+            Dict with 'type' key and command-specific arguments
+
+        Raises:
+            ValueError: If command format is invalid
+        """
+        # Native YAML format (dict) - parse as structured data
+        if isinstance(cmd, dict):
+            return self._parse_native_command(cmd)
+
+        # Legacy string format - parse angle-bracket syntax
+        elif isinstance(cmd, str):
+            warnings.warn(
+                f"String command format is deprecated: {cmd}\n"
+                "Please migrate to native YAML format. "
+                "See nix/vm-recipes/configs/YAML-AUTOMATION-SCHEMA.md for details.",
+                DeprecationWarning,
+                stacklevel=2
+            )
+            return self._parse_legacy_command(cmd)
+
+        else:
+            raise ValueError(f"Invalid command type: {type(cmd)}. Expected dict or str.")
+
+    def _parse_native_command(self, cmd: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Parse native YAML command dict.
+
+        The dict should have exactly one key indicating the command type,
+        with the value being either a simple value or a dict of parameters.
+
+        Args:
+            cmd: Native YAML command dict
+
+        Returns:
+            Normalized command dict with 'type' key
+
+        Raises:
+            ValueError: If command format is invalid
+        """
+        if not isinstance(cmd, dict) or len(cmd) != 1:
+            raise ValueError(
+                f"Native command must be a dict with exactly one key: {cmd}"
+            )
+
+        cmd_type, params = next(iter(cmd.items()))
+
+        # Simple value commands (scalar parameters)
+        if cmd_type == 'delay':
+            # delay: 5 or delay: 2.5
+            if not isinstance(params, (int, float)):
+                raise ValueError(f"delay parameter must be a number: {params}")
+            return {'type': 'delay', 'duration': float(params)}
+
+        elif cmd_type == 'type':
+            # type: "hello world"
+            if not isinstance(params, str):
+                raise ValueError(f"type parameter must be a string: {params}")
+            return {'type': 'type', 'text': params}
+
+        elif cmd_type == 'key':
+            # key: enter
+            if not isinstance(params, str):
+                raise ValueError(f"key parameter must be a string: {params}")
+            return {'type': 'keypress', 'key': params}
+
+        # Click can be simple or structured
+        elif cmd_type == 'click':
+            if isinstance(params, str):
+                # click: "Agree" (simple form)
+                return {
+                    'type': 'click',
+                    'text': params,
+                    'index': None,
+                    'xoffset': 0,
+                    'yoffset': 0
+                }
+            elif isinstance(params, dict):
+                # click: {text: "Agree", index: -1, offset: {x: 50, y: 0}}
+                if 'text' not in params:
+                    raise ValueError(f"click command requires 'text' field: {params}")
+                offset = params.get('offset', {})
+                return {
+                    'type': 'click',
+                    'text': params['text'],
+                    'index': params.get('index'),
+                    'xoffset': offset.get('x', 0),
+                    'yoffset': offset.get('y', 0)
+                }
+            else:
+                raise ValueError(f"click parameter must be string or dict: {params}")
+
+        # Structured commands (dict parameters)
+        elif cmd_type == 'wait':
+            # wait: {text: "Continue", timeout: 300}
+            if not isinstance(params, dict):
+                raise ValueError(f"wait parameter must be a dict: {params}")
+            if 'text' not in params:
+                raise ValueError(f"wait command requires 'text' field: {params}")
+            return {
+                'type': 'wait',
+                'text': params['text'],
+                'timeout': params.get('timeout', 120)
+            }
+
+        elif cmd_type == 'click_at':
+            # click_at: {x: 815, y: 480}
+            if not isinstance(params, dict):
+                raise ValueError(f"click_at parameter must be a dict: {params}")
+            if 'x' not in params or 'y' not in params:
+                raise ValueError(f"click_at requires 'x' and 'y' fields: {params}")
+            return {
+                'type': 'click_at',
+                'x': params['x'],
+                'y': params['y']
+            }
+
+        elif cmd_type == 'hotkey':
+            # hotkey: {modifiers: [shift, cmd], key: t}
+            if not isinstance(params, dict):
+                raise ValueError(f"hotkey parameter must be a dict: {params}")
+            if 'key' not in params or 'modifiers' not in params:
+                raise ValueError(f"hotkey requires 'key' and 'modifiers' fields: {params}")
+            if not isinstance(params['modifiers'], list):
+                raise ValueError(f"hotkey modifiers must be a list: {params['modifiers']}")
+            return {
+                'type': 'hotkey',
+                'modifiers': params['modifiers'],
+                'key': params['key']
+            }
+
+        elif cmd_type == 'move_mouse':
+            # move_mouse: {x: 960, y: 540}
+            if not isinstance(params, dict):
+                raise ValueError(f"move_mouse parameter must be a dict: {params}")
+            if 'x' not in params or 'y' not in params:
+                raise ValueError(f"move_mouse requires 'x' and 'y' fields: {params}")
+            return {
+                'type': 'move_mouse',
+                'x': params['x'],
+                'y': params['y']
+            }
+
+        else:
+            raise ValueError(f"Unknown command type: {cmd_type}")
+
+    def _parse_legacy_command(self, cmd_str: str) -> Dict[str, Any]:
+        """
+        Parse legacy command string (DEPRECATED).
+
+        This method maintains backwards compatibility with the old angle-bracket
+        string format. New configs should use native YAML format instead.
 
         Command format: <command args>
 
@@ -283,6 +470,10 @@ class UnattendedSetup:
         elif cmd_type == 'click_at':
             self.vnc.mouseMove(cmd['x'], cmd['y'])
             self.vnc.mousePress(1)  # Left button
+
+        elif cmd_type == 'move_mouse':
+            # Move mouse without clicking
+            self.vnc.mouseMove(cmd['x'], cmd['y'])
 
         elif cmd_type == 'type':
             # Type text character by character
