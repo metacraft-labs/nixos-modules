@@ -67,3 +67,5 @@
           inherit (inputs'.nix2container.packages) nix2container;
         };
       };
+    };
+}
