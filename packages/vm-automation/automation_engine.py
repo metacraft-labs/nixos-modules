@@ -85,7 +85,7 @@ class UnattendedSetup:
     """
 
     def __init__(self, config_path: str, vnc_host: str, vnc_port: int,
-                 vm_ip: Optional[str] = None, debug: bool = False):
+        vm_ip: Optional[str] = None, debug: bool = False):
         """
         Initialize the automation engine.
 
@@ -407,7 +407,7 @@ class UnattendedSetup:
         return observations
 
     def find_text(self, pattern: str, observations: List[TextObservation],
-                  index: Optional[int] = None) -> Optional[TextObservation]:
+        index: Optional[int] = None) -> Optional[TextObservation]:
         """
         Find text in observations using multi-strategy matching.
 
@@ -420,7 +420,7 @@ class UnattendedSetup:
             pattern: Text pattern to search for
             observations: List of text observations from OCR
             index: Optional index for selecting from multiple matches
-                   (0 = first, -1 = last, etc.)
+            (0 = first, -1 = last, etc.)
 
         Returns:
             Matching TextObservation or None if not found
@@ -451,7 +451,7 @@ class UnattendedSetup:
         return matches[0]
 
     async def click_on_text(self, text: str, index: Optional[int],
-                           xoffset: int, yoffset: int):
+        xoffset: int, yoffset: int):
         """
         Find text via OCR and click on it.
 
@@ -500,8 +500,8 @@ class UnattendedSetup:
         self.vnc.mousePress(1)  # Left button
 
     def save_debug_screenshot(self, image_path: str, click_point: Optional[Tuple[int, int]],
-                             search_text: str, failed: bool,
-                             observations: List[TextObservation]):
+        search_text: str, failed: bool,
+        observations: List[TextObservation]):
         """
         Save annotated screenshot with OCR results for debugging.
 
