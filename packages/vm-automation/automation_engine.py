@@ -9,9 +9,7 @@ This script implements the Lume unattended setup pattern for cross-platform
 VM automation. It parses YAML configuration files and executes automation
 commands via VNC, using OCR for text recognition.
 
-Supports two command formats:
-1. Native YAML (recommended) - Uses native YAML structures for type safety
-2. Legacy string format (deprecated) - Angle-bracket strings for backwards compatibility
+Uses native YAML structures for type safety, IDE support, and validation.
 
 Schema: nix/vm-recipes/configs/YAML-AUTOMATION-SCHEMA.md
 Architecture: specs/Internal/Multi-OS-VM-Infrastructure-Architecture.md
@@ -25,11 +23,10 @@ import os
 import re
 import sys
 import time
-import warnings
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 from PIL import Image, ImageDraw
@@ -184,15 +181,13 @@ class UnattendedSetup:
             if self.vnc is not None:
                 self.vnc.disconnect()
 
-    def parse_command(self, cmd: Union[str, Dict[str, Any]]) -> Dict[str, Any]:
+    def parse_command(self, cmd: Dict[str, Any]) -> Dict[str, Any]:
         """
         Parse a command into a structured command dict.
 
-        Supports two formats:
-        1. Native YAML format (dict) - RECOMMENDED
-        2. Legacy string format (angle brackets) - DEPRECATED
+        Uses native YAML format with structured dicts for type safety.
 
-        Native YAML Examples:
+        Examples:
             {'wait': {'text': 'Continue', 'timeout': 300}}
             {'delay': 5}
             {'hotkey': {'modifiers': ['shift', 'cmd'], 'key': 't'}}
@@ -200,16 +195,10 @@ class UnattendedSetup:
             {'key': 'enter'}
             {'click': 'Agree'} or {'click': {'text': 'Agree', 'index': -1}}
             {'click_at': {'x': 960, 'y': 540}}
-
-        Legacy String Examples (DEPRECATED):
-            <wait 'Continue', timeout=300>
-            <delay 5>
-            <shift+cmd+t>
-            <type 'hello'>
-            <enter>
+            {'move_mouse': {'x': 960, 'y': 540}}
 
         Args:
-            cmd: Command as dict (native YAML) or string (legacy format)
+            cmd: Command as native YAML dict
 
         Returns:
             Dict with 'type' key and command-specific arguments
@@ -217,33 +206,24 @@ class UnattendedSetup:
         Raises:
             ValueError: If command format is invalid
         """
-        # Native YAML format (dict) - parse as structured data
-        if isinstance(cmd, dict):
-            return self._parse_native_command(cmd)
-
-        # Legacy string format - parse angle-bracket syntax
-        elif isinstance(cmd, str):
-            warnings.warn(
-                f"String command format is deprecated: {cmd}\n"
-                "Please migrate to native YAML format. "
-                "See nix/vm-recipes/configs/YAML-AUTOMATION-SCHEMA.md for details.",
-                DeprecationWarning,
-                stacklevel=2
+        if not isinstance(cmd, dict):
+            raise ValueError(
+                f"Invalid command type: {type(cmd)}. Expected dict.\n"
+                "Commands must use native YAML format. "
+                "See nix/vm-recipes/configs/YAML-AUTOMATION-SCHEMA.md for details."
             )
-            return self._parse_legacy_command(cmd)
 
-        else:
-            raise ValueError(f"Invalid command type: {type(cmd)}. Expected dict or str.")
+        return self._parse_native_command(cmd)
 
     def _parse_native_command(self, cmd: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Parse native YAML command dict.
+        Parse YAML command dict into normalized command format.
 
         The dict should have exactly one key indicating the command type,
         with the value being either a simple value or a dict of parameters.
 
         Args:
-            cmd: Native YAML command dict
+            cmd: YAML command dict (e.g., {'delay': 5} or {'wait': {'text': 'OK', 'timeout': 300}})
 
         Returns:
             Normalized command dict with 'type' key
@@ -357,95 +337,6 @@ class UnattendedSetup:
         else:
             raise ValueError(f"Unknown command type: {cmd_type}")
 
-    def _parse_legacy_command(self, cmd_str: str) -> Dict[str, Any]:
-        """
-        Parse legacy command string (DEPRECATED).
-
-        This method maintains backwards compatibility with the old angle-bracket
-        string format. New configs should use native YAML format instead.
-
-        Command format: <command args>
-
-        Examples:
-            <wait 'Continue'> -> {'type': 'wait', 'text': 'Continue', 'timeout': 120}
-            <click 'Agree', index=-1> -> {'type': 'click', 'text': 'Agree', 'index': -1}
-            <click_at 960,540> -> {'type': 'click_at', 'x': 960, 'y': 540}
-            <type 'hello'> -> {'type': 'type', 'text': 'hello'}
-            <cmd+space> -> {'type': 'hotkey', 'modifiers': ['cmd'], 'key': 'space'}
-            <enter> -> {'type': 'keypress', 'key': 'enter'}
-            <delay 2> -> {'type': 'delay', 'duration': 2.0}
-
-        Args:
-            cmd_str: Command string in angle-bracket format
-
-        Returns:
-            Dict with command type and arguments
-
-        Raises:
-            ValueError: If command format is invalid
-        """
-        # Extract content from angle brackets
-        match = re.match(r'<(.+?)>', cmd_str.strip())
-        if not match:
-            raise ValueError(f"Invalid command format: {cmd_str}")
-
-        content = match.group(1)
-
-        # Parse different command types
-
-        # Wait for text: <wait 'text', timeout=120>
-        if content.startswith('wait '):
-            pattern = r"wait '(.+?)'(?:, timeout=(\d+))?"
-            m = re.match(pattern, content)
-            if not m:
-                raise ValueError(f"Invalid wait command: {content}")
-            text = m.group(1)
-            timeout = int(m.group(2)) if m.group(2) else 120
-            return {'type': 'wait', 'text': text, 'timeout': timeout}
-
-        # Click text: <click 'text', index=-1, xoffset=10, yoffset=5>
-        elif content.startswith('click '):
-            pattern = r"click '(.+?)'(?:, index=(-?\d+))?(?:, xoffset=(-?\d+))?(?:, yoffset=(-?\d+))?"
-            m = re.match(pattern, content)
-            if not m:
-                raise ValueError(f"Invalid click command: {content}")
-            return {
-                'type': 'click',
-                'text': m.group(1),
-                'index': int(m.group(2)) if m.group(2) else None,
-                'xoffset': int(m.group(3)) if m.group(3) else 0,
-                'yoffset': int(m.group(4)) if m.group(4) else 0
-            }
-
-        # Click at coordinates: <click_at 960,540>
-        elif content.startswith('click_at '):
-            coords = content.split()[1]
-            x, y = map(int, coords.split(','))
-            return {'type': 'click_at', 'x': x, 'y': y}
-
-        # Type text: <type 'hello'>
-        elif content.startswith('type '):
-            m = re.match(r"type '(.+?)'", content)
-            if not m:
-                raise ValueError(f"Invalid type command: {content}")
-            text = m.group(1)
-            return {'type': 'type', 'text': text}
-
-        # Delay: <delay 2>
-        elif content.startswith('delay '):
-            duration = float(content.split()[1])
-            return {'type': 'delay', 'duration': duration}
-
-        # Hotkey: <cmd+space>, <shift+tab>, <ctrl+alt+delete>
-        elif '+' in content:
-            parts = content.split('+')
-            modifiers = parts[:-1]
-            key = parts[-1]
-            return {'type': 'hotkey', 'modifiers': modifiers, 'key': key}
-
-        # Simple keypress: <enter>, <tab>, <esc>, <space>, etc.
-        else:
-            return {'type': 'keypress', 'key': content}
 
     async def execute_command(self, cmd: Dict[str, Any]):
         """
