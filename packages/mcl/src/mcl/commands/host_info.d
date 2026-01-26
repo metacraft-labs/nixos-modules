@@ -23,7 +23,7 @@ import mcl.utils.number : humanReadableSize, roundToPowerOf2;
 import mcl.utils.array : uniqIfSame;
 import mcl.utils.nix : Literal;
 import mcl.utils.coda : CodaApiClient, RowValues, CodaCell;
-import mcl.commands.match_invoices : MatchInvoicesArgs, matchInvoices;
+import mcl.commands.invoices : InvoicesArgs, invoices, Product, ProductCategory;
 
 version (linux)
 {
@@ -57,7 +57,7 @@ struct HostInfoArgs
 {
     SubCommand!(
         PartsArgs,
-        MatchInvoicesArgs,
+        InvoicesArgs,
         Default!ShowArgs
     ) cmd;
 }
@@ -91,7 +91,7 @@ export int host_info(HostInfoArgs args)
     return args.cmd.matchCmd!(
         (ShowArgs a) => showHostInfo(a),
         (PartsArgs a) => showParts(a),
-        (MatchInvoicesArgs a) => matchInvoices(a)
+        (InvoicesArgs a) => invoices(a)
     );
 }
 
@@ -127,16 +127,7 @@ int showHostInfo(ShowArgs args)
 struct HostParts
 {
     string hostname;
-    Part[] parts;
-}
-
-// Matches invoice CSV format: name, mark, model, sn
-struct Part
-{
-    string name;  // Category: CPU, MB, RAM, SSD, GPU
-    string mark;  // Manufacturer/brand
-    string model; // Product model
-    string sn;    // Serial number
+    Product[] parts;
 }
 
 // =============================================================================
@@ -174,20 +165,20 @@ int showParts(PartsArgs args)
 HostParts extractParts(const(Info) info)
 {
     auto hw = info.hardwareInfo;
-    Part[] parts;
+    Product[] parts;
 
     // CPU
-    parts ~= Part(
-        name: "CPU",
-        mark: hw.processorInfo.vendor,
+    parts ~= Product(
+        category: ProductCategory.CPU,
+        vendor: hw.processorInfo.vendor,
         model: hw.processorInfo.model,
         sn: "",
     );
 
     // Motherboard
-    parts ~= Part(
-        name: "MB",
-        mark: hw.motherboardInfo.vendor,
+    parts ~= Product(
+        category: ProductCategory.MB,
+        vendor: hw.motherboardInfo.vendor,
         model: hw.motherboardInfo.model,
         sn: hw.motherboardInfo.serial.cleanValue,
     );
@@ -197,9 +188,9 @@ HostParts extractParts(const(Info) info)
     {
         foreach (mod; hw.memoryInfo.modules)
         {
-            parts ~= Part(
-                name: "RAM",
-                mark: mod.vendor,
+            parts ~= Product(
+                category: ProductCategory.RAM,
+                vendor: mod.vendor,
                 model: mod.partNumber,
                 sn: mod.serial,
             );
@@ -209,9 +200,9 @@ HostParts extractParts(const(Info) info)
     {
         // No detailed info available - add aggregate entry for review
         // Round up to nearest power of 2 since /proc/meminfo reports usable, not installed RAM
-        parts ~= Part(
-            name: "RAM",
-            mark: "NEEDS REVIEW",
+        parts ~= Product(
+            category: ProductCategory.RAM,
+            vendor: "NEEDS REVIEW",
             model: roundToPowerOf2(hw.memoryInfo.totalGiB).to!string ~ " GB",
             sn: "",
         );
@@ -220,9 +211,9 @@ HostParts extractParts(const(Info) info)
     // Storage devices
     foreach (dev; hw.storageInfo.devices)
     {
-        parts ~= Part(
-            name: dev.type == "disk" ? "SSD" : dev.type.toUpper,
-            mark: dev.vendor.cleanValue,
+        parts ~= Product(
+            category: dev.type == "disk" ? ProductCategory.SSD : ProductCategory.HDD,
+            vendor: dev.vendor.cleanValue,
             model: dev.model,
             sn: dev.serial,
         );
@@ -233,9 +224,9 @@ HostParts extractParts(const(Info) info)
     {
         if (gpu.isDiscrete)
         {
-            parts ~= Part(
-                name: "GPU",
-                mark: gpu.vendor,
+            parts ~= Product(
+                category: ProductCategory.GPU,
+                vendor: gpu.vendor,
                 model: gpu.model,
                 sn: "",
             );
@@ -267,9 +258,9 @@ HostParts extractParts(const(Info) info)
         auto vendor = usbVendorName(peripheral.vendor);
 
         seenPeripherals[key] = true;
-        parts ~= Part(
-            name: peripheral.type.capitalize,
-            mark: vendor,
+        parts ~= Product(
+            category: peripheralTypeToCategory(peripheral.type),
+            vendor: vendor,
             model: peripheral.name,
             sn: peripheral.serial,
         );
@@ -279,6 +270,18 @@ HostParts extractParts(const(Info) info)
         hostname: info.softwareInfo.hostname,
         parts: parts,
     );
+}
+
+/// Convert peripheral type string to ProductCategory
+ProductCategory peripheralTypeToCategory(string type)
+{
+    switch (type.toLower)
+    {
+        case "keyboard": return ProductCategory.Keyboard;
+        case "mouse": return ProductCategory.Mouse;
+        case "webcam": return ProductCategory.Webcam;
+        default: return ProductCategory.Other;
+    }
 }
 
 // Clean placeholder values that aren't useful for matching
