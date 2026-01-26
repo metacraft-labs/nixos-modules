@@ -54,12 +54,23 @@ struct ContainsRule(string pattern_, string result_)
 }
 
 /// Rule with word boundary matching (for brand extraction)
-struct WordRule(string word_, string result_ = word_)
+/// First argument is the display name (also matched), subsequent args are aliases
+struct WordRule(string displayName_, Aliases...)
 {
-    enum word = word_;
-    enum result = result_;
+    enum displayName = displayName_;
+    alias aliases = Aliases;
+
+    // Build alternation pattern: displayName|alias1|alias2|...
+    private static string buildPattern()
+    {
+        string result = displayName_;
+        static foreach (alias_; Aliases)
+            result ~= "|" ~ alias_;
+        return result;
+    }
+
     // Match word with boundaries: space/start before, space/punctuation/end after
-    enum rx = ctRegex!(`(?:^|[\s(])` ~ word_ ~ `(?:[\s,\-)]|$)`, "i");
+    enum rx = ctRegex!(`(?:^|[\s(])(?:` ~ buildPattern() ~ `)(?:[\s,\-)]|$)`, "i");
 
     static bool matches(string input)
     {
@@ -68,7 +79,16 @@ struct WordRule(string word_, string result_ = word_)
 
     static string match(string input)
     {
-        return matches(input) ? result : null;
+        return matches(input) ? displayName : null;
+    }
+
+    /// Get all aliases for this brand (for removal from model names)
+    static string[] getAllAliases()
+    {
+        string[] result;
+        static foreach (alias_; Aliases)
+            result ~= alias_;
+        return result;
     }
 }
 
@@ -207,12 +227,12 @@ template BrandExtractor(PrimaryBrands...)
             {
                 // Only check contextual brands if not in compatibility context
                 if (!hasCompatContext && B.matches(upper))
-                    return B.result;
+                    return B.displayName;
             }
             else
             {
                 if (B.matches(upper))
-                    return B.result;
+                    return B.displayName;
             }
         }}
 
@@ -221,7 +241,7 @@ template BrandExtractor(PrimaryBrands...)
 
     private template isContextualBrand(B)
     {
-        enum isContextualBrand = B.result == "INTEL" || B.result == "AMD" || B.result == "NVIDIA";
+        enum isContextualBrand = B.displayName == "Intel" || B.displayName == "AMD" || B.displayName == "NVIDIA";
     }
 }
 
@@ -447,8 +467,8 @@ template SuffixMatcher(alias normalizer, size_t minLen = 6)
         if (len >= minLen)
         {
             return na.endsWith(nb[$ - len .. $]) ||
-                   nb.endsWith(na[$ - len .. $]) ||
-                   na.canFind(nb) || nb.canFind(na);
+                nb.endsWith(na[$ - len .. $]) ||
+                na.canFind(nb) || nb.canFind(na);
         }
         return false;
     }
@@ -552,8 +572,9 @@ alias P(string pattern, string result) = Rule!(pattern, result);
 alias C(string pattern, string result) = ContainsRule!(pattern, result);
 
 /// Word-boundary rule (for brand extraction)
-alias W(string word) = WordRule!(word);
-alias W(string word, string result) = WordRule!(word, result);
+/// W!"Brand" matches "Brand" (case-insensitive) and returns "Brand"
+/// W!("Brand", "ALIAS1", "ALIAS2") matches any of them and returns "Brand"
+alias W(string displayName, Aliases...) = WordRule!(displayName, Aliases);
 
 /// Critical token pattern
 alias Crit(string pattern) = TokenPattern!(pattern, true);
