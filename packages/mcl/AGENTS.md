@@ -277,6 +277,39 @@ foreach (record; records)
    mcl host-info | jq .
    ```
 
+### Single-File Test Scripts
+
+Use dub single-file packages for quick testing of mcl modules:
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "test_heuristics"
+    dependency "mcl" path="."
++/
+import std.stdio : writeln;
+import mcl.commands.invoice_heuristics;
+
+void main()
+{
+    auto brand = extractBrandFromProduct("Logitech MK295");
+    writeln("Brand: ", brand);
+
+    auto matches = isBrandPlusSku("Logitech 920-009800");
+    writeln("Is brand+sku: ", matches);
+}
+```
+
+Run from the `packages/mcl/` directory:
+
+```bash
+cd packages/mcl
+chmod +x test_script.d
+./test_script.d
+# Or explicitly:
+dub run --single test_script.d
+```
+
 ## Dependencies
 
 - `argparse` - CLI argument parsing
