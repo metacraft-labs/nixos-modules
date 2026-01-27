@@ -1,105 +1,20 @@
-module mcl.utils.coda;
-
-struct RowValues
-{
-    CodaCell[] cells;
-}
-
-struct CodaCell
-{
-    string column;
-    string value;
-}
-
-struct InsertRowRequest
-{
-    CodeTable table;
-    RowValues[] rows;
-}
-
-struct CodeTable
-{
-    string documentId;
-    string tableId;
-}
+module mcl.utils.coda.client;
 
 import std.net.curl : HTTP, httpGet = get, httpPost = post, httpDelete = del, httpPatch = patch, httpPut = put, HTTPStatusException;
 import std.json : JSONValue, parseJSON, JSONOptions;
 import std.format : format;
-import std.datetime : SysTime;
 import std.traits : isArray;
-import mcl.utils.json : toJSON, fromJSON;
-import std.process : environment;
-import std.stdio : writeln, writefln;
-import std.algorithm : map, filter;
 import std.exception : assertThrown;
-import std.sumtype : SumType;
-import std.array : join;
+import std.process : environment;
 import core.thread;
+
+import mcl.utils.json : toJSON, fromJSON;
+import mcl.utils.coda.types;
 
 struct CodaApiClient
 {
     string apiToken;
     string baseEndpoint = "https://coda.io/apis/v1";
-
-    struct Document
-    {
-        string browserLink;
-        SysTime createdAt;
-        struct DocSize
-        {
-            bool overApiSizeLimit;
-            int pageCount;
-            int tableAndViewCount;
-            int totalRowCount;
-        }
-
-        DocSize docSize;
-        struct Folder
-        {
-            string browserLink;
-            string id;
-            string name;
-            string type;
-        }
-
-        Folder folder;
-        string folderId;
-        string href;
-        struct Icon
-        {
-            string browserLink;
-            string name;
-            string type;
-        }
-
-        Icon icon;
-        string id;
-        string name;
-        string owner;
-        string ownerName;
-        struct SourceDoc
-        {
-            string browserLink;
-            string href;
-            string id;
-            string type;
-
-        }
-
-        string type;
-        SysTime updatedAt;
-        struct Workspace
-        {
-            string browserLink;
-            string id;
-            string name;
-            string type;
-        }
-
-        Workspace workspace;
-        string workspaceId;
-    }
 
     Document getDocument(string documentId)
     {
@@ -131,29 +46,7 @@ struct CodaApiClient
         assert(resp.length > 0);
     }
 
-    struct InitialPage
-    {
-        string name;
-        string subtitle;
-        string iconName;
-        string imageUrl;
-        string parentPageId;
-        struct PageContent
-        {
-            string type = "canvas";
-            struct CanvasContent
-            {
-                string format;
-                string content;
-            }
-
-            CanvasContent canvasContent;
-        }
-
-        PageContent pageContent;
-    }
-
-    Document createDocument(string title, string sourceDoc = "", string timezone = "Europe/Sofia", string folderID = "", InitialPage initialPage)
+    Document createDocument(string title, string sourceDoc = "", string timezone = "Europe/Sofia", string folderID = "", InitialPage initialPage = InitialPage.init)
     {
         string url = "/docs";
         JSONValue req = JSONValue(
@@ -186,7 +79,7 @@ struct CodaApiClient
     {
         auto apiToken = environment.get("CODA_API_TOKEN");
         auto coda = CodaApiClient(apiToken);
-        InitialPage initialPage = InitialPage("Test Page", "Test Subtitle", "doc:blank", "", "",
+        auto initialPage = InitialPage("Test Page", "Test Subtitle", "doc:blank", "", "",
             InitialPage.PageContent("canvas",
                 InitialPage.PageContent.CanvasContent("html", "<p><b>This</b> is rich text</p>")));
         auto resp = coda.createDocument("Test Document", "", "Europe/Sofia", "", initialPage);
@@ -212,7 +105,7 @@ struct CodaApiClient
     {
         auto apiToken = environment.get("CODA_API_TOKEN");
         auto coda = CodaApiClient(apiToken);
-        InitialPage initialPage = InitialPage("Test Page", "Test Subtitle", "doc:blank", "", "",
+        auto initialPage = InitialPage("Test Page", "Test Subtitle", "doc:blank", "", "",
             InitialPage.PageContent("canvas",
                 InitialPage.PageContent.CanvasContent("html", "<p><b>This</b> is rich text</p>")));
         auto resp = coda.createDocument("Test Document", "", "Europe/Sofia", "", initialPage);
@@ -220,61 +113,6 @@ struct CodaApiClient
         auto patched = coda.getDocument(resp.id);
         assert(patched.name == "Patched Document");
         coda.deleteDocument(patched.id);
-    }
-
-    struct Table {
-        string id;
-        string type;
-        string tableType;
-        string href;
-        string browserLink;
-        string name;
-        struct Parent {
-            string id;
-            string type;
-            string href;
-            string browserLink;
-            string name;
-        }
-        Parent parent;
-        struct ParentTable {
-            string id;
-            string type;
-            string tableType;
-            string href;
-            string browserLink;
-            string name;
-            Parent parent;
-        }
-        ParentTable parentTable;
-        struct DisplayColumn {
-            string id;
-            string type;
-            string href;
-        }
-        DisplayColumn displayColumn;
-        int rowCount;
-        struct Sort {
-            string direction;
-            struct Column {
-                string id;
-                string type;
-                string href;
-            }
-            Column column;
-        }
-        Sort[] sorts;
-        string layout;
-        struct Filter {
-            bool valid;
-            bool isVolatile;
-            bool hasUserFormula;
-            bool hasTodayFormula;
-            bool hasNowFormula;
-        }
-        Filter filter;
-        SysTime createdAt;
-        SysTime updatedAt;
     }
 
     Table[] listTables(string documentId)
@@ -306,42 +144,6 @@ struct CodaApiClient
         auto tables = coda.listTables("6vM0kjfQP6");
         auto resp = coda.getTable("6vM0kjfQP6", tables[0].id);
         assert(resp.id == tables[0].id);
-    }
-
-    struct Column {
-        string id;
-        string type;
-        string href;
-        string name;
-        bool display;
-        bool calculated;
-        string formula;
-        string defaultValue;
-        struct Format {
-            string type;
-            bool isArray;
-            string label;
-            string disableIf;
-            string action;
-        }
-        Format format;
-        struct Parent {
-            string id;
-            string type;
-            string tableType;
-            string href;
-            string browserLink;
-            string name;
-            struct ParentParent {
-                string id;
-                string type;
-                string href;
-                string browserLink;
-                string name;
-            }
-            ParentParent parent;
-        }
-        Parent parent;
     }
 
     Column[] listColumns(string documentId, string tableId)
@@ -377,36 +179,6 @@ struct CodaApiClient
         assert(resp.id == columns[0].id);
     }
 
-    alias RowValue = SumType!(string, int, bool, string[], int[], bool[]);
-
-    struct Row {
-        string id;
-        string type;
-        string href;
-        string name;
-        int index;
-        string browserLink;
-        SysTime createdAt;
-        SysTime updatedAt;
-        RowValue[string] values;
-        struct Parent {
-            string id;
-            string type;
-            string tableType;
-            string href;
-            string browserLink;
-            string name;
-            struct ParentParent {
-                string id;
-                string type;
-                string href;
-                string browserLink;
-                string name;
-            }
-            ParentParent parent;
-        }
-    }
-
     Row[] listRows(string documentId, string tableId)
     {
         string url = "/docs/%s/tables/%s/rows".format(documentId, tableId);
@@ -421,11 +193,6 @@ struct CodaApiClient
         auto tables = coda.listTables("6vM0kjfQP6");
         auto resp = coda.listRows("6vM0kjfQP6", tables[0].id);
         assert(resp.length > 0);
-    }
-
-    struct InsertRowsReturn {
-        string requestId;
-        string[] addedRowIds;
     }
 
     string[] insertRows(string documentId, string tableId, RowValues[] rows, string[] keyColumns = [])
@@ -490,11 +257,6 @@ struct CodaApiClient
         assert(resp.id == rows[0].id);
     }
 
-    struct UpdateRowReturn {
-        string requestId;
-        string id;
-    }
-
     string updateRow(string documentId, string tableId, string rowId, RowValues row, string[] keyColumns = [])
     {
         string url = "/docs/%s/tables/%s/rows/%s".format(documentId, tableId, rowId);
@@ -529,13 +291,9 @@ struct CodaApiClient
     void upsertRow(string docId, string tableId, RowValues values, string[] keyColumns = ["name"]) {
         insertRows(docId, tableId, [values], keyColumns);
     }
+
     void upsertRows(string docId, string tableId, RowValues[] values, string[] keyColumns = ["name"]) {
         insertRows(docId, tableId, values, keyColumns);
-    }
-    struct PushButtonResponse {
-        string requestId;
-        string rowId;
-        string columnId;
     }
 
     PushButtonResponse pushButton(string documentId, string tableId, string rowId, string columnId) {
@@ -558,10 +316,6 @@ struct CodaApiClient
         auto buttonResp = coda.pushButton("dEJJPwdxcw", tables[0].id, rowId, buttonColumn);
         assert(buttonResp.rowId == rowId);
         assert(buttonResp.columnId == buttonColumn);
-    }
-
-    struct Category {
-        string name;
     }
 
     Category[] listCategories()
