@@ -308,7 +308,7 @@ JSONValue toJSON(T)(in T value, bool simplify = false)
         }
         return JSONValue(result);
     }
-    else static if (is(T == K[V], K, V))
+    else static if (is(T == V[K], K, V))
     {
         JSONValue[string] result;
         foreach (key, field; value)
@@ -368,6 +368,15 @@ unittest
     Nullable!int intValue = Nullable!int(42);
     assert(nullValue.toJSON == JSONValue(null));
     assert(intValue.toJSON == JSONValue(42));
+}
+
+@("toJSON.AA")
+unittest
+{
+    auto aa = ["x": 1, "y": 2];
+    auto json = aa.toJSON;
+    assert(json["x"] == JSONValue(1));
+    assert(json["y"] == JSONValue(2));
 }
 
 @("toJSON.Pointer")
