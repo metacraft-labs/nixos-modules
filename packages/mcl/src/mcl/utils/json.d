@@ -25,6 +25,8 @@ bool tryDeserializeJson(T)(in JSONValue value, out T result)
     }
 }
 
+enum isAliasThis(T, string name) = [__traits(getAliasThis, T)] == [name];
+
 T fromJSON(T)(in JSONValue value) {
     if (value.isNull) {
         return T.init;
@@ -71,13 +73,22 @@ T fromJSON(T)(in JSONValue value) {
         }
         return Nullable!U(value.fromJSON!U);
     }
-    else static if (is(T == struct)) {
+    else static if (is(T == struct))
+    {
         T result;
-        static foreach (idx, field; T.tupleof) {
-            if ((__traits(identifier, field).replace("_", "") in value.object) && !value[__traits(identifier, field).replace("_", "")].isNull) {
-                result.tupleof[idx] = value[__traits(identifier, field).replace("_", "")].fromJSON!(typeof(field));
+        static foreach (idx, field; T.tupleof)
+        {{
+            enum name = __traits(identifier, field);
+
+            static if (isAliasThis!(T, name))
+            {
+                // Unflatten alias this field: collect its sub-fields from the parent object
+                result.tupleof[idx] = fromJSON!(typeof(field))(value);
             }
-        }
+            else if (auto property = name in value.object)
+                if (!(*property).isNull)
+                    result.tupleof[idx] = (*property).fromJSON!(typeof(field));
+        }}
         return result;
     }
     else static if (is(T == V[K], V, K)) {
@@ -245,6 +256,49 @@ unittest {
     assert(intValue.get == 42);
 }
 
+@("fromJSON.aliasThis")
+unittest {
+    struct Inner {
+        int x;
+        string y;
+    }
+
+    struct Outer {
+        Inner inner;
+        alias inner this;
+        int z;
+    }
+
+    // Flat JSON: all fields at the same level
+    auto result = `{"x": 1, "y": "hello", "z": 42}`
+        .parseJSON()
+        .fromJSON!Outer;
+    assert(result == Outer(Inner(1, "hello"), 42));
+}
+
+@("toJSON.aliasThis")
+unittest {
+    struct Inner {
+        int x;
+        string y;
+    }
+
+    struct Outer {
+        Inner inner;
+        alias inner this;
+        int z;
+    }
+
+    auto json = Outer(Inner(1, "hello"), 42).toJSON;
+    // Should be flattened: {"x": 1, "y": "hello", "z": 42}
+    assert(json["x"] == JSONValue(1));
+    assert(json["y"] == JSONValue("hello"));
+    assert(json["z"] == JSONValue(42));
+
+    // Round-trip
+    assert(json.fromJSON!Outer == Outer(Inner(1, "hello"), 42));
+}
+
 JSONValue toJSON(T)(in T value, bool simplify = false)
 {
     static if (is(T == enum))
@@ -291,23 +345,44 @@ JSONValue toJSON(T)(in T value, bool simplify = false)
         else
             return value.get.toJSON!U(simplify);
     }
+    else static if (is(T : U*, U)) {
+        if (value is null)
+            return JSONValue(null);
+        else
+            return (*value).toJSON!U(simplify);
+    }
     else static if (is(T == struct))
     {
-        JSONValue[string] result;
-        auto name = "";
+        JSONValue result;
         static foreach (idx, field; T.tupleof)
-        {
-            name = __traits(identifier, field).strip("_");
-            result[name] = value.tupleof[idx].toJSON(simplify);
-        }
-        return JSONValue(result);
+        {{
+            enum name = __traits(identifier, field);
+
+            static if (isAliasThis!(T, name))
+            {
+                // Flatten alias this field: merge its sub-fields into the parent object
+                static foreach (innerIdx, innerField; typeof(field).tupleof)
+                {{
+                    enum innerName = __traits(identifier, innerField);
+                    result[innerName] = value.tupleof[idx].tupleof[innerIdx].toJSON(simplify);
+                }}
+            }
+            else
+                result[name] = value.tupleof[idx].toJSON(simplify);
+        }}
+        return result;
     }
-    else static if (is(T == K[V], K, V))
+    else static if (is(T == V[K], K, V))
     {
         JSONValue[string] result;
         foreach (key, field; value)
         {
-            result[key] = field.toJSON(simplify);
+            static if (is(K == enum))
+                result[key.enumToString] = field.toJSON(simplify);
+            else static if (is(K : const char[]))
+                result[key] = field.toJSON(simplify);
+            else
+                static assert(false, "Unsupported associative array key type: " ~ K.stringof);
         }
         return JSONValue(result);
     }
@@ -364,6 +439,38 @@ unittest
     assert(intValue.toJSON == JSONValue(42));
 }
 
+@("toJSON.AA")
+unittest
+{
+    auto aa = ["x": 1, "y": 2];
+    auto json = aa.toJSON;
+    assert(json["x"] == JSONValue(1));
+    assert(json["y"] == JSONValue(2));
+}
+
+@("toJSON.AA.EnumKey")
+unittest
+{
+    auto aa = [TestEnum.a: 1, TestEnum.b: 2];
+    auto json = aa.toJSON;
+    assert(json["supercalifragilisticexpialidocious"] == JSONValue(1));
+    assert(json["b"] == JSONValue(2));
+}
+
+@("toJSON.Pointer")
+unittest
+{
+    int x = 42;
+    int* p = &x;
+    int* np = null;
+
+    assert(p.toJSON == JSONValue(42));
+    assert(np.toJSON == JSONValue(null));
+
+    TestStruct s = { 1, "test", true };
+    TestStruct* sp = &s;
+    assert(sp.toJSON == JSONValue(["a": JSONValue(1), "b": JSONValue("test"), "c": JSONValue(true)]));
+}
 
 T tryGet(T)(lazy T value, string errorMsg, string file = __FILE__, size_t line = __LINE__)
 {
