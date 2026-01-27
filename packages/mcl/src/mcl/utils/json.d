@@ -313,7 +313,12 @@ JSONValue toJSON(T)(in T value, bool simplify = false)
         JSONValue[string] result;
         foreach (key, field; value)
         {
-            result[key] = field.toJSON(simplify);
+            static if (is(K == enum))
+                result[key.enumToString] = field.toJSON(simplify);
+            else static if (is(K : const char[]))
+                result[key] = field.toJSON(simplify);
+            else
+                static assert(false, "Unsupported associative array key type: " ~ K.stringof);
         }
         return JSONValue(result);
     }
@@ -377,6 +382,15 @@ unittest
     auto json = aa.toJSON;
     assert(json["x"] == JSONValue(1));
     assert(json["y"] == JSONValue(2));
+}
+
+@("toJSON.AA.EnumKey")
+unittest
+{
+    auto aa = [TestEnum.a: 1, TestEnum.b: 2];
+    auto json = aa.toJSON;
+    assert(json["supercalifragilisticexpialidocious"] == JSONValue(1));
+    assert(json["b"] == JSONValue(2));
 }
 
 @("toJSON.Pointer")
