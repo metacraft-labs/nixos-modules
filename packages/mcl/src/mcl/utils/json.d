@@ -291,6 +291,12 @@ JSONValue toJSON(T)(in T value, bool simplify = false)
         else
             return value.get.toJSON!U(simplify);
     }
+    else static if (is(T : U*, U)) {
+        if (value is null)
+            return JSONValue(null);
+        else
+            return (*value).toJSON!U(simplify);
+    }
     else static if (is(T == struct))
     {
         JSONValue[string] result;
@@ -364,6 +370,20 @@ unittest
     assert(intValue.toJSON == JSONValue(42));
 }
 
+@("toJSON.Pointer")
+unittest
+{
+    int x = 42;
+    int* p = &x;
+    int* np = null;
+
+    assert(p.toJSON == JSONValue(42));
+    assert(np.toJSON == JSONValue(null));
+
+    TestStruct s = { 1, "test", true };
+    TestStruct* sp = &s;
+    assert(sp.toJSON == JSONValue(["a": JSONValue(1), "b": JSONValue("test"), "c": JSONValue(true)]));
+}
 
 T tryGet(T)(lazy T value, string errorMsg, string file = __FILE__, size_t line = __LINE__)
 {
