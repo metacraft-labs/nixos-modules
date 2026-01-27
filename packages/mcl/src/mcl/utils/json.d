@@ -25,6 +25,8 @@ bool tryDeserializeJson(T)(in JSONValue value, out T result)
     }
 }
 
+enum isAliasThis(T, string name) = [__traits(getAliasThis, T)] == [name];
+
 T fromJSON(T)(in JSONValue value) {
     if (value.isNull) {
         return T.init;
@@ -77,7 +79,13 @@ T fromJSON(T)(in JSONValue value) {
         static foreach (idx, field; T.tupleof)
         {{
             enum name = __traits(identifier, field);
-            if (auto property = name in value.object)
+
+            static if (isAliasThis!(T, name))
+            {
+                // Unflatten alias this field: collect its sub-fields from the parent object
+                result.tupleof[idx] = fromJSON!(typeof(field))(value);
+            }
+            else if (auto property = name in value.object)
                 if (!(*property).isNull)
                     result.tupleof[idx] = (*property).fromJSON!(typeof(field));
         }}
@@ -248,6 +256,49 @@ unittest {
     assert(intValue.get == 42);
 }
 
+@("fromJSON.aliasThis")
+unittest {
+    struct Inner {
+        int x;
+        string y;
+    }
+
+    struct Outer {
+        Inner inner;
+        alias inner this;
+        int z;
+    }
+
+    // Flat JSON: all fields at the same level
+    auto result = `{"x": 1, "y": "hello", "z": 42}`
+        .parseJSON()
+        .fromJSON!Outer;
+    assert(result == Outer(Inner(1, "hello"), 42));
+}
+
+@("toJSON.aliasThis")
+unittest {
+    struct Inner {
+        int x;
+        string y;
+    }
+
+    struct Outer {
+        Inner inner;
+        alias inner this;
+        int z;
+    }
+
+    auto json = Outer(Inner(1, "hello"), 42).toJSON;
+    // Should be flattened: {"x": 1, "y": "hello", "z": 42}
+    assert(json["x"] == JSONValue(1));
+    assert(json["y"] == JSONValue("hello"));
+    assert(json["z"] == JSONValue(42));
+
+    // Round-trip
+    assert(json.fromJSON!Outer == Outer(Inner(1, "hello"), 42));
+}
+
 JSONValue toJSON(T)(in T value, bool simplify = false)
 {
     static if (is(T == enum))
@@ -307,7 +358,17 @@ JSONValue toJSON(T)(in T value, bool simplify = false)
         {{
             enum name = __traits(identifier, field);
 
-            result[name] = value.tupleof[idx].toJSON(simplify);
+            static if (isAliasThis!(T, name))
+            {
+                // Flatten alias this field: merge its sub-fields into the parent object
+                static foreach (innerIdx, innerField; typeof(field).tupleof)
+                {{
+                    enum innerName = __traits(identifier, innerField);
+                    result[innerName] = value.tupleof[idx].tupleof[innerIdx].toJSON(simplify);
+                }}
+            }
+            else
+                result[name] = value.tupleof[idx].toJSON(simplify);
         }}
         return result;
     }
