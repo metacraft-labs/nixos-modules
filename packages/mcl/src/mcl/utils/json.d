@@ -71,13 +71,16 @@ T fromJSON(T)(in JSONValue value) {
         }
         return Nullable!U(value.fromJSON!U);
     }
-    else static if (is(T == struct)) {
+    else static if (is(T == struct))
+    {
         T result;
-        static foreach (idx, field; T.tupleof) {
-            if ((__traits(identifier, field).replace("_", "") in value.object) && !value[__traits(identifier, field).replace("_", "")].isNull) {
-                result.tupleof[idx] = value[__traits(identifier, field).replace("_", "")].fromJSON!(typeof(field));
-            }
-        }
+        static foreach (idx, field; T.tupleof)
+        {{
+            enum name = __traits(identifier, field);
+            if (auto property = name in value.object)
+                if (!(*property).isNull)
+                    result.tupleof[idx] = (*property).fromJSON!(typeof(field));
+        }}
         return result;
     }
     else static if (is(T == V[K], V, K)) {
@@ -299,14 +302,14 @@ JSONValue toJSON(T)(in T value, bool simplify = false)
     }
     else static if (is(T == struct))
     {
-        JSONValue[string] result;
-        auto name = "";
+        JSONValue result;
         static foreach (idx, field; T.tupleof)
-        {
-            name = __traits(identifier, field).strip("_");
+        {{
+            enum name = __traits(identifier, field);
+
             result[name] = value.tupleof[idx].toJSON(simplify);
-        }
-        return JSONValue(result);
+        }}
+        return result;
     }
     else static if (is(T == V[K], K, V))
     {
