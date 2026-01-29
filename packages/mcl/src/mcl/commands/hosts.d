@@ -764,12 +764,13 @@ private int executeCommandOnHosts(HostEntry[] hosts, SshOptions opts, bool conti
         // Sequential execution
         foreach (host; hosts)
         {
-            // If sudo is enabled, prepend sudo and allocate TTY for password input
+            // If sudo is enabled, use stdin for password prompt and hide local echo
             auto hostOpts = opts;
             if (useSudo)
             {
-                hostOpts.command = "sudo " ~ opts.command;
-                hostOpts.allocateTty = true;
+                hostOpts.command = "sudo -S " ~ opts.command;
+                hostOpts.allocateTty = false;
+                hostOpts.disableLocalEcho = true;
             }
 
             auto result = executeSshCommand(host, hostOpts, suppressOutput: false);
@@ -807,10 +808,13 @@ private int executeCommandOnHosts(HostEntry[] hosts, SshOptions opts, bool conti
         {
             writefln("[%s]", failure.host);
             writefln("  $ %s", escapeShellCommand(failure.sshArgs));
-            if (failure.output.length > 0)
+            auto failureText = failure.errorOutput.length > 0
+                ? failure.errorOutput
+                : failure.output;
+            if (failureText.length > 0)
             {
                 // Indent each line of the error output
-                foreach (line; failure.output.split("\n"))
+                foreach (line; failureText.split("\n"))
                 {
                     writefln("  %s", line);
                 }
@@ -886,20 +890,25 @@ private struct SshOptions
     bool suppressWarnings;  // suppress SSH warnings (LogLevel=ERROR)
     bool acceptNewKeys;     // use StrictHostKeyChecking=accept-new (safer for commands)
     bool allocateTty;       // allocate pseudo-TTY (-t flag) for interactive input
+    bool disableLocalEcho;  // disable local echo for sudo password input over stdin
 }
 
 private struct SshCommandResult
 {
     bool success;
     string output;
+    string errorOutput;
     HostEntry host;
     string[] sshArgs;
 }
 
 /// Execute a single SSH command on a host
-private SshCommandResult executeSshCommand(HostEntry host, SshOptions opts, bool suppressOutput = false)
+private SshCommandResult executeSshCommand(HostEntry host, SshOptions opts, bool suppressOutput = false, bool stripOutput = true)
 {
     import std.process : pipeProcess, wait, Redirect;
+    import core.thread : Thread;
+    import core.sys.posix.termios : tcgetattr, tcsetattr, termios, ECHO, TCSANOW;
+    import core.sys.posix.unistd : isatty, STDIN_FILENO;
 
     if (!suppressOutput)
         writefln("\n[%s]", host);
@@ -908,32 +917,86 @@ private SshCommandResult executeSshCommand(HostEntry host, SshOptions opts, bool
 
     try
     {
-        auto pipes = pipeProcess(args, Redirect.stdout | Redirect.stderr);
-        auto status = wait(pipes.pid);
+        termios original;
+        bool restoreEcho = false;
+        if (opts.disableLocalEcho && isatty(STDIN_FILENO) != 0 && tcgetattr(STDIN_FILENO, &original) == 0)
+        {
+            auto updated = original;
+            updated.c_lflag &= ~ECHO;
+            if (tcsetattr(STDIN_FILENO, TCSANOW, &updated) == 0)
+                restoreEcho = true;
+        }
+        scope(exit)
+        {
+            if (restoreEcho)
+                tcsetattr(STDIN_FILENO, TCSANOW, &original);
+        }
 
-        string stdout = pipes.stdout.byLine().join("\n").to!string;
-        string stderr = pipes.stderr.byLine().join("\n").to!string;
+        // Use pipeProcess with stdout/stderr redirected to pipes, but stdin inherited
+        // from parent so user can interact (e.g., for sudo password prompts).
+        // Read in chunks (not lines) to handle prompts without trailing newlines.
+        auto redirect = Redirect.stdout | Redirect.stderr;
+        auto pipes = pipeProcess(args, redirect);
+
+        // Read stdout/stderr in parallel, streaming stderr separately and capturing stdout only.
+        ubyte[] stdoutBytes;
+        ubyte[] stderrBytes;
+
+        auto stdoutThread = new Thread({
+            foreach (chunk; pipes.stdout.byChunk(1))
+            {
+                stdoutBytes ~= chunk;
+                if (!suppressOutput)
+                {
+                    stdout.rawWrite(chunk);
+                    stdout.flush();
+                }
+            }
+        });
+
+        auto stderrThread = new Thread({
+            foreach (chunk; pipes.stderr.byChunk(1))
+            {
+                stderrBytes ~= chunk;
+                if (!suppressOutput)
+                {
+                    stderr.rawWrite(chunk);
+                    stderr.flush();
+                }
+            }
+        });
+
+        stdoutThread.start();
+        stderrThread.start();
+
+        auto status = wait(pipes.pid);
+        stdoutThread.join();
+        stderrThread.join();
+
+        auto output = stripOutput
+            ? (cast(string) stdoutBytes).strip()
+            : cast(string) stdoutBytes;
+        auto errorOutput = cast(string) stderrBytes;
+
+        if (!suppressOutput)
+            writeln();  // Ensure newline after output
 
         if (status != 0)
         {
             if (!suppressOutput)
                 writefln("  [FAILED]");
-            return SshCommandResult(false, stderr.length > 0 ? stderr : stdout, host, args);
+            return SshCommandResult(false, output, errorOutput, host, args);
         }
 
         if (!suppressOutput)
-        {
-            if (stdout.length > 0)
-                writeln(stdout);
             writeln("  [OK]");
-        }
-        return SshCommandResult(true, stdout, host, args);
+        return SshCommandResult(true, output, errorOutput, host, args);
     }
     catch (Exception e)
     {
         if (!suppressOutput)
             writefln("  [FAILED]");
-        return SshCommandResult(false, e.msg, host, args);
+        return SshCommandResult(false, "", e.msg, host, args);
     }
 }
 
