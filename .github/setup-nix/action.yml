@@ -97,13 +97,13 @@ runs:
         EOF
 
     - uses: cachix/cachix-action@v15
-      if: ${{ inputs.push-to-cache }}
+      if: ${{ fromJSON(inputs.push-to-cache || 'false') }}
       with:
         name: ${{ inputs.cachix-cache }}
         authToken: ${{ inputs.cachix-auth-token }}
 
     - name: Build & activate the Nix Dev Shell
-      if: ${{ inputs.use-direnv == true || inputs.devshell != '' }}
+      if: ${{ fromJSON(inputs.use-direnv || 'false') || inputs.devshell != '' }}
       shell: bash
       run: |
         direnv() { nix run --inputs-from . nixpkgs#direnv -- "$@"; }
