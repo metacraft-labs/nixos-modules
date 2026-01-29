@@ -276,6 +276,39 @@ unittest {
     assert(result == Outer(Inner(1, "hello"), 42));
 }
 
+@("fromJSON.JSONValue")
+unittest {
+    // Test that JSONValue is passed through unchanged
+    auto json = parseJSON(`{"key": [1, 2, 3], "nested": {"a": true}}`);
+    auto result = json.fromJSON!JSONValue;
+    assert(result == json);
+
+    // Test with different JSON types
+    assert(JSONValue(42).fromJSON!JSONValue == JSONValue(42));
+    assert(JSONValue("test").fromJSON!JSONValue == JSONValue("test"));
+    assert(JSONValue(true).fromJSON!JSONValue == JSONValue(true));
+    assert(JSONValue(null).fromJSON!JSONValue == JSONValue(null));
+    assert(JSONValue([1, 2, 3]).fromJSON!JSONValue == JSONValue([1, 2, 3]));
+
+    // Test JSONValue as a struct field
+    struct WithJsonField {
+        string name;
+        JSONValue data;
+        int count;
+    }
+
+    auto structJson = parseJSON(`{
+        "name": "test",
+        "data": {"nested": [1, 2, {"key": "value"}], "flag": true},
+        "count": 42
+    }`);
+    auto structResult = structJson.fromJSON!WithJsonField;
+    assert(structResult.name == "test");
+    assert(structResult.count == 42);
+    assert(structResult.data["nested"][2]["key"] == JSONValue("value"));
+    assert(structResult.data["flag"] == JSONValue(true));
+}
+
 @("toJSON.aliasThis")
 unittest {
     struct Inner {
@@ -301,7 +334,9 @@ unittest {
 
 JSONValue toJSON(T)(in T value, bool simplify = false)
 {
-    static if (is(T == enum))
+    static if (is(T == JSONValue))
+        return value;
+    else static if (is(T == enum))
     {
         return JSONValue(value.enumToString);
     }
@@ -470,6 +505,45 @@ unittest
     TestStruct s = { 1, "test", true };
     TestStruct* sp = &s;
     assert(sp.toJSON == JSONValue(["a": JSONValue(1), "b": JSONValue("test"), "c": JSONValue(true)]));
+}
+
+@("toJSON.JSONValue")
+unittest
+{
+    // Test that JSONValue is passed through unchanged
+    auto json = parseJSON(`{"key": [1, 2, 3], "nested": {"a": true}}`);
+    assert(json.toJSON == json);
+
+    // Test with different JSON types
+    assert(JSONValue(42).toJSON == JSONValue(42));
+    assert(JSONValue("test").toJSON == JSONValue("test"));
+    assert(JSONValue(true).toJSON == JSONValue(true));
+    assert(JSONValue(null).toJSON == JSONValue(null));
+    assert(JSONValue([1, 2, 3]).toJSON == JSONValue([1, 2, 3]));
+
+    // Test round-trip
+    auto original = parseJSON(`{"array": [1, "two", true], "object": {"x": 10}}`);
+    assert(original.toJSON.fromJSON!JSONValue == original);
+
+    // Test JSONValue as a struct field
+    struct WithJsonField {
+        string name;
+        JSONValue data;
+        int count;
+    }
+
+    auto dataJson = parseJSON(`{"nested": [1, 2, {"key": "value"}], "flag": true}`);
+    auto s = WithJsonField("test", dataJson, 42);
+    auto result = s.toJSON;
+    assert(result["name"] == JSONValue("test"));
+    assert(result["count"] == JSONValue(42));
+    assert(result["data"]["nested"][2]["key"] == JSONValue("value"));
+    assert(result["data"]["flag"] == JSONValue(true));
+
+    // Test round-trip with struct containing JSONValue field
+    assert(result.fromJSON!WithJsonField.name == "test");
+    assert(result.fromJSON!WithJsonField.count == 42);
+    assert(result.fromJSON!WithJsonField.data == dataJson);
 }
 
 T tryGet(T)(lazy T value, string errorMsg, string file = __FILE__, size_t line = __LINE__)
