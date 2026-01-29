@@ -161,7 +161,7 @@ alias AllBrands = AliasSeq!(
     W!"Seagate",
     W!"Toshiba",
     W!"Hynix",
-    W!("Silicon Power", "SILICONPOWER", "SPCC"),
+    W!("Silicon Power", "Silicon Power Computer & Communications", "SILICONPOWER", "SPCC", "SP"),
 
     // Cooling
     W!"Noctua",
