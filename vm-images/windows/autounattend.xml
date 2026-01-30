@@ -1,0 +1,595 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Windows 11/10 Pro Unattended Installation Configuration
+
+  Copyright 2026 Schelling Point Labs Inc
+  SPDX-License-Identifier: AGPL-3.0-only
+
+  This autounattend.xml file provides fully unattended Windows installation for
+  QEMU/KVM virtual machines with VirtIO drivers. It is designed for:
+
+  - Windows 11 Pro (23H2 and later)
+  - Windows 10 Pro (21H2 and later)
+  - UEFI boot with GPT partitioning
+  - VirtIO storage and network drivers
+
+  Key features:
+  - Skip all OOBE (Out-of-Box Experience) screens
+  - Create local administrator account (no Microsoft account required)
+  - Enable Remote Desktop (RDP)
+  - Install and enable OpenSSH Server
+  - Set timezone to UTC
+  - Disable hibernation and fast startup (VM compatibility)
+  - Bypass TPM/Secure Boot checks for Windows 11 VM installation
+
+  Usage:
+  - Place this file at the root of a USB/floppy/CD alongside Windows installation media
+  - Or inject into the Windows ISO at the root level
+  - VirtIO drivers must be available on a secondary drive (typically D: or E:)
+
+  VirtIO driver path conventions:
+  - Storage drivers: E:\viostor\w11\amd64\ or E:\amd64\w11\
+  - Network drivers: E:\NetKVM\w11\amd64\ or E:\amd64\w11\
+  - The VirtIO ISO from Fedora uses the first convention
+
+  References:
+  - Microsoft Answer File Reference: https://learn.microsoft.com/en-us/windows-hardware/customize/desktop/unattend/
+  - Fedora VirtIO Drivers: https://fedorapeople.org/groups/virt/virtio-win/
+  - Windows Setup Automation: https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/automate-windows-setup
+  - Schneegans Unattend Generator: https://schneegans.de/windows/unattend-generator/
+
+  Placeholders (replaced by generateAutounattendXml Nix function):
+  - @USERNAME@ - Administrator account username
+  - @PASSWORD@ - Administrator account password
+  - @COMPUTER_NAME@ - Computer/hostname
+  - @TIMEZONE@ - Windows timezone string (e.g., "UTC", "Pacific Standard Time")
+  - @VIRTIO_DRIVER_PATH@ - Path to VirtIO drivers (e.g., "E:\")
+-->
+<unattend xmlns="urn:schemas-microsoft-com:unattend"
+          xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+
+  <!-- ============================================================
+       Pass 1: windowsPE - Windows Preinstallation Environment
+       This pass runs during the initial boot from installation media.
+       It handles disk partitioning, driver loading, and image selection.
+       ============================================================ -->
+  <settings pass="windowsPE">
+
+    <!-- International and locale settings for the installer -->
+    <component name="Microsoft-Windows-International-Core-WinPE"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <SetupUILanguage>
+        <UILanguage>en-US</UILanguage>
+      </SetupUILanguage>
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>en-US</UserLocale>
+    </component>
+
+    <!-- Main setup component: disk configuration, driver paths, image selection -->
+    <component name="Microsoft-Windows-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+      <!-- VirtIO Driver Paths
+           Windows PE needs VirtIO storage drivers to see the VirtIO disk.
+           These paths are searched for .inf files during setup.
+           The VirtIO ISO from Fedora contains drivers in:
+           - viostor/w11/amd64/ (block storage)
+           - NetKVM/w11/amd64/ (network)
+           - vioserial/w11/amd64/ (serial port)
+           - Balloon/w11/amd64/ (memory ballooning)
+           - qxldod/w11/amd64/ (QXL display)
+           - pvpanic/w11/amd64/ (panic notification)
+      -->
+      <DriverPaths>
+        <!-- VirtIO block storage driver - REQUIRED for disk visibility -->
+        <PathAndCredentials wcm:action="add" wcm:keyValue="1">
+          <Path>@VIRTIO_DRIVER_PATH@viostor\w11\amd64</Path>
+        </PathAndCredentials>
+        <!-- VirtIO block storage driver - Windows 10 fallback -->
+        <PathAndCredentials wcm:action="add" wcm:keyValue="2">
+          <Path>@VIRTIO_DRIVER_PATH@viostor\w10\amd64</Path>
+        </PathAndCredentials>
+        <!-- VirtIO network driver -->
+        <PathAndCredentials wcm:action="add" wcm:keyValue="3">
+          <Path>@VIRTIO_DRIVER_PATH@NetKVM\w11\amd64</Path>
+        </PathAndCredentials>
+        <!-- VirtIO network driver - Windows 10 fallback -->
+        <PathAndCredentials wcm:action="add" wcm:keyValue="4">
+          <Path>@VIRTIO_DRIVER_PATH@NetKVM\w10\amd64</Path>
+        </PathAndCredentials>
+        <!-- VirtIO balloon driver for memory management -->
+        <PathAndCredentials wcm:action="add" wcm:keyValue="5">
+          <Path>@VIRTIO_DRIVER_PATH@Balloon\w11\amd64</Path>
+        </PathAndCredentials>
+        <!-- VirtIO serial driver for QEMU guest agent -->
+        <PathAndCredentials wcm:action="add" wcm:keyValue="6">
+          <Path>@VIRTIO_DRIVER_PATH@vioserial\w11\amd64</Path>
+        </PathAndCredentials>
+        <!-- QXL display driver -->
+        <PathAndCredentials wcm:action="add" wcm:keyValue="7">
+          <Path>@VIRTIO_DRIVER_PATH@qxldod\w11\amd64</Path>
+        </PathAndCredentials>
+      </DriverPaths>
+
+      <!-- UEFI/GPT Disk Configuration
+           This creates a standard UEFI partition layout:
+           - Partition 1: EFI System Partition (300 MB, FAT32)
+           - Partition 2: Microsoft Reserved Partition (16 MB)
+           - Partition 3: Windows OS Partition (remaining space, NTFS)
+
+           Note: We omit the Recovery partition for VM simplicity.
+           The DiskID is 0 (first disk), which should be the VirtIO disk
+           after drivers are loaded.
+      -->
+      <DiskConfiguration>
+        <Disk wcm:action="add">
+          <DiskID>0</DiskID>
+          <WillWipeDisk>true</WillWipeDisk>
+          <CreatePartitions>
+            <!-- EFI System Partition (ESP) - required for UEFI boot -->
+            <CreatePartition wcm:action="add">
+              <Order>1</Order>
+              <Type>EFI</Type>
+              <Size>300</Size>
+            </CreatePartition>
+            <!-- Microsoft Reserved Partition (MSR) - required for GPT -->
+            <CreatePartition wcm:action="add">
+              <Order>2</Order>
+              <Type>MSR</Type>
+              <Size>16</Size>
+            </CreatePartition>
+            <!-- Primary Windows partition - uses remaining disk space -->
+            <CreatePartition wcm:action="add">
+              <Order>3</Order>
+              <Type>Primary</Type>
+              <Extend>true</Extend>
+            </CreatePartition>
+          </CreatePartitions>
+          <ModifyPartitions>
+            <!-- Format ESP as FAT32 -->
+            <ModifyPartition wcm:action="add">
+              <Order>1</Order>
+              <PartitionID>1</PartitionID>
+              <Label>System</Label>
+              <Format>FAT32</Format>
+            </ModifyPartition>
+            <!-- MSR partition doesn't need formatting -->
+            <ModifyPartition wcm:action="add">
+              <Order>2</Order>
+              <PartitionID>2</PartitionID>
+            </ModifyPartition>
+            <!-- Format Windows partition as NTFS -->
+            <ModifyPartition wcm:action="add">
+              <Order>3</Order>
+              <PartitionID>3</PartitionID>
+              <Label>Windows</Label>
+              <Letter>C</Letter>
+              <Format>NTFS</Format>
+            </ModifyPartition>
+          </ModifyPartitions>
+        </Disk>
+      </DiskConfiguration>
+
+      <!-- Image Installation Target
+           Specifies where to install Windows (partition 3 on disk 0)
+      -->
+      <ImageInstall>
+        <OSImage>
+          <InstallTo>
+            <DiskID>0</DiskID>
+            <PartitionID>3</PartitionID>
+          </InstallTo>
+          <!-- WillShowUI: Never shows the image selection UI
+               OnError: Fails installation on error instead of prompting -->
+          <WillShowUI>OnError</WillShowUI>
+        </OSImage>
+      </ImageInstall>
+
+      <!-- User Data and Product Key Configuration -->
+      <UserData>
+        <ProductKey>
+          <!-- Empty key uses generic key for installation, activate later -->
+          <Key></Key>
+          <WillShowUI>OnError</WillShowUI>
+        </ProductKey>
+        <AcceptEula>true</AcceptEula>
+        <FullName>@USERNAME@</FullName>
+        <Organization>Agent Harbor</Organization>
+      </UserData>
+
+      <!-- Windows 11 TPM/SecureBoot/CPU Bypass
+           These registry keys bypass hardware requirements for VM installation.
+           Reference: https://support.microsoft.com/en-us/windows/installing-windows-11-on-devices-that-don-t-meet-minimum-system-requirements
+      -->
+      <RunSynchronous>
+        <!-- Bypass TPM 2.0 check -->
+        <RunSynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassTPMCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <!-- Bypass Secure Boot check -->
+        <RunSynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassSecureBootCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <!-- Bypass RAM check (4GB minimum) -->
+        <RunSynchronousCommand wcm:action="add">
+          <Order>3</Order>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassRAMCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <!-- Bypass CPU check -->
+        <RunSynchronousCommand wcm:action="add">
+          <Order>4</Order>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassCPUCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+        <!-- Bypass storage check -->
+        <RunSynchronousCommand wcm:action="add">
+          <Order>5</Order>
+          <Path>reg add HKLM\SYSTEM\Setup\LabConfig /v BypassStorageCheck /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+      </RunSynchronous>
+
+    </component>
+  </settings>
+
+  <!-- ============================================================
+       Pass 2: offlineServicing
+       This pass runs while the Windows image is offline (before first boot).
+       Used for injecting drivers and updates into the offline image.
+       We don't need this pass for basic VM installation.
+       ============================================================ -->
+
+  <!-- ============================================================
+       Pass 3: generalize
+       This pass is used for sysprep generalization (creating golden images).
+       Not needed for fresh installations.
+       ============================================================ -->
+
+  <!-- ============================================================
+       Pass 4: specialize
+       This pass runs during the Windows specialization phase.
+       It handles computer name, network settings, and system configuration.
+       ============================================================ -->
+  <settings pass="specialize">
+
+    <!-- Computer name and network configuration -->
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <ComputerName>@COMPUTER_NAME@</ComputerName>
+      <TimeZone>@TIMEZONE@</TimeZone>
+    </component>
+
+    <!-- Enable Remote Desktop -->
+    <component name="Microsoft-Windows-TerminalServices-LocalSessionManager"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <!-- 0 = Enable RDP, 1 = Disable RDP -->
+      <fDenyTSConnections>false</fDenyTSConnections>
+    </component>
+
+    <!-- Disable Network Level Authentication for RDP
+         This allows RDP connections without NLA, which is more compatible
+         with various RDP clients and useful for automation.
+    -->
+    <component name="Microsoft-Windows-TerminalServices-RDP-WinStationExtensions"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <UserAuthentication>0</UserAuthentication>
+    </component>
+
+    <!-- Firewall Configuration: Allow RDP and ICMP -->
+    <component name="Networking-MPSSVC-Svc"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <FirewallGroups>
+        <!-- Enable Remote Desktop firewall rules -->
+        <FirewallGroup wcm:action="add" wcm:keyValue="RemoteDesktop">
+          <Active>true</Active>
+          <Group>Remote Desktop</Group>
+          <Profile>all</Profile>
+        </FirewallGroup>
+      </FirewallGroups>
+    </component>
+
+    <!-- Deployment Configuration: Run commands during specialize phase -->
+    <component name="Microsoft-Windows-Deployment"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <RunSynchronous>
+        <!-- Disable hibernation (not useful for VMs, saves disk space) -->
+        <RunSynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Path>powercfg.exe /HIBERNATE OFF</Path>
+          <Description>Disable hibernation for VM compatibility</Description>
+        </RunSynchronousCommand>
+        <!-- Disable fast startup (can cause issues with VM snapshots)
+             Fast startup uses a hybrid shutdown that saves kernel state to disk,
+             which doesn't work well with VM snapshots and clean shutdowns.
+        -->
+        <RunSynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <Path>reg add "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Power" /v HiberbootEnabled /t REG_DWORD /d 0 /f</Path>
+          <Description>Disable fast startup for VM compatibility</Description>
+        </RunSynchronousCommand>
+      </RunSynchronous>
+    </component>
+
+  </settings>
+
+  <!-- ============================================================
+       Pass 5: auditSystem / Pass 6: auditUser
+       These passes are used for audit mode (OEM/enterprise image preparation).
+       Not needed for standard VM installations.
+       ============================================================ -->
+
+  <!-- ============================================================
+       Pass 7: oobeSystem - Out-of-Box Experience
+       This pass runs during the OOBE (first boot) phase.
+       It handles user account creation, OOBE screen configuration,
+       and first logon commands.
+       ============================================================ -->
+  <settings pass="oobeSystem">
+
+    <!-- Main shell setup: user accounts, OOBE, first logon commands -->
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+      <!-- OOBE Configuration: Skip all OOBE screens -->
+      <OOBE>
+        <!-- Skip the network selection screen -->
+        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <!-- Skip the local account screen (we create one below) -->
+        <HideLocalAccountScreen>true</HideLocalAccountScreen>
+        <!-- Skip the EULA screen -->
+        <HideEULAPage>true</HideEULAPage>
+        <!-- Skip the OEM registration screen -->
+        <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+        <!-- Skip the wireless setup screen -->
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+        <!-- Disable the "privacy settings" screen -->
+        <ProtectYourPC>3</ProtectYourPC>
+        <!-- Network location: 0=Home, 1=Work, 2=Public (Work enables network discovery) -->
+        <NetworkLocation>Work</NetworkLocation>
+        <!-- Skip machine OOBE (system-level screens) -->
+        <SkipMachineOOBE>true</SkipMachineOOBE>
+        <!-- Skip user OOBE (user-level screens) -->
+        <SkipUserOOBE>true</SkipUserOOBE>
+      </OOBE>
+
+      <!-- User Accounts Configuration -->
+      <UserAccounts>
+        <!-- Create local administrator account -->
+        <LocalAccounts>
+          <LocalAccount wcm:action="add">
+            <Name>@USERNAME@</Name>
+            <DisplayName>@USERNAME@</DisplayName>
+            <Group>Administrators</Group>
+            <Password>
+              <Value>@PASSWORD@</Value>
+              <PlainText>true</PlainText>
+            </Password>
+          </LocalAccount>
+        </LocalAccounts>
+        <!-- Set the built-in Administrator password (optional, but useful for recovery) -->
+        <AdministratorPassword>
+          <Value>@PASSWORD@</Value>
+          <PlainText>true</PlainText>
+        </AdministratorPassword>
+      </UserAccounts>
+
+      <!-- AutoLogon: Automatically log in as the created user
+           This is useful for running FirstLogonCommands and initial setup.
+           LogonCount limits automatic logons (after which manual login is required).
+      -->
+      <AutoLogon>
+        <Enabled>true</Enabled>
+        <Username>@USERNAME@</Username>
+        <Password>
+          <Value>@PASSWORD@</Value>
+          <PlainText>true</PlainText>
+        </Password>
+        <!-- Number of automatic logons before requiring manual login -->
+        <LogonCount>5</LogonCount>
+      </AutoLogon>
+
+      <!-- FirstLogonCommands: Execute on first user login
+           These commands run with elevated privileges when an administrator
+           first logs in. Perfect for system configuration and software installation.
+
+           Commands execute synchronously in order, waiting for each to complete.
+      -->
+      <FirstLogonCommands>
+
+        <!-- 1. Set PowerShell execution policy to allow scripts -->
+        <SynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <CommandLine>powershell.exe -Command "Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Force"</CommandLine>
+          <Description>Set PowerShell execution policy</Description>
+          <RequiresUserInput>false</RequiresUserInput>
+        </SynchronousCommand>
+
+        <!-- 2. Install OpenSSH Client capability -->
+        <SynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <CommandLine>powershell.exe -Command "Add-WindowsCapability -Online -Name 'OpenSSH.Client~~~~0.0.1.0'"</CommandLine>
+          <Description>Install OpenSSH Client</Description>
+          <RequiresUserInput>false</RequiresUserInput>
+        </SynchronousCommand>
+
+        <!-- 3. Install OpenSSH Server capability -->
+        <SynchronousCommand wcm:action="add">
+          <Order>3</Order>
+          <CommandLine>powershell.exe -Command "Add-WindowsCapability -Online -Name 'OpenSSH.Server~~~~0.0.1.0'"</CommandLine>
+          <Description>Install OpenSSH Server</Description>
+          <RequiresUserInput>false</RequiresUserInput>
+        </SynchronousCommand>
+
+        <!-- 4. Start the SSH server service -->
+        <SynchronousCommand wcm:action="add">
+          <Order>4</Order>
+          <CommandLine>powershell.exe -Command "Start-Service sshd"</CommandLine>
+          <Description>Start SSH server</Description>
+          <RequiresUserInput>false</RequiresUserInput>
+        </SynchronousCommand>
+
+        <!-- 5. Set SSH server to start automatically -->
+        <SynchronousCommand wcm:action="add">
+          <Order>5</Order>
+          <CommandLine>powershell.exe -Command "Set-Service -Name sshd -StartupType Automatic"</CommandLine>
+          <Description>Enable SSH server auto-start</Description>
+          <RequiresUserInput>false</RequiresUserInput>
+        </SynchronousCommand>
+
+        <!-- 6. Configure Windows Firewall to allow SSH (port 22) -->
+        <SynchronousCommand wcm:action="add">
+          <Order>6</Order>
+          <CommandLine>powershell.exe -Command "New-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -DisplayName 'OpenSSH Server (sshd)' -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22"</CommandLine>
+          <Description>Add firewall rule for SSH</Description>
+          <RequiresUserInput>false</RequiresUserInput>
+        </SynchronousCommand>
+
+        <!-- 7. Set default shell for OpenSSH to PowerShell
+             This makes SSH sessions more useful than the default cmd.exe
+        -->
+        <SynchronousCommand wcm:action="add">
+          <Order>7</Order>
+          <CommandLine>powershell.exe -Command "New-ItemProperty -Path 'HKLM:\SOFTWARE\OpenSSH' -Name DefaultShell -Value 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -PropertyType String -Force"</CommandLine>
+          <Description>Set SSH default shell to PowerShell</Description>
+          <RequiresUserInput>false</RequiresUserInput>
+        </SynchronousCommand>
+
+        <!-- 8. Enable Remote Desktop through registry (belt and suspenders with specialize pass) -->
+        <SynchronousCommand wcm:action="add">
+          <Order>8</Order>
+          <CommandLine>reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f</CommandLine>
+          <Description>Enable Remote Desktop via registry</Description>
+          <RequiresUserInput>false</RequiresUserInput>
+        </SynchronousCommand>
+
+        <!-- 9. Enable RDP firewall rules using netsh (backup method) -->
+        <SynchronousCommand wcm:action="add">
+          <Order>9</Order>
+          <CommandLine>netsh advfirewall firewall set rule group="remote desktop" new enable=yes</CommandLine>
+          <Description>Enable RDP firewall rules</Description>
+          <RequiresUserInput>false</RequiresUserInput>
+        </SynchronousCommand>
+
+        <!-- 10. Disable Windows Firewall prompts for new networks
+              This prevents popup dialogs when network configuration changes.
+        -->
+        <SynchronousCommand wcm:action="add">
+          <Order>10</Order>
+          <CommandLine>reg add "HKLM\SYSTEM\CurrentControlSet\Services\NlaSvc\Parameters\Internet" /v EnableActiveProbing /t REG_DWORD /d 0 /f</CommandLine>
+          <Description>Disable network location prompts</Description>
+          <RequiresUserInput>false</RequiresUserInput>
+        </SynchronousCommand>
+
+        <!-- 11. Disable Server Manager auto-start (Windows Server editions)
+              This has no effect on Windows 10/11 client but doesn't hurt.
+        -->
+        <SynchronousCommand wcm:action="add">
+          <Order>11</Order>
+          <CommandLine>reg add "HKLM\SOFTWARE\Microsoft\ServerManager" /v DoNotOpenServerManagerAtLogon /t REG_DWORD /d 1 /f</CommandLine>
+          <Description>Disable Server Manager auto-start</Description>
+          <RequiresUserInput>false</RequiresUserInput>
+        </SynchronousCommand>
+
+        <!-- 12. Set high performance power plan (better VM performance) -->
+        <SynchronousCommand wcm:action="add">
+          <Order>12</Order>
+          <CommandLine>powercfg.exe /SETACTIVE 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c</CommandLine>
+          <Description>Set High Performance power plan</Description>
+          <RequiresUserInput>false</RequiresUserInput>
+        </SynchronousCommand>
+
+        <!-- 13. Disable automatic Windows Update (can interfere with automation)
+              This sets the registry key but doesn't prevent manual updates.
+        -->
+        <SynchronousCommand wcm:action="add">
+          <Order>13</Order>
+          <CommandLine>reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" /v NoAutoUpdate /t REG_DWORD /d 1 /f</CommandLine>
+          <Description>Disable automatic Windows Update</Description>
+          <RequiresUserInput>false</RequiresUserInput>
+        </SynchronousCommand>
+
+        <!-- 14. Disable privacy experience screens on new user creation -->
+        <SynchronousCommand wcm:action="add">
+          <Order>14</Order>
+          <CommandLine>reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\OOBE" /v DisablePrivacyExperience /t REG_DWORD /d 1 /f</CommandLine>
+          <Description>Disable privacy experience</Description>
+          <RequiresUserInput>false</RequiresUserInput>
+        </SynchronousCommand>
+
+        <!-- 15. Install VirtIO guest tools if available on the VirtIO ISO
+              This is a best-effort command that installs the guest agent and
+              additional drivers. The installer path may vary by VirtIO ISO version.
+        -->
+        <SynchronousCommand wcm:action="add">
+          <Order>15</Order>
+          <CommandLine>cmd.exe /c "if exist @VIRTIO_DRIVER_PATH@virtio-win-guest-tools.exe (@VIRTIO_DRIVER_PATH@virtio-win-guest-tools.exe /S) else (if exist @VIRTIO_DRIVER_PATH@guest-agent\qemu-ga-x86_64.msi msiexec /i @VIRTIO_DRIVER_PATH@guest-agent\qemu-ga-x86_64.msi /qn)"</CommandLine>
+          <Description>Install VirtIO guest tools and QEMU guest agent</Description>
+          <RequiresUserInput>false</RequiresUserInput>
+        </SynchronousCommand>
+
+      </FirstLogonCommands>
+
+      <!-- International settings for the installed system -->
+      <RegisteredOrganization>Agent Harbor</RegisteredOrganization>
+      <RegisteredOwner>@USERNAME@</RegisteredOwner>
+
+    </component>
+
+    <!-- International settings for OOBE -->
+    <component name="Microsoft-Windows-International-Core"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>en-US</UserLocale>
+    </component>
+
+  </settings>
+</unattend>
