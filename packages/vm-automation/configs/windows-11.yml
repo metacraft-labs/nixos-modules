@@ -8,124 +8,156 @@ boot_wait: 60
 
 boot_commands:
   # Windows 11 OOBE startup
-  - '<delay 10>'
+  - delay: 10
 
   # Country/Region selection
-  - "<wait 'Is this the right country or region?', timeout=300>"
-  - '<delay 2>'
-  - "<click 'Yes'>"
-  - '<delay 2>'
+  - wait:
+      text: 'Is this the right country or region?'
+      timeout: 300
+  - delay: 2
+  - click: 'Yes'
+  - delay: 2
 
   # Keyboard layout
-  - "<wait 'Is this the right keyboard layout?'>"
-  - "<click 'Yes'>"
-  - '<delay 2>'
+  - wait:
+      text: 'Is this the right keyboard layout?'
+      timeout: 120
+  - click: 'Yes'
+  - delay: 2
 
   # Skip second keyboard layout
-  - "<wait 'Want to add a second keyboard layout?'>"
-  - "<click 'Skip'>"
-  - '<delay 5>'
+  - wait:
+      text: 'Want to add a second keyboard layout?'
+      timeout: 120
+  - click: 'Skip'
+  - delay: 5
 
   # Network connection - skip for now
   # Windows 11 Home requires network, but Pro allows "I don't have internet"
-  - "<wait 'Let''s connect you to a network'>"
-  - '<delay 2>'
-  - "<click 'I don''t have internet'>"
-  - '<delay 2>'
-  - "<click 'Continue with limited setup'>"
-  - '<delay 5>'
+  - wait:
+      text: "Let's connect you to a network"
+      timeout: 120
+  - delay: 2
+  - click: "I don't have internet"
+  - delay: 2
+  - click: 'Continue with limited setup'
+  - delay: 5
 
   # License agreement
-  - "<wait 'License agreement'>"
-  - "<click 'Accept'>"
-  - '<delay 2>'
+  - wait:
+      text: 'License agreement'
+      timeout: 120
+  - click: 'Accept'
+  - delay: 2
 
   # Create local account
-  - "<wait 'Who''s going to use this PC?'>"
-  - "<type 'Administrator'>"
-  - "<click 'Next'>"
-  - '<delay 2>'
+  - wait:
+      text: "Who's going to use this PC?"
+      timeout: 120
+  - type: 'Administrator'
+  - click: 'Next'
+  - delay: 2
 
   # Password
-  - "<wait 'Create a password'>"
-  - "<type 'password'>"
-  - "<click 'Next'>"
-  - '<delay 2>'
+  - wait:
+      text: 'Create a password'
+      timeout: 120
+  - type: 'password'
+  - click: 'Next'
+  - delay: 2
 
   # Confirm password
-  - "<wait 'Confirm your password'>"
-  - "<type 'password'>"
-  - "<click 'Next'>"
-  - '<delay 2>'
+  - wait:
+      text: 'Confirm your password'
+      timeout: 120
+  - type: 'password'
+  - click: 'Next'
+  - delay: 2
 
   # Security questions (3 questions)
-  - "<wait 'Choose a security question'>"
-  - '<click_at 960,540>'
-  - '<enter>'
-  - "<type 'answer'>"
-  - "<click 'Next'>"
-  - '<delay 2>'
+  - wait:
+      text: 'Choose a security question'
+      timeout: 120
+  - click_at:
+      x: 960
+      y: 540
+  - key: enter
+  - type: 'answer'
+  - click: 'Next'
+  - delay: 2
 
-  - '<click_at 960,540>'
-  - '<enter>'
-  - "<type 'answer'>"
-  - "<click 'Next'>"
-  - '<delay 2>'
+  - click_at:
+      x: 960
+      y: 540
+  - key: enter
+  - type: 'answer'
+  - click: 'Next'
+  - delay: 2
 
-  - '<click_at 960,540>'
-  - '<enter>'
-  - "<type 'answer'>"
-  - "<click 'Next'>"
-  - '<delay 5>'
+  - click_at:
+      x: 960
+      y: 540
+  - key: enter
+  - type: 'answer'
+  - click: 'Next'
+  - delay: 5
 
   # Privacy settings - decline all
-  - "<wait 'Choose privacy settings'>"
-  - '<delay 2>'
+  - wait:
+      text: 'Choose privacy settings'
+      timeout: 120
+  - delay: 2
   # Activity history
-  - "<click 'No'>"
-  - '<delay 1>'
+  - click: 'No'
+  - delay: 1
   # Location
-  - "<click 'No'>"
-  - '<delay 1>'
+  - click: 'No'
+  - delay: 1
   # Find my device
-  - "<click 'No'>"
-  - '<delay 1>'
+  - click: 'No'
+  - delay: 1
   # Diagnostic data (required, can't disable)
-  - '<delay 1>'
+  - delay: 1
   # Inking and typing
-  - "<click 'No'>"
-  - '<delay 1>'
+  - click: 'No'
+  - delay: 1
   # Advertising ID
-  - "<click 'No'>"
-  - '<delay 1>'
-  - "<click 'Accept'>"
-  - '<delay 30>'
+  - click: 'No'
+  - delay: 1
+  - click: 'Accept'
+  - delay: 30
 
   # Desktop should now be visible
-  - '<delay 10>'
+  - delay: 10
 
   # Enable Remote Desktop via PowerShell
-  - '<cmd+r>'
-  - '<delay 2>'
-  - "<type 'powershell'>"
-  - '<ctrl+shift+enter>' # Run as Administrator
-  - '<delay 3>'
-  - '<left>' # Select "Yes" in UAC prompt
-  - '<enter>'
-  - '<delay 3>'
+  - hotkey:
+      modifiers: [cmd]
+      key: r
+  - delay: 2
+  - type: 'powershell'
+  - hotkey:
+      modifiers: [ctrl, shift]
+      key: enter
+  # Run as Administrator
+  - delay: 3
+  - key: left
+  # Select "Yes" in UAC prompt
+  - key: enter
+  - delay: 3
 
   # Enable Remote Desktop
-  - "<type 'Set-ItemProperty -Path ''HKLM:\\System\\CurrentControlSet\\Control\\Terminal Server'' -Name \"fDenyTSConnections\" -Value 0'>"
-  - '<enter>'
-  - '<delay 2>'
+  - type: "Set-ItemProperty -Path 'HKLM:\\System\\CurrentControlSet\\Control\\Terminal Server' -Name \"fDenyTSConnections\" -Value 0"
+  - key: enter
+  - delay: 2
 
   # Enable firewall rule
-  - '<type ''Enable-NetFirewallRule -DisplayGroup "Remote Desktop"''>'
-  - '<enter>'
-  - '<delay 2>'
+  - type: 'Enable-NetFirewallRule -DisplayGroup "Remote Desktop"'
+  - key: enter
+  - delay: 2
 
   # Exit PowerShell
-  - "<type 'exit'>"
-  - '<enter>'
+  - type: 'exit'
+  - key: enter
 # Note: Windows RDP health check would require a different approach
 # For now, we assume setup completed successfully if no errors occurred
