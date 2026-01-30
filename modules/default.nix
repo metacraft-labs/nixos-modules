@@ -12,5 +12,6 @@
     ./mcl-disko
     ./pharos
     ./commands.nix
+    ./virtualisation/desktop-vms.nix
   ];
 }
