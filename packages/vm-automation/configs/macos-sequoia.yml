@@ -9,61 +9,85 @@ boot_wait: 30
 
 boot_commands:
   # Wait for greeting screen
-  - '<delay 5>'
-  - '<space>'
-  - '<delay 2>'
+  - delay: 5
+  - key: space
+  - delay: 2
 
   # Language selection
-  - "<wait 'English', timeout=120>"
-  - "<type 'English'>"
-  - '<delay 1>'
-  - '<enter>'
-  - '<delay 2>'
+  - wait:
+      text: 'English'
+      timeout: 120
+  - type: 'English'
+  - delay: 1
+  - key: enter
+  - delay: 2
 
   # Country/Region selection
-  - "<wait 'Country or Region'>"
-  - '<click_at 960,900>'
-  - "<type 'United States'>"
-  - '<enter>'
-  - "<click 'Continue'>"
-  - '<delay 2>'
+  - wait:
+      text: 'Country or Region'
+      timeout: 120
+  - click_at:
+      x: 960
+      y: 900
+  - type: 'United States'
+  - key: enter
+  - click: 'Continue'
+  - delay: 2
 
   # Create account
-  - "<wait 'Create a Mac Account'>"
-  - "<click 'Full Name'>"
-  - "<type 'lume'>"
-  - '<tab>'
-  - '<tab>'
-  - "<type 'lume'>"
-  - '<tab>'
-  - "<type 'lume'>"
-  - "<click 'Continue'>"
-  - '<delay 2>'
+  - wait:
+      text: 'Create a Mac Account'
+      timeout: 120
+  - click: 'Full Name'
+  - type: 'lume'
+  - key: tab
+  - key: tab
+  - type: 'lume'
+  - key: tab
+  - type: 'lume'
+  - click: 'Continue'
+  - delay: 2
 
   # Terms and Conditions - use index=-1 for last "Agree" button
-  - "<wait 'Terms and Conditions'>"
-  - "<click 'Agree', index=-1>"
-  - "<wait 'I have read and agree'>"
-  - "<click 'Agree', index=0>"
-  - '<delay 2>'
+  - wait:
+      text: 'Terms and Conditions'
+      timeout: 120
+  - click:
+      text: 'Agree'
+      index: -1
+  - wait:
+      text: 'I have read and agree'
+      timeout: 120
+  - click:
+      text: 'Agree'
+      index: 0
+  - delay: 2
 
   # Complete setup
-  - "<wait 'Welcome to Mac'>"
-  - '<space>'
-  - '<delay 30>'
+  - wait:
+      text: 'Welcome to Mac'
+      timeout: 120
+  - key: space
+  - delay: 30
 
   # Enable SSH via Terminal
-  - '<click_at 960,540>'
-  - '<cmd+space>'
-  - "<type 'Terminal'>"
-  - '<enter>'
-  - '<delay 3>'
-  - "<type 'sudo launchctl load -w /System/Library/LaunchDaemons/ssh.plist'>"
-  - '<enter>'
-  - "<type 'lume'>"
-  - '<enter>'
-  - '<delay 2>'
-  - '<cmd+q>'
+  - click_at:
+      x: 960
+      y: 540
+  - hotkey:
+      modifiers: [cmd]
+      key: space
+  - type: 'Terminal'
+  - key: enter
+  - delay: 3
+  - type: 'sudo launchctl load -w /System/Library/LaunchDaemons/ssh.plist'
+  - key: enter
+  - type: 'lume'
+  - key: enter
+  - delay: 2
+  - hotkey:
+      modifiers: [cmd]
+      key: q
 
 health_check:
   type: ssh
