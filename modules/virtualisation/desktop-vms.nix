@@ -404,25 +404,26 @@
 
       config = mkIf cfg.enable (mkMerge [
         # Base libvirt configuration
+        # Using mkDefault for settings that users might override
         {
           # Enable libvirtd
           virtualisation.libvirtd = {
-            enable = true;
+            enable = lib.mkDefault true;
             qemu = {
-              package = pkgs.qemu_kvm;
-              runAsRoot = true;
-              swtpm.enable = true;
+              package = lib.mkDefault pkgs.qemu_kvm;
+              runAsRoot = lib.mkDefault true;
+              swtpm.enable = lib.mkDefault true;
               ovmf = {
-                enable = true;
-                packages = [ ovmfPackage ];
+                enable = lib.mkDefault true;
+                packages = lib.mkDefault [ ovmfPackage ];
               };
               # VirtIO-FS requires memory backing access
-              verbatimConfig = ''
+              verbatimConfig = lib.mkDefault ''
                 memory_backing_dir = "/dev/shm"
               '';
             };
             # Use nftables backend for firewall
-            extraConfig = ''
+            extraConfig = lib.mkDefault ''
               firewall_backend="nftables"
             '';
           };
