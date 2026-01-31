@@ -14,6 +14,7 @@ private enum commandModulesToExport =
     "mcl.commands.hosts" : ["hosts"],
     "mcl.commands.secret" : ["secret"],
     "mcl.commands.invoices" : ["invoices"],
+    "mcl.commands.coda" : ["coda"],
 ];
 
 template ImportAll(alias aa)

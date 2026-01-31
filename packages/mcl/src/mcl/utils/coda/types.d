@@ -3,6 +3,7 @@ module mcl.utils.coda.types;
 import std.datetime : SysTime;
 import std.json : JSONValue;
 import std.sumtype : SumType;
+import std.typecons : Nullable;
 
 // =============================================================================
 // Request/Response Value Types
@@ -166,6 +167,15 @@ struct Table
 // Column Types
 // =============================================================================
 
+/// Simplified table reference for column format (reference columns)
+struct FormatTableRef
+{
+    string id;
+    string name;
+    string href;
+    string tableType;
+}
+
 struct Column
 {
     string id;
@@ -183,6 +193,8 @@ struct Column
         string label;
         string disableIf;
         string action;
+        /// For reference/lookup columns: the target table
+        Nullable!FormatTableRef table;
     }
     Format format;
     CodaTableRef parent;
