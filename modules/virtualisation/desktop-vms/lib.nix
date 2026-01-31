@@ -263,6 +263,11 @@ rec {
   #   ovmfCodePath: Path to OVMF_CODE.fd
   #   ovmfVarsPath: Path to OVMF_VARS.fd template
   #   nvramPath: Path for NVRAM storage
+  #   memballoon: Memory balloon configuration
+  #     - enable: Enable memballoon device
+  #     - autodeflate: Enable autodeflate on OOM
+  #     - freePageReporting: Enable free page reporting
+  #     - statsInterval: Statistics polling interval in seconds (0 to disable)
   #
   # Returns: String containing the complete libvirt domain XML
   generateDomainXml = {
@@ -283,6 +288,7 @@ rec {
     ovmfVarsPath,
     nvramPath,
     extraDevices ? "",
+    memballoon ? { enable = true; autodeflate = false; freePageReporting = false; statsInterval = 5; },
   }:
     let
       memParsed = parseMemory memory;
@@ -435,10 +441,30 @@ rec {
         <audio id="1" type="spice"/>'';
 
       # Memballoon for memory management
-      memballoonXml = ''
-        <memballoon model="virtio">
+      # Reference: https://libvirt.org/formatdomain.html#memory-balloon-device
+      #
+      # Attributes:
+      # - autodeflate='on': Automatically deflate balloon before OOM killer activates
+      # - freePageReporting='on': Report free pages to host for memory overcommit
+      #
+      # The <stats> element enables periodic memory statistics collection.
+      # Stats can be viewed with: virsh dommemstat <domain>
+      memballoonXml =
+        if memballoon.enable then
+          let
+            # Build attributes string
+            autodeflateAttr = if memballoon.autodeflate then " autodeflate='on'" else "";
+            freePageReportingAttr = if memballoon.freePageReporting then " freePageReporting='on'" else "";
+            # Stats element (only if interval > 0)
+            statsElement = if memballoon.statsInterval > 0
+              then "\n          <stats period='${toString memballoon.statsInterval}'/>"
+              else "";
+          in ''
+        <memballoon model="virtio"${autodeflateAttr}${freePageReportingAttr}>${statsElement}
           <address type="pci" domain="0x0000" bus="0x05" slot="0x00" function="0x0"/>
-        </memballoon>'';
+        </memballoon>''
+        else ''
+        <memballoon model="none"/>'';
 
     in
     ''
