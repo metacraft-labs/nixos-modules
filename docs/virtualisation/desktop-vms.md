@@ -294,6 +294,12 @@ With static hugepages, memory cannot be dynamically reclaimed. Switch to `profil
 2. Ensure `firewallPorts.spice = true`
 3. Try connecting locally first: `virt-viewer --connect qemu:///system my-vm`
 
+## See Also
+
+- [Virtualisation Overview](./index.md) - Overview of all VM modules
+- [VM Images](./vm-images.md) - Building VM images for CI/CD and testing
+- [Automation Engine](./automation-engine.md) - GUI automation for unattended installation
+
 ## References
 
 - [Libvirt Domain XML Format](https://libvirt.org/formatdomain.html)
