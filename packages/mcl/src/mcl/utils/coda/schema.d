@@ -44,10 +44,127 @@ struct KeyColumn {}
 /// Mark field as read-only (calculated field, not sent on upsert)
 struct CodaReadOnly {}
 
-/// Reference to another table by logical name
+/// Reference to another table by logical name (compile-time UDA)
 struct CodaReference
 {
     string targetTableName;
+}
+
+// =============================================================================
+// Typed Reference Wrapper
+// =============================================================================
+
+/// Typed reference to a row in another Coda table with lazy loading support
+struct Ref(T) if (is(T == struct))
+{
+    string rowId;      /// Coda row ID
+    string display;    /// Display value (from Coda's default representation)
+
+    // For lazy loading
+    private CodaApiClient* _client;
+    private string _docId;
+    private Nullable!T _cached;
+
+    /// Check if reference is set
+    bool isNull() const { return rowId.length == 0; }
+
+    /// Create from row ID
+    static Ref!T fromId(string id) { return Ref!T(rowId: id, display: ""); }
+
+    /// Create from row ID and display value
+    static Ref!T fromIdAndDisplay(string id, string disp) { return Ref!T(rowId: id, display: disp); }
+
+    /// Bind to a client for lazy loading
+    void bind(CodaApiClient* client, string docId)
+    {
+        _client = client;
+        _docId = docId;
+    }
+
+    /// Check if bound to a client (can lazy load)
+    bool isBound() const { return _client !is null; }
+
+    /// Lazy load the referenced object
+    T get()
+    {
+        if (!_cached.isNull)
+            return _cached.get;
+
+        if (_client is null)
+            throw new Exception("Ref!" ~ T.stringof ~ " not bound to client - call bind() first");
+
+        if (rowId.length == 0)
+            throw new Exception("Cannot load null reference");
+
+        enum tableName = getTableName!T;
+        // Note: resolving table ID requires a resolver; for now just use the table name
+        // This is a simplified implementation - full implementation would use CodaIdResolver
+        auto tables = _client.listTables(_docId);
+        string tableId;
+        foreach (ref t; tables)
+            if (t.name == tableName)
+            {
+                tableId = t.id;
+                break;
+            }
+
+        if (tableId.length == 0)
+            throw new Exception("Table not found: " ~ tableName);
+
+        auto row = _client.getRow(_docId, tableId, rowId);
+        _cached = deserializeRow!T(*_client, _docId, tableId, row);
+        return _cached.get;
+    }
+
+    /// For JSON serialization - just use the ID
+    string toString() const { return rowId; }
+}
+
+/// Deserialize a Coda Row to a typed struct
+private T deserializeRow(T)(ref CodaApiClient client, string docId, string tableId,
+    mcl.utils.coda.types.Row row) if (is(T == struct))
+{
+    import std.traits : hasUDA, getUDAs;
+    import std.sumtype : match;
+    import std.conv : to;
+    import mcl.utils.coda.types : RowValue;
+
+    // Build column name -> ID mapping
+    auto columns = client.listColumns(docId, tableId);
+    string[string] colIdToName;
+    foreach (ref col; columns)
+        colIdToName[col.id] = col.name;
+
+    T result;
+
+    static foreach (idx, field; T.tupleof)
+    {
+        static if (hasUDA!(field, CodaColumn))
+        {{
+            enum colName = getUDAs!(field, CodaColumn)[0].columnName;
+            // Find the column ID for this column name
+            foreach (colId, name; colIdToName)
+            {
+                if (name == colName)
+                {
+                    if (auto pVal = colId in row.values)
+                    {
+                        alias FieldType = typeof(field);
+                        result.tupleof[idx] = (*pVal).match!(
+                            (string s) => s.to!FieldType,
+                            (int i) => i.to!FieldType,
+                            (double d) => d.to!FieldType,
+                            (bool b) => b.to!FieldType,
+                            _ => FieldType.init
+                        );
+                    }
+                    break;
+                }
+            }
+        }}
+    }
+
+    return result;
 }
 
 // =============================================================================
@@ -327,11 +444,14 @@ template getKeyColumnNames(T) if (is(T == struct))
 private JSONValue convertToCodaValue(T)(T value, CodaType codaType)
 {
     import std.conv : to;
-    import std.traits : isNumeric, isFloatingPoint, Unqual;
+    import std.traits : isNumeric, isFloatingPoint, Unqual, TemplateOf;
 
     alias U = Unqual!T;
 
-    static if (is(U == bool))
+    // Handle Ref!R types - serialize as the row ID
+    static if (__traits(compiles, TemplateOf!U) && __traits(isSame, TemplateOf!U, Ref))
+        return JSONValue(value.rowId);
+    else static if (is(U == bool))
         return JSONValue(cast(bool) value);
     else static if (isFloatingPoint!U)
         return JSONValue(cast(double) value);
