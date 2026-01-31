@@ -4,8 +4,10 @@
 # using libvirt/QEMU with optimizations for gaming, development, and desktop workloads.
 #
 # Key features:
+# - Two usage profiles: "always-on" (max performance) vs "occasional" (flexible memory)
 # - CPU pinning for consistent performance
-# - Hugepages memory backing for reduced latency
+# - Hugepages memory backing for reduced latency (always-on profile)
+# - Memory ballooning for dynamic sizing (occasional profile)
 # - VirtIO-FS for fast host-guest file sharing
 # - SPICE/VNC/Looking Glass display options
 # - Windows 11 support with TPM 2.0 and Secure Boot
@@ -14,10 +16,7 @@
 # Example usage:
 #   virtualisation.desktopVMs = {
 #     enable = true;
-#     hugepages = {
-#       enable = true;
-#       count = 12288;  # 24GB with 2MB pages
-#     };
+#     profile = "always-on";  # or "occasional"
 #     vms.windows-dev = {
 #       enable = true;
 #       memory = "16G";
@@ -25,16 +24,28 @@
 #       cpuPinning = [ "0-1" "2-3" "4-5" "6-7" "8-9" "10-11" "12-13" "14-15" ];
 #       sharedFolders.projects = "/home/user/projects";
 #       osType = "windows";
-#       tpm = true;
-#       secureBoot = true;
 #     };
 #   };
+#
+# Profile descriptions:
+#   "always-on": Best for VMs that run frequently or continuously.
+#     - Uses static hugepages (reserved at boot, best performance)
+#     - Memory is permanently allocated to the VM subsystem
+#     - No dynamic memory sizing (ballooning disabled)
+#     - VMs can auto-start at boot
+#
+#   "occasional": Best for VMs that run infrequently.
+#     - Uses Transparent Hugepages (dynamic, slightly lower performance)
+#     - Memory is available to host when VM is not running
+#     - Full memory ballooning support for dynamic sizing
+#     - Host can reclaim unused VM memory
 #
 # References:
 # - Libvirt documentation: https://libvirt.org/
 # - QEMU performance tuning: https://www.qemu.org/docs/master/system/i386/cpu.html
 # - VirtIO-FS: https://virtio-fs.gitlab.io/
 # - Looking Glass: https://looking-glass.io/
+# - Memory ballooning: https://www.libvirt.org/formatdomain.html#memory-balloon-device
 { ... }:
 {
   flake.modules.nixos.desktop-vms =
@@ -50,14 +61,12 @@
         mkOption
         mkIf
         mkMerge
+        mkDefault
         types
         mapAttrs
         mapAttrsToList
         filterAttrs
-        concatStringsSep
         optionalString
-        optional
-        optionals
         literalExpression
         ;
 
@@ -65,12 +74,50 @@
 
       # Import our library functions
       vmLib = import ./desktop-vms/lib.nix { inherit lib; };
-      windowsLib = import ./desktop-vms/windows.nix { inherit lib pkgs; };
 
       # OVMF paths for UEFI boot
       ovmfPackage = pkgs.OVMF.override { secureBoot = true; tpmSupport = true; };
       ovmfCodePath = "${ovmfPackage.fd}/FV/OVMF_CODE.fd";
       ovmfVarsPath = "${ovmfPackage.fd}/FV/OVMF_VARS.fd";
+
+      # Profile-based defaults
+      # These are applied via mkDefault so users can override individual settings
+      profileDefaults = {
+        # "always-on" profile: Maximum performance, static resource allocation
+        # Best for: Gaming VMs, development workstations, VMs that run daily
+        # Trade-off: Memory reserved even when VM is off
+        always-on = {
+          hugepages.enable = true;
+          vm = {
+            autoStart = true;
+            memballoon = {
+              enable = true;  # Keep memballoon for stats, but no dynamic sizing
+              autodeflate = false;  # Not useful with hugepages
+              freePageReporting = false;  # Not compatible with hugepages
+              statsInterval = 5;
+            };
+          };
+        };
+
+        # "occasional" profile: Flexible memory, dynamic allocation
+        # Best for: Testing VMs, infrequent use, memory-constrained hosts
+        # Trade-off: ~2-3% lower performance than static hugepages
+        occasional = {
+          hugepages.enable = false;  # Use THP instead
+          vm = {
+            autoStart = false;
+            memballoon = {
+              enable = true;
+              autodeflate = true;  # Release memory before OOM
+              freePageReporting = true;  # Report free pages to host
+              statsInterval = 5;
+            };
+          };
+        };
+      };
+
+      # Get defaults for current profile
+      currentProfileDefaults = profileDefaults.${cfg.profile};
 
       # Filter enabled VMs
       enabledVMs = filterAttrs (name: vmCfg: vmCfg.enable) cfg.vms;
@@ -94,11 +141,87 @@
           inherit ovmfCodePath ovmfVarsPath;
           nvramPath = "/var/lib/libvirt/qemu/nvram/${name}_VARS.fd";
           extraDevices = vmCfg.extraDevices;
+          # Memballoon configuration
+          memballoon = vmCfg.memballoon;
         };
 
       # Write domain XML to a file
       vmDomainXmlFile = name: vmCfg:
         pkgs.writeText "${name}-domain.xml" (generateVmXml name vmCfg);
+
+      # Memballoon submodule for per-VM memory balloon configuration
+      memballoonSubmodule = types.submodule {
+        options = {
+          enable = mkOption {
+            type = types.bool;
+            default = currentProfileDefaults.vm.memballoon.enable;
+            description = ''
+              Enable the virtio memory balloon device.
+
+              The balloon device allows the host to reclaim unused memory from the guest.
+              It also provides memory statistics to the host.
+
+              Note: Memory ballooning is not effective when using static hugepages,
+              as hugepages cannot be dynamically reclaimed.
+
+              Reference: https://www.libvirt.org/formatdomain.html#memory-balloon-device
+            '';
+          };
+
+          autodeflate = mkOption {
+            type = types.bool;
+            default = currentProfileDefaults.vm.memballoon.autodeflate;
+            description = ''
+              Automatically deflate the balloon (return memory to guest) when the
+              guest is under memory pressure, before the OOM killer activates.
+
+              This prevents the guest from crashing due to memory starvation when
+              the balloon has been inflated.
+
+              Only effective when not using static hugepages.
+              Requires QEMU 2.1+ and libvirt 1.3.1+.
+
+              Reference: https://www.qemu.org/docs/master/interop/virtio-balloon-stats.html
+            '';
+          };
+
+          freePageReporting = mkOption {
+            type = types.bool;
+            default = currentProfileDefaults.vm.memballoon.freePageReporting;
+            description = ''
+              Enable free page reporting (also known as free page hinting).
+
+              The guest periodically reports pages that are free to the host,
+              allowing the host to reclaim them for other uses. This improves
+              memory overcommit efficiency without actively inflating the balloon.
+
+              Not compatible with static hugepages.
+              Requires QEMU 5.1+ and libvirt 6.9+.
+
+              Reference: https://www.qemu.org/docs/master/interop/virtio-balloon-stats.html
+            '';
+          };
+
+          statsInterval = mkOption {
+            type = types.int;
+            default = currentProfileDefaults.vm.memballoon.statsInterval;
+            description = ''
+              Interval in seconds for collecting memory statistics from the guest.
+              Set to 0 to disable statistics collection.
+
+              Statistics can be viewed with: virsh dommemstat <domain>
+
+              Available stats include:
+              - actual: Current balloon size
+              - unused: Free memory in guest (MemFree)
+              - usable: Available memory in guest (MemAvailable)
+              - rss: Resident set size on host
+              - swap_in/swap_out: Swap activity
+            '';
+            example = 10;
+          };
+        };
+      };
 
       # VM submodule type definition
       vmSubmodule = types.submodule ({ name, ... }: {
@@ -124,8 +247,11 @@
               Amount of memory allocated to the VM.
               Accepts formats like "8G", "8GiB", "16384M", "16384MiB".
 
-              For hugepages, ensure this is a multiple of the hugepage size.
-              With 2MB hugepages, use values like 8G, 16G, 24G, etc.
+              For the "always-on" profile with hugepages, ensure this is a multiple
+              of the hugepage size. With 2MB hugepages, use values like 8G, 16G, 24G.
+
+              For the "occasional" profile, the VM can dynamically adjust memory
+              usage via ballooning.
             '';
             example = "16G";
           };
@@ -255,10 +381,31 @@
 
           autoStart = mkOption {
             type = types.bool;
-            default = false;
+            default = currentProfileDefaults.vm.autoStart;
             description = ''
               Start this VM automatically when the host boots.
-              Use with caution as it consumes resources immediately.
+
+              Default depends on the profile:
+              - "always-on": true (VM is expected to run continuously)
+              - "occasional": false (VM started manually when needed)
+            '';
+          };
+
+          memballoon = mkOption {
+            type = memballoonSubmodule;
+            default = { };
+            description = ''
+              Memory balloon device configuration for dynamic memory management.
+
+              The balloon device allows the host to reclaim unused memory from guests
+              and provides memory statistics. Settings depend on the profile:
+
+              - "always-on" profile: Balloon enabled for stats only, no dynamic sizing
+                (hugepages prevent memory reclamation)
+              - "occasional" profile: Full ballooning with autodeflate and free page
+                reporting for efficient memory sharing
+
+              Reference: https://www.libvirt.org/formatdomain.html#memory-balloon-device
             '';
           };
 
@@ -293,16 +440,56 @@
           swtpm for TPM emulation, and virtiofsd for shared folders.
         '';
 
-        hugepages = {
-          enable = mkEnableOption ''
-            hugepages for VM memory backing.
+        profile = mkOption {
+          type = types.enum [ "always-on" "occasional" ];
+          default = "occasional";
+          description = ''
+            Usage profile that sets sensible defaults for VM configuration.
 
-            Hugepages provide lower memory access latency and prevent
-            VM memory from being swapped. Recommended for desktop VMs.
+            **"always-on"** - Best for VMs that run frequently or continuously:
+            - Static hugepages for maximum performance (~2-5% faster)
+            - Memory permanently reserved at boot (unavailable to host)
+            - VMs auto-start at boot by default
+            - Memory ballooning disabled (incompatible with hugepages)
+            - Best for: gaming VMs, daily-use development workstations
 
-            Important: The total hugepages size should cover all VM memory
-            plus some overhead. Calculate: count * size >= total_vm_memory
+            **"occasional"** - Best for VMs that run infrequently:
+            - Transparent Hugepages for dynamic allocation
+            - Memory available to host when VM is not running
+            - VMs started manually by default
+            - Full memory ballooning with autodeflate and free page reporting
+            - Best for: testing, occasional use, memory-constrained hosts
+
+            Individual settings can be overridden regardless of profile.
           '';
+          example = "always-on";
+        };
+
+        hugepages = {
+          enable = mkOption {
+            type = types.bool;
+            default = currentProfileDefaults.hugepages.enable;
+            description = ''
+              Use static hugepages for VM memory backing.
+
+              **Benefits:**
+              - Lower memory access latency (reduced TLB misses)
+              - ~2-5% performance improvement for memory-intensive workloads
+              - Memory cannot be swapped (consistent performance)
+
+              **Trade-offs:**
+              - Memory reserved at boot, unavailable to host even when VM is off
+              - Incompatible with memory ballooning (no dynamic sizing)
+              - Incompatible with KSM (Kernel Same-page Merging)
+
+              Default depends on profile:
+              - "always-on": true
+              - "occasional": false (uses Transparent Hugepages instead)
+
+              When disabled, QEMU uses Transparent Hugepages (THP) which provide
+              most of the performance benefit while allowing dynamic memory management.
+            '';
+          };
 
           size = mkOption {
             type = types.str;
@@ -325,8 +512,11 @@
               Calculate: memory_in_bytes / hugepage_size
               Example: 24GB with 2MB pages = 24 * 1024 / 2 = 12288 pages
 
-              Warning: These pages are reserved at boot and unavailable
-              to the rest of the system.
+              **Warning:** These pages are reserved at boot and permanently
+              unavailable to the rest of the system, even when VMs are not running.
+
+              Set to 0 to auto-calculate based on total VM memory (not yet implemented,
+              must specify explicitly).
             '';
             example = 12288;
           };
@@ -408,22 +598,22 @@
         {
           # Enable libvirtd
           virtualisation.libvirtd = {
-            enable = lib.mkDefault true;
+            enable = mkDefault true;
             qemu = {
-              package = lib.mkDefault pkgs.qemu_kvm;
-              runAsRoot = lib.mkDefault true;
-              swtpm.enable = lib.mkDefault true;
+              package = mkDefault pkgs.qemu_kvm;
+              runAsRoot = mkDefault true;
+              swtpm.enable = mkDefault true;
               ovmf = {
-                enable = lib.mkDefault true;
-                packages = lib.mkDefault [ ovmfPackage ];
+                enable = mkDefault true;
+                packages = mkDefault [ ovmfPackage ];
               };
               # VirtIO-FS requires memory backing access
-              verbatimConfig = lib.mkDefault ''
+              verbatimConfig = mkDefault ''
                 memory_backing_dir = "/dev/shm"
               '';
             };
             # Use nftables backend for firewall
-            extraConfig = lib.mkDefault ''
+            extraConfig = mkDefault ''
               firewall_backend="nftables"
             '';
           };
@@ -451,7 +641,7 @@
           '';
         }
 
-        # Hugepages configuration
+        # Hugepages configuration (for "always-on" profile or explicit enable)
         (mkIf cfg.hugepages.enable {
           # Kernel parameters for hugepages
           boot.kernelParams = [
@@ -627,6 +817,18 @@
                 status)
                   virsh dominfo ${name}
                   ;;
+                memstats)
+                  virsh dommemstat ${name}
+                  ;;
+                setmem)
+                  if [ -z "$2" ]; then
+                    echo "Usage: vm-${name} setmem <size>"
+                    echo "Example: vm-${name} setmem 16G"
+                    exit 1
+                  fi
+                  virsh setmem ${name} "$2" --live
+                  echo "Memory set to $2 for ${name}"
+                  ;;
                 ssh)
                   # Try to get IP and SSH (for VMs with QEMU guest agent)
                   IP=$(virsh domifaddr ${name} --source agent 2>/dev/null | grep -oP '(\d+\.){3}\d+' | head -1)
@@ -638,7 +840,7 @@
                   fi
                   ;;
                 *)
-                  echo "Usage: vm-${name} {start|stop|force-stop|view|console|status|ssh}"
+                  echo "Usage: vm-${name} {start|stop|force-stop|view|console|status|memstats|setmem|ssh}"
                   exit 1
                   ;;
               esac
