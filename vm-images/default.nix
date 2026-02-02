@@ -56,7 +56,7 @@
 #               majorVersion = 14;
 #               sha256 = "sha256-...";
 #             };
-#             automationConfig = ./configs/macos-sonoma.yml;
+#             automationConfig = vmImages.automationConfigs.macos-sonoma;
 #           };
 #
 #           # Example: Build a Windows VM
@@ -122,6 +122,11 @@
 #
 # Automation:
 #   - yaml-automation-runner (the automation engine package)
+#   - automationConfigs.macos-ventura (YAML config for macOS Ventura OOBE)
+#   - automationConfigs.macos-sonoma (YAML config for macOS Sonoma OOBE)
+#   - automationConfigs.macos-sequoia (YAML config for macOS Sequoia OOBE)
+#   - automationConfigs.macos-tahoe (YAML config for macOS Tahoe OOBE)
+#   - automationConfigs.windows-11 (YAML config for Windows 11 OOBE)
 #
 # =============================================================================
 # References:
@@ -330,6 +335,31 @@ in
   # The YAML automation runner for GUI automation via VNC + OCR
   # This is either the provided yaml-automation-runner or auto-created from packages/vm-automation
   yaml-automation-runner = resolvedYamlAutomationRunner;
+
+  # ==========================================================================
+  # Automation Configs
+  # ==========================================================================
+
+  # Pre-built YAML automation configs for unattended OS installation.
+  # These configs automate the OOBE (Out-of-Box Experience) setup via VNC + OCR,
+  # creating VMs with SSH enabled and admin/admin credentials.
+  #
+  # Usage:
+  #   vmImages.darwin.makeDarwinVM {
+  #     automationConfig = vmImages.automationConfigs.macos-sequoia;
+  #     ...
+  #   };
+  automationConfigs =
+    let
+      configsDir = ../packages/vm-automation/configs;
+    in
+    {
+      macos-ventura = configsDir + /macos-ventura.yml;
+      macos-sonoma = configsDir + /macos-sonoma.yml;
+      macos-sequoia = configsDir + /macos-sequoia.yml;
+      macos-tahoe = configsDir + /macos-tahoe.yml;
+      windows-11 = configsDir + /windows-11.yml;
+    };
 
   # ==========================================================================
   # Raw module access (for advanced use cases)

@@ -1,44 +1,95 @@
 # YAML Automation Configs
 
-This directory contains example YAML configuration files for the automation engine.
+This directory contains YAML configuration files for automating OS installation in VMs.
+These configs use VNC + OCR to interact with the GUI during unattended setup.
+
+## Available Configs
+
+### macOS
+
+- **macos-ventura.yml** - macOS Ventura (13.x) Setup Assistant automation
+- **macos-sonoma.yml** - macOS Sonoma (14.x) Setup Assistant automation
+- **macos-sequoia.yml** - macOS Sequoia (15.x) Setup Assistant automation
+- **macos-tahoe.yml** - macOS Tahoe (16.x) Setup Assistant automation
+
+### Windows
+
+- **windows-11.yml** - Windows 11 OOBE (Out-of-Box Experience) automation
 
 ## Format
 
-The YAML format follows the [Lume unattended setup pattern](https://cua.ai/docs/lume/guide/fundamentals/unattended-setup):
+The YAML format uses native structures for type safety, validation, and IDE support.
+See [YAML-AUTOMATION-SCHEMA.md](YAML-AUTOMATION-SCHEMA.md) for the complete schema.
 
 ```yaml
 boot_wait: 30 # Seconds to wait after VM boots
 
 boot_commands:
-  - "<wait 'text'>" # Wait for text to appear via OCR
-  - "<click 'text'>" # Click on text
-  - "<click 'text', index=-1>" # Click last occurrence (for duplicates)
-  - '<click_at 960,540>' # Click exact coordinates
-  - "<type 'hello'>" # Type text
-  - '<enter>' # Press key
-  - '<cmd+space>' # Hotkey combination
-  - '<delay 2>' # Wait N seconds
+  # Wait for text to appear via OCR
+  - wait:
+      text: 'Continue'
+      timeout: 300
+
+  # Click on text
+  - click: 'Continue'
+
+  # Click last occurrence (for duplicates)
+  - click:
+      text: 'Agree'
+      index: -1
+
+  # Click exact coordinates
+  - click_at:
+      x: 960
+      y: 540
+
+  # Type text
+  - type: 'hello world'
+
+  # Press keys
+  - key: enter
+  - key: tab
+
+  # Hotkey combination
+  - hotkey:
+      modifiers: [cmd]
+      key: space
+
+  # Wait N seconds
+  - delay: 2
 
 health_check:
   type: ssh
-  user: username
-  password: password
+  host: 127.0.0.1
+  port: 22
+  user: admin
+  password: admin
   timeout: 30
-  retries: 5
-  retry_delay: 10
+  retries: 10
+  retry_delay: 15
+  command: 'sw_vers'
 ```
 
-## Available Configs
-
-- **macos-sequoia.yml** - Simplified macOS Sequoia Setup Assistant automation
-- **windows-11.yml** - Windows 11 OOBE (Out-of-Box Experience) automation
-
-For complete examples, see:
-
-- `vendor/vm-research/cua/libs/lume/resources/unattended-sequoia.yml` (full macOS automation)
-- `vendor/vm-research/cua/libs/lume/resources/unattended-tahoe.yml` (macOS 15)
-
 ## Usage
+
+### From Nix
+
+```nix
+# In your flake.nix
+let
+  vmImages = import (nixos-modules + /vm-images) { inherit pkgs; };
+in {
+  packages.macos-vm = vmImages.darwin.makeDarwinVM {
+    name = "my-macos-vm";
+    baseSystemImg = vmImages.fetchMacOSBaseSystem { release = "sonoma"; sha256 = "..."; };
+    installAssistantIso = vmImages.fetchMacOSInstallAssistant { majorVersion = 14; sha256 = "..."; };
+    # Reference config from this directory
+    automationConfig = nixos-modules + /packages/vm-automation/configs/macos-sonoma.yml;
+  };
+}
+```
+
+### Standalone
 
 ```bash
 # Build the automation runner
@@ -61,90 +112,105 @@ When `--debug` is enabled, the engine saves:
 
 Debug files are saved to `/tmp/unattended-<timestamp>/`
 
-## Command Reference
+## Quick Reference
 
 ### Wait Commands
 
-- `<wait 'text'>` - Wait for text to appear (default timeout: 120s)
-- `<wait 'text', timeout=300>` - Wait with custom timeout
+```yaml
+- wait:
+    text: 'Continue'
+    timeout: 300 # optional, default: 120
+```
 
 ### Click Commands
 
-- `<click 'text'>` - Click first occurrence of text
-- `<click 'text', index=0>` - Click first occurrence (explicit)
-- `<click 'text', index=-1>` - Click last occurrence (useful for duplicate text)
-- `<click 'text', xoffset=50>` - Click 50px to the right of text center
-- `<click 'text', yoffset=-20>` - Click 20px above text center
-- `<click_at 960,540>` - Click exact screen coordinates
+```yaml
+# Simple click (first occurrence)
+- click: 'Continue'
 
-### Typing Commands
+# Click with options
+- click:
+    text: 'Agree'
+    index: -1 # -1 = last, 0 = first
+    offset:
+      x: 50 # pixels right (+) or left (-)
+      y: 0
 
-- `<type 'hello world'>` - Type text character by character
+# Coordinate click
+- click_at:
+    x: 960
+    y: 540
+```
 
-### Key Commands
+### Typing
 
-- `<enter>` - Press Enter
-- `<tab>` - Press Tab
-- `<space>` - Press Space
-- `<backspace>` - Press Backspace
-- `<esc>` - Press Escape
-- `<up>`, `<down>`, `<left>`, `<right>` - Arrow keys
-- `<f1>` through `<f12>` - Function keys
+```yaml
+- type: 'hello world'
+```
 
-### Hotkey Commands
+### Keys
 
-- `<cmd+space>` - macOS Spotlight (Command + Space)
-- `<cmd+q>` - macOS Quit (Command + Q)
-- `<ctrl+alt+delete>` - Windows Security (Ctrl + Alt + Delete)
-- `<shift+tab>` - Shift + Tab
-- `<cmd+shift+enter>` - Multiple modifiers
+```yaml
+- key: enter
+- key: tab
+- key: space
+- key: backspace
+- key: escape
+- key: up    # arrow keys
+- key: f1    # function keys
+```
 
-### Timing Commands
+### Hotkeys
 
-- `<delay 2>` - Wait 2 seconds
-- `<delay 0.5>` - Wait 500 milliseconds
+```yaml
+- hotkey:
+    modifiers: [cmd, shift]
+    key: t
+```
+
+### Timing
+
+```yaml
+- delay: 2   # seconds (can be float: 0.5)
+```
 
 ## Tips
 
 ### Handling Duplicate Text
 
-When text appears multiple times (e.g., "Agree" in license text AND button), use `index`:
+When text appears multiple times (e.g., "Agree" in license AND button):
 
 ```yaml
 # Click last "Agree" (usually the button)
-- "<click 'Agree', index=-1>"
-
-# Click first "Agree" (if it's on top)
-- "<click 'Agree', index=0>"
+- click:
+    text: 'Agree'
+    index: -1
 ```
 
 ### Coordinate Fallback
 
-If OCR fails to recognize text, use coordinates:
+If OCR fails to recognize text:
 
 ```yaml
-# Fallback to clicking center of screen
-- '<click_at 960,540>'
+- click_at:
+    x: 960
+    y: 540
 ```
 
-### Timing Adjustments
+### Account Credentials
 
-- Add `<delay N>` after clicks to wait for UI updates
-- Increase `timeout` for slow-loading screens:
-  ```yaml
-  - "<wait 'Loading...', timeout=300>"
-  ```
+All macOS configs create:
+- Username: `admin`
+- Password: `admin`
 
-### SSH Health Check
+### Port Forwarding
 
-Always include an SSH health check to verify setup completed:
+The `health_check.port` in configs is the guest port (22 for SSH).
+Configure actual port forwarding in your VM builder:
 
-```yaml
-health_check:
-  type: ssh
-  user: testuser
-  password: testpass
-  timeout: 30 # Per-attempt timeout
-  retries: 5 # Number of attempts
-  retry_delay: 10 # Seconds between attempts
+```nix
+vmImages.darwin.makeDarwinVM {
+  sshPort = 2225;  # Host port -> guest port 22
+  ...
+}
 ```
