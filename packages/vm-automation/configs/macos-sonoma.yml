@@ -1,16 +1,17 @@
 # Copyright 2026 Schelling Point Labs Inc
 # SPDX-License-Identifier: AGPL-3.0-only
 
-# Unattended macOS Sequoia Setup Assistant Configuration
+# Unattended macOS Sonoma Setup Assistant Configuration
 #
-# This YAML config automates the macOS Sequoia (15.x) OOBE setup for creating
-# reproducible VM images. Uses native YAML format for validation and IDE support.
+# This YAML config automates the macOS Sonoma (14.x) OOBE (Out-of-Box Experience)
+# setup for creating reproducible VM images. Uses native YAML format for better
+# validation and IDE support.
 #
 # Usage:
-#   yaml-automation-runner --config macos-sequoia.yml --vnc localhost:5902
+#   yaml-automation-runner --config macos-sonoma.yml --vnc localhost:5900
 #
 # Prerequisites:
-#   - macOS Sequoia BaseSystem.img (from fetchMacOSBaseSystem)
+#   - macOS Sonoma BaseSystem.img (from fetchMacOSBaseSystem)
 #   - OpenCore bootloader configured
 #   - InstallAssistant.pkg ISO mounted
 #   - run_offline.sh ISO mounted at /Volumes/run_offline/
@@ -19,20 +20,13 @@
 #   - Username: admin
 #   - Password: admin
 #
-# Key differences from Sonoma:
-#   - Boot wait reduced from 45s to 30s (faster boot)
-#   - Apple Account sign-in confirmation popup (NEW)
-#   - Siri setup 2-screen flow (NEW)
-#   - Update Mac Automatically screen (NEW)
-#
 # References:
-#   - Sonoma config: macos-sonoma.yml
-#   - Lume Sequoia: https://github.com/trycua/cua/blob/main/libs/lume/src/Resources/unattended-presets/sequoia.yml
 #   - Schema: YAML-AUTOMATION-SCHEMA.md
+#   - OSX-KVM: https://github.com/kholia/OSX-KVM
 
 # Seconds to wait after VM boots before starting automation
-# Sequoia boots faster than Sonoma due to optimizations
-boot_wait: 30
+# Sonoma takes longer to boot than newer versions due to OpenCore initialization
+boot_wait: 45
 
 boot_commands:
   # ============================================
@@ -254,7 +248,7 @@ boot_commands:
   # ============================================
 
   # This is the most timing-sensitive part - if the VM is too slow,
-  # account creation can fail
+  # account creation can fail.
 
   - wait:
       text: 'Create a Computer Account'
@@ -296,35 +290,7 @@ boot_commands:
   - delay: 5
 
   # ============================================
-  # Stage 12: Apple Account Sign-In (NEW in Sequoia)
-  # ============================================
-
-  # Sequoia adds an Apple Account sign-in screen with confirmation popup
-  - wait:
-      text: 'Sign In with Your Apple'
-      timeout: 60
-
-  - delay: 2
-
-  # Click "Set Up Later" to skip
-  - click: 'Set Up Later'
-  - delay: 2
-
-  # NEW: Confirmation popup "Are you sure you want to skip?"
-  - wait:
-      text: "Don't Skip"
-      timeout: 30
-
-  - delay: 1
-
-  # Tab to "Skip" button and press enter
-  - key: tab
-  - delay: 1
-  - key: enter
-  - delay: 3
-
-  # ============================================
-  # Stage 13: Enable Location Services
+  # Stage 12: Enable Location Services
   # ============================================
 
   - wait:
@@ -343,7 +309,7 @@ boot_commands:
   - delay: 2
 
   # ============================================
-  # Stage 14: Location Services Confirmation
+  # Stage 13: Location Services Confirmation
   # ============================================
 
   - wait:
@@ -359,7 +325,7 @@ boot_commands:
   - delay: 3
 
   # ============================================
-  # Stage 15: Select Time Zone
+  # Stage 14: Select Time Zone
   # ============================================
 
   - wait:
@@ -386,7 +352,7 @@ boot_commands:
   - delay: 3
 
   # ============================================
-  # Stage 16: Analytics
+  # Stage 15: Analytics
   # ============================================
 
   - wait:
@@ -410,13 +376,13 @@ boot_commands:
   - delay: 3
 
   # ============================================
-  # Stage 17: Screen Time
+  # Stage 16: Screen Time
   # ============================================
 
-  # Screen Time can have a longer delay in Sequoia while checking iCloud status
+  # Screen Time can have a delay while checking iCloud status
   - wait:
       text: 'Screen Time'
-      timeout: 300
+      timeout: 120
 
   - delay: 5
 
@@ -427,46 +393,7 @@ boot_commands:
   - delay: 3
 
   # ============================================
-  # Stage 18: Siri Setup (NEW in Sequoia - 2 screens)
-  # ============================================
-
-  # Screen 1: Enable Siri
-  - wait:
-      text: 'Siri'
-      timeout: 300
-
-  - delay: 1
-
-  # Continue to enable Siri
-  - click: 'Continue'
-  - delay: 3
-
-  # Screen 2: Select a Siri Voice
-  - wait:
-      text: 'Select a Siri Voice'
-      timeout: 60
-
-  - delay: 1
-
-  # Choose default voice
-  - click: 'Choose For Me'
-  - delay: 3
-
-  # Screen 3: Improve Siri & Dictation
-  - wait:
-      text: 'Improve Siri'
-      timeout: 60
-
-  - delay: 1
-
-  # Decline sharing Siri data
-  - click: 'Not Now'
-  - delay: 1
-  - click: 'Continue'
-  - delay: 3
-
-  # ============================================
-  # Stage 19: Choose Your Look (Light/Dark Mode)
+  # Stage 17: Choose Your Look (Light/Dark Mode)
   # ============================================
 
   - wait:
@@ -482,24 +409,10 @@ boot_commands:
 
   - delay: 1
   - key: space
-  - delay: 3
-
-  # ============================================
-  # Stage 20: Update Mac Automatically (NEW in Sequoia)
-  # ============================================
-
-  - wait:
-      text: 'Update Mac Automatically'
-      timeout: 60
-
-  - delay: 1
-
-  # Continue with default settings
-  - click: 'Continue'
   - delay: 5
 
   # ============================================
-  # Stage 21: Desktop Setup Complete - Enable SSH
+  # Stage 18: Desktop Setup Complete - Enable SSH
   # ============================================
 
   # Wait for Finder to appear (indicates desktop is ready)
@@ -546,7 +459,7 @@ boot_commands:
   - delay: 2
 
   # ============================================
-  # Stage 22: Enable SSH (Remote Login)
+  # Stage 19: Enable SSH (Remote Login)
   # ============================================
 
   # Enable Remote Login using launchctl
@@ -571,8 +484,6 @@ boot_commands:
   # - User account: admin / admin
   # - SSH enabled on port 22
   # - Time zone: UTC
-  # - Siri enabled with default voice
-  # - Auto-updates enabled (default)
   # - No iCloud/Apple ID configured
   # - Analytics disabled
 

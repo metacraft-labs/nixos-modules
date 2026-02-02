@@ -1,16 +1,16 @@
 # Copyright 2026 Schelling Point Labs Inc
 # SPDX-License-Identifier: AGPL-3.0-only
 
-# Unattended macOS Sequoia Setup Assistant Configuration
+# Unattended macOS Tahoe Setup Assistant Configuration
 #
-# This YAML config automates the macOS Sequoia (15.x) OOBE setup for creating
+# This YAML config automates the macOS Tahoe (16.x) OOBE setup for creating
 # reproducible VM images. Uses native YAML format for validation and IDE support.
 #
 # Usage:
-#   yaml-automation-runner --config macos-sequoia.yml --vnc localhost:5902
+#   yaml-automation-runner --config macos-tahoe.yml --vnc localhost:5903
 #
 # Prerequisites:
-#   - macOS Sequoia BaseSystem.img (from fetchMacOSBaseSystem)
+#   - macOS Tahoe BaseSystem.img (from fetchMacOSBaseSystem)
 #   - OpenCore bootloader configured
 #   - InstallAssistant.pkg ISO mounted
 #   - run_offline.sh ISO mounted at /Volumes/run_offline/
@@ -19,19 +19,19 @@
 #   - Username: admin
 #   - Password: admin
 #
-# Key differences from Sonoma:
-#   - Boot wait reduced from 45s to 30s (faster boot)
-#   - Apple Account sign-in confirmation popup (NEW)
-#   - Siri setup 2-screen flow (NEW)
-#   - Update Mac Automatically screen (NEW)
+# Key differences from Sequoia:
+#   - Migration Assistant: Tab navigation (3 tabs to "Set up as new")
+#   - Account Creation: Avatar picker (6 tabs before Full Name field)
+#   - FileVault encryption screen (NEW - after Siri)
+#   - Welcome screen: "Get Started" button
 #
 # References:
-#   - Sonoma config: macos-sonoma.yml
-#   - Lume Sequoia: https://github.com/trycua/cua/blob/main/libs/lume/src/Resources/unattended-presets/sequoia.yml
+#   - Sequoia config: macos-sequoia.yml
+#   - Lume Tahoe: https://github.com/trycua/cua/blob/main/libs/lume/src/Resources/unattended-presets/tahoe.yml
 #   - Schema: YAML-AUTOMATION-SCHEMA.md
 
 # Seconds to wait after VM boots before starting automation
-# Sequoia boots faster than Sonoma due to optimizations
+# Tahoe boots at similar speed to Sequoia
 boot_wait: 30
 
 boot_commands:
@@ -195,23 +195,29 @@ boot_commands:
   - delay: 3
 
   # ============================================
-  # Stage 8: Migration Assistant
+  # Stage 8: Migration Assistant (CHANGED in Tahoe)
   # ============================================
 
+  # Tahoe uses different tab navigation - 3 tabs to "Set up as new"
   - wait:
-      text: 'Migration Assistant'
+      text: 'Transfer Your Data'
       timeout: 60
 
-  - delay: 2
+  - delay: 20
 
-  # Navigate to "Not Now" option (third tab from current position)
+  # Tab order: From a Mac -> From Windows PC -> Set up with iPhone -> Set up as new
+  # We need 3 tabs to reach the 4th option "Set up as new"
   - key: tab
-  - delay: 1
+  - delay: 2
   - key: tab
-  - delay: 1
+  - delay: 2
   - key: tab
-  - delay: 1
+  - delay: 2
   - key: space
+  - delay: 1
+
+  # Click Continue
+  - click: 'Continue'
   - delay: 3
 
   # ============================================
@@ -250,20 +256,33 @@ boot_commands:
   - delay: 3
 
   # ============================================
-  # Stage 11: Create Computer Account
+  # Stage 11: Create Computer Account (CHANGED in Tahoe)
   # ============================================
 
-  # This is the most timing-sensitive part - if the VM is too slow,
-  # account creation can fail
+  # Tahoe has avatar picker - need 6 tabs to skip past it
+  # Field order: Avatar picker (6 icons) -> Full Name -> Account Name -> Password -> Verify Password -> Hint -> Continue
 
   - wait:
-      text: 'Create a Computer Account'
+      text: 'Create a Mac Account'
       timeout: 120
 
   - delay: 3
 
-  # Fill in account details:
-  # Full Name field
+  # Tab past avatar picker icons (6 tabs)
+  - key: tab
+  - delay: 1
+  - key: tab
+  - delay: 1
+  - key: tab
+  - delay: 1
+  - key: tab
+  - delay: 1
+  - key: tab
+  - delay: 1
+  - key: tab
+  - delay: 1
+
+  # Now at Full Name field
   - type: 'admin'
   - delay: 1
   - key: tab
@@ -296,10 +315,10 @@ boot_commands:
   - delay: 5
 
   # ============================================
-  # Stage 12: Apple Account Sign-In (NEW in Sequoia)
+  # Stage 12: Apple Account Sign-In
   # ============================================
 
-  # Sequoia adds an Apple Account sign-in screen with confirmation popup
+  # Similar to Sequoia - has confirmation popup
   - wait:
       text: 'Sign In with Your Apple'
       timeout: 60
@@ -310,7 +329,7 @@ boot_commands:
   - click: 'Set Up Later'
   - delay: 2
 
-  # NEW: Confirmation popup "Are you sure you want to skip?"
+  # Confirmation popup "Are you sure you want to skip?"
   - wait:
       text: "Don't Skip"
       timeout: 30
@@ -413,7 +432,7 @@ boot_commands:
   # Stage 17: Screen Time
   # ============================================
 
-  # Screen Time can have a longer delay in Sequoia while checking iCloud status
+  # Screen Time can have a longer delay while checking iCloud status
   - wait:
       text: 'Screen Time'
       timeout: 300
@@ -427,7 +446,7 @@ boot_commands:
   - delay: 3
 
   # ============================================
-  # Stage 18: Siri Setup (NEW in Sequoia - 2 screens)
+  # Stage 18: Siri Setup (2 screens)
   # ============================================
 
   # Screen 1: Enable Siri
@@ -466,7 +485,31 @@ boot_commands:
   - delay: 3
 
   # ============================================
-  # Stage 19: Choose Your Look (Light/Dark Mode)
+  # Stage 19: FileVault (NEW in Tahoe)
+  # ============================================
+
+  # Tahoe adds FileVault encryption setup screen
+  - wait:
+      text: 'FileVault'
+      timeout: 60
+
+  - delay: 1
+
+  # Skip FileVault encryption
+  - click: 'Not Now'
+  - delay: 1
+
+  # Confirmation popup: "Mac Data Will Not Be Securely Encrypted"
+  - wait:
+      text: 'Securely Encrypted'
+      timeout: 30
+
+  - delay: 1
+  - click: 'Continue'
+  - delay: 3
+
+  # ============================================
+  # Stage 20: Choose Your Look (Light/Dark Mode)
   # ============================================
 
   - wait:
@@ -485,7 +528,7 @@ boot_commands:
   - delay: 3
 
   # ============================================
-  # Stage 20: Update Mac Automatically (NEW in Sequoia)
+  # Stage 21: Update Mac Automatically
   # ============================================
 
   - wait:
@@ -499,7 +542,7 @@ boot_commands:
   - delay: 5
 
   # ============================================
-  # Stage 21: Desktop Setup Complete - Enable SSH
+  # Stage 22: Desktop Setup Complete - Enable SSH
   # ============================================
 
   # Wait for Finder to appear (indicates desktop is ready)
@@ -546,7 +589,7 @@ boot_commands:
   - delay: 2
 
   # ============================================
-  # Stage 22: Enable SSH (Remote Login)
+  # Stage 23: Enable SSH (Remote Login)
   # ============================================
 
   # Enable Remote Login using launchctl
@@ -574,6 +617,7 @@ boot_commands:
   # - Siri enabled with default voice
   # - Auto-updates enabled (default)
   # - No iCloud/Apple ID configured
+  # - No FileVault encryption
   # - Analytics disabled
 
   - delay: 10
