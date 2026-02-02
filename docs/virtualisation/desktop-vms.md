@@ -41,14 +41,15 @@ The `profile` option provides sensible defaults for common use cases:
 
 Best for VMs that run infrequently or on memory-constrained hosts.
 
-| Setting | Value | Rationale |
-|---------|-------|-----------|
-| `hugepages.enable` | `false` | Memory available when VM is off |
-| `autoStart` | `false` | VMs started manually |
-| `memballoon.autodeflate` | `true` | Prevents guest OOM crashes |
-| `memballoon.freePageReporting` | `true` | Host can reclaim unused pages |
+| Setting                        | Value   | Rationale                       |
+| ------------------------------ | ------- | ------------------------------- |
+| `hugepages.enable`             | `false` | Memory available when VM is off |
+| `autoStart`                    | `false` | VMs started manually            |
+| `memballoon.autodeflate`       | `true`  | Prevents guest OOM crashes      |
+| `memballoon.freePageReporting` | `true`  | Host can reclaim unused pages   |
 
 **Trade-offs:**
+
 - ~2-3% lower performance than static hugepages
 - Memory dynamically allocated/freed
 - Full ballooning support
@@ -57,14 +58,15 @@ Best for VMs that run infrequently or on memory-constrained hosts.
 
 Best for VMs that run frequently or continuously (gaming, development workstations).
 
-| Setting | Value | Rationale |
-|---------|-------|-----------|
-| `hugepages.enable` | `true` | Maximum performance |
-| `autoStart` | `true` | VMs start at boot |
-| `memballoon.autodeflate` | `false` | N/A with hugepages |
-| `memballoon.freePageReporting` | `false` | N/A with hugepages |
+| Setting                        | Value   | Rationale           |
+| ------------------------------ | ------- | ------------------- |
+| `hugepages.enable`             | `true`  | Maximum performance |
+| `autoStart`                    | `true`  | VMs start at boot   |
+| `memballoon.autodeflate`       | `false` | N/A with hugepages  |
+| `memballoon.freePageReporting` | `false` | N/A with hugepages  |
 
 **Trade-offs:**
+
 - Memory permanently reserved at boot
 - No dynamic sizing (ballooning ineffective)
 - Best TLB performance
@@ -203,6 +205,7 @@ count = total_vm_memory_bytes / hugepage_size_bytes
 ```
 
 Examples with 2MB pages:
+
 - 8GB VM: `8 * 1024 / 2 = 4096` pages
 - 16GB VM: `16 * 1024 / 2 = 8192` pages
 - 24GB VM: `24 * 1024 / 2 = 12288` pages
@@ -241,6 +244,7 @@ virsh dommemstat my-vm
 ```
 
 Key statistics:
+
 - `actual`: Current memory available to guest
 - `unused`: Free memory (MemFree)
 - `usable`: Available memory (MemAvailable)
@@ -272,6 +276,7 @@ When `freePageReporting = true`, the guest periodically reports free pages to th
 ### VM won't start with hugepages
 
 Check available hugepages:
+
 ```bash
 grep -i huge /proc/meminfo
 ```

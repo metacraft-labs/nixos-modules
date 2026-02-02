@@ -55,14 +55,12 @@ rec {
   inherit virtioDriversUrl timezoneMapping;
 
   # Convert IANA timezone to Windows timezone name
-  toWindowsTimezone = tz:
-    if builtins.hasAttr tz timezoneMapping
-    then timezoneMapping.${tz}
-    else tz;  # Assume already Windows format
+  toWindowsTimezone = tz: if builtins.hasAttr tz timezoneMapping then timezoneMapping.${tz} else tz; # Assume already Windows format
 
   # Fetch VirtIO drivers ISO declaratively
   # This can be used in NixOS configuration or for standalone builds
-  fetchVirtioDrivers = { sha256 }:
+  fetchVirtioDrivers =
+    { sha256 }:
     pkgs.fetchurl {
       url = virtioDriversUrl;
       inherit sha256;
@@ -112,21 +110,23 @@ rec {
   #   virtioDriverPath: Path to VirtIO drivers (typically E:\)
   #
   # Reference: https://learn.microsoft.com/en-us/windows-hardware/customize/desktop/unattend/
-  generateAutounattendXml = {
-    username ? "admin",
-    password ? "admin",
-    computerName ? "WIN-VM",
-    timezone ? "UTC",
-    locale ? "en-US",
-    virtioDriverPath ? "E:\\",
-  }:
+  generateAutounattendXml =
+    {
+      username ? "admin",
+      password ? "admin",
+      computerName ? "WIN-VM",
+      timezone ? "UTC",
+      locale ? "en-US",
+      virtioDriverPath ? "E:\\",
+    }:
     let
       windowsTimezone = toWindowsTimezone timezone;
       # Validate computer name (Windows restriction: max 15 chars)
       validatedComputerName =
-        if builtins.stringLength computerName > 15
-        then throw "Windows computer name '${computerName}' exceeds 15 character limit"
-        else computerName;
+        if builtins.stringLength computerName > 15 then
+          throw "Windows computer name '${computerName}' exceeds 15 character limit"
+        else
+          computerName;
     in
     ''
       <?xml version="1.0" encoding="utf-8"?>
@@ -340,10 +340,14 @@ rec {
 
   # Create a floppy disk image with autounattend.xml
   # Windows Setup automatically searches for this file on floppy drives
-  makeAutounattendFloppy = { autounattendXml }:
+  makeAutounattendFloppy =
+    { autounattendXml }:
     pkgs.runCommand "autounattend-floppy.vfd"
       {
-        nativeBuildInputs = [ pkgs.dosfstools pkgs.mtools ];
+        nativeBuildInputs = [
+          pkgs.dosfstools
+          pkgs.mtools
+        ];
         passAsFile = [ "xml" ];
         xml = autounattendXml;
       }
@@ -357,22 +361,21 @@ rec {
 
   # Windows VM creation helper script
   # This generates a shell script that can be used to create a new Windows VM
-  makeWindowsVmCreationScript = {
-    vmName,
-    diskSizeGB ? 100,
-    memoryGB ? 8,
-    vcpus ? 4,
-    storagePool ? "default",
-    windowsIsoPath ? null,
-    virtioIsoPath ? null,
-  }:
+  makeWindowsVmCreationScript =
+    {
+      vmName,
+      diskSizeGB ? 100,
+      memoryGB ? 8,
+      vcpus ? 4,
+      storagePool ? "default",
+      windowsIsoPath ? null,
+      virtioIsoPath ? null,
+    }:
     let
-      windowsIsoArg = if windowsIsoPath != null
-                      then "--disk path=${windowsIsoPath},device=cdrom,readonly=on"
-                      else "";
-      virtioIsoArg = if virtioIsoPath != null
-                     then "--disk path=${virtioIsoPath},device=cdrom,readonly=on"
-                     else "";
+      windowsIsoArg =
+        if windowsIsoPath != null then "--disk path=${windowsIsoPath},device=cdrom,readonly=on" else "";
+      virtioIsoArg =
+        if virtioIsoPath != null then "--disk path=${virtioIsoPath},device=cdrom,readonly=on" else "";
     in
     pkgs.writeShellScriptBin "create-${vmName}" ''
       set -e

@@ -198,8 +198,9 @@ def download_file(url: str, output_path: Path):
                         percent = (downloaded / total_size) * 100
                         gb_downloaded = downloaded / (1024**3)
                         gb_total = total_size / (1024**3)
-                        print(f"\rProgress: {percent:.1f}% ({gb_downloaded:.2f}/{gb_total:.2f} GB)",
-                              end='', file=sys.stderr)
+                        print(
+                            f"\rProgress: {percent:.1f}% ({gb_downloaded:.2f}/{gb_total:.2f} GB)",
+                            end='', file=sys.stderr)
 
             print(f"\nDownload complete: {output_path}", file=sys.stderr)
 
@@ -216,20 +217,24 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s --version 14                 # Get latest Sonoma
-  %(prog)s --version 13 --output-dir .  # Get Ventura, save in current dir
-  %(prog)s --list                       # List available versions
-  %(prog)s --version 14 --url-only      # Print URL without downloading
+    %(prog)s --version 14                 # Get latest Sonoma
+    %(prog)s --version 13 --output-dir .  # Get Ventura, save in current dir
+    %(prog)s --list                       # List available versions
+    %(prog)s --version 14 --url-only      # Print URL without downloading
 """)
 
-    parser.add_argument('--version', type=int, metavar='VERSION',
-                       help='macOS major version to download (11-16)')
-    parser.add_argument('--list', action='store_true',
-                       help='List available macOS versions')
-    parser.add_argument('--url-only', action='store_true',
-                       help='Print download URL only, do not download')
-    parser.add_argument('--output-dir', type=str, default='.',
-                       help='Output directory for downloaded file (default: current directory)')
+    parser.add_argument(
+        '--version', type=int, metavar='VERSION',
+        help='macOS major version to download (11-16)')
+    parser.add_argument(
+        '--list', action='store_true',
+        help='List available macOS versions')
+    parser.add_argument(
+        '--url-only', action='store_true',
+        help='Print download URL only, do not download')
+    parser.add_argument(
+        '--output-dir', type=str, default='.',
+        help='Output directory for downloaded file (default: current directory)')
 
     args = parser.parse_args()
 
