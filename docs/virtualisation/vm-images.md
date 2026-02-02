@@ -5,6 +5,7 @@ A Nix library for building reproducible VM images with automated unattended inst
 ## Overview
 
 The VM Images module provides Nix functions for:
+
 - Fetching OS installation media (ISOs, cloud images)
 - Building VM images with automated installation
 - Creating reproducible test environments for CI/CD
@@ -150,12 +151,12 @@ vmImages.darwin.makeRunScript {
 ### macOS Release Names
 
 | macOS Version | Release Name | Major Version |
-|---------------|--------------|---------------|
-| macOS 15 | Tahoe | 15 |
-| macOS 14 | Sequoia | 14 |
-| macOS 14 | Sonoma | 14 |
-| macOS 13 | Ventura | 13 |
-| macOS 12 | Monterey | 12 |
+| ------------- | ------------ | ------------- |
+| macOS 15      | Tahoe        | 15            |
+| macOS 14      | Sequoia      | 14            |
+| macOS 14      | Sonoma       | 14            |
+| macOS 13      | Ventura      | 13            |
+| macOS 12      | Monterey     | 12            |
 
 ## Windows VMs
 
@@ -330,43 +331,43 @@ VM images are large but reproducible. Use binary caches:
 
 ### Linux
 
-| Function | Description |
-|----------|-------------|
-| `linux.makeLinuxVM` | Build a complete Linux VM |
+| Function                              | Description                |
+| ------------------------------------- | -------------------------- |
+| `linux.makeLinuxVM`                   | Build a complete Linux VM  |
 | `linux.cloudInit.makeCloudInitConfig` | Generate cloud-init config |
-| `linux.cloudInit.generateTestSSHKey` | Generate SSH key pair |
+| `linux.cloudInit.generateTestSSHKey`  | Generate SSH key pair      |
 
 ### Darwin (macOS)
 
-| Function | Description |
-|----------|-------------|
-| `darwin.makeDarwinVM` | Build a complete macOS VM |
-| `darwin.makeDarwinCachedBootTest` | Create boot test for pre-built VM |
-| `darwin.makeDarwinRunScript` | Create run script for VM directory |
-| `darwin.makeRunScript` | Create run script for QCOW2 image |
+| Function                          | Description                        |
+| --------------------------------- | ---------------------------------- |
+| `darwin.makeDarwinVM`             | Build a complete macOS VM          |
+| `darwin.makeDarwinCachedBootTest` | Create boot test for pre-built VM  |
+| `darwin.makeDarwinRunScript`      | Create run script for VM directory |
+| `darwin.makeRunScript`            | Create run script for QCOW2 image  |
 
 ### Windows
 
-| Function | Description |
-|----------|-------------|
-| `windows.makeWindowsVM` | Build a complete Windows VM |
-| `windows.generateAutounattendXml` | Generate autounattend.xml |
-| `windows.makeAutounattendFloppy` | Create floppy with autounattend |
-| `windows.makeAutounattendIso` | Create ISO with autounattend |
-| `windows.makeWindowsVMPackage` | Build installation package |
-| `windows.makeWindowsRunScript` | Create run script for VM |
+| Function                            | Description                       |
+| ----------------------------------- | --------------------------------- |
+| `windows.makeWindowsVM`             | Build a complete Windows VM       |
+| `windows.generateAutounattendXml`   | Generate autounattend.xml         |
+| `windows.makeAutounattendFloppy`    | Create floppy with autounattend   |
+| `windows.makeAutounattendIso`       | Create ISO with autounattend      |
+| `windows.makeWindowsVMPackage`      | Build installation package        |
+| `windows.makeWindowsRunScript`      | Create run script for VM          |
 | `windows.makeWindowsCachedBootTest` | Create boot test for pre-built VM |
-| `windows.makeWindowsHealthCheck` | Create SSH health check script |
+| `windows.makeWindowsHealthCheck`    | Create SSH health check script    |
 
 ### Fetchers
 
-| Function | Description |
-|----------|-------------|
-| `fetchUbuntuCloudImage` | Fetch Ubuntu cloud QCOW2 |
-| `fetchMacOSBaseSystem` | Fetch macOS BaseSystem.img |
-| `fetchMacOSInstallAssistant` | Fetch macOS installer ISO |
-| `fetchVirtIODrivers` | Fetch VirtIO drivers ISO |
-| `validateWindowsISO` | Validate Windows ISO contents |
+| Function                     | Description                   |
+| ---------------------------- | ----------------------------- |
+| `fetchUbuntuCloudImage`      | Fetch Ubuntu cloud QCOW2      |
+| `fetchMacOSBaseSystem`       | Fetch macOS BaseSystem.img    |
+| `fetchMacOSInstallAssistant` | Fetch macOS installer ISO     |
+| `fetchVirtIODrivers`         | Fetch VirtIO drivers ISO      |
+| `validateWindowsISO`         | Validate Windows ISO contents |
 
 ## Troubleshooting
 
@@ -388,6 +389,7 @@ inputs.osx-kvm = { url = "github:kholia/OSX-KVM"; flake = false; };
 ### Build fails with "hash mismatch"
 
 SHA256 hashes change when upstream updates files. Get current hashes from:
+
 - Ubuntu: https://cloud-images.ubuntu.com/releases/
 - VirtIO: https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/
 

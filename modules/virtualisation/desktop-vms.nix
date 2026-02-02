@@ -76,7 +76,10 @@
       vmLib = import ./desktop-vms/lib.nix { inherit lib; };
 
       # OVMF paths for UEFI boot
-      ovmfPackage = pkgs.OVMF.override { secureBoot = true; tpmSupport = true; };
+      ovmfPackage = pkgs.OVMF.override {
+        secureBoot = true;
+        tpmSupport = true;
+      };
       ovmfCodePath = "${ovmfPackage.fd}/FV/OVMF_CODE.fd";
       ovmfVarsPath = "${ovmfPackage.fd}/FV/OVMF_VARS.fd";
 
@@ -91,9 +94,9 @@
           vm = {
             autoStart = true;
             memballoon = {
-              enable = true;  # Keep memballoon for stats, but no dynamic sizing
-              autodeflate = false;  # Not useful with hugepages
-              freePageReporting = false;  # Not compatible with hugepages
+              enable = true; # Keep memballoon for stats, but no dynamic sizing
+              autodeflate = false; # Not useful with hugepages
+              freePageReporting = false; # Not compatible with hugepages
               statsInterval = 5;
             };
           };
@@ -103,13 +106,13 @@
         # Best for: Testing VMs, infrequent use, memory-constrained hosts
         # Trade-off: ~2-3% lower performance than static hugepages
         occasional = {
-          hugepages.enable = false;  # Use THP instead
+          hugepages.enable = false; # Use THP instead
           vm = {
             autoStart = false;
             memballoon = {
               enable = true;
-              autodeflate = true;  # Release memory before OOM
-              freePageReporting = true;  # Report free pages to host
+              autodeflate = true; # Release memory before OOM
+              freePageReporting = true; # Report free pages to host
               statsInterval = 5;
             };
           };
@@ -123,7 +126,8 @@
       enabledVMs = filterAttrs (name: vmCfg: vmCfg.enable) cfg.vms;
 
       # Generate domain XML for a VM
-      generateVmXml = name: vmCfg:
+      generateVmXml =
+        name: vmCfg:
         vmLib.generateDomainXml {
           inherit name;
           uuid = vmCfg.uuid;
@@ -146,8 +150,7 @@
         };
 
       # Write domain XML to a file
-      vmDomainXmlFile = name: vmCfg:
-        pkgs.writeText "${name}-domain.xml" (generateVmXml name vmCfg);
+      vmDomainXmlFile = name: vmCfg: pkgs.writeText "${name}-domain.xml" (generateVmXml name vmCfg);
 
       # Memballoon submodule for per-VM memory balloon configuration
       memballoonSubmodule = types.submodule {
@@ -224,211 +227,222 @@
       };
 
       # VM submodule type definition
-      vmSubmodule = types.submodule ({ name, ... }: {
-        options = {
-          enable = mkEnableOption "this VM";
+      vmSubmodule = types.submodule (
+        { name, ... }:
+        {
+          options = {
+            enable = mkEnableOption "this VM";
 
-          uuid = mkOption {
-            type = types.nullOr types.str;
-            default = null;
-            description = ''
-              Fixed UUID for the VM. If not specified, libvirt will generate one.
-              Use a fixed UUID if you need consistent VM identity across rebuilds.
+            uuid = mkOption {
+              type = types.nullOr types.str;
+              default = null;
+              description = ''
+                Fixed UUID for the VM. If not specified, libvirt will generate one.
+                Use a fixed UUID if you need consistent VM identity across rebuilds.
 
-              Generate with: uuidgen
-            '';
-            example = "550e8400-e29b-41d4-a716-446655440000";
+                Generate with: uuidgen
+              '';
+              example = "550e8400-e29b-41d4-a716-446655440000";
+            };
+
+            memory = mkOption {
+              type = types.str;
+              default = "8G";
+              description = ''
+                Amount of memory allocated to the VM.
+                Accepts formats like "8G", "8GiB", "16384M", "16384MiB".
+
+                For the "always-on" profile with hugepages, ensure this is a multiple
+                of the hugepage size. With 2MB hugepages, use values like 8G, 16G, 24G.
+
+                For the "occasional" profile, the VM can dynamically adjust memory
+                usage via ballooning.
+              '';
+              example = "16G";
+            };
+
+            vcpus = mkOption {
+              type = types.int;
+              default = 4;
+              description = ''
+                Number of virtual CPUs allocated to the VM.
+
+                For best performance with CPU pinning, match this to the number
+                of physical cores you want to dedicate (or 2x for hyperthreading).
+              '';
+              example = 8;
+            };
+
+            diskSize = mkOption {
+              type = types.str;
+              default = "100G";
+              description = ''
+                Size of the VM's primary disk image.
+                Only used when creating a new disk; existing disks are not resized.
+              '';
+              example = "256G";
+            };
+
+            storagePool = mkOption {
+              type = types.str;
+              default = "default";
+              description = ''
+                Libvirt storage pool where the VM disk will be stored.
+                The default pool uses /var/lib/libvirt/images.
+              '';
+            };
+
+            cpuPinning = mkOption {
+              type = types.nullOr (types.listOf types.str);
+              default = null;
+              description = ''
+                CPU pinning configuration for consistent performance.
+                Each element is a cpuset string for one vCPU.
+
+                The list length should match the vcpus count.
+                Use lscpu to identify your CPU topology and choose appropriate cores.
+
+                For best performance, pin to physical cores on the same NUMA node
+                and avoid cores shared with the host (e.g., core 0).
+              '';
+              example = literalExpression ''
+                [
+                  "0-1"   # vCPU 0 can use host CPUs 0-1
+                  "2-3"   # vCPU 1 can use host CPUs 2-3
+                  "4-5"   # vCPU 2 can use host CPUs 4-5
+                  "6-7"   # vCPU 3 can use host CPUs 6-7
+                ]
+              '';
+            };
+
+            display = mkOption {
+              type = types.enum [
+                "spice"
+                "vnc"
+                "looking-glass"
+              ];
+              default = "spice";
+              description = ''
+                Display technology for the VM.
+
+                - spice: Best for remote access, supports clipboard/audio/USB
+                - vnc: Simple remote display, widely compatible
+                - looking-glass: Near-native performance for local display
+                  (requires additional Looking Glass setup on host and guest)
+
+                Reference: https://looking-glass.io/
+              '';
+            };
+
+            sharedFolders = mkOption {
+              type = types.attrsOf types.path;
+              default = { };
+              description = ''
+                VirtIO-FS shared folders for fast host-guest file sharing.
+                Keys are mount names visible to the guest, values are host paths.
+
+                In Windows guests, use WinFsp and virtio-fs driver to mount.
+                In Linux guests, mount with: mount -t virtiofs <name> /mnt/point
+
+                Reference: https://virtio-fs.gitlab.io/
+              '';
+              example = literalExpression ''
+                {
+                  projects = "/home/user/projects";
+                  downloads = "/home/user/Downloads";
+                }
+              '';
+            };
+
+            osType = mkOption {
+              type = types.enum [
+                "windows"
+                "linux"
+                "macos"
+              ];
+              default = "windows";
+              description = ''
+                Operating system type, used for OS-specific optimizations.
+
+                - windows: Enables Hyper-V enlightenments, Windows clock, TPM
+                - linux: Standard KVM optimizations
+                - macos: macOS-specific tweaks (experimental)
+              '';
+            };
+
+            tpm = mkOption {
+              type = types.bool;
+              default = true;
+              description = ''
+                Enable TPM 2.0 emulation via swtpm.
+                Required for Windows 11 without registry bypass.
+
+                The module automatically enables swtpm when any VM needs TPM.
+              '';
+            };
+
+            secureBoot = mkOption {
+              type = types.bool;
+              default = true;
+              description = ''
+                Enable UEFI Secure Boot.
+                Requires OVMF with Secure Boot support.
+
+                Some older operating systems may not support Secure Boot.
+              '';
+            };
+
+            autoStart = mkOption {
+              type = types.bool;
+              default = currentProfileDefaults.vm.autoStart;
+              description = ''
+                Start this VM automatically when the host boots.
+
+                Default depends on the profile:
+                - "always-on": true (VM is expected to run continuously)
+                - "occasional": false (VM started manually when needed)
+              '';
+            };
+
+            memballoon = mkOption {
+              type = memballoonSubmodule;
+              default = { };
+              description = ''
+                Memory balloon device configuration for dynamic memory management.
+
+                The balloon device allows the host to reclaim unused memory from guests
+                and provides memory statistics. Settings depend on the profile:
+
+                - "always-on" profile: Balloon enabled for stats only, no dynamic sizing
+                  (hugepages prevent memory reclamation)
+                - "occasional" profile: Full ballooning with autodeflate and free page
+                  reporting for efficient memory sharing
+
+                Reference: https://www.libvirt.org/formatdomain.html#memory-balloon-device
+              '';
+            };
+
+            extraDevices = mkOption {
+              type = types.lines;
+              default = "";
+              description = ''
+                Additional libvirt XML device definitions to include.
+                Use this for PCI passthrough, additional disks, etc.
+              '';
+              example = literalExpression ''
+                '''
+                  <!-- GPU passthrough example -->
+                  <hostdev mode="subsystem" type="pci" managed="yes">
+                    <source>
+                      <address domain="0x0000" bus="0x01" slot="0x00" function="0x0"/>
+                    </source>
+                  </hostdev>
+                '''
+              '';
+            };
           };
-
-          memory = mkOption {
-            type = types.str;
-            default = "8G";
-            description = ''
-              Amount of memory allocated to the VM.
-              Accepts formats like "8G", "8GiB", "16384M", "16384MiB".
-
-              For the "always-on" profile with hugepages, ensure this is a multiple
-              of the hugepage size. With 2MB hugepages, use values like 8G, 16G, 24G.
-
-              For the "occasional" profile, the VM can dynamically adjust memory
-              usage via ballooning.
-            '';
-            example = "16G";
-          };
-
-          vcpus = mkOption {
-            type = types.int;
-            default = 4;
-            description = ''
-              Number of virtual CPUs allocated to the VM.
-
-              For best performance with CPU pinning, match this to the number
-              of physical cores you want to dedicate (or 2x for hyperthreading).
-            '';
-            example = 8;
-          };
-
-          diskSize = mkOption {
-            type = types.str;
-            default = "100G";
-            description = ''
-              Size of the VM's primary disk image.
-              Only used when creating a new disk; existing disks are not resized.
-            '';
-            example = "256G";
-          };
-
-          storagePool = mkOption {
-            type = types.str;
-            default = "default";
-            description = ''
-              Libvirt storage pool where the VM disk will be stored.
-              The default pool uses /var/lib/libvirt/images.
-            '';
-          };
-
-          cpuPinning = mkOption {
-            type = types.nullOr (types.listOf types.str);
-            default = null;
-            description = ''
-              CPU pinning configuration for consistent performance.
-              Each element is a cpuset string for one vCPU.
-
-              The list length should match the vcpus count.
-              Use lscpu to identify your CPU topology and choose appropriate cores.
-
-              For best performance, pin to physical cores on the same NUMA node
-              and avoid cores shared with the host (e.g., core 0).
-            '';
-            example = literalExpression ''
-              [
-                "0-1"   # vCPU 0 can use host CPUs 0-1
-                "2-3"   # vCPU 1 can use host CPUs 2-3
-                "4-5"   # vCPU 2 can use host CPUs 4-5
-                "6-7"   # vCPU 3 can use host CPUs 6-7
-              ]
-            '';
-          };
-
-          display = mkOption {
-            type = types.enum [ "spice" "vnc" "looking-glass" ];
-            default = "spice";
-            description = ''
-              Display technology for the VM.
-
-              - spice: Best for remote access, supports clipboard/audio/USB
-              - vnc: Simple remote display, widely compatible
-              - looking-glass: Near-native performance for local display
-                (requires additional Looking Glass setup on host and guest)
-
-              Reference: https://looking-glass.io/
-            '';
-          };
-
-          sharedFolders = mkOption {
-            type = types.attrsOf types.path;
-            default = { };
-            description = ''
-              VirtIO-FS shared folders for fast host-guest file sharing.
-              Keys are mount names visible to the guest, values are host paths.
-
-              In Windows guests, use WinFsp and virtio-fs driver to mount.
-              In Linux guests, mount with: mount -t virtiofs <name> /mnt/point
-
-              Reference: https://virtio-fs.gitlab.io/
-            '';
-            example = literalExpression ''
-              {
-                projects = "/home/user/projects";
-                downloads = "/home/user/Downloads";
-              }
-            '';
-          };
-
-          osType = mkOption {
-            type = types.enum [ "windows" "linux" "macos" ];
-            default = "windows";
-            description = ''
-              Operating system type, used for OS-specific optimizations.
-
-              - windows: Enables Hyper-V enlightenments, Windows clock, TPM
-              - linux: Standard KVM optimizations
-              - macos: macOS-specific tweaks (experimental)
-            '';
-          };
-
-          tpm = mkOption {
-            type = types.bool;
-            default = true;
-            description = ''
-              Enable TPM 2.0 emulation via swtpm.
-              Required for Windows 11 without registry bypass.
-
-              The module automatically enables swtpm when any VM needs TPM.
-            '';
-          };
-
-          secureBoot = mkOption {
-            type = types.bool;
-            default = true;
-            description = ''
-              Enable UEFI Secure Boot.
-              Requires OVMF with Secure Boot support.
-
-              Some older operating systems may not support Secure Boot.
-            '';
-          };
-
-          autoStart = mkOption {
-            type = types.bool;
-            default = currentProfileDefaults.vm.autoStart;
-            description = ''
-              Start this VM automatically when the host boots.
-
-              Default depends on the profile:
-              - "always-on": true (VM is expected to run continuously)
-              - "occasional": false (VM started manually when needed)
-            '';
-          };
-
-          memballoon = mkOption {
-            type = memballoonSubmodule;
-            default = { };
-            description = ''
-              Memory balloon device configuration for dynamic memory management.
-
-              The balloon device allows the host to reclaim unused memory from guests
-              and provides memory statistics. Settings depend on the profile:
-
-              - "always-on" profile: Balloon enabled for stats only, no dynamic sizing
-                (hugepages prevent memory reclamation)
-              - "occasional" profile: Full ballooning with autodeflate and free page
-                reporting for efficient memory sharing
-
-              Reference: https://www.libvirt.org/formatdomain.html#memory-balloon-device
-            '';
-          };
-
-          extraDevices = mkOption {
-            type = types.lines;
-            default = "";
-            description = ''
-              Additional libvirt XML device definitions to include.
-              Use this for PCI passthrough, additional disks, etc.
-            '';
-            example = literalExpression ''
-              '''
-                <!-- GPU passthrough example -->
-                <hostdev mode="subsystem" type="pci" managed="yes">
-                  <source>
-                    <address domain="0x0000" bus="0x01" slot="0x00" function="0x0"/>
-                  </source>
-                </hostdev>
-              '''
-            '';
-          };
-        };
-      });
+        }
+      );
 
     in
     {
@@ -441,7 +455,10 @@
         '';
 
         profile = mkOption {
-          type = types.enum [ "always-on" "occasional" ];
+          type = types.enum [
+            "always-on"
+            "occasional"
+          ];
           default = "occasional";
           description = ''
             Usage profile that sets sensible defaults for VM configuration.
@@ -623,11 +640,11 @@
 
           # Required packages for VM management
           environment.systemPackages = with pkgs; [
-            virt-viewer     # SPICE/VNC viewer
-            spice-gtk       # SPICE client library
-            virt-manager    # GUI for VM management
-            libguestfs      # VM disk inspection tools
-            quickemu        # For downloading Windows ISOs
+            virt-viewer # SPICE/VNC viewer
+            spice-gtk # SPICE client library
+            virt-manager # GUI for VM management
+            libguestfs # VM disk inspection tools
+            quickemu # For downloading Windows ISOs
           ];
 
           # Polkit rules for non-root VM management
@@ -671,14 +688,20 @@
           fileSystems."/dev/hugepages" = {
             device = "hugetlbfs";
             fsType = "hugetlbfs";
-            options = [ "mode=1770" "gid=libvirtd" ];
+            options = [
+              "mode=1770"
+              "gid=libvirtd"
+            ];
           };
         })
 
         # Firewall configuration
         (mkIf (cfg.firewallPorts.spice || cfg.firewallPorts.vnc) {
           networking.firewall.allowedTCPPortRanges = [
-            { from = 5900; to = 5999; }  # SPICE/VNC port range
+            {
+              from = 5900;
+              to = 5999;
+            } # SPICE/VNC port range
           ];
         })
 
@@ -731,7 +754,10 @@
           systemd.services.libvirt-default-network = {
             description = "Ensure libvirt default network is active";
             wantedBy = [ "multi-user.target" ];
-            after = [ "libvirtd.service" "libvirt-storage-pool.service" ];
+            after = [
+              "libvirtd.service"
+              "libvirt-storage-pool.service"
+            ];
             requires = [ "libvirtd.service" ];
             serviceConfig = {
               Type = "oneshot";
@@ -751,7 +777,11 @@
           systemd.services = mapAttrs (name: vmCfg: {
             description = "Define libvirt domain for ${name}";
             wantedBy = [ "multi-user.target" ];
-            after = [ "libvirtd.service" "libvirt-storage-pool.service" "libvirt-default-network.service" ];
+            after = [
+              "libvirtd.service"
+              "libvirt-storage-pool.service"
+              "libvirt-default-network.service"
+            ];
             requires = [ "libvirtd.service" ];
             serviceConfig = {
               Type = "oneshot";
@@ -790,7 +820,8 @@
           }) enabledVMs;
 
           # Generate VM management scripts
-          environment.systemPackages = mapAttrsToList (name: vmCfg:
+          environment.systemPackages = mapAttrsToList (
+            name: vmCfg:
             pkgs.writeShellScriptBin "vm-${name}" ''
               #!/usr/bin/env bash
               set -e

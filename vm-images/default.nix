@@ -182,7 +182,8 @@ let
     else
       # Create a placeholder that throws helpful errors when used
       let
-        throwOsxKvmRequired = name:
+        throwOsxKvmRequired =
+          name:
           throw ''
             darwin.${name} requires the osx-kvm input to be provided.
 
@@ -197,7 +198,8 @@ let
 
               osx-kvm = { url = "github:kholia/OSX-KVM"; flake = false; };
           '';
-      in {
+      in
+      {
         makeDarwinVM = _: throwOsxKvmRequired "makeDarwinVM";
         makeDarwinCachedBootTest = _: throwOsxKvmRequired "makeDarwinCachedBootTest";
         makeDarwinRunScript = _: throwOsxKvmRequired "makeDarwinRunScript";
@@ -335,6 +337,12 @@ in
 
   # Direct access to the underlying modules for advanced customization
   _internal = {
-    inherit isoFetchers linuxBuilder cloudInit darwinBuilder windowsBuilder;
+    inherit
+      isoFetchers
+      linuxBuilder
+      cloudInit
+      darwinBuilder
+      windowsBuilder
+      ;
   };
 }

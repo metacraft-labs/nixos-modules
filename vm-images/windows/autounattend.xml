@@ -45,24 +45,28 @@
   - @TIMEZONE@ - Windows timezone string (e.g., "UTC", "Pacific Standard Time")
   - @VIRTIO_DRIVER_PATH@ - Path to VirtIO drivers (e.g., "E:\")
 -->
-<unattend xmlns="urn:schemas-microsoft-com:unattend"
-          xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+<unattend
+    xmlns="urn:schemas-microsoft-com:unattend"
+    xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
 
-  <!-- ============================================================
-       Pass 1: windowsPE - Windows Preinstallation Environment
-       This pass runs during the initial boot from installation media.
-       It handles disk partitioning, driver loading, and image selection.
-       ============================================================ -->
+  <!--
+    ============================================================
+    Pass 1: windowsPE - Windows Preinstallation Environment
+    This pass runs during the initial boot from installation media.
+    It handles disk partitioning, driver loading, and image selection.
+    ============================================================
+  -->
   <settings pass="windowsPE">
 
     <!-- International and locale settings for the installer -->
-    <component name="Microsoft-Windows-International-Core-WinPE"
-               processorArchitecture="amd64"
-               publicKeyToken="31bf3856ad364e35"
-               language="neutral"
-               versionScope="nonSxS"
-               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
-               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <component
+        name="Microsoft-Windows-International-Core-WinPE"
+        processorArchitecture="amd64"
+        publicKeyToken="31bf3856ad364e35"
+        language="neutral"
+        versionScope="nonSxS"
+        xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
       <SetupUILanguage>
         <UILanguage>en-US</UILanguage>
       </SetupUILanguage>
@@ -73,24 +77,26 @@
     </component>
 
     <!-- Main setup component: disk configuration, driver paths, image selection -->
-    <component name="Microsoft-Windows-Setup"
-               processorArchitecture="amd64"
-               publicKeyToken="31bf3856ad364e35"
-               language="neutral"
-               versionScope="nonSxS"
-               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
-               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <component
+        name="Microsoft-Windows-Setup"
+        processorArchitecture="amd64"
+        publicKeyToken="31bf3856ad364e35"
+        language="neutral"
+        versionScope="nonSxS"
+        xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
 
-      <!-- VirtIO Driver Paths
-           Windows PE needs VirtIO storage drivers to see the VirtIO disk.
-           These paths are searched for .inf files during setup.
-           The VirtIO ISO from Fedora contains drivers in:
-           - viostor/w11/amd64/ (block storage)
-           - NetKVM/w11/amd64/ (network)
-           - vioserial/w11/amd64/ (serial port)
-           - Balloon/w11/amd64/ (memory ballooning)
-           - qxldod/w11/amd64/ (QXL display)
-           - pvpanic/w11/amd64/ (panic notification)
+      <!--
+        VirtIO Driver Paths
+        Windows PE needs VirtIO storage drivers to see the VirtIO disk.
+        These paths are searched for .inf files during setup.
+        The VirtIO ISO from Fedora contains drivers in:
+        - viostor/w11/amd64/ (block storage)
+        - NetKVM/w11/amd64/ (network)
+        - vioserial/w11/amd64/ (serial port)
+        - Balloon/w11/amd64/ (memory ballooning)
+        - qxldod/w11/amd64/ (QXL display)
+        - pvpanic/w11/amd64/ (panic notification)
       -->
       <DriverPaths>
         <!-- VirtIO block storage driver - REQUIRED for disk visibility -->
@@ -123,15 +129,16 @@
         </PathAndCredentials>
       </DriverPaths>
 
-      <!-- UEFI/GPT Disk Configuration
-           This creates a standard UEFI partition layout:
-           - Partition 1: EFI System Partition (300 MB, FAT32)
-           - Partition 2: Microsoft Reserved Partition (16 MB)
-           - Partition 3: Windows OS Partition (remaining space, NTFS)
+      <!--
+        UEFI/GPT Disk Configuration
+        This creates a standard UEFI partition layout:
+        - Partition 1: EFI System Partition (300 MB, FAT32)
+        - Partition 2: Microsoft Reserved Partition (16 MB)
+        - Partition 3: Windows OS Partition (remaining space, NTFS)
 
-           Note: We omit the Recovery partition for VM simplicity.
-           The DiskID is 0 (first disk), which should be the VirtIO disk
-           after drivers are loaded.
+        Note: We omit the Recovery partition for VM simplicity.
+        The DiskID is 0 (first disk), which should be the VirtIO disk
+        after drivers are loaded.
       -->
       <DiskConfiguration>
         <Disk wcm:action="add">
@@ -182,8 +189,9 @@
         </Disk>
       </DiskConfiguration>
 
-      <!-- Image Installation Target
-           Specifies where to install Windows (partition 3 on disk 0)
+      <!--
+        Image Installation Target
+        Specifies where to install Windows (partition 3 on disk 0)
       -->
       <ImageInstall>
         <OSImage>
@@ -191,8 +199,10 @@
             <DiskID>0</DiskID>
             <PartitionID>3</PartitionID>
           </InstallTo>
-          <!-- WillShowUI: Never shows the image selection UI
-               OnError: Fails installation on error instead of prompting -->
+          <!--
+            WillShowUI: Never shows the image selection UI
+            OnError: Fails installation on error instead of prompting
+          -->
           <WillShowUI>OnError</WillShowUI>
         </OSImage>
       </ImageInstall>
@@ -209,9 +219,10 @@
         <Organization>Agent Harbor</Organization>
       </UserData>
 
-      <!-- Windows 11 TPM/SecureBoot/CPU Bypass
-           These registry keys bypass hardware requirements for VM installation.
-           Reference: https://support.microsoft.com/en-us/windows/installing-windows-11-on-devices-that-don-t-meet-minimum-system-requirements
+      <!--
+        Windows 11 TPM/SecureBoot/CPU Bypass
+        These registry keys bypass hardware requirements for VM installation.
+        Reference: https://support.microsoft.com/en-us/windows/installing-windows-11-on-devices-that-don-t-meet-minimum-system-requirements
       -->
       <RunSynchronous>
         <!-- Bypass TPM 2.0 check -->
@@ -244,72 +255,83 @@
     </component>
   </settings>
 
-  <!-- ============================================================
-       Pass 2: offlineServicing
-       This pass runs while the Windows image is offline (before first boot).
-       Used for injecting drivers and updates into the offline image.
-       We don't need this pass for basic VM installation.
-       ============================================================ -->
+  <!--
+    ============================================================
+    Pass 2: offlineServicing
+    This pass runs while the Windows image is offline (before first boot).
+    Used for injecting drivers and updates into the offline image.
+    We don't need this pass for basic VM installation.
+    ============================================================
+  -->
 
-  <!-- ============================================================
-       Pass 3: generalize
-       This pass is used for sysprep generalization (creating golden images).
-       Not needed for fresh installations.
-       ============================================================ -->
+  <!--
+    ============================================================
+    Pass 3: generalize
+    This pass is used for sysprep generalization (creating golden images).
+    Not needed for fresh installations.
+    ============================================================
+  -->
 
-  <!-- ============================================================
-       Pass 4: specialize
-       This pass runs during the Windows specialization phase.
-       It handles computer name, network settings, and system configuration.
-       ============================================================ -->
+  <!--
+    ============================================================
+    Pass 4: specialize
+    This pass runs during the Windows specialization phase.
+    It handles computer name, network settings, and system configuration.
+    ============================================================
+  -->
   <settings pass="specialize">
 
     <!-- Computer name and network configuration -->
-    <component name="Microsoft-Windows-Shell-Setup"
-               processorArchitecture="amd64"
-               publicKeyToken="31bf3856ad364e35"
-               language="neutral"
-               versionScope="nonSxS"
-               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
-               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <component
+        name="Microsoft-Windows-Shell-Setup"
+        processorArchitecture="amd64"
+        publicKeyToken="31bf3856ad364e35"
+        language="neutral"
+        versionScope="nonSxS"
+        xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
       <ComputerName>@COMPUTER_NAME@</ComputerName>
       <TimeZone>@TIMEZONE@</TimeZone>
     </component>
 
     <!-- Enable Remote Desktop -->
-    <component name="Microsoft-Windows-TerminalServices-LocalSessionManager"
-               processorArchitecture="amd64"
-               publicKeyToken="31bf3856ad364e35"
-               language="neutral"
-               versionScope="nonSxS"
-               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
-               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <component
+        name="Microsoft-Windows-TerminalServices-LocalSessionManager"
+        processorArchitecture="amd64"
+        publicKeyToken="31bf3856ad364e35"
+        language="neutral"
+        versionScope="nonSxS"
+        xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
       <!-- 0 = Enable RDP, 1 = Disable RDP -->
       <fDenyTSConnections>false</fDenyTSConnections>
     </component>
 
-    <!-- Disable Network Level Authentication for RDP
-         This allows RDP connections without NLA, which is more compatible
-         with various RDP clients and useful for automation.
+    <!--
+      Disable Network Level Authentication for RDP
+      This allows RDP connections without NLA, which is more compatible
+      with various RDP clients and useful for automation.
     -->
-    <component name="Microsoft-Windows-TerminalServices-RDP-WinStationExtensions"
-               processorArchitecture="amd64"
-               publicKeyToken="31bf3856ad364e35"
-               language="neutral"
-               versionScope="nonSxS"
-               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
-               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <component
+        name="Microsoft-Windows-TerminalServices-RDP-WinStationExtensions"
+        processorArchitecture="amd64"
+        publicKeyToken="31bf3856ad364e35"
+        language="neutral"
+        versionScope="nonSxS"
+        xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
       <UserAuthentication>0</UserAuthentication>
     </component>
 
     <!-- Firewall Configuration: Allow RDP and ICMP -->
-    <component name="Networking-MPSSVC-Svc"
-               processorArchitecture="amd64"
-               publicKeyToken="31bf3856ad364e35"
-               language="neutral"
-               versionScope="nonSxS"
-               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
-               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <component
+        name="Networking-MPSSVC-Svc"
+        processorArchitecture="amd64"
+        publicKeyToken="31bf3856ad364e35"
+        language="neutral"
+        versionScope="nonSxS"
+        xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
       <FirewallGroups>
         <!-- Enable Remote Desktop firewall rules -->
         <FirewallGroup wcm:action="add" wcm:keyValue="RemoteDesktop">
@@ -321,13 +343,14 @@
     </component>
 
     <!-- Deployment Configuration: Run commands during specialize phase -->
-    <component name="Microsoft-Windows-Deployment"
-               processorArchitecture="amd64"
-               publicKeyToken="31bf3856ad364e35"
-               language="neutral"
-               versionScope="nonSxS"
-               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
-               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <component
+        name="Microsoft-Windows-Deployment"
+        processorArchitecture="amd64"
+        publicKeyToken="31bf3856ad364e35"
+        language="neutral"
+        versionScope="nonSxS"
+        xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
       <RunSynchronous>
         <!-- Disable hibernation (not useful for VMs, saves disk space) -->
         <RunSynchronousCommand wcm:action="add">
@@ -335,9 +358,10 @@
           <Path>powercfg.exe /HIBERNATE OFF</Path>
           <Description>Disable hibernation for VM compatibility</Description>
         </RunSynchronousCommand>
-        <!-- Disable fast startup (can cause issues with VM snapshots)
-             Fast startup uses a hybrid shutdown that saves kernel state to disk,
-             which doesn't work well with VM snapshots and clean shutdowns.
+        <!--
+          Disable fast startup (can cause issues with VM snapshots)
+          Fast startup uses a hybrid shutdown that saves kernel state to disk,
+          which doesn't work well with VM snapshots and clean shutdowns.
         -->
         <RunSynchronousCommand wcm:action="add">
           <Order>2</Order>
@@ -349,28 +373,33 @@
 
   </settings>
 
-  <!-- ============================================================
-       Pass 5: auditSystem / Pass 6: auditUser
-       These passes are used for audit mode (OEM/enterprise image preparation).
-       Not needed for standard VM installations.
-       ============================================================ -->
+  <!--
+    ============================================================
+    Pass 5: auditSystem / Pass 6: auditUser
+    These passes are used for audit mode (OEM/enterprise image preparation).
+    Not needed for standard VM installations.
+    ============================================================
+  -->
 
-  <!-- ============================================================
-       Pass 7: oobeSystem - Out-of-Box Experience
-       This pass runs during the OOBE (first boot) phase.
-       It handles user account creation, OOBE screen configuration,
-       and first logon commands.
-       ============================================================ -->
+  <!--
+    ============================================================
+    Pass 7: oobeSystem - Out-of-Box Experience
+    This pass runs during the OOBE (first boot) phase.
+    It handles user account creation, OOBE screen configuration,
+    and first logon commands.
+    ============================================================
+  -->
   <settings pass="oobeSystem">
 
     <!-- Main shell setup: user accounts, OOBE, first logon commands -->
-    <component name="Microsoft-Windows-Shell-Setup"
-               processorArchitecture="amd64"
-               publicKeyToken="31bf3856ad364e35"
-               language="neutral"
-               versionScope="nonSxS"
-               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
-               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <component
+        name="Microsoft-Windows-Shell-Setup"
+        processorArchitecture="amd64"
+        publicKeyToken="31bf3856ad364e35"
+        language="neutral"
+        versionScope="nonSxS"
+        xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
 
       <!-- OOBE Configuration: Skip all OOBE screens -->
       <OOBE>
@@ -415,9 +444,10 @@
         </AdministratorPassword>
       </UserAccounts>
 
-      <!-- AutoLogon: Automatically log in as the created user
-           This is useful for running FirstLogonCommands and initial setup.
-           LogonCount limits automatic logons (after which manual login is required).
+      <!--
+        AutoLogon: Automatically log in as the created user
+        This is useful for running FirstLogonCommands and initial setup.
+        LogonCount limits automatic logons (after which manual login is required).
       -->
       <AutoLogon>
         <Enabled>true</Enabled>
@@ -430,11 +460,12 @@
         <LogonCount>5</LogonCount>
       </AutoLogon>
 
-      <!-- FirstLogonCommands: Execute on first user login
-           These commands run with elevated privileges when an administrator
-           first logs in. Perfect for system configuration and software installation.
+      <!--
+        FirstLogonCommands: Execute on first user login
+        These commands run with elevated privileges when an administrator
+        first logs in. Perfect for system configuration and software installation.
 
-           Commands execute synchronously in order, waiting for each to complete.
+        Commands execute synchronously in order, waiting for each to complete.
       -->
       <FirstLogonCommands>
 
@@ -486,8 +517,9 @@
           <RequiresUserInput>false</RequiresUserInput>
         </SynchronousCommand>
 
-        <!-- 7. Set default shell for OpenSSH to PowerShell
-             This makes SSH sessions more useful than the default cmd.exe
+        <!--
+          7. Set default shell for OpenSSH to PowerShell
+          This makes SSH sessions more useful than the default cmd.exe
         -->
         <SynchronousCommand wcm:action="add">
           <Order>7</Order>
@@ -578,13 +610,14 @@
     </component>
 
     <!-- International settings for OOBE -->
-    <component name="Microsoft-Windows-International-Core"
-               processorArchitecture="amd64"
-               publicKeyToken="31bf3856ad364e35"
-               language="neutral"
-               versionScope="nonSxS"
-               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
-               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <component
+        name="Microsoft-Windows-International-Core"
+        processorArchitecture="amd64"
+        publicKeyToken="31bf3856ad364e35"
+        language="neutral"
+        versionScope="nonSxS"
+        xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
       <InputLocale>en-US</InputLocale>
       <SystemLocale>en-US</SystemLocale>
       <UILanguage>en-US</UILanguage>

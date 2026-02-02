@@ -6,11 +6,11 @@ This documentation covers the VM infrastructure provided by nixos-modules, enabl
 
 The virtualisation modules are organized into three main components:
 
-| Module | Purpose | Use Case |
-|--------|---------|----------|
-| [Desktop VMs](./desktop-vms.md) | High-performance local VMs | Development, gaming, daily use |
-| [VM Images](./vm-images.md) | Automated VM image building | CI/CD, testing, reproducible environments |
-| [Automation Engine](./automation-engine.md) | GUI automation via VNC+OCR | Unattended OS installation |
+| Module                                      | Purpose                     | Use Case                                  |
+| ------------------------------------------- | --------------------------- | ----------------------------------------- |
+| [Desktop VMs](./desktop-vms.md)             | High-performance local VMs  | Development, gaming, daily use            |
+| [VM Images](./vm-images.md)                 | Automated VM image building | CI/CD, testing, reproducible environments |
+| [Automation Engine](./automation-engine.md) | GUI automation via VNC+OCR  | Unattended OS installation                |
 
 ## Choosing the Right Module
 

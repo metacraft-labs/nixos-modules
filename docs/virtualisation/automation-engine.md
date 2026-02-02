@@ -5,6 +5,7 @@ A YAML-based GUI automation framework for unattended OS installation. Uses VNC s
 ## Overview
 
 The automation engine enables fully automated OS installation by:
+
 1. Connecting to a VM's VNC display
 2. Capturing screenshots and recognizing text with OCR
 3. Simulating keyboard and mouse input based on YAML scripts
@@ -32,7 +33,7 @@ nix build .#yaml-automation-runner
 
 ```yaml
 # my-automation.yml
-boot_wait: 30  # Seconds to wait after VM boots
+boot_wait: 30 # Seconds to wait after VM boots
 
 boot_commands:
   # Wait for text to appear
@@ -76,10 +77,11 @@ Wait for text to appear on screen before proceeding.
 # Custom timeout
 - wait:
     text: 'Installing...'
-    timeout: 300  # 5 minutes
+    timeout: 300 # 5 minutes
 ```
 
 **Parameters:**
+
 - `text` (required): Text to search for (case-sensitive)
 - `timeout` (optional): Maximum wait time in seconds (default: 120)
 
@@ -94,12 +96,13 @@ Click on text found via OCR.
 # Click with options
 - click:
     text: 'Agree'
-    index: -1      # Click last occurrence
-    xoffset: 50    # Offset from text center
+    index: -1 # Click last occurrence
+    xoffset: 50 # Offset from text center
     yoffset: 0
 ```
 
 **Parameters:**
+
 - `text` (required): Text to click on
 - `index` (optional): Which occurrence to click (0 = first, -1 = last)
 - `xoffset` (optional): Horizontal offset from text center in pixels
@@ -192,12 +195,13 @@ health_check:
   type: ssh
   user: testuser
   password: testpassword
-  timeout: 30      # Per-attempt timeout in seconds
-  retries: 5       # Number of connection attempts
-  retry_delay: 10  # Seconds between attempts
+  timeout: 30 # Per-attempt timeout in seconds
+  retries: 5 # Number of connection attempts
+  retry_delay: 10 # Seconds between attempts
 ```
 
 The health check:
+
 1. Waits for SSH to become available
 2. Connects with provided credentials
 3. Runs basic commands to verify the system is responsive
@@ -219,16 +223,17 @@ The health check:
 
 Debug mode saves to `/tmp/unattended-<timestamp>/`:
 
-| File | Description |
-|------|-------------|
-| `screenshot-001.png` | Raw screenshot |
+| File                           | Description                   |
+| ------------------------------ | ----------------------------- |
+| `screenshot-001.png`           | Raw screenshot                |
 | `screenshot-001-annotated.png` | Screenshot with click markers |
-| `screenshot-001-ocr.json` | Full OCR results |
-| `automation.log` | Command execution log |
+| `screenshot-001-ocr.json`      | Full OCR results              |
+| `automation.log`               | Command execution log         |
 
 ### Annotated Screenshots
 
 In debug mode, screenshots are annotated with:
+
 - **Red crosshairs**: Where clicks occurred
 - **Bounding boxes**: Detected text regions
 - **Labels**: Recognized text
@@ -283,11 +288,11 @@ boot_commands:
   - click: 'Full Name'
   - type: 'agent'
   - key: tab
-  - type: 'agent'  # Account name
+  - type: 'agent' # Account name
   - key: tab
-  - type: 'agent'  # Password
+  - type: 'agent' # Password
   - key: tab
-  - type: 'agent'  # Verify password
+  - type: 'agent' # Verify password
   - click: 'Continue'
   - delay: 5
 
@@ -309,7 +314,7 @@ boot_commands:
   - delay: 3
   - type: 'sudo systemsetup -setremotelogin on'
   - key: enter
-  - type: 'agent'  # Password for sudo
+  - type: 'agent' # Password for sudo
   - key: enter
   - delay: 2
 
@@ -472,11 +477,11 @@ Add delays after actions that trigger UI changes:
 
 ```yaml
 - click: 'Install'
-- delay: 5  # Wait for installation dialog
+- delay: 5 # Wait for installation dialog
 
 - wait:
     text: 'Progress'
-    timeout: 600  # 10 minutes for long installs
+    timeout: 600 # 10 minutes for long installs
 ```
 
 ### Robust Text Matching
