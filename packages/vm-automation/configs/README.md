@@ -156,8 +156,8 @@ Debug files are saved to `/tmp/unattended-<timestamp>/`
 - key: space
 - key: backspace
 - key: escape
-- key: up    # arrow keys
-- key: f1    # function keys
+- key: up # arrow keys
+- key: f1 # function keys
 ```
 
 ### Hotkeys
@@ -171,7 +171,7 @@ Debug files are saved to `/tmp/unattended-<timestamp>/`
 ### Timing
 
 ```yaml
-- delay: 2   # seconds (can be float: 0.5)
+- delay: 2 # seconds (can be float: 0.5)
 ```
 
 ## Tips
@@ -200,6 +200,7 @@ If OCR fails to recognize text:
 ### Account Credentials
 
 All macOS configs create:
+
 - Username: `admin`
 - Password: `admin`
 

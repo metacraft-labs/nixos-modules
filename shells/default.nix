@@ -52,7 +52,9 @@
             ]
             ++ pkgs.lib.optionals (pkgs.stdenv.system == "x86_64-linux") [
               dmd
-            ];
+            ]
+            ++ config.pre-commit.settings.enabledPackages
+            ++ [ config.pre-commit.settings.package ];
 
           shellHook = ''
             export REPO_ROOT="$PWD"
