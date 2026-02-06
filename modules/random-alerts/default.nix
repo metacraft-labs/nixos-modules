@@ -27,35 +27,35 @@
             type = types.int;
             default = 3600;
             example = 360;
-            description = ''Minimum wait time before alert in seconds'';
+            description = "Minimum wait time before alert in seconds";
           };
 
           max-wait-time = mkOption {
             type = types.int;
             default = 14400;
             example = 6000;
-            description = ''Maximum wait time before alert in seconds'';
+            description = "Maximum wait time before alert in seconds";
           };
 
           alert-duration = mkOption {
             type = types.int;
             default = 3600;
             example = 360;
-            description = ''Time after alerts ends in seconds'';
+            description = "Time after alerts ends in seconds";
           };
 
           start-time = mkOption {
             type = types.str;
             default = "00:00:00";
             example = "10:00:00";
-            description = ''The start time of alerts in a 24-hour clock'';
+            description = "The start time of alerts in a 24-hour clock";
           };
 
           end-time = mkOption {
             type = types.str;
             default = "23:59:59";
             example = "22:00:00";
-            description = ''The end time of alerts in a 24-hour clock'';
+            description = "The end time of alerts in a 24-hour clock";
           };
 
           log-level = mkOption {
