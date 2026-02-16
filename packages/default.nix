@@ -57,7 +57,6 @@
         };
       }
       // optionalAttrs (system == "x86_64-linux" || system == "aarch64-darwin") {
-        secret = import ./secret { inherit inputs' pkgs; };
         aztec = pkgs.callPackage ./aztec { };
       }
       // optionalAttrs isLinux {
