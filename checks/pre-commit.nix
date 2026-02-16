@@ -45,10 +45,7 @@
                   editorconfig-checker.enable = true;
 
                   # *.nix formatting
-                  nixfmt-rfc-style.enable = true;
-
-                  # *.rs formatting
-                  rustfmt.enable = true;
+                  nixfmt.enable = true;
 
                   # *.{js,jsx,ts,tsx,css,html,md,json} formatting
                   prettier = {
