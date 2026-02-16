@@ -4,7 +4,7 @@
   ...
 }:
 let
-  agenix = inputs'.agenix.packages.agenix.override { ageBin = "${pkgs.rage}/bin/rage"; };
+  agenix = inputs'.agenix.packages.agenix;
 in
 pkgs.writeShellApplication {
   name = "secret";
