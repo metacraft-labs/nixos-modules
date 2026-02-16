@@ -93,19 +93,11 @@ let
                     ];
                     description = "Extra keys which can decrypt the secrets.";
                   };
-                  nix-file = mkOption {
-                    default = builtins.toFile "${serviceName}-secrets.nix" ''
-                      let
-                        hostKey = ["${sshKey}"];
-                        extraKeysPerService = ["${concatStringsSep "\"\"" config.extraKeys}"];
-                        extraKeysPerHost = ["${concatStringsSep "\"\"" mcl-secrets.extraKeys}"];
-                      in {
-                        ${concatMapStringsSep "\n" (
-                          n: "\"${n}.age\".publicKeys = hostKey ++ extraKeysPerService ++ extraKeysPerHost;"
-                        ) (builtins.attrNames config.secrets)}
-                      }
-                    '';
-                    type = types.path;
+                  recipients = mkOption {
+                    type = types.listOf types.str;
+                    readOnly = true;
+                    default = [ sshKey ] ++ config.extraKeys ++ mcl-secrets.extraKeys;
+                    description = "All public keys that can decrypt this service's secrets (host key + per-service extra keys + global extra keys).";
                   };
                 };
               }
