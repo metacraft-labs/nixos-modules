@@ -6,11 +6,14 @@ import std.file : exists, isDir, dirEntries, SpanMode, mkdirRecurse,
     remove, write, read, deleteme;
 import std.path : buildPath, baseName, stripExtension, dirName;
 import std.process : environment;
+import std.logger : infof, warningf;
 import std.stdio : writeln;
 import std.string : replace, split, strip, endsWith;
 
 import argparse : Command, Description, NamedArgument, Placeholder, Required,
     SubCommand, Default, matchCmd;
+
+import sparkles.test_utils.tmpfs : TmpFS;
 
 import mcl.utils.log : errorAndExit;
 import mcl.utils.nix : nix;
@@ -147,6 +150,7 @@ private int secretEdit(SecretArgs common, SecretEditArgs args)
 {
     validateVmFlag(common.vm, common.configurationType);
 
+    auto tmpfs = TmpFS.create("mcl-secret-agent-keys");
     const confAttr = common.configurationType.enumToString;
     auto machineFolder = resolveMachineFolder(common.machine, confAttr, common.extraNixOptions);
     auto recipients = resolveRecipients(common, confAttr, args.service);
@@ -158,7 +162,7 @@ private int secretEdit(SecretArgs common, SecretEditArgs args)
             : machineFolder.buildPath("secrets", args.service);
 
     auto secretFile = secretsFolder.buildPath(args.secret ~ ".age");
-    editSecret(secretFile, recipients, resolveIdentity(common.identity));
+    editSecret(secretFile, recipients, resolveIdentity(common.identity, tmpfs));
     return 0;
 }
 
@@ -166,6 +170,7 @@ private int secretReEncrypt(SecretArgs common, SecretReEncryptArgs args)
 {
     validateVmFlag(common.vm, common.configurationType);
 
+    auto tmpfs = TmpFS.create("mcl-secret-agent-keys");
     const confAttr = common.configurationType.enumToString;
     auto machineFolder = resolveMachineFolder(common.machine, confAttr, common.extraNixOptions);
     auto recipients = resolveRecipients(common, confAttr, args.service);
@@ -176,7 +181,7 @@ private int secretReEncrypt(SecretArgs common, SecretReEncryptArgs args)
             ? DEFAULT_VM_SECRETS_PATH ~ args.service
             : machineFolder.buildPath("secrets", args.service);
 
-    reEncryptFolder(secretsFolder, recipients, resolveIdentity(common.identity));
+    reEncryptFolder(secretsFolder, recipients, resolveIdentity(common.identity, tmpfs));
     return 0;
 }
 
@@ -184,11 +189,12 @@ private int secretReEncryptAll(SecretArgs common, SecretReEncryptAllArgs args)
 {
     validateVmFlag(common.vm, common.configurationType);
 
+    auto tmpfs = TmpFS.create("mcl-secret-agent-keys");
     const confAttr = common.configurationType.enumToString;
     auto machineFolder = args.configPath.length > 0
         ? args.configPath
         : resolveMachineFolder(common.machine, confAttr, common.extraNixOptions);
-    auto identityArgs = resolveIdentity(common.identity);
+    auto identityArgs = resolveIdentity(common.identity, tmpfs);
 
     auto services = nixEvalAttrNames(
         common.extraNixOptions,
@@ -334,13 +340,43 @@ private string[] recipientArgs(string[] recipients)
         .array;
 }
 
-private string[] resolveIdentity(string identity)
+private string[] resolveIdentity(string identityPath, ref TmpFS tmpfs)
 {
-    if (identity.length > 0)
-        return ["-i", identity];
+    if (identityPath.length > 0)
+    {
+        if (!identityPath.exists)
+            warningf("Specified identity file does not exist: %s", identityPath);
+        return ["-i", identityPath];
+    }
 
-    // Auto-discover SSH keys like agenix does
     string[] identityArgs;
+
+    // Try ssh-agent first: if SSH_AUTH_SOCK is set, ask the agent for
+    // public keys and write each to a temp file so age can use the agent
+    // for decryption.
+    auto authSock = environment.get("SSH_AUTH_SOCK", "");
+    if (authSock.length > 0)
+    {
+        try
+        {
+            auto agentKeys = execute(["ssh-add", "-L"], false);
+            foreach (line; agentKeys.split("\n").filter!(l => l.length > 0))
+            {
+                auto tmpPath = tmpfs.writeFile(line);
+                infof("Using ssh-agent identity: %s", tmpPath);
+                identityArgs ~= ["-i", tmpPath];
+            }
+        }
+        catch (Exception e)
+        {
+            warningf("Failed to list ssh-agent keys: %s", e.msg);
+        }
+    }
+
+    if (identityArgs.length > 0)
+        return identityArgs;
+
+    // Fall back to well-known SSH key paths
     auto home = environment.get("HOME", "");
     if (home.length > 0)
     {
@@ -348,9 +384,15 @@ private string[] resolveIdentity(string identity)
         auto rsa = home.buildPath(".ssh", "id_rsa");
 
         if (ed25519.exists)
+        {
+            infof("Using auto-discovered identity: %s", ed25519);
             identityArgs ~= ["-i", ed25519];
+        }
         if (rsa.exists)
+        {
+            infof("Using auto-discovered identity: %s", rsa);
             identityArgs ~= ["-i", rsa];
+        }
     }
     return identityArgs;
 }
