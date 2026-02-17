@@ -789,12 +789,6 @@
               ExecStart = pkgs.writeShellScript "define-${name}" ''
                 set -e
 
-                # Check if domain already exists
-                if ${pkgs.libvirt}/bin/virsh dominfo ${name} &>/dev/null; then
-                  echo "Domain ${name} already exists"
-                  exit 0
-                fi
-
                 # Create disk volume if it doesn't exist
                 ${pkgs.libvirt}/bin/virsh pool-refresh ${vmCfg.storagePool} || true
                 if ! ${pkgs.libvirt}/bin/virsh vol-info ${name}.qcow2 --pool ${vmCfg.storagePool} &>/dev/null; then

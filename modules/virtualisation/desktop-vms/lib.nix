@@ -430,6 +430,7 @@ rec {
                 <reset state="on"/>
                 <frequencies state="on"/>
               </hyperv>
+              <smm state="on"/>
             </features>''
         else
           ''
