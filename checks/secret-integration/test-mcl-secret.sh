@@ -10,6 +10,11 @@ trap 'rm -rf "$MCL_SECRET_TMP_DIR"' EXIT
 export HOME="$MCL_SECRET_TMP_DIR/home"
 mkdir -p "$HOME/.ssh"
 
+# Prevent age from picking up ssh-agent public keys (which it cannot use
+# as identity files for decryption).  We rely on the private key file at
+# $HOME/.ssh/id_ed25519 instead.
+unset SSH_AUTH_SOCK
+
 # Copy the test identity so age can decrypt with it.
 cp "@TEST_KEYS_DIR@/id_ed25519" "$HOME/.ssh/id_ed25519"
 chmod 600 "$HOME/.ssh/id_ed25519"
