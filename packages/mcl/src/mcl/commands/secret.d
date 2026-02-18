@@ -8,6 +8,7 @@ import std.path : buildPath, baseName, stripExtension, dirName;
 import std.process : environment;
 import std.logger : infof, warningf;
 import std.stdio : writeln;
+import std.regex : ctRegex, matchFirst;
 import std.string : replace, split, strip, endsWith;
 
 import argparse : Command, Description, NamedArgument, Placeholder, Required,
@@ -66,7 +67,7 @@ struct SecretArgs
 
     @(NamedArgument(["identity", "i"])
         .Placeholder("PATH")
-        .Description("SSH private key to use for decryption"))
+        .Description("Age identity file to use for decryption"))
     string identity;
 
     SubCommand!(
@@ -150,7 +151,7 @@ private int secretEdit(SecretArgs common, SecretEditArgs args)
 {
     validateVmFlag(common.vm, common.configurationType);
 
-    auto tmpfs = TmpFS.create("mcl-secret-agent-keys");
+    auto tmpfs = TmpFS.create("mcl-secret-identity-keys");
     const confAttr = common.configurationType.enumToString;
     auto machineFolder = resolveMachineFolder(common.machine, confAttr, common.extraNixOptions);
     auto recipients = resolveRecipients(common, confAttr, args.service);
@@ -170,7 +171,7 @@ private int secretReEncrypt(SecretArgs common, SecretReEncryptArgs args)
 {
     validateVmFlag(common.vm, common.configurationType);
 
-    auto tmpfs = TmpFS.create("mcl-secret-agent-keys");
+    auto tmpfs = TmpFS.create("mcl-secret-identity-keys");
     const confAttr = common.configurationType.enumToString;
     auto machineFolder = resolveMachineFolder(common.machine, confAttr, common.extraNixOptions);
     auto recipients = resolveRecipients(common, confAttr, args.service);
@@ -189,7 +190,7 @@ private int secretReEncryptAll(SecretArgs common, SecretReEncryptAllArgs args)
 {
     validateVmFlag(common.vm, common.configurationType);
 
-    auto tmpfs = TmpFS.create("mcl-secret-agent-keys");
+    auto tmpfs = TmpFS.create("mcl-secret-identity-keys");
     const confAttr = common.configurationType.enumToString;
     auto machineFolder = args.configPath.length > 0
         ? args.configPath
@@ -351,28 +352,8 @@ private string[] resolveIdentity(string identityPath, ref TmpFS tmpfs)
 
     string[] identityArgs;
 
-    // Try ssh-agent first: if SSH_AUTH_SOCK is set, ask the agent for
-    // public keys and write each to a temp file so age can use the agent
-    // for decryption.
-    auto authSock = environment.get("SSH_AUTH_SOCK", "");
-    if (authSock.length > 0)
-    {
-        try
-        {
-            auto agentKeys = execute(["ssh-add", "-L"], false);
-            foreach (line; agentKeys.split("\n").filter!(l => l.length > 0))
-            {
-                auto tmpPath = tmpfs.writeFile(line);
-                infof("Using ssh-agent identity: %s", tmpPath);
-                identityArgs ~= ["-i", tmpPath];
-            }
-        }
-        catch (Exception e)
-        {
-            warningf("Failed to list ssh-agent keys: %s", e.msg);
-        }
-    }
-
+    // Try age-plugin-yubikey: query for hardware-backed identities
+    identityArgs = resolveYubikeyIdentities(tmpfs);
     if (identityArgs.length > 0)
         return identityArgs;
 
@@ -394,6 +375,36 @@ private string[] resolveIdentity(string identityPath, ref TmpFS tmpfs)
             identityArgs ~= ["-i", rsa];
         }
     }
+    return identityArgs;
+}
+
+private enum yubikeyIdentityPattern = ctRegex!(`^AGE-PLUGIN-YUBIKEY-[0-9A-Z]+$`);
+
+private string[] resolveYubikeyIdentities(ref TmpFS tmpfs)
+{
+    string[] identityArgs;
+
+    try
+    {
+        auto output = execute(["age-plugin-yubikey", "-i"], printCommand: false);
+        auto identities = output
+            .split("\n")
+            .map!strip
+            .filter!(l => !l.matchFirst(yubikeyIdentityPattern).empty)
+            .array;
+
+        foreach (identity; identities)
+        {
+            auto tmpPath = tmpfs.writeFile(identity);
+            infof("Using YubiKey identity: %s", identity);
+            identityArgs ~= ["-i", tmpPath];
+        }
+    }
+    catch (Exception e)
+    {
+        infof("age-plugin-yubikey not available: %s", e.msg);
+    }
+
     return identityArgs;
 }
 
