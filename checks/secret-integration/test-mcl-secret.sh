@@ -5,28 +5,24 @@ set -euo pipefail
 # Setup
 # ---------------------------------------------------------------
 MCL_SECRET_TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "$MCL_SECRET_TMP_DIR"' EXIT
 
-export HOME="$MCL_SECRET_TMP_DIR/home"
-mkdir -p "$HOME/.ssh"
+# configPath is "./checks/test-machine" — mcl writes secrets there.
+# Clean up both the temp dir and any repo-local artifacts on exit.
+cleanup() {
+  rm -rf "$MCL_SECRET_TMP_DIR"
+  rm -rf ./checks/test-machine/secrets
+  rmdir ./checks/test-machine 2>/dev/null || true
+}
+trap cleanup EXIT
 
-# Prevent age from picking up ssh-agent public keys (which it cannot use
-# as identity files for decryption).  We rely on the private key file at
-# $HOME/.ssh/id_ed25519 instead.
-unset SSH_AUTH_SOCK
+# Point HOME at the temp dir and symlink .ssh to the test keys so that
+# mcl's auto-discovery finds the identity at $HOME/.ssh/id_ed25519.
+export HOME="$MCL_SECRET_TMP_DIR"
+ln -s "@TEST_KEYS_DIR@/.ssh" "$HOME/.ssh"
 
-# Copy the test identity so age can decrypt with it.
-cp "@TEST_KEYS_DIR@/id_ed25519" "$HOME/.ssh/id_ed25519"
-chmod 600 "$HOME/.ssh/id_ed25519"
-
-# Create a writable "machine" directory for re-encrypt-all test.
-# This mimics the structure expected by the NixOS config's configPath.
-MACHINE_DIR="$MCL_SECRET_TMP_DIR/test-machine"
-mkdir -p "$MACHINE_DIR/secrets/test-svc"
-mkdir -p "$MACHINE_DIR/secrets/other-svc"
-
-# Use the machine directory for all secrets (re-encrypt-all reads from here).
-SECRETS_DIR="$MACHINE_DIR/secrets"
+# configPath resolves to ./checks/test-machine (relative to repo root).
+# mcl derives secrets paths from it, so secrets are written there.
+SECRETS_DIR="./checks/test-machine/secrets"
 
 # Create a helper script to use as EDITOR — it copies the
 # cleartext-input file to the target file that age will encrypt.
@@ -74,8 +70,7 @@ mcl secret \
   --machine test-secret-machine \
   edit \
   --service test-svc \
-  --secret password \
-  --secrets-folder "$SECRETS_DIR/test-svc"
+  --secret password
 
 assert_file_exists "$SECRETS_DIR/test-svc/password.age" "password.age created"
 
@@ -94,8 +89,7 @@ mcl secret \
   --machine test-secret-machine \
   edit \
   --service test-svc \
-  --secret password \
-  --secrets-folder "$SECRETS_DIR/test-svc"
+  --secret password
 
 decrypted=$(age --decrypt \
   -i "$HOME/.ssh/id_ed25519" \
@@ -112,14 +106,12 @@ mcl secret \
   --machine test-secret-machine \
   edit \
   --service test-svc \
-  --secret api-key \
-  --secrets-folder "$SECRETS_DIR/test-svc"
+  --secret api-key
 
 mcl secret \
   --machine test-secret-machine \
   re-encrypt \
-  --service test-svc \
-  --secrets-folder "$SECRETS_DIR/test-svc"
+  --service test-svc
 
 d1=$(age --decrypt -i "$HOME/.ssh/id_ed25519" "$SECRETS_DIR/test-svc/password.age")
 d2=$(age --decrypt -i "$HOME/.ssh/id_ed25519" "$SECRETS_DIR/test-svc/api-key.age")
@@ -136,15 +128,11 @@ mcl secret \
   --machine test-secret-machine \
   edit \
   --service other-svc \
-  --secret token \
-  --secrets-folder "$SECRETS_DIR/other-svc"
+  --secret token
 
-# re-encrypt-all uses configPath-derived folder paths.
-# We use --config-path to point to our writable machine directory.
 mcl secret \
   --machine test-secret-machine \
-  re-encrypt-all \
-  --config-path "$MACHINE_DIR"
+  re-encrypt-all
 
 d1=$(age --decrypt -i "$HOME/.ssh/id_ed25519" "$SECRETS_DIR/test-svc/password.age")
 d2=$(age --decrypt -i "$HOME/.ssh/id_ed25519" "$SECRETS_DIR/test-svc/api-key.age")
