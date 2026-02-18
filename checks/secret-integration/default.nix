@@ -24,11 +24,11 @@
         mcl.host-info = {
           type = "server";
           isDebugVM = false;
-          configPath = self + "/checks/test-machine";
-          sshKey = builtins.readFile ./test-keys/id_ed25519.pub;
+          configPath = "./checks/test-machine";
+          sshKey = builtins.readFile ./test-keys/.ssh/id_ed25519.pub;
         };
         mcl.secrets = {
-          extraKeys = [ (builtins.readFile ./test-keys/extra_id_ed25519.pub) ];
+          extraKeys = [ (builtins.readFile ./test-keys/.ssh/extra_id_ed25519.pub) ];
           services.test-svc = {
             encryptedSecretDir = self + "/checks/test-machine/secrets";
             secrets.password = { };
@@ -66,7 +66,6 @@
             self'.packages.mcl
             pkgs.age
             pkgs.openssh
-            pkgs.gitMinimal
             pkgs.nix
           ];
           text = "bash ${
