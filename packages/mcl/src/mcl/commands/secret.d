@@ -18,6 +18,7 @@ import sparkles.test_utils.tmpfs : TmpFS;
 
 import mcl.utils.log : errorAndExit;
 import mcl.utils.nix : nix;
+import mcl.utils.path : rootDir;
 import mcl.utils.process : execute, spawnProcessInline;
 import mcl.utils.string : enumToString, StringRepresentation;
 
@@ -199,7 +200,7 @@ private int secretReEncryptAll(SecretArgs common, SecretReEncryptAllArgs args)
 
     auto services = nixEvalAttrNames(
         common.extraNixOptions,
-        ".#" ~ confAttr ~ "." ~ common.machine ~ ".config.mcl.secrets.services"
+        rootDir ~ "#" ~ confAttr ~ "." ~ common.machine ~ ".config.mcl.secrets.services"
     );
 
     foreach (service; services)
@@ -474,8 +475,7 @@ private string resolveMachineFolder(string machine, string confAttr, string[] ex
 {
     import std.json : JSONValue;
 
-    // Use --json to get clean string output without nix store path prefix
-    auto json = nix().eval!JSONValue(".#" ~ confAttr ~ "." ~ machine ~ ".config.mcl.host-info.configPath", extraNixOptions);
+    auto json = nix().eval!JSONValue(rootDir ~ "#" ~ confAttr ~ "." ~ machine ~ ".config.mcl.host-info.configPath", extraNixOptions);
     return json.str;
 }
 
@@ -484,9 +484,9 @@ private string[] resolveRecipients(SecretArgs common, string confAttr, string se
     import std.json : JSONValue;
 
     auto configBase = common.vm
-        ? ".#nixosConfigurations." ~ common.machine
+        ? rootDir ~ "#nixosConfigurations." ~ common.machine
             ~ "-vm.config.virtualisation.vmVariant"
-        : ".#" ~ confAttr ~ "." ~ common.machine ~ ".config";
+        : rootDir ~ "#" ~ confAttr ~ "." ~ common.machine ~ ".config";
 
     auto json = nix().eval!JSONValue(
         configBase ~ ".mcl.secrets.services." ~ service ~ ".recipients",
