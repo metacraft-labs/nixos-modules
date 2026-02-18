@@ -26,7 +26,7 @@ let
 
       secretDir =
         let
-          machineConfigPath = config.mcl.host-info.configPath;
+          machineConfigPath = lib.path.append dirs.root config.mcl.host-info.configPath;
           machineSecretDir = machineConfigPath + "/secrets";
           vmConfig = dirs.modules + "/default-vm-config";
           vmSecretDir = vmConfig + "/secrets";

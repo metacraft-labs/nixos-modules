@@ -7,6 +7,15 @@ let
       ...
     }:
     {
+      config = {
+        assertions = [
+          {
+            assertion = lib.path.subpath.isValid config.mcl.host-info.configPath;
+            message = "mcl.host-info.configPath must be a valid relative subpath without '..' components (got '${config.mcl.host-info.configPath}')";
+          }
+        ];
+      };
+
       options.mcl.host-info = with lib; {
         type = mkOption {
           type = types.enum [
@@ -30,8 +39,8 @@ let
         };
 
         configPath = mkOption {
-          type = types.path;
-          example = [ "machines/server/solunska-server" ];
+          type = types.str;
+          example = "./machines/server/solunska-server";
           description = ''
             The configuration path for this host relative to the repo root.
           '';
