@@ -8,7 +8,7 @@ import std.file : exists, isDir, dirEntries, SpanMode, mkdirRecurse,
 import std.format : format;
 import std.path : buildPath, baseName, stripExtension, dirName;
 import std.process : environment;
-import std.logger : infof, warningf;
+import std.logger : infof, tracef, warningf, errorf;
 import std.stdio : writeln, writefln, stderr;
 import std.regex : ctRegex, matchFirst;
 import std.string : replace, split, strip, endsWith;
@@ -273,6 +273,11 @@ private int unknownCommand()
 
 private void editSecret(string secretFile, string[] recipients, string[] identityArgs)
 {
+    import std.conv : to;
+
+    tracef("editSecret: secretFile=%s, recipients=%s, identityArgs=%s",
+        secretFile, recipients, identityArgs);
+
     if (recipients.length == 0)
         errorAndExit("No recipients found for encryption.");
 
@@ -286,12 +291,18 @@ private void editSecret(string secretFile, string[] recipients, string[] identit
     // Decrypt existing file if present
     if (secretFile.exists)
     {
+        infof("Decrypting existing secret: %s", secretFile);
         auto decryptCmd = ["age", "--decrypt"] ~ identityArgs ~ ["-o", cleartextFile, "--", secretFile];
         spawnProcessInline(decryptCmd);
+    }
+    else
+    {
+        infof("Secret file does not exist yet, creating new: %s", secretFile);
     }
 
     // Open editor
     auto editor = environment.get("EDITOR", "vim");
+    infof("Opening editor: %s %s", editor, cleartextFile);
     spawnProcessInline([editor, cleartextFile]);
 
     if (!cleartextFile.exists)
@@ -300,30 +311,59 @@ private void editSecret(string secretFile, string[] recipients, string[] identit
         return;
     }
 
+    auto cleartextData = read(cleartextFile);
+    tracef("Cleartext data size: %s bytes", cleartextData.length);
+
     // Ensure output directory exists
     auto outputDir = secretFile.dirName;
     if (!outputDir.exists)
+    {
+        infof("Creating output directory: %s", outputDir);
         mkdirRecurse(outputDir);
+    }
 
     // Encrypt with all recipients via stdin to avoid cleartext in process list (ps)
     import std.process : pipeProcess, wait, Redirect;
-    auto cleartextData = read(cleartextFile);
     auto encryptCmd = ["age", "--encrypt", "--armor"]
         ~ recipientArgs(recipients)
         ~ ["-o", secretFile]
         ~ ["-"];  // Read from stdin
+    infof("Encrypting to %s with %s recipient(s)", secretFile, recipients.length);
+    tracef("Encrypt command: %-(%s %)", encryptCmd);
     auto pipes = pipeProcess(encryptCmd, Redirect.stdin | Redirect.stdout | Redirect.stderr);
+    // NOTE: stdout/stderr are only drained after this write completes, so this
+    // can deadlock if `age` emits armored output filling the OS pipe buffer
+    // (16 pages by default on Linux) before all of stdin is consumed. Safe in
+    // practice because secrets are small; a large secret would require draining
+    // concurrently (e.g. writing stdin on a separate thread).
     pipes.stdin.rawWrite(cleartextData);
     pipes.stdin.close();
+
+    auto stdoutOutput = pipes.stdout.byLine().join("\n").to!string;
+    auto stderrOutput = pipes.stderr.byLine().join("\n").to!string;
     pipes.stdout.close();
     pipes.stderr.close();
     auto status = wait(pipes.pid);
+
     if (status != 0)
-        errorAndExit("Encryption failed");
+    {
+        errorf("Encryption failed (exit code %s)\nstdout: %s\nstderr: %s",
+            status, stdoutOutput, stderrOutput);
+        errorAndExit("Encryption failed (exit code " ~ status.to!string ~ "): " ~ stderrOutput);
+    }
+
+    tracef("Encryption stdout: %s", stdoutOutput);
+    tracef("Encryption stderr: %s", stderrOutput);
+    infof("Successfully encrypted secret to %s", secretFile);
 }
 
 private void reEncryptFolder(string secretsFolder, string[] recipients, string[] identityArgs)
 {
+    import std.conv : to;
+
+    tracef("reEncryptFolder: secretsFolder=%s, recipients=%s, identityArgs=%s",
+        secretsFolder, recipients, identityArgs);
+
     if (!secretsFolder.exists)
         errorAndExit("Secrets folder does not exist: " ~ secretsFolder);
 
@@ -340,6 +380,8 @@ private void reEncryptFolder(string secretsFolder, string[] recipients, string[]
         return;
     }
 
+    infof("Re-encrypting %s file(s) in %s", ageFiles.length, secretsFolder);
+
     foreach (ageFile; ageFiles)
     {
         auto secretName = ageFile.baseName.stripExtension;
@@ -353,6 +395,7 @@ private void reEncryptFolder(string secretsFolder, string[] recipients, string[]
         }
 
         // Decrypt
+        infof("Decrypting %s", ageFile);
         auto decryptCmd = ["age", "--decrypt"] ~ identityArgs ~ ["-o", cleartextFile, "--", ageFile];
         spawnProcessInline(decryptCmd);
 
@@ -363,15 +406,34 @@ private void reEncryptFolder(string secretsFolder, string[] recipients, string[]
             ~ recipientArgs(recipients)
             ~ ["-o", ageFile]
             ~ ["-"];  // Read from stdin
+        tracef("Re-encrypt command: %-(%s %)", encryptCmd);
         auto pipes = pipeProcess(encryptCmd, Redirect.stdin | Redirect.stdout | Redirect.stderr);
+        // NOTE: stdout/stderr are only drained after this write completes, so
+        // this can deadlock if `age` emits armored output filling the OS pipe
+        // buffer (16 pages by default on Linux) before all of stdin is consumed.
+        // Safe in practice because secrets are small; a large secret would
+        // require draining concurrently (e.g. writing stdin on a separate thread).
         pipes.stdin.rawWrite(cleartextData);
         pipes.stdin.close();
+
+        auto stdoutOutput = pipes.stdout.byLine().join("\n").to!string;
+        auto stderrOutput = pipes.stderr.byLine().join("\n").to!string;
         pipes.stdout.close();
         pipes.stderr.close();
         auto status = wait(pipes.pid);
+
         if (status != 0)
-            errorAndExit("Re-encryption failed");
+        {
+            errorf("Re-encryption of %s failed (exit code %s)\nstdout: %s\nstderr: %s",
+                ageFile, status, stdoutOutput, stderrOutput);
+            errorAndExit("Re-encryption failed (exit code " ~ status.to!string ~ "): " ~ stderrOutput);
+        }
+
+        tracef("Re-encryption stdout: %s", stdoutOutput);
+        tracef("Re-encryption stderr: %s", stderrOutput);
     }
+
+    infof("Successfully re-encrypted %s file(s)", ageFiles.length);
 }
 
 private int verifySecret(string secretFile, string[] recipients, string[] identityArgs, string service)
