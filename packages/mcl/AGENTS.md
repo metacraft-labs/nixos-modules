@@ -283,3 +283,15 @@ foreach (record; records)
 - `silly` - Test runner
 
 All dependencies are managed via `dub.sdl` and Nix flake.
+
+### Updating `dub-lock.json`
+
+After changing dependencies in `dub.sdl`, regenerate the Nix lock file used by `buildDubPackage`:
+
+```bash
+cd packages/mcl
+dub upgrade          # update dub.selections.json
+dub-to-nix > dub-lock.json  # regenerate dub-lock.json from selections
+```
+
+`dub-to-nix` is available in the Nix devshell (see `shells/default.nix`).
