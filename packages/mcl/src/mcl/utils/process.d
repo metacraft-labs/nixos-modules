@@ -28,9 +28,9 @@ T execute(T = string)(string[] args, bool printCommand = true, bool returnErr = 
     auto cmd = args.map!(x => x.canFind("*") ? x : x.escapeShellCommand()).join(" ");
 
     if (printCommand)
-    {
         infof("\n$ `%s`", cmd.bold);
-    }
+    else
+        tracef("\n$ `%s`", cmd.bold);
     auto res = pipeShell(cmd, redirect);
     static if (is(T == ProcessPipes))
     {
