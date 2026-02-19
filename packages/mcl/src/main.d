@@ -9,6 +9,7 @@ import std.algorithm : endsWith;
 import std.format : format;
 import std.meta : staticMap;
 import std.traits : Parameters;
+import sparkles.core_cli.logger : initLogger;
 import mcl.utils.path : rootDir;
 import mcl.utils.tui : bold;
 
@@ -39,7 +40,7 @@ alias SumTypeCase(alias func) = (Parameters!func args) => func(args);
 
 mixin CLI!MCLArgs.main!((args)
 {
-    setLogLevel(args.logLevel);
+    initLogger(args.logLevel);
 
     int result = args.cmd.matchCmd!(
         staticMap!(SumTypeCase, unknown_command, SubCommandFunctions),
@@ -47,10 +48,3 @@ mixin CLI!MCLArgs.main!((args)
 
     return result;
 });
-
-void setLogLevel(LogLevel l)
-{
-    import std.logger : globalLogLevel, sharedLog;
-    globalLogLevel = l;
-    (cast()sharedLog()).logLevel = l;
-}

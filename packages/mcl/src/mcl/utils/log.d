@@ -1,6 +1,5 @@
 module mcl.utils.log;
 
-
 void errorAndExit(string message) {
     import core.stdc.stdlib: exit;
     import std.stdio : stderr;
