@@ -61,7 +61,7 @@ struct NixCommand
 
     template opDispatch(string commandName)
     {
-        T opDispatch(T = string)(string path, string[] args = [])
+        T opDispatch(T = string)(string path, string[] args = [], bool printCommand = false)
         {
             import std.algorithm : canFind;
 
@@ -84,7 +84,7 @@ struct NixCommand
                 commandName,
             ] ~ args ~ path;
 
-            auto output = command.execute(printCommand: true, throwOnError: true).strip();
+            auto output = command.execute(printCommand: printCommand, throwOnError: true).strip();
 
             static if (is(T == JSONValue))
                 return parseJSON(output);
