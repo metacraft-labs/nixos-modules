@@ -164,6 +164,25 @@ export int parent_command(ParentArgs args)
 }
 ```
 
+### Enum Aliases with `@AllowedValues`
+
+Use `@AllowedValues` on enum members to accept alternative CLI spellings. Name enum members to match their canonical string form so `to!string` produces the right value without needing `@StringRepresentation`:
+
+```d
+import argparse : AllowedValues;
+
+enum ConfigurationType
+{
+    @AllowedValues("nixos", "nixosConfigurations")
+    nixosConfigurations,
+
+    @AllowedValues("nix-darwin", "darwinConfigurations")
+    darwinConfigurations,
+}
+```
+
+> **Note**: Use `.Parse(lambda)` (runtime argument), **not** `.Parse!(lambda)` (template argument), when customizing parsing on a `NamedArgument`.
+
 ### Data Structures
 
 Use named parameters for struct initialization:
