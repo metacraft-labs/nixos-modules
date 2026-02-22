@@ -168,6 +168,36 @@ ProcessResult runProcessWithInputCapture(string[] args, string input, bool echoO
     return ProcessResult(status, stdoutText, stderrText);
 }
 
+bool isInPath(string name)
+{
+    import std.algorithm : splitter;
+    import std.file : exists, isFile;
+    import std.path : buildPath;
+    import std.process : environment;
+    import std.string : toStringz;
+    import core.sys.posix.unistd : access, X_OK;
+
+    auto pathVar = environment.get("PATH", "");
+    foreach (dir; pathVar.splitter(':'))
+    {
+        auto candidate = dir.buildPath(name);
+        // isFile guards against a searchable directory of the same name;
+        // access(X_OK) ensures the file is actually executable.
+        if (candidate.exists && candidate.isFile
+            && access(candidate.toStringz, X_OK) == 0)
+            return true;
+    }
+    return false;
+}
+
+@("isInPath finds executables on PATH")
+unittest
+{
+    // "ls" should always be available on NixOS / any Linux
+    assert(isInPath("ls"));
+    assert(!isInPath("nonexistent-binary-abc123"));
+}
+
 void spawnProcessInline(string[] args)
 {
     import std.logger : tracef;
