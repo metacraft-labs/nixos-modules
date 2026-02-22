@@ -154,17 +154,16 @@ private int secretEdit(SecretArgs common, SecretEditArgs args)
 
     auto tmpfs = TmpFS.create("mcl-secret-identity-keys");
     const confAttr = common.configurationType.enumToString;
-    auto machineFolder = resolveMachineFolder(common.machine, confAttr, common.extraNixOptions);
-    auto recipients = resolveRecipients(common, confAttr, args.service);
+    auto info = resolveServiceInfo(common, confAttr, args.service);
 
     auto secretsFolder = args.secretsFolder
         ? args.secretsFolder
         : common.vm
             ? DEFAULT_VM_SECRETS_PATH ~ args.service
-            : machineFolder.buildPath("secrets", args.service);
+            : info.configPath.buildPath("secrets", args.service);
 
     auto secretFile = secretsFolder.buildPath(args.secret ~ ".age");
-    editSecret(secretFile, recipients, resolveIdentity(common.identity, tmpfs));
+    editSecret(secretFile, info.recipients, resolveIdentity(common.identity, tmpfs));
     return 0;
 }
 
@@ -174,16 +173,15 @@ private int secretReEncrypt(SecretArgs common, SecretReEncryptArgs args)
 
     auto tmpfs = TmpFS.create("mcl-secret-identity-keys");
     const confAttr = common.configurationType.enumToString;
-    auto machineFolder = resolveMachineFolder(common.machine, confAttr, common.extraNixOptions);
-    auto recipients = resolveRecipients(common, confAttr, args.service);
+    auto info = resolveServiceInfo(common, confAttr, args.service);
 
     auto secretsFolder = args.secretsFolder.length > 0
         ? args.secretsFolder
         : common.vm
             ? DEFAULT_VM_SECRETS_PATH ~ args.service
-            : machineFolder.buildPath("secrets", args.service);
+            : info.configPath.buildPath("secrets", args.service);
 
-    reEncryptFolder(secretsFolder, recipients, resolveIdentity(common.identity, tmpfs));
+    reEncryptFolder(secretsFolder, info.recipients, resolveIdentity(common.identity, tmpfs));
     return 0;
 }
 
@@ -193,20 +191,15 @@ private int secretReEncryptAll(SecretArgs common, SecretReEncryptAllArgs args)
 
     auto tmpfs = TmpFS.create("mcl-secret-identity-keys");
     const confAttr = common.configurationType.enumToString;
+    auto allInfo = resolveAllServicesInfo(common, confAttr);
     auto machineFolder = args.configPath.length > 0
         ? args.configPath
-        : resolveMachineFolder(common.machine, confAttr, common.extraNixOptions);
+        : allInfo.configPath;
     auto identityArgs = resolveIdentity(common.identity, tmpfs);
 
-    auto services = nixEvalAttrNames(
-        common.extraNixOptions,
-        rootDir ~ "#" ~ confAttr ~ "." ~ common.machine ~ ".config.mcl.secrets.services"
-    );
-
-    foreach (service; services)
+    foreach (service, recipients; allInfo.serviceRecipients)
     {
         writeln("Re-encrypting secrets for service ", service);
-        auto recipients = resolveRecipients(common, confAttr, service);
         auto secretsFolder = common.vm
             ? DEFAULT_VM_SECRETS_PATH ~ service
             : machineFolder.buildPath("secrets", service);
@@ -471,15 +464,14 @@ private void validateVmFlag(bool vm, ConfigurationType configurationType)
         errorAndExit("Cannot use `vm` with `configuration-type` " ~ configurationType.enumToString);
 }
 
-private string resolveMachineFolder(string machine, string confAttr, string[] extraNixOptions)
+private struct ServiceInfo
 {
-    import std.json : JSONValue;
-
-    auto json = nix().eval!JSONValue(rootDir ~ "#" ~ confAttr ~ "." ~ machine ~ ".config.mcl.host-info.configPath", extraNixOptions);
-    return json.str;
+    string configPath;
+    string[] recipients;
 }
 
-private string[] resolveRecipients(SecretArgs common, string confAttr, string service)
+/// Resolves configPath and recipients for a single service in one nix eval.
+private ServiceInfo resolveServiceInfo(SecretArgs common, string confAttr, string service)
 {
     import std.json : JSONValue;
 
@@ -488,19 +480,46 @@ private string[] resolveRecipients(SecretArgs common, string confAttr, string se
             ~ "-vm.config.virtualisation.vmVariant"
         : rootDir ~ "#" ~ confAttr ~ "." ~ common.machine ~ ".config";
 
-    auto json = nix().eval!JSONValue(
-        configBase ~ ".mcl.secrets.services." ~ service ~ ".recipients",
-        common.extraNixOptions);
+    auto json = nix().eval!JSONValue(configBase, common.extraNixOptions ~ [
+        "--apply", "c: { configPath = c.mcl.host-info.configPath; "
+            ~ "recipients = c.mcl.secrets.services." ~ service ~ ".recipients; }"
+    ]);
 
-    return json.array.map!(v => v.str).array;
+    return ServiceInfo(
+        configPath: json["configPath"].str,
+        recipients: json["recipients"].array.map!(v => v.str).array,
+    );
 }
 
-private string[] nixEvalAttrNames(string[] extraNixOptions, string path)
+private struct AllServicesInfo
+{
+    string configPath;
+    string[][string] serviceRecipients;
+}
+
+/// Resolves configPath and recipients for all services in one nix eval.
+private AllServicesInfo resolveAllServicesInfo(SecretArgs common, string confAttr)
 {
     import std.json : JSONValue;
 
-    auto json = nix().eval!JSONValue(path, extraNixOptions ~ ["--apply", "builtins.attrNames"]);
-    return json.array.map!(v => v.str).array;
+    auto configBase = common.vm
+        ? rootDir ~ "#nixosConfigurations." ~ common.machine
+            ~ "-vm.config.virtualisation.vmVariant"
+        : rootDir ~ "#" ~ confAttr ~ "." ~ common.machine ~ ".config";
+
+    auto json = nix().eval!JSONValue(configBase, common.extraNixOptions ~ [
+        "--apply", "c: { configPath = c.mcl.host-info.configPath; "
+            ~ "services = builtins.mapAttrs (_: s: s.recipients) c.mcl.secrets.services; }"
+    ]);
+
+    string[][string] serviceRecipients;
+    foreach (name, val; json["services"].object)
+        serviceRecipients[name] = val.array.map!(v => v.str).array;
+
+    return AllServicesInfo(
+        configPath: json["configPath"].str,
+        serviceRecipients: serviceRecipients,
+    );
 }
 
 // ---------------------------------------------------------------------------
