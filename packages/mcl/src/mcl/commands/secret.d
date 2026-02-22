@@ -22,7 +22,7 @@ import mcl.utils.json : fromJSON;
 import mcl.utils.log : errorAndExit;
 import mcl.utils.nix : nix;
 import mcl.utils.path : rootDir;
-import mcl.utils.process : execute, spawnProcessInline;
+import mcl.utils.process : execute, isInPath, spawnProcessInline;
 import mcl.utils.string : enumToString, StringRepresentation;
 
 // =============================================================================
@@ -618,6 +618,13 @@ private enum yubikeyIdentityPattern = ctRegex!(`^AGE-PLUGIN-YUBIKEY-[0-9A-Z]+$`)
 
 private string[] resolveYubikeyIdentities(ref TmpFS tmpfs)
 {
+    // Check if age-plugin-yubikey is available on PATH before executing
+    if (!isInPath("age-plugin-yubikey"))
+    {
+        infof("age-plugin-yubikey not found in PATH, skipping YubiKey identity resolution");
+        return [];
+    }
+
     string[] identityArgs;
 
     try
@@ -638,7 +645,7 @@ private string[] resolveYubikeyIdentities(ref TmpFS tmpfs)
     }
     catch (Exception e)
     {
-        infof("age-plugin-yubikey not available: %s", e.msg);
+        infof("age-plugin-yubikey execution failed: %s", e.msg);
     }
 
     return identityArgs;
