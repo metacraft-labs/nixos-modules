@@ -11,8 +11,8 @@ import std.stdio : writeln;
 import std.regex : ctRegex, matchFirst;
 import std.string : replace, split, strip, endsWith;
 
-import argparse : Command, Description, NamedArgument, Placeholder, Required,
-    SubCommand, Default, matchCmd;
+import argparse : AllowedValues, Command, Description, NamedArgument, Placeholder,
+    Required, SubCommand, Default, matchCmd;
 
 import sparkles.test_utils.tmpfs : TmpFS;
 
@@ -20,7 +20,7 @@ import mcl.utils.log : errorAndExit;
 import mcl.utils.nix : nix;
 import mcl.utils.path : rootDir;
 import mcl.utils.process : execute, isInPath, spawnProcessInline;
-import mcl.utils.string : enumToString, StringRepresentation;
+import std.conv : to;
 
 // =============================================================================
 // Constants
@@ -38,8 +38,11 @@ enum DEFAULT_VM_SECRETS_PATH = "./modules/default-vm-config/secrets/";
 
 enum ConfigurationType
 {
-    @StringRepresentation("nixosConfigurations") nixos,
-    @StringRepresentation("darwinConfigurations") nix_darwin,
+    @AllowedValues("nixos", "nixosConfigurations")
+    nixosConfigurations,
+
+    @AllowedValues("nix-darwin", "darwinConfigurations")
+    darwinConfigurations,
 }
 
 @(Command("secret")
@@ -54,8 +57,8 @@ struct SecretArgs
 
     @(NamedArgument(["configuration-type"])
         .Placeholder("TYPE")
-        .Description("Type of configurations, either `nixos` or `nix-darwin`"))
-    ConfigurationType configurationType = ConfigurationType.nixos;
+        .Description("Type of configurations, either `nixos`/`nixosConfigurations` or `nix-darwin`/`darwinConfigurations`"))
+    ConfigurationType configurationType = ConfigurationType.nixosConfigurations;
 
     @(NamedArgument(["vm"])
         .Description("Use the vmVariant configuration"))
@@ -153,7 +156,7 @@ private int secretEdit(SecretArgs common, SecretEditArgs args)
     validateVmFlag(common.vm, common.configurationType);
 
     auto tmpfs = TmpFS.create("mcl-secret-identity-keys");
-    const confAttr = common.configurationType.enumToString;
+    const confAttr = common.configurationType.to!string;
     auto info = resolveServiceInfo(common, confAttr, args.service);
 
     auto secretsFolder = args.secretsFolder
@@ -172,7 +175,7 @@ private int secretReEncrypt(SecretArgs common, SecretReEncryptArgs args)
     validateVmFlag(common.vm, common.configurationType);
 
     auto tmpfs = TmpFS.create("mcl-secret-identity-keys");
-    const confAttr = common.configurationType.enumToString;
+    const confAttr = common.configurationType.to!string;
     auto info = resolveServiceInfo(common, confAttr, args.service);
 
     auto secretsFolder = args.secretsFolder.length > 0
@@ -190,7 +193,7 @@ private int secretReEncryptAll(SecretArgs common, SecretReEncryptAllArgs args)
     validateVmFlag(common.vm, common.configurationType);
 
     auto tmpfs = TmpFS.create("mcl-secret-identity-keys");
-    const confAttr = common.configurationType.enumToString;
+    const confAttr = common.configurationType.to!string;
     auto allInfo = resolveAllServicesInfo(common, confAttr);
     auto machineFolder = args.configPath.length > 0
         ? args.configPath
@@ -222,8 +225,6 @@ private int unknownCommand()
 
 private void editSecret(string secretFile, string[] recipients, string[] identityArgs)
 {
-    import std.conv : to;
-
     tracef("editSecret: secretFile=%s, recipients=%s, identityArgs=%s",
         secretFile, recipients, identityArgs);
 
@@ -303,8 +304,6 @@ private void editSecret(string secretFile, string[] recipients, string[] identit
 
 private void reEncryptFolder(string secretsFolder, string[] recipients, string[] identityArgs)
 {
-    import std.conv : to;
-
     tracef("reEncryptFolder: secretsFolder=%s, recipients=%s, identityArgs=%s",
         secretsFolder, recipients, identityArgs);
 
@@ -467,8 +466,8 @@ private string[] resolveYubikeyIdentities(ref TmpFS tmpfs)
 
 private void validateVmFlag(bool vm, ConfigurationType configurationType)
 {
-    if (vm && configurationType != ConfigurationType.nixos)
-        errorAndExit("Cannot use `vm` with `configuration-type` " ~ configurationType.enumToString);
+    if (vm && configurationType != ConfigurationType.nixosConfigurations)
+        errorAndExit("Cannot use `vm` with `configuration-type` " ~ configurationType.to!string);
 }
 
 private struct ServiceInfo
@@ -533,16 +532,18 @@ private AllServicesInfo resolveAllServicesInfo(SecretArgs common, string confAtt
 // Unit tests
 // ---------------------------------------------------------------------------
 
-@("ConfigurationType.enumToString maps nixos")
+@("ConfigurationType.to!string maps nixosConfigurations")
 unittest
 {
-    assert(ConfigurationType.nixos.enumToString == "nixosConfigurations");
+    import std.conv : to;
+    assert(ConfigurationType.nixosConfigurations.to!string == "nixosConfigurations");
 }
 
-@("ConfigurationType.enumToString maps nix-darwin")
+@("ConfigurationType.to!string maps darwinConfigurations")
 unittest
 {
-    assert(ConfigurationType.nix_darwin.enumToString == "darwinConfigurations");
+    import std.conv : to;
+    assert(ConfigurationType.darwinConfigurations.to!string == "darwinConfigurations");
 }
 
 @("recipientArgs builds correct args")
