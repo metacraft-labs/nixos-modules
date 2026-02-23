@@ -263,7 +263,13 @@ private int secretList(SecretArgs common, SecretListArgs args)
             {
                 JSONValue ms_j;
                 foreach (svc, secrets; ms.serviceSecrets)
-                    ms_j[svc] = JSONValue(secrets.dup.sort.array);
+                {
+                    // Check if this is an error marker
+                    if (svc == "__ERROR__")
+                        ms_j["__error__"] = JSONValue("See stderr for details");
+                    else
+                        ms_j[svc] = JSONValue(secrets.dup.sort.array);
+                }
                 j[machine] = ms_j;
             }
             writeln(j.toJSON(pretty: true));
@@ -273,11 +279,21 @@ private int secretList(SecretArgs common, SecretListArgs args)
             foreach (machine; info.machines.keys.dup.sort.array)
             {
                 writeln(machine ~ ":");
+                bool hasError = false;
                 foreach (svc; info.machines[machine].serviceSecrets.keys.dup.sort.array)
                 {
-                    writeln("  " ~ svc ~ ":");
-                    foreach (secret; info.machines[machine].serviceSecrets[svc].dup.sort.array)
-                        writeln("    - " ~ secret);
+                    // Check if this is an error marker
+                    if (svc == "__ERROR__")
+                    {
+                        writeln("  ERROR (see stderr for details)");
+                        hasError = true;
+                    }
+                    else
+                    {
+                        writeln("  " ~ svc ~ ":");
+                        foreach (secret; info.machines[machine].serviceSecrets[svc].dup.sort.array)
+                            writeln("    - " ~ secret);
+                    }
                 }
             }
         }
@@ -667,24 +683,85 @@ private MachineServiceSecrets resolveListInfo(SecretArgs common, string confAttr
 }
 
 /// Resolves list info for all machines using --apply to avoid heavy eval.
+/// Falls back to per-machine evaluation if the bulk eval fails, with errors logged to stderr.
 private AllMachinesListInfo resolveAllMachinesListInfo(SecretArgs common, string confAttr)
 {
     auto flakeAttr = rootDir ~ "#" ~ confAttr;
 
-    auto json = nix().eval!JSONValue(flakeAttr, common.extraNixOptions ~ [
-        "--apply",
-        "cfgs: builtins.mapAttrs (_: m:"
-            ~ " builtins.mapAttrs (_: s: builtins.attrNames s.secrets)"
-            ~ " m.config.mcl.secrets.services) cfgs"
-    ]);
+    // Try bulk evaluation first
+    try
+    {
+        auto json = nix().eval!JSONValue(flakeAttr, common.extraNixOptions ~ [
+            "--apply",
+            "cfgs: builtins.mapAttrs (_: m:"
+                ~ " builtins.mapAttrs (_: s: builtins.attrNames s.secrets)"
+                ~ " m.config.mcl.secrets.services) cfgs"
+        ]);
+
+        AllMachinesListInfo result;
+        foreach (machine, services; json.object)
+        {
+            string[][string] svcMap;
+            foreach (svc, secrets; services.object)
+                svcMap[svc] = secrets.array.map!(v => v.str).array;
+            result.machines[machine] = MachineServiceSecrets(serviceSecrets: svcMap);
+        }
+
+        return result;
+    }
+    catch (Exception e)
+    {
+        // Bulk eval failed, fall back to per-machine evaluation
+        warningf("Bulk evaluation of all machines failed, evaluating machines individually");
+        return resolveAllMachinesListInfoFallback(common, confAttr);
+    }
+}
+
+/// Fallback to evaluate machines one at a time when bulk eval fails.
+/// Logs errors to stderr for failed machines and returns partial results with ERROR markers.
+private AllMachinesListInfo resolveAllMachinesListInfoFallback(SecretArgs common, string confAttr)
+{
+    auto flakeAttr = rootDir ~ "#" ~ confAttr;
+
+    // Get list of all available machines using --apply to extract attribute names
+    auto machineListJson = nix().eval!JSONValue(
+        flakeAttr,
+        common.extraNixOptions ~ [
+            "--apply",
+            "cfgs: builtins.attrNames cfgs"
+        ]
+    );
+
+    string[] machines;
+    foreach (machine; machineListJson.array)
+        machines ~= machine.str;
 
     AllMachinesListInfo result;
-    foreach (machine, services; json.object)
+    foreach (machine; machines.dup.sort.array)
     {
-        string[][string] svcMap;
-        foreach (svc, secrets; services.object)
-            svcMap[svc] = secrets.array.map!(v => v.str).array;
-        result.machines[machine] = MachineServiceSecrets(serviceSecrets: svcMap);
+        try
+        {
+            auto singleMachineResult = resolveListInfo(
+                SecretArgs(
+                    machine: machine,
+                    configurationType: common.configurationType,
+                    vm: common.vm,
+                    extraNixOptions: common.extraNixOptions,
+                    identity: common.identity,
+                    cmd: common.cmd
+                ),
+                confAttr
+            );
+            result.machines[machine] = singleMachineResult;
+        }
+        catch (Exception e)
+        {
+            errorf("Failed to evaluate machine '%s': %s", machine, e.msg);
+            // Add ERROR marker for this machine
+            result.machines[machine] = MachineServiceSecrets(
+                serviceSecrets: ["__ERROR__": ["See stderr for details"]]
+            );
+        }
     }
 
     return result;
