@@ -1,7 +1,8 @@
 module mcl.commands.secret;
 
-import std.algorithm : filter, map, each;
+import std.algorithm : filter, map, each, sort;
 import std.array : array, join;
+import std.json : JSONValue, toJSON;
 import std.file : exists, isDir, dirEntries, SpanMode, mkdirRecurse,
     remove, write, read, deleteme;
 import std.path : buildPath, baseName, stripExtension, dirName;
@@ -50,7 +51,6 @@ enum ConfigurationType
 struct SecretArgs
 {
     @(NamedArgument(["machine", "m"])
-        .Required()
         .Placeholder("NAME")
         .Description("Machine for which to manage secrets"))
     string machine;
@@ -78,6 +78,7 @@ struct SecretArgs
         SecretEditArgs,
         SecretReEncryptArgs,
         SecretReEncryptAllArgs,
+        SecretListArgs,
         Default!UnknownCommandArgs
     ) cmd;
 }
@@ -133,6 +134,15 @@ struct SecretReEncryptAllArgs
     string configPath;
 }
 
+@(Command("list")
+    .Description("List services and their secrets for a machine"))
+struct SecretListArgs
+{
+    @(NamedArgument(["json"])
+        .Description("Output as JSON"))
+    bool json;
+}
+
 // =============================================================================
 // Public Entry Point
 // =============================================================================
@@ -143,6 +153,7 @@ export int secret(SecretArgs args)
         (SecretEditArgs a) => secretEdit(args, a),
         (SecretReEncryptArgs a) => secretReEncrypt(args, a),
         (SecretReEncryptAllArgs a) => secretReEncryptAll(args, a),
+        (SecretListArgs a) => secretList(args, a),
         (UnknownCommandArgs _) => unknownCommand(),
     );
 }
@@ -153,6 +164,7 @@ export int secret(SecretArgs args)
 
 private int secretEdit(SecretArgs common, SecretEditArgs args)
 {
+    requireMachine(common);
     validateVmFlag(common.vm, common.configurationType);
 
     auto tmpfs = TmpFS.create("mcl-secret-identity-keys");
@@ -172,6 +184,7 @@ private int secretEdit(SecretArgs common, SecretEditArgs args)
 
 private int secretReEncrypt(SecretArgs common, SecretReEncryptArgs args)
 {
+    requireMachine(common);
     validateVmFlag(common.vm, common.configurationType);
 
     auto tmpfs = TmpFS.create("mcl-secret-identity-keys");
@@ -190,6 +203,7 @@ private int secretReEncrypt(SecretArgs common, SecretReEncryptArgs args)
 
 private int secretReEncryptAll(SecretArgs common, SecretReEncryptAllArgs args)
 {
+    requireMachine(common);
     validateVmFlag(common.vm, common.configurationType);
 
     auto tmpfs = TmpFS.create("mcl-secret-identity-keys");
@@ -208,6 +222,65 @@ private int secretReEncryptAll(SecretArgs common, SecretReEncryptAllArgs args)
             : machineFolder.buildPath("secrets", service);
 
         reEncryptFolder(secretsFolder, recipients, identityArgs);
+    }
+
+    return 0;
+}
+
+private int secretList(SecretArgs common, SecretListArgs args)
+{
+    const confAttr = common.configurationType.to!string;
+
+    if (common.machine.length > 0)
+    {
+        auto info = resolveListInfo(common, confAttr);
+
+        if (args.json)
+        {
+            JSONValue j;
+            foreach (svc, secrets; info.serviceSecrets)
+                j[svc] = JSONValue(secrets.dup.sort.array);
+            writeln(j.toJSON(pretty: true));
+        }
+        else
+        {
+            foreach (svc; info.serviceSecrets.keys.dup.sort.array)
+            {
+                writeln(svc ~ ":");
+                foreach (secret; info.serviceSecrets[svc].dup.sort.array)
+                    writeln("  - " ~ secret);
+            }
+        }
+    }
+    else
+    {
+        auto info = resolveAllMachinesListInfo(common, confAttr);
+
+        if (args.json)
+        {
+            JSONValue j;
+            foreach (machine, ms; info.machines)
+            {
+                JSONValue ms_j;
+                foreach (svc, secrets; ms.serviceSecrets)
+                    ms_j[svc] = JSONValue(secrets.dup.sort.array);
+                j[machine] = ms_j;
+            }
+            writeln(j.toJSON(pretty: true));
+        }
+        else
+        {
+            foreach (machine; info.machines.keys.dup.sort.array)
+            {
+                writeln(machine ~ ":");
+                foreach (svc; info.machines[machine].serviceSecrets.keys.dup.sort.array)
+                {
+                    writeln("  " ~ svc ~ ":");
+                    foreach (secret; info.machines[machine].serviceSecrets[svc].dup.sort.array)
+                        writeln("    - " ~ secret);
+                }
+            }
+        }
     }
 
     return 0;
@@ -464,10 +537,53 @@ private string[] resolveYubikeyIdentities(ref TmpFS tmpfs)
 // Helpers
 // =============================================================================
 
+private void requireMachine(SecretArgs common)
+{
+    if (common.machine.length == 0)
+        errorAndExit("--machine is required for this subcommand.");
+}
+
 private void validateVmFlag(bool vm, ConfigurationType configurationType)
 {
     if (vm && configurationType != ConfigurationType.nixosConfigurations)
         errorAndExit("Cannot use `vm` with `configuration-type` " ~ configurationType.to!string);
+}
+
+// JSON parsing structs for mcl.secrets
+private struct SecretFileInfo
+{
+    string file;
+    string group;
+    string mode;
+    string name;
+    string owner;
+    string path;
+    bool symlink;
+}
+
+private struct MachineServiceConfig
+{
+    string encryptedSecretDir;
+    string[] extraKeys;
+    string[] recipients;
+    SecretFileInfo[string] secrets;
+}
+
+private struct MachineSecretsConfig
+{
+    string[] extraKeys;
+    MachineServiceConfig[string] services;
+}
+
+// Output structures for list operations
+private struct MachineServiceSecrets
+{
+    string[][string] serviceSecrets;
+}
+
+private struct AllMachinesListInfo
+{
+    MachineServiceSecrets[string] machines;
 }
 
 private struct ServiceInfo
@@ -526,6 +642,52 @@ private AllServicesInfo resolveAllServicesInfo(SecretArgs common, string confAtt
         configPath: json["configPath"].str,
         serviceRecipients: serviceRecipients,
     );
+}
+
+/// Resolves list info for a single machine by evaluating mcl.secrets directly.
+private MachineServiceSecrets resolveListInfo(SecretArgs common, string confAttr)
+{
+    import mcl.utils.json : fromJSON;
+    import std.json : JSONValue;
+
+    auto configBase = common.vm
+        ? rootDir ~ "#nixosConfigurations." ~ common.machine
+            ~ "-vm.config.virtualisation.vmVariant.mcl.secrets"
+        : rootDir ~ "#" ~ confAttr ~ "." ~ common.machine ~ ".config.mcl.secrets";
+
+    auto secretsConfig = nix()
+        .eval!JSONValue(configBase, common.extraNixOptions)
+        .fromJSON!MachineSecretsConfig;
+
+    string[][string] serviceSecrets;
+    foreach (name, svc; secretsConfig.services)
+        serviceSecrets[name] = svc.secrets.keys.dup.sort.array;
+
+    return MachineServiceSecrets(serviceSecrets: serviceSecrets);
+}
+
+/// Resolves list info for all machines using --apply to avoid heavy eval.
+private AllMachinesListInfo resolveAllMachinesListInfo(SecretArgs common, string confAttr)
+{
+    auto flakeAttr = rootDir ~ "#" ~ confAttr;
+
+    auto json = nix().eval!JSONValue(flakeAttr, common.extraNixOptions ~ [
+        "--apply",
+        "cfgs: builtins.mapAttrs (_: m:"
+            ~ " builtins.mapAttrs (_: s: builtins.attrNames s.secrets)"
+            ~ " m.config.mcl.secrets.services) cfgs"
+    ]);
+
+    AllMachinesListInfo result;
+    foreach (machine, services; json.object)
+    {
+        string[][string] svcMap;
+        foreach (svc, secrets; services.object)
+            svcMap[svc] = secrets.array.map!(v => v.str).array;
+        result.machines[machine] = MachineServiceSecrets(serviceSecrets: svcMap);
+    }
+
+    return result;
 }
 
 // ---------------------------------------------------------------------------
