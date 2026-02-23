@@ -2,20 +2,19 @@ module mcl.commands.invoices.match;
 
 import std.stdio : writeln, writefln, File;
 import std.conv : to;
-import std.string : strip, toLower, startsWith, split;
+import std.string : toLower;
 import std.array : array, replace;
 import std.algorithm : map, filter, canFind;
 import std.file : exists, dirEntries, SpanMode, readText;
 import std.json : JSONOptions, parseJSON, JSONType;
-import std.exception : ifThrown;
 
 import argparse : Command, Default, Description, matchCmd, NamedArgument, Placeholder, Required, SubCommand;
 
 import mcl.utils.json : toJSON, fromJSON;
 import mcl.commands.host_info : HostParts;
-import mcl.commands.invoices.types : InvoiceItem, ManualMatchRecord, Product, ProductCategory, loadInvoiceItems;
-import mcl.commands.invoices.heuristics : isAutoMatchCategory,
-    categoriesMatch, extractBrandFromProduct, brandsMatch, serialsMatch,
+import mcl.commands.invoices.types : InvoiceItem, ManualMatchRecord, Product, ProductCategory,
+    loadInvoiceItems, loadManualMatches;
+import mcl.commands.invoices.heuristics : categoriesMatch, brandsMatch, serialsMatch,
     modelsMatch, matchProductCategory;
 import mcl.commands.invoices.list : ListArgs, listProducts;
 
@@ -260,42 +259,6 @@ HostParts parseHostInfoJson(string jsonText)
     {
         return HostParts.init;
     }
-}
-
-/// Load manual matches from CSV file
-ManualMatchRecord[] loadManualMatches(string filepath)
-{
-    if (!exists(filepath))
-        return [];
-
-    return ifThrown(
-        readText(filepath)
-            .split("\n")
-            .filter!(line => line.length > 0 && !line.startsWith("#"))
-            .map!(line => parseManualMatchLine(line))
-            .filter!(r => r.invoiceId.length > 0)
-            .array,
-        cast(ManualMatchRecord[]) []
-    );
-}
-
-ManualMatchRecord parseManualMatchLine(string line)
-{
-    auto fields = line.split(",");
-    if (fields.length < 9)
-        return ManualMatchRecord.init;
-
-    return ManualMatchRecord(
-        fields[0].strip,  // invoiceId
-        fields[1].strip,  // invoiceSn
-        fields[2].strip,  // invoiceDate
-        fields[3].strip,  // category
-        fields[4].strip,  // brand
-        fields[5].strip,  // model
-        fields[6].strip,  // matchType
-        fields[7].strip,  // hostname
-        fields[8].strip   // notes
-    );
 }
 
 // =============================================================================
