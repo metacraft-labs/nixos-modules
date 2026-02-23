@@ -141,6 +141,10 @@ struct SecretListArgs
     @(NamedArgument(["json"])
         .Description("Output as JSON"))
     bool json;
+
+    @(NamedArgument(["include-vms"])
+        .Description("Include VM configurations (VMs are hidden by default)"))
+    bool includeVMs;
 }
 
 // =============================================================================
@@ -261,6 +265,10 @@ private int secretList(SecretArgs common, SecretListArgs args)
             JSONValue j;
             foreach (machine, ms; info.machines)
             {
+                // Skip VMs unless --include-vms is specified
+                if (ms.isVM && !args.includeVMs)
+                    continue;
+
                 JSONValue ms_j;
                 foreach (svc, secrets; ms.serviceSecrets)
                 {
@@ -278,6 +286,10 @@ private int secretList(SecretArgs common, SecretListArgs args)
         {
             foreach (machine; info.machines.keys.dup.sort.array)
             {
+                // Skip VMs unless --include-vms is specified
+                if (info.machines[machine].isVM && !args.includeVMs)
+                    continue;
+
                 writeln(machine ~ ":");
                 bool hasError = false;
                 foreach (svc; info.machines[machine].serviceSecrets.keys.dup.sort.array)
@@ -565,6 +577,15 @@ private void validateVmFlag(bool vm, ConfigurationType configurationType)
         errorAndExit("Cannot use `vm` with `configuration-type` " ~ configurationType.to!string);
 }
 
+// JSON parsing structs for mcl.host-info
+private struct HostInfo
+{
+    string configPath;
+    bool isDebugVM;
+    string sshKey;
+    string type;
+}
+
 // JSON parsing structs for mcl.secrets
 private struct SecretFileInfo
 {
@@ -595,6 +616,7 @@ private struct MachineSecretsConfig
 private struct MachineServiceSecrets
 {
     string[][string] serviceSecrets;
+    bool isVM;  // true if this is a debug VM
 }
 
 private struct AllMachinesListInfo
@@ -660,7 +682,7 @@ private AllServicesInfo resolveAllServicesInfo(SecretArgs common, string confAtt
     );
 }
 
-/// Resolves list info for a single machine by evaluating mcl.secrets directly.
+/// Resolves list info for a single machine by evaluating mcl.secrets and mcl.host-info.
 private MachineServiceSecrets resolveListInfo(SecretArgs common, string confAttr)
 {
     import mcl.utils.json : fromJSON;
@@ -679,7 +701,27 @@ private MachineServiceSecrets resolveListInfo(SecretArgs common, string confAttr
     foreach (name, svc; secretsConfig.services)
         serviceSecrets[name] = svc.secrets.keys.dup.sort.array;
 
-    return MachineServiceSecrets(serviceSecrets: serviceSecrets);
+    // Fetch host-info to determine if this is a VM
+    bool isVM = false;
+    try
+    {
+        auto hostInfoBase = common.vm
+            ? rootDir ~ "#nixosConfigurations." ~ common.machine
+                ~ "-vm.config.virtualisation.vmVariant.mcl.host-info"
+            : rootDir ~ "#" ~ confAttr ~ "." ~ common.machine ~ ".config.mcl.host-info";
+
+        auto hostInfo = nix()
+            .eval!JSONValue(hostInfoBase, common.extraNixOptions)
+            .fromJSON!HostInfo;
+        isVM = hostInfo.isDebugVM;
+    }
+    catch (Exception e)
+    {
+        // If we can't get host-info, assume it's not a VM
+        tracef("Could not fetch host-info for machine '%s', assuming not a VM", common.machine);
+    }
+
+    return MachineServiceSecrets(serviceSecrets: serviceSecrets, isVM: isVM);
 }
 
 /// Resolves list info for all machines using --apply to avoid heavy eval.
@@ -757,9 +799,10 @@ private AllMachinesListInfo resolveAllMachinesListInfoFallback(SecretArgs common
         catch (Exception e)
         {
             errorf("Failed to evaluate machine '%s': %s", machine, e.msg);
-            // Add ERROR marker for this machine
+            // Add ERROR marker for this machine (assume isVM=false if we can't evaluate)
             result.machines[machine] = MachineServiceSecrets(
-                serviceSecrets: ["__ERROR__": ["See stderr for details"]]
+                serviceSecrets: ["__ERROR__": ["See stderr for details"]],
+                isVM: false
             );
         }
     }
