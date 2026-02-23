@@ -2,6 +2,7 @@ module mcl.commands.secret;
 
 import std.algorithm : filter, map, each, sort, startsWith;
 import std.array : array, join, appender;
+import std.json : JSONValue;
 import std.digest.sha : sha256Of, toHexString;
 import std.file : exists, isDir, dirEntries, SpanMode, mkdirRecurse,
     remove, write, read, deleteme;
@@ -18,7 +19,7 @@ import argparse : AllowedValues, Command, Description, NamedArgument, Placeholde
 
 import sparkles.test_utils.tmpfs : TmpFS;
 
-import mcl.utils.json : fromJSON;
+import mcl.utils.json : fromJSON, toJSON;
 import mcl.utils.log : errorAndExit;
 import mcl.utils.nix : nix;
 import mcl.utils.path : rootDir;
@@ -53,7 +54,6 @@ enum ConfigurationType
 struct SecretArgs
 {
     @(NamedArgument(["machine", "m"])
-        .Required()
         .Placeholder("NAME")
         .Description("Machine for which to manage secrets"))
     string machine;
@@ -82,6 +82,7 @@ struct SecretArgs
         SecretReEncryptArgs,
         SecretReEncryptAllArgs,
         SecretVerifyArgs,
+        SecretListArgs,
         Default!UnknownCommandArgs
     ) cmd;
 }
@@ -159,6 +160,15 @@ struct SecretVerifyArgs
     string secretsFolder;
 }
 
+@(Command("list")
+    .Description("List services and their secrets for a machine"))
+struct SecretListArgs
+{
+    @(NamedArgument(["json"])
+        .Description("Output as JSON"))
+    bool json;
+}
+
 // =============================================================================
 // Public Entry Point
 // =============================================================================
@@ -170,6 +180,7 @@ export int secret(SecretArgs args)
         (SecretReEncryptArgs a) => secretReEncrypt(args, a),
         (SecretReEncryptAllArgs a) => secretReEncryptAll(args, a),
         (SecretVerifyArgs a) => secretVerify(args, a),
+        (SecretListArgs a) => secretList(args, a),
         (UnknownCommandArgs _) => unknownCommand(),
     );
 }
@@ -180,6 +191,7 @@ export int secret(SecretArgs args)
 
 private int secretEdit(SecretArgs common, SecretEditArgs args)
 {
+    requireMachine(common);
     validateVmFlag(common.vm, common.configurationType);
 
     auto tmpfs = TmpFS.create("mcl-secret-identity-keys");
@@ -199,6 +211,7 @@ private int secretEdit(SecretArgs common, SecretEditArgs args)
 
 private int secretReEncrypt(SecretArgs common, SecretReEncryptArgs args)
 {
+    requireMachine(common);
     validateVmFlag(common.vm, common.configurationType);
 
     auto tmpfs = TmpFS.create("mcl-secret-identity-keys");
@@ -217,6 +230,7 @@ private int secretReEncrypt(SecretArgs common, SecretReEncryptArgs args)
 
 private int secretReEncryptAll(SecretArgs common, SecretReEncryptAllArgs args)
 {
+    requireMachine(common);
     validateVmFlag(common.vm, common.configurationType);
 
     auto tmpfs = TmpFS.create("mcl-secret-identity-keys");
@@ -242,21 +256,70 @@ private int secretReEncryptAll(SecretArgs common, SecretReEncryptAllArgs args)
 
 private int secretVerify(SecretArgs common, SecretVerifyArgs args)
 {
+    requireMachine(common);
     validateVmFlag(common.vm, common.configurationType);
 
     auto tmpfs = TmpFS.create("mcl-secret-identity-keys");
-    const confAttr = common.configurationType.enumToString;
-    auto machineFolder = resolveMachineFolder(common.machine, confAttr, common.extraNixOptions);
-    auto recipients = resolveRecipients(common, confAttr, args.service);
+    const confAttr = common.configurationType.to!string;
+    auto info = resolveServiceInfo(common, confAttr, args.service);
 
     auto secretsFolder = args.secretsFolder.length > 0
         ? args.secretsFolder
         : common.vm
             ? DEFAULT_VM_SECRETS_PATH ~ args.service
-            : machineFolder.buildPath("secrets", args.service);
+            : info.configPath.buildPath("secrets", args.service);
 
     auto secretFile = secretsFolder.buildPath(args.secret ~ ".age");
-    return verifySecret(secretFile, recipients, resolveIdentity(common.identity, tmpfs), args.service);
+    return verifySecret(secretFile, info.recipients, resolveIdentity(common.identity, tmpfs), args.service);
+}
+
+private int secretList(SecretArgs common, SecretListArgs args)
+{
+    const confAttr = common.configurationType.to!string;
+
+    if (common.machine.length > 0)
+    {
+        auto info = resolveListInfo(common, confAttr);
+
+        if (args.json)
+            writeln(info.serviceSecrets.toJSON.toPrettyString);
+        else
+        {
+            foreach (svc; info.serviceSecrets.keys.dup.sort.array)
+            {
+                writeln(svc ~ ":");
+                foreach (secret; info.serviceSecrets[svc].dup.sort.array)
+                    writeln("  - " ~ secret);
+            }
+        }
+    }
+    else
+    {
+        auto info = resolveAllMachinesListInfo(common, confAttr);
+
+        if (args.json)
+        {
+            auto j = JSONValue.emptyObject;
+            foreach (machine, ms; info.machines)
+                j[machine] = ms.serviceSecrets.toJSON;
+            writeln(j.toPrettyString);
+        }
+        else
+        {
+            foreach (machine; info.machines.keys.dup.sort.array)
+            {
+                writeln(machine ~ ":");
+                foreach (svc; info.machines[machine].serviceSecrets.keys.dup.sort.array)
+                {
+                    writeln("  " ~ svc ~ ":");
+                    foreach (secret; info.machines[machine].serviceSecrets[svc].dup.sort.array)
+                        writeln("    - " ~ secret);
+                }
+            }
+        }
+    }
+
+    return 0;
 }
 
 private int unknownCommand()
@@ -654,10 +717,53 @@ private string[] resolveYubikeyIdentities(ref TmpFS tmpfs)
 // Helpers
 // =============================================================================
 
+private void requireMachine(SecretArgs common)
+{
+    if (common.machine.length == 0)
+        errorAndExit("--machine is required for this subcommand.");
+}
+
 private void validateVmFlag(bool vm, ConfigurationType configurationType)
 {
     if (vm && configurationType != ConfigurationType.nixosConfigurations)
         errorAndExit("Cannot use `vm` with `configuration-type` " ~ configurationType.to!string);
+}
+
+// JSON parsing structs for mcl.secrets
+private struct SecretFileInfo
+{
+    string file;
+    string group;
+    string mode;
+    string name;
+    string owner;
+    string path;
+    bool symlink;
+}
+
+private struct MachineServiceConfig
+{
+    string encryptedSecretDir;
+    string[] extraKeys;
+    string[] recipients;
+    SecretFileInfo[string] secrets;
+}
+
+private struct MachineSecretsConfig
+{
+    string[] extraKeys;
+    MachineServiceConfig[string] services;
+}
+
+// Output structures for list operations
+private struct MachineServiceSecrets
+{
+    string[][string] serviceSecrets;
+}
+
+private struct AllMachinesListInfo
+{
+    MachineServiceSecrets[string] machines;
 }
 
 private struct ServiceInfo
@@ -698,6 +804,49 @@ private AllServicesInfo resolveAllServicesInfo(SecretArgs common, string confAtt
         "--apply", "c: { configPath = c.mcl.host-info.configPath; "
             ~ "serviceRecipients = builtins.mapAttrs (_: s: s.recipients) c.mcl.secrets.services; }"
     ]).fromJSON!AllServicesInfo;
+}
+
+/// Resolves list info for a single machine by evaluating mcl.secrets directly.
+private MachineServiceSecrets resolveListInfo(SecretArgs common, string confAttr)
+{
+    auto configBase = common.vm
+        ? rootDir ~ "#nixosConfigurations." ~ common.machine
+            ~ "-vm.config.virtualisation.vmVariant.mcl.secrets"
+        : rootDir ~ "#" ~ confAttr ~ "." ~ common.machine ~ ".config.mcl.secrets";
+
+    auto secretsConfig = nix()
+        .eval!JSONValue(configBase, common.extraNixOptions)
+        .fromJSON!MachineSecretsConfig;
+
+    string[][string] serviceSecrets;
+    foreach (name, svc; secretsConfig.services)
+        serviceSecrets[name] = svc.secrets.keys.dup.sort.array;
+
+    return MachineServiceSecrets(serviceSecrets: serviceSecrets);
+}
+
+/// Resolves list info for all machines using --apply to avoid heavy eval.
+private AllMachinesListInfo resolveAllMachinesListInfo(SecretArgs common, string confAttr)
+{
+    auto flakeAttr = rootDir ~ "#" ~ confAttr;
+
+    auto json = nix().eval!JSONValue(flakeAttr, common.extraNixOptions ~ [
+        "--apply",
+        "cfgs: builtins.mapAttrs (_: m:"
+            ~ " builtins.mapAttrs (_: s: builtins.attrNames s.secrets)"
+            ~ " m.config.mcl.secrets.services) cfgs"
+    ]);
+
+    AllMachinesListInfo result;
+    foreach (machine, services; json.object)
+    {
+        string[][string] svcMap;
+        foreach (svc, secrets; services.object)
+            svcMap[svc] = secrets.array.map!(v => v.str).array;
+        result.machines[machine] = MachineServiceSecrets(serviceSecrets: svcMap);
+    }
+
+    return result;
 }
 
 // ---------------------------------------------------------------------------

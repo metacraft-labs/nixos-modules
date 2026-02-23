@@ -142,6 +142,32 @@ assert_eq "$d2" "my-api-key-123" "api-key preserved after re-encrypt-all"
 assert_eq "$d3" "other-token-value" "token preserved after re-encrypt-all"
 
 # ---------------------------------------------------------------
+# Test 5: `mcl secret list` (single machine, tree output)
+# ---------------------------------------------------------------
+echo "=== Test 5: mcl secret list (single machine, tree) ==="
+list_output=$(mcl secret --machine test-secret-machine list)
+assert_eq "$(echo "$list_output" | grep -c 'test-svc\|other-svc')" "2" "list shows both services"
+assert_eq "$(echo "$list_output" | grep -c '  - password\|  - api-key\|  - token')" "3" "list shows all 3 secrets"
+
+# ---------------------------------------------------------------
+# Test 6: `mcl secret list` (single machine, JSON output)
+# ---------------------------------------------------------------
+echo "=== Test 6: mcl secret list (single machine, JSON) ==="
+list_json=$(mcl secret --machine test-secret-machine list --json)
+assert_eq "$(echo "$list_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(sorted(d.keys()))")" \
+  "['other-svc', 'test-svc']" "JSON has expected service keys"
+assert_eq "$(echo "$list_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(sorted(d['test-svc']))")" \
+  "['api-key', 'password']" "JSON test-svc has expected secrets"
+
+# ---------------------------------------------------------------
+# Test 7: `mcl secret list` (all machines, tree output)
+# ---------------------------------------------------------------
+echo "=== Test 7: mcl secret list (all machines) ==="
+all_output=$(mcl secret list)
+assert_eq "$(echo "$all_output" | grep -c 'test-secret-machine')" "1" "list all shows machine name"
+assert_eq "$(echo "$all_output" | grep -c '  test-svc:\|  other-svc:')" "2" "list all shows services indented"
+
+# ---------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------
 echo ""
