@@ -258,17 +258,13 @@ private int secretList(SecretArgs common, SecretListArgs args)
     }
     else
     {
-        auto info = resolveAllMachinesListInfo(common, confAttr);
+        auto info = resolveAllMachinesListInfo(common, args, confAttr);
 
         if (args.json)
         {
             JSONValue j;
             foreach (machine, ms; info.machines)
             {
-                // Skip VMs unless --include-vms is specified
-                if (ms.isVM && !args.includeVMs)
-                    continue;
-
                 JSONValue ms_j;
                 foreach (svc, secrets; ms.serviceSecrets)
                 {
@@ -286,10 +282,6 @@ private int secretList(SecretArgs common, SecretListArgs args)
         {
             foreach (machine; info.machines.keys.dup.sort.array)
             {
-                // Skip VMs unless --include-vms is specified
-                if (info.machines[machine].isVM && !args.includeVMs)
-                    continue;
-
                 writeln(machine ~ ":");
                 bool hasError = false;
                 foreach (svc; info.machines[machine].serviceSecrets.keys.dup.sort.array)
@@ -577,15 +569,6 @@ private void validateVmFlag(bool vm, ConfigurationType configurationType)
         errorAndExit("Cannot use `vm` with `configuration-type` " ~ configurationType.to!string);
 }
 
-// JSON parsing structs for mcl.host-info
-private struct HostInfo
-{
-    string configPath;
-    bool isDebugVM;
-    string sshKey;
-    string type;
-}
-
 // JSON parsing structs for mcl.secrets
 private struct SecretFileInfo
 {
@@ -701,32 +684,18 @@ private MachineServiceSecrets resolveListInfo(SecretArgs common, string confAttr
     foreach (name, svc; secretsConfig.services)
         serviceSecrets[name] = svc.secrets.keys.dup.sort.array;
 
-    // Fetch host-info to determine if this is a VM
-    bool isVM = false;
-    try
-    {
-        auto hostInfoBase = common.vm
-            ? rootDir ~ "#nixosConfigurations." ~ common.machine
-                ~ "-vm.config.virtualisation.vmVariant.mcl.host-info"
-            : rootDir ~ "#" ~ confAttr ~ "." ~ common.machine ~ ".config.mcl.host-info";
-
-        auto hostInfo = nix()
-            .eval!JSONValue(hostInfoBase, common.extraNixOptions)
-            .fromJSON!HostInfo;
-        isVM = hostInfo.isDebugVM;
-    }
-    catch (Exception e)
-    {
-        // If we can't get host-info, assume it's not a VM
-        tracef("Could not fetch host-info for machine '%s', assuming not a VM", common.machine);
-    }
-
-    return MachineServiceSecrets(serviceSecrets: serviceSecrets, isVM: isVM);
+    // Determine if this is a VM based on machine name convention (machines ending in "-vm")
+    return MachineServiceSecrets(serviceSecrets: serviceSecrets, isVM: common.machine.endsWith("-vm"));
 }
 
 /// Resolves list info for all machines using --apply to avoid heavy eval.
 /// Falls back to per-machine evaluation if the bulk eval fails, with errors logged to stderr.
-private AllMachinesListInfo resolveAllMachinesListInfo(SecretArgs common, string confAttr)
+/// Filters out VMs unless --include-vms is specified.
+private AllMachinesListInfo resolveAllMachinesListInfo(
+    SecretArgs common,
+    SecretListArgs listArgs,
+    string confAttr
+)
 {
     auto flakeAttr = rootDir ~ "#" ~ confAttr;
 
@@ -743,10 +712,17 @@ private AllMachinesListInfo resolveAllMachinesListInfo(SecretArgs common, string
         AllMachinesListInfo result;
         foreach (machine, services; json.object)
         {
+            // Skip VMs unless --include-vms is specified
+            if (machine.endsWith("-vm") && !listArgs.includeVMs)
+                continue;
+
             string[][string] svcMap;
             foreach (svc, secrets; services.object)
                 svcMap[svc] = secrets.array.map!(v => v.str).array;
-            result.machines[machine] = MachineServiceSecrets(serviceSecrets: svcMap);
+            result.machines[machine] = MachineServiceSecrets(
+                serviceSecrets: svcMap,
+                isVM: machine.endsWith("-vm")
+            );
         }
 
         return result;
@@ -755,13 +731,17 @@ private AllMachinesListInfo resolveAllMachinesListInfo(SecretArgs common, string
     {
         // Bulk eval failed, fall back to per-machine evaluation
         warningf("Bulk evaluation of all machines failed, evaluating machines individually");
-        return resolveAllMachinesListInfoFallback(common, confAttr);
+        return resolveAllMachinesListInfoFallback(common, listArgs, confAttr);
     }
 }
 
 /// Fallback to evaluate machines one at a time when bulk eval fails.
 /// Logs errors to stderr for failed machines and returns partial results with ERROR markers.
-private AllMachinesListInfo resolveAllMachinesListInfoFallback(SecretArgs common, string confAttr)
+private AllMachinesListInfo resolveAllMachinesListInfoFallback(
+    SecretArgs common,
+    SecretListArgs listArgs,
+    string confAttr
+)
 {
     auto flakeAttr = rootDir ~ "#" ~ confAttr;
 
@@ -781,6 +761,11 @@ private AllMachinesListInfo resolveAllMachinesListInfoFallback(SecretArgs common
     AllMachinesListInfo result;
     foreach (machine; machines.dup.sort.array)
     {
+        // Skip VMs unless --include-vms is specified
+        bool isVM = machine.endsWith("-vm");
+        if (isVM && !listArgs.includeVMs)
+            continue;
+
         try
         {
             auto singleMachineResult = resolveListInfo(
@@ -799,10 +784,10 @@ private AllMachinesListInfo resolveAllMachinesListInfoFallback(SecretArgs common
         catch (Exception e)
         {
             errorf("Failed to evaluate machine '%s': %s", machine, e.msg);
-            // Add ERROR marker for this machine (assume isVM=false if we can't evaluate)
+            // Add ERROR marker for this machine
             result.machines[machine] = MachineServiceSecrets(
                 serviceSecrets: ["__ERROR__": ["See stderr for details"]],
-                isVM: false
+                isVM: isVM
             );
         }
     }
