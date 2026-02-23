@@ -1,13 +1,14 @@
 module mcl.commands.invoices.types;
 
-import std.algorithm : joiner, map;
-import std.array : array;
+import std.algorithm : filter, joiner, map;
+import std.array : array, join;
 import std.conv : to;
 import std.csv : csvReader, Malformed;
 import std.datetime : Date;
 import std.exception : ifThrown;
 import std.file : dirEntries, exists, readText, SpanMode;
 import std.path : baseName;
+import std.string : lineSplitter, startsWith, strip;
 
 import mcl.utils.string : StringRepresentation;
 
@@ -139,4 +140,82 @@ struct ManualMatchRecord
     string matchType;  // serial, model, manual, standalone, ignored
     string hostname;
     string notes;
+}
+
+struct ManualMatchCsvRow
+{
+    string invoice_id;
+    string invoice_sn;
+    string invoice_date;
+    string category;
+    string brand;
+    string model;
+    string match_type;
+    string hostname;
+    string notes;
+}
+
+/// Load manual match overrides from CSV file.
+/// Supports comment lines that start with '#'.
+ManualMatchRecord[] loadManualMatches(string filepath)
+{
+    if (!exists(filepath))
+        return [];
+
+    auto csvText = readText(filepath)
+        .lineSplitter
+        .filter!(line => line.strip.length > 0 && !line.strip.startsWith("#"))
+        .array
+        .join("\n");
+
+    return ifThrown(
+        csvText
+            .csvReader!(ManualMatchCsvRow, Malformed.ignore)(null)
+            .map!(row => ManualMatchRecord(
+                invoiceId: row.invoice_id.strip,
+                invoiceSn: row.invoice_sn.strip,
+                invoiceDate: row.invoice_date.strip,
+                category: row.category.strip,
+                brand: row.brand.strip,
+                model: row.model.strip,
+                matchType: row.match_type.strip,
+                hostname: row.hostname.strip,
+                notes: row.notes.strip,
+            ))
+            .filter!(record => record.invoiceId.length > 0)
+            .array,
+        cast(ManualMatchRecord[]) []
+    );
+}
+
+unittest
+{
+    import std.conv : to;
+    import std.datetime.systime : Clock;
+    import std.file : exists, remove, tempDir, write;
+    import std.path : buildPath;
+
+    auto filepath = buildPath(tempDir(), "manual-matches-" ~ Clock.currTime.stdTime.to!string ~ ".csv");
+    scope (exit)
+    {
+        if (exists(filepath))
+            remove(filepath);
+    }
+
+    filepath.write(
+        "# comment line\n" ~
+        "invoice_id,invoice_sn,invoice_date,category,brand,model,match_type,hostname,notes\n" ~
+        "2264559,69ENF0R871366,2022-02-12,SSD,Samsung,980 PRO 2TB,serial,gpu-server-001,\n" ~
+        "2148749,008NTXRDS794,2020-12-28,Monitor,LG,\"27GL850-B, Rev 2\",manual,martin-ivanov-001,\"Desk 3, Row A\"\n"
+    );
+
+    auto records = loadManualMatches(filepath);
+    assert(records.length == 2);
+
+    assert(records[0].invoiceId == "2264559");
+    assert(records[0].model == "980 PRO 2TB");
+
+    assert(records[1].invoiceId == "2148749");
+    assert(records[1].model == "27GL850-B, Rev 2");
+    assert(records[1].notes == "Desk 3, Row A");
 }
