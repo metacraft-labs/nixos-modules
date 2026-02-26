@@ -154,10 +154,10 @@ assert_eq "$(echo "$list_output" | grep -c '  - password\|  - api-key\|  - token
 # ---------------------------------------------------------------
 echo "=== Test 6: mcl secret list (single machine, JSON) ==="
 list_json=$(mcl secret --machine test-secret-machine list --json)
-assert_eq "$(echo "$list_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(sorted(d.keys()))")" \
-  "['other-svc', 'test-svc']" "JSON has expected service keys"
-assert_eq "$(echo "$list_json" | python3 -c "import sys,json; d=json.load(sys.stdin); print(sorted(d['test-svc']))")" \
-  "['api-key', 'password']" "JSON test-svc has expected secrets"
+assert_eq "$(echo "$list_json" | jq -r 'keys | sort | join(",")')" \
+  "other-svc,test-svc" "JSON has expected service keys"
+assert_eq "$(echo "$list_json" | jq -r '."test-svc" | sort | join(",")')" \
+  "api-key,password" "JSON test-svc has expected secrets"
 
 # ---------------------------------------------------------------
 # Test 7: `mcl secret list` (all machines, tree output)
@@ -166,6 +166,41 @@ echo "=== Test 7: mcl secret list (all machines) ==="
 all_output=$(mcl secret list)
 assert_eq "$(echo "$all_output" | grep -c 'test-secret-machine')" "1" "list all shows machine name"
 assert_eq "$(echo "$all_output" | grep -c '  test-svc:\|  other-svc:')" "2" "list all shows services indented"
+
+# ---------------------------------------------------------------
+# Test 8: `mcl secret list` is resilient to a machine that fails to
+#         evaluate. `broken-machine` throws while forcing its secrets;
+#         the whole-fleet eval must not abort — it should surface an
+#         ERROR marker for that machine and still list the healthy ones.
+# ---------------------------------------------------------------
+echo "=== Test 8: mcl secret list (resilient to broken machine) ==="
+broken_stderr="$MCL_SECRET_TMP_DIR/broken-stderr"
+broken_output=$(mcl secret list 2>"$broken_stderr")
+assert_eq "$(echo "$broken_output" | grep -c '^broken-machine:')" "1" \
+  "broken machine appears in list"
+assert_eq "$(echo "$broken_output" | grep -c 'ERROR (see stderr for details)')" "1" \
+  "broken machine shows ERROR marker"
+assert_eq "$(echo "$broken_output" | grep -c '^test-secret-machine:')" "1" \
+  "healthy machine still listed despite broken peer"
+assert_eq "$(grep -c 'broken-machine' "$broken_stderr")" "1" \
+  "broken machine error logged to stderr"
+
+# JSON output must carry the per-machine error marker too.
+broken_json=$(mcl secret list --json 2>/dev/null)
+assert_eq "$(echo "$broken_json" | jq -r '."broken-machine" | has("__error__")')" \
+  "true" "JSON list marks broken machine with __error__"
+
+# ---------------------------------------------------------------
+# Test 9: `mcl secret list` hides VMs (machines ending in `-vm`) by
+#         default and reveals them with `--include-vms`.
+# ---------------------------------------------------------------
+echo "=== Test 9: mcl secret list (VM filtering) ==="
+default_list=$(mcl secret list 2>/dev/null)
+assert_eq "$(echo "$default_list" | grep -c '^test-secret-machine-vm:')" "0" \
+  "VM hidden by default"
+include_list=$(mcl secret list --include-vms 2>/dev/null)
+assert_eq "$(echo "$include_list" | grep -c '^test-secret-machine-vm:')" "1" \
+  "VM shown with --include-vms"
 
 # ---------------------------------------------------------------
 # Summary
