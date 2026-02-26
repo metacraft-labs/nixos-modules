@@ -30,19 +30,35 @@ path (`/nix/store/...`), which would be read-only.
 
 `default.nix` sets up:
 
-1. A minimal `nixosConfigurations.test-secret-machine` with `mcl-host-info`
-   and `mcl-secrets` modules, using test SSH keys from `test-keys/`.
+1. Three `nixosConfigurations` (all built from the shared `mkMachine`
+   helper, using `mcl-host-info`/`mcl-secrets` and test SSH keys from
+   `test-keys/`):
+   - `test-secret-machine` — the primary, fully-valid machine.
+   - `broken-machine` — its `mcl.secrets.services.broken-svc.secrets` is a
+     `throw`, so forcing its secrets fails. Used to verify `list`'s
+     per-machine `tryEval` resilience (the whole-fleet eval must not abort).
+   - `test-secret-machine-vm` — a valid machine whose name ends in `-vm`,
+     used to verify VM filtering in `list`.
 2. A `writeShellApplication` check that runs `test-mcl-secret.sh` with
    `mcl`, `age`, `git`, and `nix` on `PATH`.
 
-`test-mcl-secret.sh` covers four scenarios:
+Note: these test machines intentionally do **not** build a full
+`system.build.toplevel` (they lack `age.identityPaths`, etc.); `list` only
+forces `mcl.secrets.services.*.secrets` attr-names, never `toplevel`.
 
-| Test | Subcommand                  | What it verifies                                          |
-| ---- | --------------------------- | --------------------------------------------------------- |
-| 1    | `mcl secret edit`           | Creates a new `.age` secret and decrypts it back          |
-| 2    | `mcl secret edit`           | Edits an existing secret (overwrites ciphertext)          |
-| 3    | `mcl secret re-encrypt`     | Re-encrypts a service folder; content is preserved        |
-| 4    | `mcl secret re-encrypt-all` | Re-encrypts all services using `configPath`-derived paths |
+`test-mcl-secret.sh` covers these scenarios:
+
+| Test | Subcommand                  | What it verifies                                                                                                                           |
+| ---- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1    | `mcl secret edit`           | Creates a new `.age` secret and decrypts it back                                                                                           |
+| 2    | `mcl secret edit`           | Edits an existing secret (overwrites ciphertext)                                                                                           |
+| 3    | `mcl secret re-encrypt`     | Re-encrypts a service folder; content is preserved                                                                                         |
+| 4    | `mcl secret re-encrypt-all` | Re-encrypts all services using `configPath`-derived paths                                                                                  |
+| 5    | `mcl secret list`           | Single machine, tree output: lists services and secrets                                                                                    |
+| 6    | `mcl secret list --json`    | Single machine, JSON output: service/secret keys                                                                                           |
+| 7    | `mcl secret list`           | All machines: machine name + indented services                                                                                             |
+| 8    | `mcl secret list`           | Resilience: `broken-machine` yields an ERROR marker (tree) / `__error__` (JSON) and is logged to stderr, while healthy machines still list |
+| 9    | `mcl secret list`           | VM filtering: `-vm` machine hidden by default, shown with `--include-vms`                                                                  |
 
 ### Test environment setup
 
