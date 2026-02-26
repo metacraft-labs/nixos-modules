@@ -688,9 +688,10 @@ private MachineServiceSecrets resolveListInfo(SecretArgs common, string confAttr
     return MachineServiceSecrets(serviceSecrets: serviceSecrets, isVM: common.machine.endsWith("-vm"));
 }
 
-/// Resolves list info for all machines using --apply to avoid heavy eval.
-/// Falls back to per-machine evaluation if the bulk eval fails, with errors logged to stderr.
-/// Filters out VMs unless --include-vms is specified.
+/// Resolves list info for all machines using a single --apply bulk eval.
+/// Per-machine errors are caught inside the Nix expression via builtins.tryEval,
+/// so broken machines produce an error marker instead of aborting the whole eval.
+/// Filters out VMs (machines ending in "-vm") unless --include-vms is specified.
 private AllMachinesListInfo resolveAllMachinesListInfo(
     SecretArgs common,
     SecretListArgs listArgs,
@@ -699,94 +700,44 @@ private AllMachinesListInfo resolveAllMachinesListInfo(
 {
     auto flakeAttr = rootDir ~ "#" ~ confAttr;
 
-    // Try bulk evaluation first
-    try
-    {
-        auto json = nix().eval!JSONValue(flakeAttr, common.extraNixOptions ~ [
-            "--apply",
-            "cfgs: builtins.mapAttrs (_: m:"
-                ~ " builtins.mapAttrs (_: s: builtins.attrNames s.secrets)"
-                ~ " m.config.mcl.secrets.services) cfgs"
-        ]);
-
-        AllMachinesListInfo result;
-        foreach (machine, services; json.object)
-        {
-            // Skip VMs unless --include-vms is specified
-            if (machine.endsWith("-vm") && !listArgs.includeVMs)
-                continue;
-
-            string[][string] svcMap;
-            foreach (svc, secrets; services.object)
-                svcMap[svc] = secrets.array.map!(v => v.str).array;
-            result.machines[machine] = MachineServiceSecrets(
-                serviceSecrets: svcMap,
-                isVM: machine.endsWith("-vm")
-            );
-        }
-
-        return result;
-    }
-    catch (Exception e)
-    {
-        // Bulk eval failed, fall back to per-machine evaluation
-        warningf("Bulk evaluation of all machines failed, evaluating machines individually");
-        return resolveAllMachinesListInfoFallback(common, listArgs, confAttr);
-    }
-}
-
-/// Fallback to evaluate machines one at a time when bulk eval fails.
-/// Logs errors to stderr for failed machines and returns partial results with ERROR markers.
-private AllMachinesListInfo resolveAllMachinesListInfoFallback(
-    SecretArgs common,
-    SecretListArgs listArgs,
-    string confAttr
-)
-{
-    auto flakeAttr = rootDir ~ "#" ~ confAttr;
-
-    // Get list of all available machines using --apply to extract attribute names
-    auto machineListJson = nix().eval!JSONValue(
-        flakeAttr,
-        common.extraNixOptions ~ [
-            "--apply",
-            "cfgs: builtins.attrNames cfgs"
-        ]
-    );
-
-    string[] machines;
-    foreach (machine; machineListJson.array)
-        machines ~= machine.str;
+    auto json = nix().eval!JSONValue(flakeAttr, common.extraNixOptions ~ [
+        "--apply",
+        `cfgs: builtins.mapAttrs (name: m:`
+            ~ ` let`
+            ~ `   result = builtins.mapAttrs (_: s: builtins.attrNames s.secrets)`
+            ~ `            m.config.mcl.secrets.services;`
+            ~ `   eval = builtins.tryEval (builtins.deepSeq result result);`
+            ~ ` in`
+            ~ `   if eval.success then eval.value`
+            ~ `   else { __error__ = "evaluation failed"; }`
+            ~ ` ) cfgs`
+    ]);
 
     AllMachinesListInfo result;
-    foreach (machine; machines.dup.sort.array)
+    foreach (machine, machineJson; json.object)
     {
         // Skip VMs unless --include-vms is specified
         bool isVM = machine.endsWith("-vm");
         if (isVM && !listArgs.includeVMs)
             continue;
 
-        try
+        // Check if this machine had an evaluation error
+        if ("__error__" in machineJson.object)
         {
-            auto singleMachineResult = resolveListInfo(
-                SecretArgs(
-                    machine: machine,
-                    configurationType: common.configurationType,
-                    vm: common.vm,
-                    extraNixOptions: common.extraNixOptions,
-                    identity: common.identity,
-                    cmd: common.cmd
-                ),
-                confAttr
-            );
-            result.machines[machine] = singleMachineResult;
-        }
-        catch (Exception e)
-        {
-            errorf("Failed to evaluate machine '%s': %s", machine, e.msg);
-            // Add ERROR marker for this machine
+            errorf("Failed to evaluate machine '%s': %s",
+                machine, machineJson["__error__"].str);
             result.machines[machine] = MachineServiceSecrets(
                 serviceSecrets: ["__ERROR__": ["See stderr for details"]],
+                isVM: isVM
+            );
+        }
+        else
+        {
+            string[][string] svcMap;
+            foreach (svc, secrets; machineJson.object)
+                svcMap[svc] = secrets.array.map!(v => v.str).array;
+            result.machines[machine] = MachineServiceSecrets(
+                serviceSecrets: svcMap,
                 isVM: isVM
             );
         }
