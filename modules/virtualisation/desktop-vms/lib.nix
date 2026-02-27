@@ -336,6 +336,7 @@ rec {
   #   hugepages: Enable hugepages memory backing
   #   sharedFolders: Attribute set of { mountName = "/host/path"; }
   #   display: "spice", "vnc", or "looking-glass"
+  #   videoModel: Video device model ("virtio", "qxl", "vga", "cirrus")
   #   diskPool: Libvirt storage pool name
   #   diskVolume: Libvirt volume name (qcow2 file)
   #   osType: "windows", "linux", or "macos"
@@ -361,6 +362,7 @@ rec {
       hugepages ? false,
       sharedFolders ? { },
       display ? "spice",
+      videoModel ? "virtio",
       diskPool ? "default",
       diskVolume,
       osType ? "windows",
@@ -492,7 +494,7 @@ rec {
       networkXml = generateNetworkXml { };
 
       # Video
-      videoXml = generateVideoXml { };
+      videoXml = generateVideoXml { type = videoModel; };
 
       # Input devices
       inputXml = ''
