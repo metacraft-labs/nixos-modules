@@ -137,6 +137,7 @@
           hugepages = cfg.hugepages.enable;
           sharedFolders = vmCfg.sharedFolders;
           display = vmCfg.display;
+          videoModel = vmCfg.videoModel;
           diskPool = vmCfg.storagePool;
           diskVolume = "${name}.qcow2";
           osType = vmCfg.osType;
@@ -331,6 +332,30 @@
                   (requires additional Looking Glass setup on host and guest)
 
                 Reference: https://looking-glass.io/
+              '';
+            };
+
+            videoModel = mkOption {
+              type = types.enum [
+                "virtio"
+                "qxl"
+                "vga"
+                "cirrus"
+              ];
+              default = "virtio";
+              description = ''
+                Video device model for the VM.
+
+                - virtio: Modern paravirtualized GPU, best performance for Linux guests
+                - qxl: SPICE-native video device, best auto-resize support with SPICE guest tools
+                - vga: Standard VGA, maximum compatibility
+                - cirrus: Legacy VGA, for very old operating systems
+
+                For Windows guests using SPICE display, "qxl" is recommended as it
+                provides seamless resolution auto-resize when SPICE guest tools are
+                installed. The "virtio" model requires a separate virtio-gpu driver.
+
+                Reference: https://libvirt.org/formatdomain.html#video-devices
               '';
             };
 
