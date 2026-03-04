@@ -59,9 +59,21 @@ runs:
         gh api /rate_limit | jq || true
         echo "::endgroup::"
 
+    - name: Check if Nix is available
+      id: check-nix
+      shell: bash
+      run: |
+        if command -v nix &>/dev/null; then
+          echo "has_nix=true" >> "$GITHUB_OUTPUT"
+          echo "Nix is already installed: $(nix --version)"
+        else
+          echo "has_nix=false" >> "$GITHUB_OUTPUT"
+          echo "Nix is not installed, will install it"
+        fi
+
     - name: Install Nix
       uses: cachix/install-nix-action@v31
-      if: ${{ runner.environment == 'github-hosted' }}
+      if: steps.check-nix.outputs.has_nix != 'true'
       with:
         install_url: ${{ inputs.nix-version != '' && format('https://releases.nixos.org/nix/nix-{0}/install', inputs.nix-version) || '' }}
 
