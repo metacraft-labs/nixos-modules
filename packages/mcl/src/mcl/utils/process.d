@@ -28,9 +28,9 @@ T execute(T = string)(string[] args, bool printCommand = true, bool returnErr = 
     auto cmd = args.map!(x => x.canFind("*") ? x : x.escapeShellCommand()).join(" ");
 
     if (printCommand)
-    {
         infof("\n$ `%s`", cmd.bold);
-    }
+    else
+        tracef("\n$ `%s`", cmd.bold);
     auto res = pipeShell(cmd, redirect);
     static if (is(T == ProcessPipes))
     {
@@ -90,6 +90,31 @@ unittest
     assert(execute(["echo", "hello"]) == "hello");
     assert(execute(["true"]) == "");
     // assertThrown(execute(["false"]), "Command `false` failed with status 1");
+}
+
+bool isInPath(string name)
+{
+    import std.algorithm : splitter;
+    import std.file : exists, isFile;
+    import std.path : buildPath;
+    import std.process : environment;
+
+    auto pathVar = environment.get("PATH", "");
+    foreach (dir; pathVar.splitter(':'))
+    {
+        auto candidate = dir.buildPath(name);
+        if (candidate.exists && candidate.isFile)
+            return true;
+    }
+    return false;
+}
+
+@("isInPath finds executables on PATH")
+unittest
+{
+    // "ls" should always be available on NixOS / any Linux
+    assert(isInPath("ls"));
+    assert(!isInPath("nonexistent-binary-abc123"));
 }
 
 void spawnProcessInline(string[] args)

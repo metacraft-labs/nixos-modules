@@ -6,20 +6,21 @@ import std.file : exists, isDir, dirEntries, SpanMode, mkdirRecurse,
     remove, write, read, deleteme;
 import std.path : buildPath, baseName, stripExtension, dirName;
 import std.process : environment;
-import std.logger : infof, warningf;
+import std.logger : infof, tracef, warningf, errorf;
 import std.stdio : writeln;
 import std.regex : ctRegex, matchFirst;
 import std.string : replace, split, strip, endsWith;
 
-import argparse : Command, Description, NamedArgument, Placeholder, Required,
-    SubCommand, Default, matchCmd;
+import argparse : AllowedValues, Command, Description, NamedArgument, Placeholder,
+    Required, SubCommand, Default, matchCmd;
 
 import sparkles.test_utils.tmpfs : TmpFS;
 
 import mcl.utils.log : errorAndExit;
 import mcl.utils.nix : nix;
-import mcl.utils.process : execute, spawnProcessInline;
-import mcl.utils.string : enumToString, StringRepresentation;
+import mcl.utils.path : rootDir;
+import mcl.utils.process : execute, isInPath, spawnProcessInline;
+import std.conv : to;
 
 // =============================================================================
 // Constants
@@ -37,8 +38,11 @@ enum DEFAULT_VM_SECRETS_PATH = "./modules/default-vm-config/secrets/";
 
 enum ConfigurationType
 {
-    @StringRepresentation("nixosConfigurations") nixos,
-    @StringRepresentation("darwinConfigurations") nix_darwin,
+    @AllowedValues("nixos", "nixosConfigurations")
+    nixosConfigurations,
+
+    @AllowedValues("nix-darwin", "darwinConfigurations")
+    darwinConfigurations,
 }
 
 @(Command("secret")
@@ -53,8 +57,8 @@ struct SecretArgs
 
     @(NamedArgument(["configuration-type"])
         .Placeholder("TYPE")
-        .Description("Type of configurations, either `nixos` or `nix-darwin`"))
-    ConfigurationType configurationType = ConfigurationType.nixos;
+        .Description("Type of configurations, either `nixos`/`nixosConfigurations` or `nix-darwin`/`darwinConfigurations`"))
+    ConfigurationType configurationType = ConfigurationType.nixosConfigurations;
 
     @(NamedArgument(["vm"])
         .Description("Use the vmVariant configuration"))
@@ -152,18 +156,17 @@ private int secretEdit(SecretArgs common, SecretEditArgs args)
     validateVmFlag(common.vm, common.configurationType);
 
     auto tmpfs = TmpFS.create("mcl-secret-identity-keys");
-    const confAttr = common.configurationType.enumToString;
-    auto machineFolder = resolveMachineFolder(common.machine, confAttr, common.extraNixOptions);
-    auto recipients = resolveRecipients(common, confAttr, args.service);
+    const confAttr = common.configurationType.to!string;
+    auto info = resolveServiceInfo(common, confAttr, args.service);
 
     auto secretsFolder = args.secretsFolder
         ? args.secretsFolder
         : common.vm
             ? DEFAULT_VM_SECRETS_PATH ~ args.service
-            : machineFolder.buildPath("secrets", args.service);
+            : info.configPath.buildPath("secrets", args.service);
 
     auto secretFile = secretsFolder.buildPath(args.secret ~ ".age");
-    editSecret(secretFile, recipients, resolveIdentity(common.identity, tmpfs));
+    editSecret(secretFile, info.recipients, resolveIdentity(common.identity, tmpfs));
     return 0;
 }
 
@@ -172,17 +175,16 @@ private int secretReEncrypt(SecretArgs common, SecretReEncryptArgs args)
     validateVmFlag(common.vm, common.configurationType);
 
     auto tmpfs = TmpFS.create("mcl-secret-identity-keys");
-    const confAttr = common.configurationType.enumToString;
-    auto machineFolder = resolveMachineFolder(common.machine, confAttr, common.extraNixOptions);
-    auto recipients = resolveRecipients(common, confAttr, args.service);
+    const confAttr = common.configurationType.to!string;
+    auto info = resolveServiceInfo(common, confAttr, args.service);
 
     auto secretsFolder = args.secretsFolder.length > 0
         ? args.secretsFolder
         : common.vm
             ? DEFAULT_VM_SECRETS_PATH ~ args.service
-            : machineFolder.buildPath("secrets", args.service);
+            : info.configPath.buildPath("secrets", args.service);
 
-    reEncryptFolder(secretsFolder, recipients, resolveIdentity(common.identity, tmpfs));
+    reEncryptFolder(secretsFolder, info.recipients, resolveIdentity(common.identity, tmpfs));
     return 0;
 }
 
@@ -191,21 +193,16 @@ private int secretReEncryptAll(SecretArgs common, SecretReEncryptAllArgs args)
     validateVmFlag(common.vm, common.configurationType);
 
     auto tmpfs = TmpFS.create("mcl-secret-identity-keys");
-    const confAttr = common.configurationType.enumToString;
+    const confAttr = common.configurationType.to!string;
+    auto allInfo = resolveAllServicesInfo(common, confAttr);
     auto machineFolder = args.configPath.length > 0
         ? args.configPath
-        : resolveMachineFolder(common.machine, confAttr, common.extraNixOptions);
+        : allInfo.configPath;
     auto identityArgs = resolveIdentity(common.identity, tmpfs);
 
-    auto services = nixEvalAttrNames(
-        common.extraNixOptions,
-        ".#" ~ confAttr ~ "." ~ common.machine ~ ".config.mcl.secrets.services"
-    );
-
-    foreach (service; services)
+    foreach (service, recipients; allInfo.serviceRecipients)
     {
         writeln("Re-encrypting secrets for service ", service);
-        auto recipients = resolveRecipients(common, confAttr, service);
         auto secretsFolder = common.vm
             ? DEFAULT_VM_SECRETS_PATH ~ service
             : machineFolder.buildPath("secrets", service);
@@ -228,6 +225,9 @@ private int unknownCommand()
 
 private void editSecret(string secretFile, string[] recipients, string[] identityArgs)
 {
+    tracef("editSecret: secretFile=%s, recipients=%s, identityArgs=%s",
+        secretFile, recipients, identityArgs);
+
     if (recipients.length == 0)
         errorAndExit("No recipients found for encryption.");
 
@@ -241,12 +241,18 @@ private void editSecret(string secretFile, string[] recipients, string[] identit
     // Decrypt existing file if present
     if (secretFile.exists)
     {
+        infof("Decrypting existing secret: %s", secretFile);
         auto decryptCmd = ["age", "--decrypt"] ~ identityArgs ~ ["-o", cleartextFile, "--", secretFile];
         spawnProcessInline(decryptCmd);
+    }
+    else
+    {
+        infof("Secret file does not exist yet, creating new: %s", secretFile);
     }
 
     // Open editor
     auto editor = environment.get("EDITOR", "vim");
+    infof("Opening editor: %s %s", editor, cleartextFile);
     spawnProcessInline([editor, cleartextFile]);
 
     if (!cleartextFile.exists)
@@ -255,30 +261,52 @@ private void editSecret(string secretFile, string[] recipients, string[] identit
         return;
     }
 
+    auto cleartextData = read(cleartextFile);
+    tracef("Cleartext data size: %s bytes", cleartextData.length);
+
     // Ensure output directory exists
     auto outputDir = secretFile.dirName;
     if (!outputDir.exists)
+    {
+        infof("Creating output directory: %s", outputDir);
         mkdirRecurse(outputDir);
+    }
 
     // Encrypt with all recipients via stdin to avoid cleartext in process list (ps)
     import std.process : pipeProcess, wait, Redirect;
-    auto cleartextData = read(cleartextFile);
     auto encryptCmd = ["age", "--encrypt", "--armor"]
         ~ recipientArgs(recipients)
         ~ ["-o", secretFile]
         ~ ["-"];  // Read from stdin
+    infof("Encrypting to %s with %s recipient(s)", secretFile, recipients.length);
+    tracef("Encrypt command: %-(%s %)", encryptCmd);
     auto pipes = pipeProcess(encryptCmd, Redirect.stdin | Redirect.stdout | Redirect.stderr);
     pipes.stdin.rawWrite(cleartextData);
     pipes.stdin.close();
+
+    auto stdoutOutput = pipes.stdout.byLine().join("\n").to!string;
+    auto stderrOutput = pipes.stderr.byLine().join("\n").to!string;
     pipes.stdout.close();
     pipes.stderr.close();
     auto status = wait(pipes.pid);
+
     if (status != 0)
-        errorAndExit("Encryption failed");
+    {
+        errorf("Encryption failed (exit code %s)\nstdout: %s\nstderr: %s",
+            status, stdoutOutput, stderrOutput);
+        errorAndExit("Encryption failed (exit code " ~ status.to!string ~ "): " ~ stderrOutput);
+    }
+
+    tracef("Encryption stdout: %s", stdoutOutput);
+    tracef("Encryption stderr: %s", stderrOutput);
+    infof("Successfully encrypted secret to %s", secretFile);
 }
 
 private void reEncryptFolder(string secretsFolder, string[] recipients, string[] identityArgs)
 {
+    tracef("reEncryptFolder: secretsFolder=%s, recipients=%s, identityArgs=%s",
+        secretsFolder, recipients, identityArgs);
+
     if (!secretsFolder.exists)
         errorAndExit("Secrets folder does not exist: " ~ secretsFolder);
 
@@ -295,6 +323,8 @@ private void reEncryptFolder(string secretsFolder, string[] recipients, string[]
         return;
     }
 
+    infof("Re-encrypting %s file(s) in %s", ageFiles.length, secretsFolder);
+
     foreach (ageFile; ageFiles)
     {
         auto secretName = ageFile.baseName.stripExtension;
@@ -308,6 +338,7 @@ private void reEncryptFolder(string secretsFolder, string[] recipients, string[]
         }
 
         // Decrypt
+        infof("Decrypting %s", ageFile);
         auto decryptCmd = ["age", "--decrypt"] ~ identityArgs ~ ["-o", cleartextFile, "--", ageFile];
         spawnProcessInline(decryptCmd);
 
@@ -318,15 +349,29 @@ private void reEncryptFolder(string secretsFolder, string[] recipients, string[]
             ~ recipientArgs(recipients)
             ~ ["-o", ageFile]
             ~ ["-"];  // Read from stdin
+        tracef("Re-encrypt command: %-(%s %)", encryptCmd);
         auto pipes = pipeProcess(encryptCmd, Redirect.stdin | Redirect.stdout | Redirect.stderr);
         pipes.stdin.rawWrite(cleartextData);
         pipes.stdin.close();
+
+        auto stdoutOutput = pipes.stdout.byLine().join("\n").to!string;
+        auto stderrOutput = pipes.stderr.byLine().join("\n").to!string;
         pipes.stdout.close();
         pipes.stderr.close();
         auto status = wait(pipes.pid);
+
         if (status != 0)
-            errorAndExit("Re-encryption failed");
+        {
+            errorf("Re-encryption of %s failed (exit code %s)\nstdout: %s\nstderr: %s",
+                ageFile, status, stdoutOutput, stderrOutput);
+            errorAndExit("Re-encryption failed (exit code " ~ status.to!string ~ "): " ~ stderrOutput);
+        }
+
+        tracef("Re-encryption stdout: %s", stdoutOutput);
+        tracef("Re-encryption stderr: %s", stderrOutput);
     }
+
+    infof("Successfully re-encrypted %s file(s)", ageFiles.length);
 }
 
 // =============================================================================
@@ -382,6 +427,13 @@ private enum yubikeyIdentityPattern = ctRegex!(`^AGE-PLUGIN-YUBIKEY-[0-9A-Z]+$`)
 
 private string[] resolveYubikeyIdentities(ref TmpFS tmpfs)
 {
+    // Check if age-plugin-yubikey is available on PATH before executing
+    if (!isInPath("age-plugin-yubikey"))
+    {
+        infof("age-plugin-yubikey not found in PATH, skipping YubiKey identity resolution");
+        return [];
+    }
+
     string[] identityArgs;
 
     try
@@ -402,7 +454,7 @@ private string[] resolveYubikeyIdentities(ref TmpFS tmpfs)
     }
     catch (Exception e)
     {
-        infof("age-plugin-yubikey not available: %s", e.msg);
+        infof("age-plugin-yubikey execution failed: %s", e.msg);
     }
 
     return identityArgs;
@@ -414,57 +466,84 @@ private string[] resolveYubikeyIdentities(ref TmpFS tmpfs)
 
 private void validateVmFlag(bool vm, ConfigurationType configurationType)
 {
-    if (vm && configurationType != ConfigurationType.nixos)
-        errorAndExit("Cannot use `vm` with `configuration-type` " ~ configurationType.enumToString);
+    if (vm && configurationType != ConfigurationType.nixosConfigurations)
+        errorAndExit("Cannot use `vm` with `configuration-type` " ~ configurationType.to!string);
 }
 
-private string resolveMachineFolder(string machine, string confAttr, string[] extraNixOptions)
+private struct ServiceInfo
 {
-    import std.json : JSONValue;
-
-    // Use --json to get clean string output without nix store path prefix
-    auto json = nix().eval!JSONValue(".#" ~ confAttr ~ "." ~ machine ~ ".config.mcl.host-info.configPath", extraNixOptions);
-    return json.str;
+    string configPath;
+    string[] recipients;
 }
 
-private string[] resolveRecipients(SecretArgs common, string confAttr, string service)
+/// Resolves configPath and recipients for a single service in one nix eval.
+private ServiceInfo resolveServiceInfo(SecretArgs common, string confAttr, string service)
 {
     import std.json : JSONValue;
 
     auto configBase = common.vm
-        ? ".#nixosConfigurations." ~ common.machine
+        ? rootDir ~ "#nixosConfigurations." ~ common.machine
             ~ "-vm.config.virtualisation.vmVariant"
-        : ".#" ~ confAttr ~ "." ~ common.machine ~ ".config";
+        : rootDir ~ "#" ~ confAttr ~ "." ~ common.machine ~ ".config";
 
-    auto json = nix().eval!JSONValue(
-        configBase ~ ".mcl.secrets.services." ~ service ~ ".recipients",
-        common.extraNixOptions);
+    auto json = nix().eval!JSONValue(configBase, common.extraNixOptions ~ [
+        "--apply", "c: { configPath = c.mcl.host-info.configPath; "
+            ~ "recipients = c.mcl.secrets.services." ~ service ~ ".recipients; }"
+    ]);
 
-    return json.array.map!(v => v.str).array;
+    return ServiceInfo(
+        configPath: json["configPath"].str,
+        recipients: json["recipients"].array.map!(v => v.str).array,
+    );
 }
 
-private string[] nixEvalAttrNames(string[] extraNixOptions, string path)
+private struct AllServicesInfo
+{
+    string configPath;
+    string[][string] serviceRecipients;
+}
+
+/// Resolves configPath and recipients for all services in one nix eval.
+private AllServicesInfo resolveAllServicesInfo(SecretArgs common, string confAttr)
 {
     import std.json : JSONValue;
 
-    auto json = nix().eval!JSONValue(path, extraNixOptions ~ ["--apply", "builtins.attrNames"]);
-    return json.array.map!(v => v.str).array;
+    auto configBase = common.vm
+        ? rootDir ~ "#nixosConfigurations." ~ common.machine
+            ~ "-vm.config.virtualisation.vmVariant"
+        : rootDir ~ "#" ~ confAttr ~ "." ~ common.machine ~ ".config";
+
+    auto json = nix().eval!JSONValue(configBase, common.extraNixOptions ~ [
+        "--apply", "c: { configPath = c.mcl.host-info.configPath; "
+            ~ "services = builtins.mapAttrs (_: s: s.recipients) c.mcl.secrets.services; }"
+    ]);
+
+    string[][string] serviceRecipients;
+    foreach (name, val; json["services"].object)
+        serviceRecipients[name] = val.array.map!(v => v.str).array;
+
+    return AllServicesInfo(
+        configPath: json["configPath"].str,
+        serviceRecipients: serviceRecipients,
+    );
 }
 
 // ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------
 
-@("ConfigurationType.enumToString maps nixos")
+@("ConfigurationType.to!string maps nixosConfigurations")
 unittest
 {
-    assert(ConfigurationType.nixos.enumToString == "nixosConfigurations");
+    import std.conv : to;
+    assert(ConfigurationType.nixosConfigurations.to!string == "nixosConfigurations");
 }
 
-@("ConfigurationType.enumToString maps nix-darwin")
+@("ConfigurationType.to!string maps darwinConfigurations")
 unittest
 {
-    assert(ConfigurationType.nix_darwin.enumToString == "darwinConfigurations");
+    import std.conv : to;
+    assert(ConfigurationType.darwinConfigurations.to!string == "darwinConfigurations");
 }
 
 @("recipientArgs builds correct args")
