@@ -151,7 +151,7 @@ jobs:
             --flake-attribute-path "${{ matrix.flakeAttrPath }}" \
             --is-initial
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.filename }}
           path: matrix-pre.json
@@ -172,7 +172,7 @@ jobs:
         uses: metacraft-labs/nixos-modules/.github/setup-nix@main
         with: *setup-nix-no-push
 
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         if: needs.eval-matrix.result == 'success'
 
       - name: Merge matrices
