@@ -14,8 +14,19 @@
       legacyPackages = {
         inputs = {
           nixpkgs = rec {
-            inherit (pkgs) cachix nix-eval-jobs;
+            inherit (pkgs) nix-eval-jobs;
             nix = nix-eval-jobs.passthru.nix;
+            cachix =
+              let
+                customHaskellPackages = pkgs.haskellPackages.override {
+                  overrides = hself: hsuper: {
+                    hercules-ci-cnix-store = hsuper.hercules-ci-cnix-store.override {
+                      inherit nix;
+                    };
+                  };
+                };
+              in
+              customHaskellPackages.cachix.bin;
             nix-fast-build = pkgs.nix-fast-build.override { inherit nix-eval-jobs; };
           };
           agenix = inputs'.agenix.packages;
