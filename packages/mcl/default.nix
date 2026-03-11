@@ -15,6 +15,7 @@ let
       nix-eval-jobs
     ]
     ++ (with pkgs; [
+      age
       gitMinimal
       jc
       util-linux
