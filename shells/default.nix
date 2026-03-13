@@ -49,6 +49,12 @@
               ldc
               inputs'.nixpkgs-unstable.legacyPackages.act
               podman-as-docker
+
+              # Terraform/OpenTofu tooling
+              opentofu
+              inputs'.terranix.packages.terranix
+              cf-terraforming
+              tflint
             ]
             ++ pkgs.lib.optionals (pkgs.stdenv.system == "x86_64-linux") [
               dmd

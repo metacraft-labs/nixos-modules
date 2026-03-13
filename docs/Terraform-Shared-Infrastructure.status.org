@@ -2,9 +2,9 @@
 
 * Document
   :PROPERTIES:
-  :next_steps: Complete M0 dev tooling (Terranix + OpenTofu in shared dev shell, terraform-format pre-commit hook); then begin M1 reusable CI workflow
+  :next_steps: Begin M1 reusable CI workflow (reusable-terraform-ci.yml)
   :last_updated: 2026-03-13
-  :current_milestone: M0
+  :current_milestone: M1
   :END:
 
 * Introduction
@@ -136,7 +136,8 @@
 
 ** M0: Dev Tooling
 :PROPERTIES:
-:status: planned
+:status: done
+:last_updated: 2026-03-13
 :END:
 
   Add Terranix and OpenTofu to the shared dev shell so consuming repos get
@@ -149,12 +150,12 @@
   tools are available in the dev shell).
 
 *** Deliverables
-    - [ ] OpenTofu added to shared dev shell
-    - [ ] Terranix added to shared dev shell (for repos using Nix-generated HCL)
-    - [ ] cf-terraforming added to shared dev shell (for Cloudflare import workflows)
-    - [ ] TFLint added to shared dev shell (for local linting before CI)
-    - [ ] terraform-format pre-commit hook added to shared checks
-    - [ ] Documentation updated to reference new dev shell additions
+    - [X] OpenTofu added to shared dev shell
+    - [X] Terranix added to shared dev shell (for repos using Nix-generated HCL)
+    - [X] cf-terraforming added to shared dev shell (for Cloudflare import workflows)
+    - [X] TFLint added to shared dev shell (for local linting before CI)
+    - [X] terraform-format pre-commit hook added to shared checks
+    - [X] Documentation updated to reference new dev shell additions
 
 *** Verification
     - test_name: verify_devshell_has_tofu
@@ -174,12 +175,12 @@
       status: pending
 
 *** Outstanding Tasks
-    - [ ] Determine correct shell module to extend (shells/default.nix or similar)
-    - [ ] Pin Terranix and OpenTofu versions via flake inputs (tools are pinned
+    - [X] Determine correct shell module to extend (shells/default.nix or similar)
+    - [X] Pin Terranix and OpenTofu versions via flake inputs (tools are pinned
           by Nix flake.lock; no separate CI version pinning needed)
-    - [ ] Verify cf-terraforming package is available in nixpkgs or add as flake input
-    - [ ] Ensure terraform-format hook handles both .tf and .tftest.hcl files
-    - [ ] Ensure terraform-format hook does not interfere with Terranix-generated .tf.json files
+    - [X] Verify cf-terraforming package is available in nixpkgs or add as flake input
+    - [X] Ensure terraform-format hook handles both .tf and .tftest.hcl files
+    - [X] Ensure terraform-format hook does not interfere with Terranix-generated .tf.json files
 
 ** M1: Reusable CI Workflow
 :PROPERTIES:
