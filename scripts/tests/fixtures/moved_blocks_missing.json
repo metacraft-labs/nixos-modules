@@ -1,0 +1,26 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.1",
+  "resource_changes": [
+    {
+      "address": "cloudflare_r2_bucket.new_apt",
+      "type": "cloudflare_r2_bucket",
+      "name": "new_apt",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {"name": "apt-agent-harbor"}
+      }
+    },
+    {
+      "address": "cloudflare_r2_bucket.old_apt",
+      "type": "cloudflare_r2_bucket",
+      "name": "old_apt",
+      "change": {
+        "actions": ["delete"],
+        "before": {"name": "apt-agent-harbor"},
+        "after": null
+      }
+    }
+  ]
+}
