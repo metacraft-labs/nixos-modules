@@ -1,3 +1,5 @@
+REPOMIX_OUT_DIR := env('REPOMIX_OUT_DIR', 'repomix')
+
 image := `nix eval --raw .#ci-image.imageRefUnsafe`
 
 is-podman-available := `if command -v podman &> /dev/null; then echo true; else echo false; fi`
@@ -54,3 +56,21 @@ act workflow_name="ci": image
     --pull=false \
     --input "runner=[\"self-hosted\"]" \
     -P self-hosted={{image}}
+
+# Create repomix bundle of shared Terraform infrastructure docs and workflows
+REPOMIX_TERRAFORM_SHARED_PATTERNS := replace("""
+docs/Terraform-Agent-Development-Methodology.md
+docs/Terraform-Testing.md
+docs/Terraform-Shared-Infrastructure.status.org
+.github/workflows/reusable-terraform*.yml
+""", "\n", ",")
+
+repomix-terraform-shared *args:
+    mkdir -p {{REPOMIX_OUT_DIR}}
+    repomix \
+        . \
+        --output {{REPOMIX_OUT_DIR}}/Terraform-Shared-Infrastructure.md \
+        --style markdown \
+        --header-text "Shared Terraform Infrastructure - Reusable CI Workflow, Dev Shell, and Policy Scripts" \
+        --include "{{REPOMIX_TERRAFORM_SHARED_PATTERNS}}" \
+        {{args}}

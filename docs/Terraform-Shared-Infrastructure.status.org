@@ -1,0 +1,139 @@
+#+TITLE: Shared Terraform Infrastructure Status
+
+* Document
+  :PROPERTIES:
+  :next_steps: Complete M0 dev tooling (Terranix + OpenTofu in shared dev shell, terraform-format pre-commit hook); then begin M1 reusable CI workflow
+  :last_updated: 2026-03-13
+  :current_milestone: M0
+  :END:
+
+* Introduction
+  :PROPERTIES:
+  :initiative_goals: Provide shared Terraform/OpenTofu infrastructure consumed by both blocksense/infra and old-metacraft/infra: reusable CI workflow, dev shell tooling, plan JSON policy scripts
+  :related_specs: [[file:Terraform-Agent-Development-Methodology.md][Agent-Development-Methodology]], [[file:Terraform-Testing.md][Terraform-Testing]]
+  :END:
+
+  Multiple repos (blocksense/infra for Cloudflare management, old-metacraft/infra
+  for ephemeral CI runners) share the same Terraform/OpenTofu agentic workflow:
+  agents develop offline with mock providers, CI runs credentialed plan and posts
+  results as PR comments, humans approve, CI applies on merge.
+
+  Rather than duplicating CI workflows, policy scripts, and dev shell additions
+  in each repo, the shared infrastructure lives here in nixos-modules and is
+  consumed by downstream repos.
+
+  Consuming repos:
+  - [[https://github.com/nickolay-kondratyev/blocksense-infra][blocksense/infra]] — Cloudflare resource management ([[https://github.com/nickolay-kondratyev/blocksense-infra/blob/main/docs/Cloudflare-Agent-Harbor.status.org][status]])
+  - [[https://github.com/metacraft-labs/infra][old-metacraft/infra]] — Ephemeral CI runners and cloud provisioning ([[https://github.com/metacraft-labs/infra/blob/main/docs/ephemeral-runners.status.org][status]])
+
+* Milestones
+
+** M0: Dev Tooling
+:PROPERTIES:
+:status: planned
+:END:
+
+  Add Terranix and OpenTofu to the shared dev shell so consuming repos get
+  Terraform tooling automatically. Add a terraform-format pre-commit hook
+  to enforce consistent HCL formatting.
+
+*** Deliverables
+    - [ ] Terranix added to shared dev shell (shells/default.nix or equivalent)
+    - [ ] OpenTofu added to shared dev shell
+    - [ ] terraform-format pre-commit hook added to shared checks
+    - [ ] Documentation updated to reference new dev shell additions
+
+*** Verification
+    - test_name: verify_devshell_has_tofu
+      description: nix develop provides tofu and terranix commands
+      status: pending
+
+    - test_name: verify_precommit_format
+      description: Pre-commit hook detects and rejects unformatted HCL files
+      status: pending
+
+*** Outstanding Tasks
+    - [ ] Determine correct shell module to extend (shells/default.nix or similar)
+    - [ ] Pin Terranix and OpenTofu versions via flake inputs
+    - [ ] Add cf-terraforming to dev shell for Cloudflare import workflows
+
+** M1: Reusable CI Workflow
+:PROPERTIES:
+:status: planned
+:END:
+
+  Create reusable-terraform-ci.yml: a GitHub Actions reusable workflow that
+  consuming repos call with their specific inputs. Provides plan-on-PR,
+  apply-on-merge, and all safety gates.
+
+*** Deliverables
+    - [ ] .github/workflows/reusable-terraform-ci.yml
+    - [ ] Plan-on-PR job: runs tofu plan, posts result as PR comment
+    - [ ] Apply-on-merge job: runs tofu apply with GitHub Environment approval gate
+    - [ ] Fork-PR guard: credentialed plan skipped at job level for fork PRs
+    - [ ] Denylist CI step: blocks dangerous HCL constructs (data "external", exec provisioners, null_resource, unpinned remote sources)
+    - [ ] Plan safety gate: destroy/replace blocked unless allow-destroy label present
+    - [ ] All GitHub Actions pinned by commit SHA
+
+*** Verification
+    - test_name: verify_workflow_syntax
+      description: actionlint passes on reusable-terraform-ci.yml
+      status: pending
+
+    - test_name: verify_fork_guard
+      description: Fork PRs skip credentialed plan and run only offline checks
+      status: pending
+
+    - test_name: verify_denylist
+      description: PRs with dangerous HCL constructs are blocked
+      status: pending
+
+    - test_name: verify_plan_safety_gate
+      description: Destroy/replace actions blocked without allow-destroy label
+      status: pending
+
+*** Outstanding Tasks
+    - [ ] Define workflow inputs (working directory, backend config, path triggers, etc.)
+    - [ ] Coordinate input/output contract with blocksense/infra and old-metacraft/infra
+    - [ ] Determine how consuming repos pass secrets (OIDC vs static keys)
+    - [ ] Add plan-as-PR-comment step (e.g. dflook/terraform-plan or custom script)
+
+** M2: Plan JSON Policy
+:PROPERTIES:
+:status: planned
+:END:
+
+  Structured plan analysis script or Nix package that consuming repos use in
+  CI to enforce import-only checks, duplicate import detection, and
+  blast-radius declaration comparison.
+
+*** Deliverables
+    - [ ] Plan JSON policy script/package (Nix-packaged for reproducibility)
+    - [ ] Import-only check: verify zero update/delete actions, only expected resource type
+    - [ ] Duplicate import detection: fail if same remote object imported to multiple addresses
+    - [ ] Blast-radius declaration comparison: PR must declare expected resource count changes
+    - [ ] Integration with reusable-terraform-ci.yml (M1)
+
+*** Verification
+    - test_name: verify_import_only_policy
+      description: Policy rejects plans with update/delete actions on import-only PRs
+      status: pending
+
+    - test_name: verify_duplicate_import_detection
+      description: Policy detects and rejects duplicate imports of the same remote object
+      status: pending
+
+    - test_name: verify_blast_radius_check
+      description: Policy compares actual plan changes against declared blast radius
+      status: pending
+
+*** Outstanding Tasks
+    - [ ] Choose implementation language (bash + jq, Python, or Nix expression)
+    - [ ] Define policy configuration format (per-repo or per-PR labels)
+    - [ ] Evaluate conftest/OPA as a long-term replacement for custom scripts
+
+* References
+  - [[file:Terraform-Agent-Development-Methodology.md][Agent Development Methodology]] — Agentic workflow for Terraform modules
+  - [[file:Terraform-Testing.md][Terraform Testing]] — Testing strategy with mock providers
+  - [[https://github.com/nickolay-kondratyev/blocksense-infra/blob/main/docs/Cloudflare-Agent-Harbor.status.org][Cloudflare Agent Harbor Status (blocksense/infra)]] — Consuming repo status
+  - [[https://github.com/metacraft-labs/infra/blob/main/docs/ephemeral-runners.status.org][Ephemeral Runners Status (old-metacraft/infra)]] — Consuming repo status
