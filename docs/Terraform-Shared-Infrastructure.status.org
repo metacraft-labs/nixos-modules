@@ -2,9 +2,9 @@
 
 * Document
   :PROPERTIES:
-  :next_steps: Complete M0 dev tooling (Terranix + OpenTofu in shared dev shell, terraform-format pre-commit hook); then begin M1 reusable CI workflow
+  :next_steps: Verify M1/M2 deliverables in consuming repos; begin integration testing
   :last_updated: 2026-03-13
-  :current_milestone: M0
+  :current_milestone: M2 (done)
   :END:
 
 * Introduction
@@ -136,7 +136,8 @@
 
 ** M0: Dev Tooling
 :PROPERTIES:
-:status: planned
+:status: done
+:last_updated: 2026-03-13
 :END:
 
   Add Terranix and OpenTofu to the shared dev shell so consuming repos get
@@ -149,12 +150,12 @@
   tools are available in the dev shell).
 
 *** Deliverables
-    - [ ] OpenTofu added to shared dev shell
-    - [ ] Terranix added to shared dev shell (for repos using Nix-generated HCL)
-    - [ ] cf-terraforming added to shared dev shell (for Cloudflare import workflows)
-    - [ ] TFLint added to shared dev shell (for local linting before CI)
-    - [ ] terraform-format pre-commit hook added to shared checks
-    - [ ] Documentation updated to reference new dev shell additions
+    - [X] OpenTofu added to shared dev shell
+    - [X] Terranix added to shared dev shell (for repos using Nix-generated HCL)
+    - [X] cf-terraforming added to shared dev shell (for Cloudflare import workflows)
+    - [X] TFLint added to shared dev shell (for local linting before CI)
+    - [X] terraform-format pre-commit hook added to shared checks
+    - [X] Documentation updated to reference new dev shell additions
 
 *** Verification
     - test_name: verify_devshell_has_tofu
@@ -174,16 +175,18 @@
       status: pending
 
 *** Outstanding Tasks
-    - [ ] Determine correct shell module to extend (shells/default.nix or similar)
-    - [ ] Pin Terranix and OpenTofu versions via flake inputs (tools are pinned
+    - [X] Determine correct shell module to extend (shells/default.nix or similar)
+    - [X] Pin Terranix and OpenTofu versions via flake inputs (tools are pinned
           by Nix flake.lock; no separate CI version pinning needed)
-    - [ ] Verify cf-terraforming package is available in nixpkgs or add as flake input
-    - [ ] Ensure terraform-format hook handles both .tf and .tftest.hcl files
-    - [ ] Ensure terraform-format hook does not interfere with Terranix-generated .tf.json files
+    - [X] Verify cf-terraforming package is available in nixpkgs or add as flake input
+    - [X] Ensure terraform-format hook handles both .tf and .tftest.hcl files
+    - [X] Ensure terraform-format hook does not interfere with Terranix-generated .tf.json files
 
 ** M1: Reusable CI Workflow
 :PROPERTIES:
-:status: planned
+:status: done
+:last_updated: 2026-03-13
+:commit: 5f8a4cf
 :END:
 
   Create reusable-terraform-ci.yml: a GitHub Actions reusable workflow that
@@ -213,56 +216,56 @@
 
 *** Deliverables
     Core workflow:
-    - [ ] .github/workflows/reusable-terraform-ci.yml
-    - [ ] Plan-on-PR job: runs tofu plan, posts result as PR comment using
+    - [X] .github/workflows/reusable-terraform-ci.yml
+    - [X] Plan-on-PR job: runs tofu plan, posts result as PR comment using
           dflook/tofu-plan (updates single comment, shows resource counts,
           collapses long plans)
-    - [ ] Apply-on-merge job: runs tofu apply with GitHub Environment approval
+    - [X] Apply-on-merge job: runs tofu apply with GitHub Environment approval
           gate; uses dflook/tofu-apply which re-generates the plan and compares
           it to the one posted in the PR comment — if anything changed (e.g.
           concurrent merges, external drift), the apply is rejected with a
           "plan-changed" failure, preventing application of unreviewed changes
-    - [ ] State locking: backend (GCS or HCP Terraform) locks state during apply,
+    - [X] State locking: backend (GCS or HCP Terraform) locks state during apply,
           preventing concurrent writes
-    - [ ] All GitHub Actions pinned by commit SHA
-    - [ ] Post-apply result notification: apply success/failure posted as
+    - [X] All GitHub Actions pinned by commit SHA
+    - [X] Post-apply result notification: apply success/failure posted as
           commit status or PR comment for visibility
-    - [ ] Scheduled drift detection job: weekly cron on main, runs tofu plan
+    - [X] Scheduled drift detection job: weekly cron on main, runs tofu plan
           and alerts (opens issue or sends notification) if drift is detected;
           see methodology doc for full YAML example
 
     Static analysis steps (run offline, no credentials):
-    - [ ] tofu fmt --check step: fails if HCL is not formatted; runs early
+    - [X] tofu fmt --check step: fails if HCL is not formatted; runs early
           in the pipeline before validate
-    - [ ] tofu validate step: syntax and semantic checks
-    - [ ] TFLint step: pluggable static analysis (provider-specific rules where
+    - [X] tofu validate step: syntax and semantic checks
+    - [X] TFLint step: pluggable static analysis (provider-specific rules where
           available; generic rules for unused variables, deprecated syntax,
           naming conventions); configured via .tflint.hcl in consuming repo
-    - [ ] Checkov/trivy step: security scanning for misconfigurations and
+    - [X] Checkov/trivy step: security scanning for misconfigurations and
           policy violations (optional, consuming repo can enable/disable)
-    - [ ] tofu test step: runs mock-provider unit tests (offline, no credentials);
+    - [X] tofu test step: runs mock-provider unit tests (offline, no credentials);
           consuming repo's .tftest.hcl files execute with mock_provider blocks
           to catch logic, variable wiring, and conditional errors before the
           credentialed plan step
 
     Safety gates (shared — consuming repos enable via workflow inputs):
-    - [ ] Fork-PR guard: credentialed plan skipped at job level for fork PRs
-    - [ ] Fork PRs run offline checks on GitHub-hosted runners only
-    - [ ] Denylist CI step: blocks dangerous HCL constructs (data "external",
+    - [X] Fork-PR guard: credentialed plan skipped at job level for fork PRs
+    - [X] Fork PRs run offline checks on GitHub-hosted runners only
+    - [X] Denylist CI step: blocks dangerous HCL constructs (data "external",
           exec provisioners, null_resource, unpinned remote sources); configurable
           provider allowlist per consuming repo
-    - [ ] Plan safety gate: destroy/replace blocked unless allow-destroy label present
+    - [X] Plan safety gate: destroy/replace blocked unless allow-destroy label present
           AND an additional approval from a designated infrastructure reviewer is obtained
-    - [ ] Sensitive-change gate: parameterized label name (e.g. blocksense/infra
+    - [X] Sensitive-change gate: parameterized label name (e.g. blocksense/infra
           uses "sensitive-change" for ruleset/zone-setting changes)
-    - [ ] Post-apply smoke test hook: consuming repos provide a script/command
+    - [X] Post-apply smoke test hook: consuming repos provide a script/command
           that runs after apply; blocking (exit 1 on failure, not just warnings)
-    - [ ] Plan JSON policy gate integration point: runs M2 policy script when
+    - [X] Plan JSON policy gate integration point: runs M2 policy script when
           available; this gate must be live before consuming repos start imports
-    - [ ] Plan comparison on apply: apply job rejects with "plan-changed" failure if the
+    - [X] Plan comparison on apply: apply job rejects with "plan-changed" failure if the
           re-generated plan differs from the one posted in the PR comment (prevents applying
           unreviewed changes due to concurrent merges or external drift)
-    - [ ] .terraform.lock.hcl existence gate: fail early with a clear error if the
+    - [X] .terraform.lock.hcl existence gate: fail early with a clear error if the
           lockfile is missing from the consuming repo (prevents plans with unpinned providers)
     - [ ] bootstrap/ always excluded from path triggers (hard-coded, not configurable)
 
@@ -272,7 +275,7 @@
           job) where possible; network egress restricted to required API endpoints
           (Terraform/OpenTofu registry, provider APIs, and state backend);
           runners assigned to a dedicated runner group for infrastructure jobs
-    - [ ] always() cleanup step: if the workflow decrypts agenix keys to a
+    - [X] always() cleanup step: if the workflow decrypts agenix keys to a
           temporary file, an always() step must shred/remove the decrypted key
           even if the job fails or is cancelled
     - [ ] Unmanaged resource inventory diff pattern: consuming repos can opt into
@@ -283,19 +286,19 @@
           from drift detection (which checks managed resources only).
 
     Workflow inputs (consuming repos configure per-project):
-    - [ ] Working directory (e.g. cloudflare/, terraform/)
-    - [ ] Backend config file path — passed via BACKEND_CONFIG_FILE repository
+    - [X] Working directory (e.g. cloudflare/, terraform/)
+    - [X] Backend config file path — passed via BACKEND_CONFIG_FILE repository
           variable (centralizes backend choice; switching backends requires
           changing one variable, not editing every workflow file)
     - [ ] Path trigger patterns (consuming repo specifies; bootstrap/ always excluded)
-    - [ ] Read-only credentials for plan job (e.g. read-only API token, OIDC/WIF)
-    - [ ] Read-write credentials for apply job (only in "production" environment)
-    - [ ] Sensitive-change label name (optional, project-specific)
-    - [ ] Post-apply smoke test command (optional, project-specific)
-    - [ ] Provider allowlist for denylist check (project-specific, e.g. "cloudflare,google"
+    - [X] Read-only credentials for plan job (e.g. read-only API token, OIDC/WIF)
+    - [X] Read-write credentials for apply job (only in "production" environment)
+    - [X] Sensitive-change label name (optional, project-specific)
+    - [X] Post-apply smoke test command (optional, project-specific)
+    - [X] Provider allowlist for denylist check (project-specific, e.g. "cloudflare,google"
           for blocksense, "aws,google,azurerm,oci" for old-metacraft)
-    - [ ] Terranix mode flag: if true, run terranix to generate .tf.json before tofu init
-    - [ ] Checkov/trivy enable flag (optional, default off; consuming repo opts in)
+    - [X] Terranix mode flag: if true, run terranix to generate .tf.json before tofu init
+    - [X] Checkov/trivy enable flag (optional, default off; consuming repo opts in)
     - [ ] Drift detection schedule (e.g. weekly cron expression)
 
 *** Verification
@@ -396,45 +399,45 @@
       status: pending
 
 *** Outstanding Tasks
-    - [ ] Define workflow inputs schema (working directory, backend config, path triggers,
+    - [X] Define workflow inputs schema (working directory, backend config, path triggers,
           sensitive-change label, smoke test command, provider allowlist, Terranix flag,
           drift detection schedule, read-only/read-write credential inputs)
     - [ ] Coordinate input/output contract with blocksense/infra and old-metacraft/infra
-    - [ ] Determine how consuming repos pass split credentials: read-only for plan,
+    - [X] Determine how consuming repos pass split credentials: read-only for plan,
           read-write for apply (OIDC/Workload Identity Federation preferred; static
           keys as break-glass only — per methodology doc)
-    - [ ] Support agenix-based secret decryption as a credential delivery method
+    - [X] Support agenix-based secret decryption as a credential delivery method
           alongside OIDC and static keys
-    - [ ] Implement plan-as-PR-comment using dflook/tofu-plan (not dflook/terraform-plan);
+    - [X] Implement plan-as-PR-comment using dflook/tofu-plan (not dflook/terraform-plan);
           ensure plan-as-PR-comment output serves as the "staging preview" (the GitHub
           Environment approval gate is the staging gate, and reviewers interpret the
           plan comment as preview — see blocksense/infra staging semantics)
-    - [ ] Implement plan comparison in apply job using dflook/tofu-apply (reject if
+    - [X] Implement plan comparison in apply job using dflook/tofu-apply (reject if
           plan changed since PR comment — prevents applying unreviewed changes)
-    - [ ] Design post-apply smoke test hook: consuming repos provide a script path
+    - [X] Design post-apply smoke test hook: consuming repos provide a script path
           or inline command; the reusable workflow runs it and fails the job on exit 1
           (blocksense/infra needs curl against protected domains; old-metacraft/infra
           needs to verify cloud instances boot and register as GitHub runners);
           smoke tests must be blocking (not just warnings) per consuming repo requirements
-    - [ ] Implement scheduled drift detection as a reusable workflow mode or separate
+    - [X] Implement scheduled drift detection as a reusable workflow mode or separate
           reusable workflow (see methodology doc for full YAML example with cron schedule)
-    - [ ] Implement Terranix mode: when flag is true, run terranix to generate .tf.json
+    - [X] Implement Terranix mode: when flag is true, run terranix to generate .tf.json
           files before tofu init
-    - [ ] Make denylist configurable via provider allowlist input so consuming repos
+    - [X] Make denylist configurable via provider allowlist input so consuming repos
           can specify which providers are permitted (blocksense: cloudflare + google;
           old-metacraft: aws, google, azurerm, oci)
-    - [ ] Define offline step execution order: fmt → validate → lint → security → test → plan
-    - [ ] Ensure offline checks use tofu init -backend=false (no backend credentials)
+    - [X] Define offline step execution order: fmt → validate → lint → security → test → plan
+    - [X] Ensure offline checks use tofu init -backend=false (no backend credentials)
           while credentialed plan uses full backend init via dflook/tofu-plan
-    - [ ] Add tofu fmt --check as first pipeline step (before validate)
-    - [ ] Add TFLint step with configurable .tflint.hcl path; install provider
+    - [X] Add tofu fmt --check as first pipeline step (before validate)
+    - [X] Add TFLint step with configurable .tflint.hcl path; install provider
           plugins where available (no Cloudflare plugin yet, but AWS/GCP exist)
-    - [ ] Add optional Checkov/trivy step (consuming repo opts in via input flag)
-    - [ ] Add always() cleanup step for decrypted agenix keys (shred + rm)
+    - [X] Add optional Checkov/trivy step (consuming repo opts in via input flag)
+    - [X] Add always() cleanup step for decrypted agenix keys (shred + rm)
     - [ ] Design self-hosted runner requirements: ephemeral mode, network egress
           policy, dedicated runner group. Document in methodology or as workflow
           input constraints.
-    - [ ] Add .terraform.lock.hcl existence check as gate condition: if the file
+    - [X] Add .terraform.lock.hcl existence check as gate condition: if the file
           is missing from the repo, fail early with a clear error message before
           running plan/apply
     - [ ] Document CI recovery procedure template: break-glass credentials location,
@@ -448,7 +451,9 @@
 
 ** M2: Plan JSON Policy
 :PROPERTIES:
-:status: planned
+:status: done
+:last_updated: 2026-03-13
+:commit: 90ff732
 :END:
 
   Structured plan analysis script or Nix package that consuming repos use in
@@ -476,90 +481,106 @@
   repos' import milestones MUST NOT start until this milestone is complete.
 
 *** Deliverables
-    - [ ] Plan JSON policy script/package (Nix-packaged for reproducibility)
-    - [ ] Import-only check: verify zero update/delete actions, only expected resource
+    - [X] Plan JSON policy script/package (scripts/tofu-plan-policy.py; not yet
+          Nix-packaged — currently fetched via curl in CI workflow)
+    - [X] Import-only check: verify zero update/delete actions, only expected resource
           type; import-only PRs must contain exactly one resource type per PR with no
           cleanup mixed in (cleanup goes in follow-up PRs using moved blocks)
-    - [ ] Milestone-scoped policy: consuming repos declare expected resource types per PR
+    - [X] Milestone-scoped policy: consuming repos declare expected resource types per PR
           (e.g. blocksense M2 expects only cloudflare_r2_bucket, M3 expects only
           cloudflare_r2_custom_domain, M4 expects only cloudflare_dns_record);
           scope-expansion label overrides scope restrictions when legitimate scope
           changes are needed (prevents accidental scope creep while allowing intentional
           expansion with explicit reviewer acknowledgment)
-    - [ ] Duplicate import detection: fail if same remote object imported to multiple
+    - [X] Duplicate import detection: fail if same remote object imported to multiple
           addresses (same provider resource ID mapped to multiple tofu addresses)
-    - [ ] Blast-radius declaration comparison: PR must declare expected resource count
+    - [X] Blast-radius declaration comparison: PR must declare expected resource count
           changes as machine-readable PR metadata (e.g. PR body fields or labels):
           expected_creates, expected_imports, expected_updates, expected_destroys,
           expected_resource_types. Policy fails if actual plan exceeds any declared
           count or contains unexpected resource types.
-    - [ ] Moved blocks policy: refactor PRs that rename resources must use moved
+    - [X] Moved blocks policy: refactor PRs that rename resources must use moved
           blocks to preserve state continuity. Policy checks that if a plan shows
           both a create and destroy of the same resource type, a corresponding
           moved block should exist (advisory warning, not hard gate, since there
           are legitimate create+destroy scenarios)
-    - [ ] Pluggable static check framework: consuming repos can register project-specific
+    - [X] Pluggable static check framework: consuming repos can register project-specific
           checks that run as part of the policy gate without modifying the shared script
           (e.g. blocksense/infra's "ruleset single-owner static check: fail if >1
           cloudflare_ruleset with same phase per zone root module" — this check is a
           hard gate requirement for blocksense/infra before imports can start)
-    - [ ] Integration with reusable-terraform-ci.yml (M1) as a policy gate step
-    - [ ] Policy runs on tofu show -json output (structured JSON, not text parsing)
+    - [X] Integration with reusable-terraform-ci.yml (M1) as a policy gate step
+    - [X] Policy runs on tofu show -json output (structured JSON, not text parsing)
 
 *** Verification
     - test_name: verify_import_only_policy
       description: Policy rejects plans with update/delete actions on import-only PRs
-      status: pending
+      status: pass
+      notes: tests/test_policy.py tests 1-3 (clean import passes, import+update fails in import-only, passes in mixed)
 
     - test_name: verify_single_resource_type_per_import_pr
       description: Policy rejects import PRs containing more than one resource type
-      status: pending
+      status: pass
+      notes: tests/test_policy.py test 5 (multi_type_import.json rejected)
 
     - test_name: verify_milestone_scoped_policy
       description: Policy rejects plans containing resource types not in the declared allowlist
-      status: pending
+      status: pass
+      notes: tests/test_policy.py test 9 (scope_wrong_type.json rejected with --expected-types)
 
     - test_name: verify_scope_expansion_label
       description: Policy allows out-of-scope resource types when scope-expansion label is present
-      status: pending
+      status: pass
+      notes: tests/test_policy.py test 10 (--scope-expansion overrides type check)
 
     - test_name: verify_duplicate_import_detection
       description: Policy detects and rejects duplicate imports of the same remote object
-      status: pending
+      status: pass
+      notes: tests/test_policy.py test 4 (duplicate_import.json detected)
 
     - test_name: verify_blast_radius_check
       description: Policy compares actual plan changes against declared blast radius fields (expected_creates, expected_imports, etc.)
-      status: pending
+      status: pass
+      notes: tests/test_policy.py tests 6-7 (blast_radius_exceeded.json, within limits passes), test 13 (expected_resource_types)
 
     - test_name: verify_moved_blocks_advisory
       description: Policy warns when plan shows create+destroy of same type without corresponding moved blocks
-      status: pending
+      status: pass
+      notes: tests/test_policy.py test 8 (moved_blocks_missing.json gives exit code 2 advisory)
 
     - test_name: verify_pluggable_static_checks
       description: Consuming repo can register a custom static check that runs as part of the policy gate
       status: pending
+      notes: run_custom_checks() implemented but no integration test with a real custom check script
 
     - test_name: verify_policy_json_input
       description: Policy reads tofu show -json output, not raw plan text
-      status: pending
+      status: pass
+      notes: All tests use fixture JSON files representing tofu show -json output
 
 *** Outstanding Tasks
-    - [ ] Choose implementation language (bash + jq, Python, or Nix expression)
-    - [ ] Define policy configuration format (per-repo config file or per-PR labels;
+    - [X] Choose implementation language (bash + jq, Python, or Nix expression)
+          Chose Python (scripts/tofu-plan-policy.py)
+    - [X] Define policy configuration format (per-repo config file or per-PR labels;
           blocksense/infra uses labels like allow-destroy, sensitive-change, and
           scope-expansion)
-    - [ ] Design pluggable check interface so consuming repos can add project-specific
+          Uses CLI args (--mode, --expected-types, --scope-expansion); CI workflow
+          reads PR labels and translates to CLI args
+    - [X] Design pluggable check interface so consuming repos can add project-specific
           checks without modifying the shared script (e.g. blocksense's ruleset
           single-owner check counts cloudflare_ruleset resources with same phase);
           the interface must support checks that are hard gates (must pass before
           imports can start) vs. advisory checks
+          Implemented via --custom-checks-dir: executable scripts return exit 1
+          (hard gate) or exit 2 (advisory warning)
     - [ ] Evaluate conftest/OPA as a long-term replacement for custom scripts
           (blocksense/infra M6 lists "Migrate denylist from grep to conftest/OPA
           when practical"); plan migration path from grep-based denylist (M1) to
           conftest/OPA policy engine
-    - [ ] Ensure policy script handles both import-only PRs and mixed-change PRs
+    - [X] Ensure policy script handles both import-only PRs and mixed-change PRs
           (import milestones require zero update/delete; later milestones like M5
           create new resources and need different policy rules)
+          Implemented via --mode import-only vs. mixed
 
 * References
   - [[file:Terraform-Agent-Development-Methodology.md][Agent Development Methodology]] — Agentic workflow for Terraform modules

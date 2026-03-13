@@ -1,0 +1,496 @@
+name: 'Terraform CI'
+
+on:
+  workflow_call:
+    inputs:
+      mode:
+        description: 'Workflow mode: "pr" (offline + plan), "apply" (apply on merge), "drift" (scheduled drift check)'
+        type: string
+        required: true
+
+      working_directory:
+        description: 'Directory containing .tf files (e.g. "cloudflare")'
+        type: string
+        required: true
+
+      backend_config_file:
+        description: 'Path to backend config file relative to repo root (e.g. "backends/gcs.hcl")'
+        type: string
+        required: false
+        default: ''
+
+      runner:
+        description: 'JSON-encoded runner labels for self-hosted runner'
+        type: string
+        required: false
+        default: '["self-hosted", "Linux", "x86-64-v2"]'
+
+      provider_allowlist:
+        description: 'Comma-separated list of allowed provider source prefixes for denylist check (e.g. "cloudflare,google")'
+        type: string
+        required: false
+        default: ''
+
+      sensitive_change_label:
+        description: 'PR label required for sensitive changes (e.g. "sensitive-change"). Empty to disable.'
+        type: string
+        required: false
+        default: ''
+
+      smoke_test_command:
+        description: 'Command to run as post-apply smoke test. Empty to skip.'
+        type: string
+        required: false
+        default: ''
+
+      terranix:
+        description: 'Run terranix to generate .tf.json before tofu init'
+        type: boolean
+        required: false
+        default: false
+
+      enable_checkov:
+        description: 'Enable Checkov security scanning'
+        type: boolean
+        required: false
+        default: false
+
+      credentials_env_name:
+        description: 'Environment variable name for the provider API token (e.g. "CLOUDFLARE_API_TOKEN")'
+        type: string
+        required: false
+        default: ''
+
+      agenix_plan_secret_path:
+        description: 'Path to agenix-encrypted plan (read-only) token relative to repo root'
+        type: string
+        required: false
+        default: ''
+
+      agenix_apply_secret_path:
+        description: 'Path to agenix-encrypted apply (read-write) token relative to repo root'
+        type: string
+        required: false
+        default: ''
+
+    secrets:
+      AGENIX_CI_PRIVATE_KEY:
+        description: 'SSH private key for agenix secret decryption'
+        required: false
+      NIX_GITHUB_TOKEN:
+        description: 'GitHub token for Nix flake fetches'
+        required: false
+      CACHIX_AUTH_TOKEN:
+        description: 'Cachix auth token for binary cache'
+        required: false
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Job 1: Offline checks (no credentials required)
+  # Runs in ALL modes: pr, apply, drift
+  # Fork PRs run on GitHub-hosted runners; everything else on self-hosted.
+  # ---------------------------------------------------------------------------
+  offline-checks:
+    runs-on: ${{ inputs.mode == 'pr' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || fromJSON(inputs.runner) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup Nix
+        uses: metacraft-labs/nixos-modules/.github/setup-nix@main
+        with:
+          push-to-cache: false
+          nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+
+      - name: Lockfile check
+        run: |
+          if [ ! -f "${{ inputs.working_directory }}/.terraform.lock.hcl" ]; then
+            if [ "${{ inputs.mode }}" = "apply" ]; then
+              echo "::error::.terraform.lock.hcl is missing in ${{ inputs.working_directory }}/. Run 'tofu init' locally and commit the lockfile."
+              exit 1
+            else
+              echo "::warning::.terraform.lock.hcl is missing in ${{ inputs.working_directory }}/. Run 'tofu init' locally and commit the lockfile before merging."
+            fi
+          fi
+
+      - name: Terranix
+        if: inputs.terranix
+        run: nix develop --accept-flake-config --command terranix --working-directory ${{ inputs.working_directory }}
+
+      - name: Format check
+        run: nix develop --accept-flake-config --command tofu fmt -check -recursive ${{ inputs.working_directory }}/
+
+      - name: Init (offline)
+        run: |
+          cd ${{ inputs.working_directory }}
+          nix develop --accept-flake-config --command tofu init -backend=false
+
+      - name: Validate
+        run: |
+          cd ${{ inputs.working_directory }}
+          nix develop --accept-flake-config --command tofu validate
+
+      - name: Denylist check
+        run: |
+          echo "Scanning ${{ inputs.working_directory }}/ for dangerous constructs..."
+          exit_code=0
+
+          # Check for dangerous constructs
+          if grep -rn 'data\s*"external"' "${{ inputs.working_directory }}/" --include='*.tf' --include='*.tf.json'; then
+            echo '::error::Denylist violation: data "external" block found. Use a provider data source instead.'
+            exit_code=1
+          fi
+
+          if grep -rn 'provisioner\s*"local-exec"' "${{ inputs.working_directory }}/" --include='*.tf' --include='*.tf.json'; then
+            echo '::error::Denylist violation: provisioner "local-exec" found. Use a provider resource instead.'
+            exit_code=1
+          fi
+
+          if grep -rn 'provisioner\s*"remote-exec"' "${{ inputs.working_directory }}/" --include='*.tf' --include='*.tf.json'; then
+            echo '::error::Denylist violation: provisioner "remote-exec" found. Use a provider resource instead.'
+            exit_code=1
+          fi
+
+          if grep -rn 'resource\s*"null_resource"' "${{ inputs.working_directory }}/" --include='*.tf' --include='*.tf.json'; then
+            echo '::error::Denylist violation: resource "null_resource" found. Use terraform_data or a provider resource instead.'
+            exit_code=1
+          fi
+
+          # Check for unpinned remote module sources (module blocks without version constraint)
+          # Match module blocks with source referencing a registry (contains //) but no version attribute
+          while IFS= read -r -d '' tf_file; do
+            # Extract module blocks and check for registry sources without version
+            if awk '
+              /^module\s/ { in_module=1; has_registry_source=0; has_version=0; block_start=NR; brace_depth=0 }
+              in_module && /{/ { brace_depth++ }
+              in_module && /}/ { brace_depth--; if (brace_depth<=0) { if (has_registry_source && !has_version) { print FILENAME ":" block_start ": module without version constraint"; found=1 } in_module=0 } }
+              in_module && /source\s*=/ && /registry\.terraform\.io|\/\// { has_registry_source=1 }
+              in_module && /version\s*=/ { has_version=1 }
+              END { exit found ? 1 : 0 }
+            ' "$tf_file" 2>/dev/null; then
+              :
+            else
+              echo "::error::Denylist violation: unpinned remote module source found in $tf_file. Add a version constraint."
+              exit_code=1
+            fi
+          done < <(find "${{ inputs.working_directory }}/" -name '*.tf' -print0)
+
+          # Provider allowlist check
+          ALLOWLIST="${{ inputs.provider_allowlist }}"
+          if [ -n "$ALLOWLIST" ]; then
+            echo "Checking provider sources against allowlist: $ALLOWLIST"
+            while IFS= read -r -d '' tf_file; do
+              while IFS= read -r line; do
+                # Extract provider source from required_providers blocks
+                provider_source="$(echo "$line" | grep -oP 'source\s*=\s*"\K[^"]+' || true)"
+                if [ -n "$provider_source" ]; then
+                  allowed=false
+                  IFS=',' read -ra PROVIDERS <<< "$ALLOWLIST"
+                  for p in "${PROVIDERS[@]}"; do
+                    p="$(echo "$p" | xargs)" # trim whitespace
+                    if echo "$provider_source" | grep -qi "$p"; then
+                      allowed=true
+                      break
+                    fi
+                  done
+                  if [ "$allowed" = "false" ]; then
+                    echo "::error::Provider source '$provider_source' in $tf_file is not in the allowlist ($ALLOWLIST)."
+                    exit_code=1
+                  fi
+                fi
+              done < <(grep -n 'source\s*=' "$tf_file" || true)
+            done < <(find "${{ inputs.working_directory }}/" -name '*.tf' -print0)
+          fi
+
+          exit $exit_code
+
+      - name: TFLint
+        if: hashFiles(format('{0}/.tflint.hcl', inputs.working_directory)) != ''
+        run: |
+          cd ${{ inputs.working_directory }}
+          nix develop --accept-flake-config --command tflint --init
+          nix develop --accept-flake-config --command tflint
+
+      - name: Checkov
+        if: inputs.enable_checkov
+        run: nix develop --accept-flake-config --command checkov -d ${{ inputs.working_directory }}/
+
+      - name: Unit tests
+        run: |
+          cd ${{ inputs.working_directory }}
+          nix develop --accept-flake-config --command tofu test
+
+  # ---------------------------------------------------------------------------
+  # Job 2: Credentialed plan (PR mode only, same-repo PRs only)
+  # Fork PRs are excluded entirely — this is the fork-PR guard.
+  # ---------------------------------------------------------------------------
+  credentialed-plan:
+    if: inputs.mode == 'pr' && github.event.pull_request.head.repo.full_name == github.repository
+    needs: offline-checks
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup Nix
+        uses: metacraft-labs/nixos-modules/.github/setup-nix@main
+        with:
+          push-to-cache: false
+          nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+
+      - name: Decrypt provider credentials
+        if: inputs.agenix_plan_secret_path != ''
+        run: |
+          install -m 600 /dev/null "$RUNNER_TEMP/ci-key"
+          echo "${{ secrets.AGENIX_CI_PRIVATE_KEY }}" > "$RUNNER_TEMP/ci-key"
+          TOKEN="$(nix develop --accept-flake-config --command age -d -i "$RUNNER_TEMP/ci-key" \
+            "${{ inputs.agenix_plan_secret_path }}")"
+          echo "::add-mask::$TOKEN"
+          echo "${{ inputs.credentials_env_name }}=$TOKEN" >> "$GITHUB_ENV"
+
+      - name: Lockfile existence gate
+        run: |
+          if [ ! -f "${{ inputs.working_directory }}/.terraform.lock.hcl" ]; then
+            echo "::error::.terraform.lock.hcl is missing. Run 'tofu init' locally and commit the lockfile."
+            exit 1
+          fi
+
+      - name: Terranix
+        if: inputs.terranix
+        run: nix develop --accept-flake-config --command terranix --working-directory ${{ inputs.working_directory }}
+
+      - name: Plan
+        uses: dflook/tofu-plan@2b0b0a4074e31e43c19ca5a0e76d8f8956e6cc27 # v2
+        id: plan
+        with:
+          path: ${{ inputs.working_directory }}
+          label: ${{ inputs.working_directory }}
+          backend_config_file: ${{ inputs.backend_config_file }}
+
+      - name: Plan safety gate — destroy
+        if: steps.plan.outputs.to_destroy > 0
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh pr view "${{ github.event.pull_request.number }}" --json labels -q '.labels[].name' | grep -q 'allow-destroy'; then
+            echo "::error::Plan includes destroy actions. Add the 'allow-destroy' label and get extra approval to proceed."
+            exit 1
+          fi
+
+      - name: Plan safety gate — replace
+        if: steps.plan.outputs.json_plan_path != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PLAN_JSON="${{ steps.plan.outputs.json_plan_path }}"
+          if [ ! -f "$PLAN_JSON" ]; then
+            exit 0
+          fi
+          # Detect resources with replace actions (create + delete)
+          REPLACES=$(python3 -c "
+          import json, sys
+          plan = json.load(open(sys.argv[1]))
+          replaces = [
+              rc['address']
+              for rc in plan.get('resource_changes', [])
+              if set(rc.get('change', {}).get('actions', [])) >= {'create', 'delete'}
+          ]
+          if replaces:
+              for r in replaces:
+                  print(f'  - {r}')
+              sys.exit(1)
+          " "$PLAN_JSON" 2>&1) || {
+            echo "::error::Plan includes replace actions (delete + recreate) on these resources:"
+            echo "$REPLACES"
+            echo "Add the 'allow-destroy' label and get extra approval to proceed."
+            if ! gh pr view "${{ github.event.pull_request.number }}" --json labels -q '.labels[].name' | grep -q 'allow-destroy'; then
+              exit 1
+            fi
+          }
+
+      - name: Plan JSON policy gate
+        if: steps.plan.outputs.json_plan_path != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Fetch policy script from nixos-modules
+          WORKFLOW_REF="${{ github.action_ref || 'main' }}"
+          POLICY_SCRIPT_URL="https://raw.githubusercontent.com/metacraft-labs/nixos-modules/${WORKFLOW_REF}/scripts/tofu-plan-policy.py"
+          curl -fsSL "$POLICY_SCRIPT_URL" -o /tmp/tofu-plan-policy.py
+
+          PLAN_JSON="${{ steps.plan.outputs.json_plan_path }}"
+          POLICY_ARGS=""
+
+          # Check PR labels for policy mode
+          LABELS=$(gh pr view "${{ github.event.pull_request.number }}" --json labels -q '.labels[].name' 2>/dev/null || echo "")
+
+          if echo "$LABELS" | grep -q 'import-only'; then
+            POLICY_ARGS="$POLICY_ARGS --mode import-only"
+          fi
+
+          if echo "$LABELS" | grep -q 'scope-expansion'; then
+            POLICY_ARGS="$POLICY_ARGS --scope-expansion"
+          fi
+
+          # Run policy check
+          python3 /tmp/tofu-plan-policy.py "$PLAN_JSON" $POLICY_ARGS
+
+      - name: Sensitive-change gate
+        if: inputs.sensitive_change_label != '' && steps.plan.outputs.changes == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh pr view "${{ github.event.pull_request.number }}" --json labels -q '.labels[].name' | grep -q '${{ inputs.sensitive_change_label }}'; then
+            echo "::error::Plan shows changes that may be sensitive. Add the '${{ inputs.sensitive_change_label }}' label to acknowledge."
+            exit 1
+          fi
+
+      - name: Cleanup credentials
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/ci-key"
+
+  # ---------------------------------------------------------------------------
+  # Job 3: Apply (merge-to-main mode only)
+  # Requires GitHub Environment "production" approval gate.
+  # ---------------------------------------------------------------------------
+  apply:
+    if: inputs.mode == 'apply'
+    needs: offline-checks
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup Nix
+        uses: metacraft-labs/nixos-modules/.github/setup-nix@main
+        with:
+          push-to-cache: false
+          nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+
+      - name: Lockfile existence gate
+        run: |
+          if [ ! -f "${{ inputs.working_directory }}/.terraform.lock.hcl" ]; then
+            echo "::error::.terraform.lock.hcl is missing. Run 'tofu init' locally and commit the lockfile."
+            exit 1
+          fi
+
+      - name: Decrypt provider credentials
+        if: inputs.agenix_apply_secret_path != ''
+        run: |
+          install -m 600 /dev/null "$RUNNER_TEMP/ci-key"
+          echo "${{ secrets.AGENIX_CI_PRIVATE_KEY }}" > "$RUNNER_TEMP/ci-key"
+          TOKEN="$(nix develop --accept-flake-config --command age -d -i "$RUNNER_TEMP/ci-key" \
+            "${{ inputs.agenix_apply_secret_path }}")"
+          echo "::add-mask::$TOKEN"
+          echo "${{ inputs.credentials_env_name }}=$TOKEN" >> "$GITHUB_ENV"
+
+      - name: Terranix
+        if: inputs.terranix
+        run: nix develop --accept-flake-config --command terranix --working-directory ${{ inputs.working_directory }}
+
+      - name: Apply
+        uses: dflook/tofu-apply@3d5bdd8e0ccc0e04e6b0e18f1a76e8e17a22e92a # v2
+        id: apply
+        with:
+          path: ${{ inputs.working_directory }}
+          label: ${{ inputs.working_directory }}
+          backend_config_file: ${{ inputs.backend_config_file }}
+
+      - name: Post-apply smoke tests
+        if: inputs.smoke_test_command != ''
+        run: ${{ inputs.smoke_test_command }}
+
+      - name: Cleanup credentials
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/ci-key"
+
+  # ---------------------------------------------------------------------------
+  # Job 4: Drift detection (scheduled mode only)
+  # Runs tofu plan with -detailed-exitcode and opens an issue if drift found.
+  # ---------------------------------------------------------------------------
+  drift-check:
+    if: inputs.mode == 'drift'
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup Nix
+        uses: metacraft-labs/nixos-modules/.github/setup-nix@main
+        with:
+          push-to-cache: false
+          nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+
+      - name: Decrypt provider credentials
+        if: inputs.agenix_plan_secret_path != ''
+        run: |
+          install -m 600 /dev/null "$RUNNER_TEMP/ci-key"
+          echo "${{ secrets.AGENIX_CI_PRIVATE_KEY }}" > "$RUNNER_TEMP/ci-key"
+          TOKEN="$(nix develop --accept-flake-config --command age -d -i "$RUNNER_TEMP/ci-key" \
+            "${{ inputs.agenix_plan_secret_path }}")"
+          echo "::add-mask::$TOKEN"
+          echo "${{ inputs.credentials_env_name }}=$TOKEN" >> "$GITHUB_ENV"
+
+      - name: Init
+        run: |
+          cd ${{ inputs.working_directory }}
+          nix develop --accept-flake-config --command tofu init \
+            ${{ inputs.backend_config_file != '' && format('-backend-config=../{0}', inputs.backend_config_file) || '' }}
+
+      - name: Detect drift
+        id: drift
+        run: |
+          cd ${{ inputs.working_directory }}
+          nix develop --accept-flake-config --command tofu plan -detailed-exitcode 2>&1 | tee /tmp/drift-plan.txt || {
+            exit_code=$?
+            if [ "$exit_code" -eq 2 ]; then
+              echo "drift_detected=true" >> "$GITHUB_OUTPUT"
+              echo "::warning::Infrastructure drift detected!"
+            else
+              exit $exit_code
+            fi
+          }
+
+      - name: Open drift issue
+        if: steps.drift.outputs.drift_detected == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PLAN_OUTPUT="$(cat /tmp/drift-plan.txt)"
+          gh issue create \
+            --title "Infrastructure drift detected in ${{ inputs.working_directory }}" \
+            --body "Scheduled drift detection found changes. Review the plan output and reconcile.
+
+          \`\`\`
+          $PLAN_OUTPUT
+          \`\`\`" \
+            --label "drift"
+
+      - name: Cleanup credentials
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/ci-key"
