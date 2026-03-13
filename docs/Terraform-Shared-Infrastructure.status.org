@@ -184,7 +184,7 @@
 
 ** M1: Reusable CI Workflow
 :PROPERTIES:
-:status: planned
+:status: in-progress
 :END:
 
   Create reusable-terraform-ci.yml: a GitHub Actions reusable workflow that
