@@ -1,0 +1,30 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.1",
+  "resource_changes": [
+    {
+      "address": "cloudflare_r2_bucket.apt",
+      "type": "cloudflare_r2_bucket",
+      "name": "apt",
+      "provider_name": "registry.terraform.io/cloudflare/cloudflare",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {"name": "apt-agent-harbor"},
+        "importing": {"id": "bucket-id-1"}
+      }
+    },
+    {
+      "address": "cloudflare_dns_record.apt",
+      "type": "cloudflare_dns_record",
+      "name": "apt",
+      "provider_name": "registry.terraform.io/cloudflare/cloudflare",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {"hostname": "apt.agent-harbor.com"},
+        "importing": {"id": "dns-record-1"}
+      }
+    }
+  ]
+}

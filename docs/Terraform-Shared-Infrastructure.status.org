@@ -449,7 +449,7 @@
 
 ** M2: Plan JSON Policy
 :PROPERTIES:
-:status: planned
+:status: in-progress
 :END:
 
   Structured plan analysis script or Nix package that consuming repos use in

@@ -1,0 +1,36 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.1",
+  "resource_changes": [
+    {
+      "address": "cloudflare_r2_bucket.apt",
+      "type": "cloudflare_r2_bucket",
+      "name": "apt",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {"name": "apt-agent-harbor"}
+      }
+    },
+    {
+      "address": "cloudflare_r2_bucket.yum",
+      "type": "cloudflare_r2_bucket",
+      "name": "yum",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {"name": "yum-agent-harbor"}
+      }
+    },
+    {
+      "address": "cloudflare_r2_bucket.apk",
+      "type": "cloudflare_r2_bucket",
+      "name": "apk",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {"name": "apk-agent-harbor"}
+      }
+    }
+  ]
+}

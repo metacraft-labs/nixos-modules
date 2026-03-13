@@ -322,12 +322,31 @@ jobs:
           }
 
       - name: Plan JSON policy gate
-        if: false # TODO: Enable when M2 policy script is available
+        if: steps.plan.outputs.json_plan_path != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          # M2 will provide a policy script that validates the plan JSON.
-          # It will check: import-only enforcement, duplicate import detection,
-          # blast-radius declaration comparison, milestone-scoped resource types.
-          echo "Policy check against: ${{ steps.plan.outputs.json_plan_path }}"
+          # Fetch policy script from nixos-modules
+          WORKFLOW_REF="${{ github.action_ref || 'main' }}"
+          POLICY_SCRIPT_URL="https://raw.githubusercontent.com/metacraft-labs/nixos-modules/${WORKFLOW_REF}/scripts/tofu-plan-policy.py"
+          curl -fsSL "$POLICY_SCRIPT_URL" -o /tmp/tofu-plan-policy.py
+
+          PLAN_JSON="${{ steps.plan.outputs.json_plan_path }}"
+          POLICY_ARGS=""
+
+          # Check PR labels for policy mode
+          LABELS=$(gh pr view "${{ github.event.pull_request.number }}" --json labels -q '.labels[].name' 2>/dev/null || echo "")
+
+          if echo "$LABELS" | grep -q 'import-only'; then
+            POLICY_ARGS="$POLICY_ARGS --mode import-only"
+          fi
+
+          if echo "$LABELS" | grep -q 'scope-expansion'; then
+            POLICY_ARGS="$POLICY_ARGS --scope-expansion"
+          fi
+
+          # Run policy check
+          python3 /tmp/tofu-plan-policy.py "$PLAN_JSON" $POLICY_ARGS
 
       - name: Sensitive-change gate
         if: inputs.sensitive_change_label != '' && steps.plan.outputs.changes == 'true'
