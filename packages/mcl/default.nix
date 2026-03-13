@@ -4,6 +4,7 @@
   pkgs,
   nix,
   nix-eval-jobs,
+  cachix,
   ...
 }:
 let
@@ -13,6 +14,7 @@ let
     [
       nix
       nix-eval-jobs
+      cachix
     ]
     ++ (with pkgs; [
       gitMinimal
@@ -21,7 +23,6 @@ let
       xorg.xrandr
       alejandra
       openssh
-      cachix
     ])
     ++ lib.optionals (isLinux && isx86) [
       dmidecode
@@ -53,7 +54,7 @@ pkgs.buildDubPackage rec {
     ) ./.;
   };
 
-  inherit dCompiler;
+  compiler = dCompiler;
 
   dubLock = ./dub-lock.json;
 
