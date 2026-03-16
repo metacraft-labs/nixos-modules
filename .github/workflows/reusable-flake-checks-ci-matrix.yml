@@ -80,7 +80,7 @@ jobs:
     runs-on: ${{ inputs.non-nix-runner }}
     steps:
       - name: 'Post initial package status comment'
-        uses: marocchino/sticky-pull-request-comment@v2.9.4
+        uses: marocchino/sticky-pull-request-comment@v3.0.2
         with:
           recreate: true
           message: |
@@ -116,7 +116,7 @@ jobs:
 
       - name: Post CI matrix comment
         if: steps.generate-matrix.outputs.full_matrix
-        uses: marocchino/sticky-pull-request-comment@v2.9.4
+        uses: marocchino/sticky-pull-request-comment@v3.0.2
         with:
           recreate: true
           path: comment.md
@@ -189,7 +189,7 @@ jobs:
         run: ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} print-table
 
       - name: Post CI matrix comment
-        uses: marocchino/sticky-pull-request-comment@v2.9.4
+        uses: marocchino/sticky-pull-request-comment@v3.0.2
         with:
           recreate: true
           path: comment.md
@@ -265,7 +265,7 @@ jobs:
         run: ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} print-table
 
       - name: Update GitHub Comment
-        uses: marocchino/sticky-pull-request-comment@v2.9.4
+        uses: marocchino/sticky-pull-request-comment@v3.0.2
         with:
           recreate: true
           path: comment.md
