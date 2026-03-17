@@ -138,6 +138,10 @@
           sharedFolders = vmCfg.sharedFolders;
           display = vmCfg.display;
           videoModel = vmCfg.videoModel;
+          videoRam = vmCfg.videoRam;
+          videoVram = vmCfg.videoVram;
+          videoVgamem = vmCfg.videoVgamem;
+          videoHeads = vmCfg.videoHeads;
           diskPool = vmCfg.storagePool;
           diskVolume = "${name}.qcow2";
           osType = vmCfg.osType;
@@ -357,6 +361,48 @@
 
                 Reference: https://libvirt.org/formatdomain.html#video-devices
               '';
+            };
+
+            videoRam = mkOption {
+              type = types.nullOr types.int;
+              default = null;
+              description = ''
+                Primary surface memory in KB for the video device.
+                Only applicable to QXL. Default (when null) is 65536 (64MB).
+                For multi-monitor setups, increase proportionally.
+              '';
+              example = 524288;
+            };
+
+            videoVram = mkOption {
+              type = types.nullOr types.int;
+              default = null;
+              description = ''
+                Secondary surface memory in KB for the video device.
+                Only applicable to QXL. Default (when null) is 65536 (64MB).
+                For 4K displays, use at least 128MB (131072) per head.
+              '';
+              example = 524288;
+            };
+
+            videoVgamem = mkOption {
+              type = types.nullOr types.int;
+              default = null;
+              description = ''
+                VGA framebuffer memory in KB for the video device.
+                Only applicable to QXL. Default (when null) is 16384 (16MB).
+              '';
+              example = 65536;
+            };
+
+            videoHeads = mkOption {
+              type = types.nullOr types.int;
+              default = null;
+              description = ''
+                Number of display outputs (monitor heads).
+                Only applicable to QXL. Default (when null) is 1.
+              '';
+              example = 4;
             };
 
             sharedFolders = mkOption {
