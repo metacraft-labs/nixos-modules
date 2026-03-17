@@ -313,13 +313,32 @@ rec {
 
   # Generate video device configuration
   # Reference: https://libvirt.org/formatdomain.html#video-devices
+  #
+  # For QXL, the model supports these attributes (values in KB):
+  #   ram     - Primary surface memory (default 65536 = 64MB)
+  #   vram    - Secondary surface memory (default 65536 = 64MB)
+  #   vgamem  - VGA framebuffer memory (default 16384 = 16MB)
+  #   heads   - Number of display outputs (default 1)
   generateVideoXml =
     {
       type ? "virtio",
+      ram ? null,
+      vram ? null,
+      vgamem ? null,
+      heads ? null,
     }:
+    let
+      attrs = {
+        inherit type;
+      }
+      // lib.optionalAttrs (ram != null) { inherit ram; }
+      // lib.optionalAttrs (vram != null) { inherit vram; }
+      // lib.optionalAttrs (vgamem != null) { inherit vgamem; }
+      // lib.optionalAttrs (heads != null) { inherit heads; };
+    in
     ''
       <video>
-        <model type="${type}"/>
+        ${xmlElement "model" attrs null}
       </video>'';
 
   # Generate a complete libvirt domain XML for a desktop VM
@@ -363,6 +382,10 @@ rec {
       sharedFolders ? { },
       display ? "spice",
       videoModel ? "virtio",
+      videoRam ? null,
+      videoVram ? null,
+      videoVgamem ? null,
+      videoHeads ? null,
       diskPool ? "default",
       diskVolume,
       osType ? "windows",
@@ -494,7 +517,13 @@ rec {
       networkXml = generateNetworkXml { };
 
       # Video
-      videoXml = generateVideoXml { type = videoModel; };
+      videoXml = generateVideoXml {
+        type = videoModel;
+        ram = videoRam;
+        vram = videoVram;
+        vgamem = videoVgamem;
+        heads = videoHeads;
+      };
 
       # Input devices
       inputXml = ''
