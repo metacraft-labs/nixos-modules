@@ -1,13 +1,13 @@
 module mcl.commands.hosts;
 
 import core.time : Duration, seconds;
-import std.algorithm : filter, map;
+import std.algorithm : canFind, filter, map;
 import std.array : array, assocArray, join;
 import std.conv : to;
 import std.file : exists, readText;
 import std.format : format;
 import std.json : JSONValue, parseJSON, JSONType;
-import std.range : empty, iota, repeat, zip;
+import std.range : empty, iota, repeat;
 import std.stdio : stdout, writef, writeln, writefln, stderr;
 import std.string : split, strip, startsWith, endsWith;
 import std.typecons : tuple;
@@ -86,8 +86,8 @@ struct ScanArgs
 
     @(NamedArgument(["port", "p"])
         .Placeholder("PORT")
-        .Description("SSH port to scan (default: 22)"))
-    ushort port = 22;
+        .Description("SSH ports to scan (can be specified multiple times, default: 22)"))
+    ushort[] ports;
 
     @(NamedArgument(["timeout", "t"])
         .Placeholder("SECONDS")
@@ -102,8 +102,8 @@ struct ScanArgs
 
     @(NamedArgument(["ssh-user", "u"])
         .Placeholder("USER")
-        .Description("SSH user for fetching hostnames (default: root)"))
-    string sshUser = "root";
+        .Description("SSH users for fetching hostnames (can be specified multiple times, default: root)"))
+    string[] sshUsers;
 
     @(NamedArgument(["save-keys"])
         .Placeholder("FILE")
@@ -313,6 +313,9 @@ int scan(ScanArgs args)
         return 1;
     }
 
+    auto scanPorts = normalizeScanPorts(args.ports);
+    auto scanUsers = normalizeScanUsers(args.sshUsers);
+
     defaultPoolThreads = args.parallel;
 
     // Load merge file if provided (for merging with existing hosts)
@@ -325,15 +328,15 @@ int scan(ScanArgs args)
         writefln("Loaded %d host(s) from merge file.\n", existingHosts.length);
     }
 
-    writefln("=== Pass 1: Port scanning %s.[%s-%s] on port %s (parallel: %s) ===\n",
-        args.network, args.start, args.end, args.port, args.parallel);
+    writefln("=== Pass 1: Port scanning %s.[%s-%s] on ports [%s] (parallel: %s) ===\n",
+        args.network, args.start, args.end, scanPorts.map!(p => p.to!string).array.join(", "), args.parallel);
 
     // Pass 1: Parallel port scan to find hosts with SSH
     auto hosts = scanNetworkRange(
         networkPrefix: args.network,
         start: args.start,
         end: args.end,
-        port: args.port,
+        ports: scanPorts,
         timeout: args.timeout,
     );
 
@@ -343,14 +346,12 @@ int scan(ScanArgs args)
         return 0;
     }
 
-    writefln("\n=== Found %d host(s) with SSH service ===\n", hosts.length);
-
-    // Apply CLI defaults to hosts
-    hosts = hosts.map!(h => h.withDefaults(args.sshUser, args.port)).array;
+    writefln("\n=== Found %d reachable SSH endpoint(s) ===\n", hosts.length);
 
     // Pass 2: Fetch hostnames via SSH for all hosts (to verify SSH connectivity)
-    writefln("=== Pass 2: Fetching hostnames via SSH (parallel: %s) ===\n", args.parallel);
-    hosts = fetchHostnamesParallel(hosts, SshOptions(
+    writefln("=== Pass 2: Probing SSH login + hostname via users [%s] (parallel: %s) ===\n",
+        scanUsers.join(", "), args.parallel);
+    hosts = fetchHostnamesByIpParallel(hosts, scanUsers, SshOptions(
         command: "hostname",
         timeout: args.timeout,
         suppressWarnings: args.suppressWarnings,
@@ -415,7 +416,7 @@ int executeOnHosts(ExecuteArgs args)
             networkPrefix: args.scanNetwork,
             start: 1,
             end: 254,
-            port: args.port,
+            ports: [args.port],
             timeout: args.timeout,
         );
 
@@ -544,12 +545,12 @@ private HostEntry[] loadHostsFromFile(string filePath)
 private struct SshProbeResult
 {
     string ip;
-    bool success;
+    ushort[] openPorts;
 }
 
 /// Scan a network range for SSH hosts using pure D sockets (parallelized)
 private HostEntry[] scanNetworkRange(string networkPrefix, ubyte start, ubyte end,
-    ushort port, Duration timeout)
+    ushort[] ports, Duration timeout)
 {
     import std.parallelism : parallel;
 
@@ -557,33 +558,49 @@ private HostEntry[] scanNetworkRange(string networkPrefix, ubyte start, ubyte en
     auto ips = iota(start, end + 1)
         .map!(i => format!"%s.%d"(networkPrefix, i));
 
-    writefln("Probing %d hosts...", ips.length);
+    writefln("Probing %d host(s) across %d port(s)...", ips.length, ports.length);
     auto results = new SshProbeResult[](ips.length);
     shared size_t completed = 0;
 
     foreach (idx, ip; parallel(ips, 1))
     {
-        results[idx] = probeSshPort(ip, port, timeout);
+        results[idx] = probeSshPorts(ip, ports, timeout);
         updateProgress(completed, ips.length, "hosts checked");
     }
 
     writeln();
 
-    // Collect successful results (description is empty, will be filled by hostname fetch)
-    return results
-        .filter!(r => r.success)
-        .map!(r => HostEntry(r.ip, ""))
-        .array;
+    HostEntry[] hosts;
+    foreach (result; results)
+    {
+        foreach (openPort; result.openPorts)
+        {
+            hosts ~= HostEntry(
+                ipv4: result.ip,
+                description: "",
+                user: "",
+                port: openPort,
+                sshSuccess: false,
+            );
+        }
+    }
+
+    return hosts;
 }
 
-/// Probe a single host for SSH service using pure D sockets
-private SshProbeResult probeSshPort(string ip, ushort port, Duration timeout)
+/// Probe all requested ports for one host and collect those with SSH service.
+private SshProbeResult probeSshPorts(string ip, ushort[] ports, Duration timeout)
+{
+    return SshProbeResult(
+        ip: ip,
+        openPorts: ports.filter!(port => probeSshPort(ip, port, timeout)).array,
+    );
+}
+
+/// Probe a single host/port for SSH service using pure D sockets.
+private bool probeSshPort(string ip, ushort port, Duration timeout)
 {
     import std.socket : TcpSocket, InternetAddress, SocketOption, SocketOptionLevel;
-
-    SshProbeResult result;
-    result.ip = ip;
-    result.success = false;
 
     TcpSocket socket;
     try
@@ -609,7 +626,7 @@ private SshProbeResult probeSshPort(string ip, ushort port, Duration timeout)
         if (received > 0)
         {
             // Verify it's actually SSH (banner starts with "SSH-")
-            result.success = buffer[0 .. received].startsWith("SSH-");
+            return buffer[0 .. received].startsWith("SSH-");
         }
     }
     catch (Exception e)
@@ -617,7 +634,7 @@ private SshProbeResult probeSshPort(string ip, ushort port, Duration timeout)
         // Connection failed or timed out
     }
 
-    return result;
+    return false;
 }
 
 // =============================================================================
@@ -646,25 +663,112 @@ private string[] buildSshArgs(HostEntry host, SshOptions opts)
     ];
 }
 
-/// Fetch hostnames for a list of hosts (parallel)
-private HostEntry[] fetchHostnamesParallel(HostEntry[] hosts, SshOptions opts)
+/// Probe user/port combinations per IP and fetch hostname from first successful SSH login.
+private HostEntry[] fetchHostnamesByIpParallel(HostEntry[] hosts, string[] users, SshOptions opts)
 {
     import std.parallelism : parallel;
-    auto results = new SshCommandResult[](hosts.length);
+
+    string[] ips;
+    ushort[][string] portsByIp;
+
+    foreach (host; hosts)
+    {
+        if (auto existing = host.ipv4 in portsByIp)
+        {
+            if (!(*existing).canFind(host.port))
+                *existing ~= host.port;
+        }
+        else
+        {
+            ips ~= host.ipv4;
+            portsByIp[host.ipv4] = [host.port];
+        }
+    }
+
+    auto results = new HostEntry[](ips.length);
     shared size_t completed = 0;
 
-    foreach (idx, host; parallel(hosts))
+    foreach (idx, ip; parallel(ips))
     {
-        results[idx] = executeSshCommand(host, opts, suppressOutput: true);
-        updateProgress(completed, hosts.length, "hostnames fetched");
+        results[idx] = probeHostCredentialsForHostname(ip, portsByIp[ip], users, opts);
+        updateProgress(completed, ips.length, "hosts probed");
     }
 
     writeln();
+    return results;
+}
 
-    // Build result with hostnames as description and SSH success status
-    return zip(hosts, results)
-        .map!(pair => HostEntry(pair[0].ipv4, pair[1].success ? pair[1].output : "", pair[0].user, pair[0].port, pair[1].success))
-        .array;
+private HostEntry probeHostCredentialsForHostname(string ip, ushort[] ports, string[] users, SshOptions opts)
+{
+    foreach (port; ports)
+    {
+        foreach (user; users)
+        {
+            auto host = HostEntry(
+                ipv4: ip,
+                description: "",
+                user: user,
+                port: port,
+                sshSuccess: false,
+            );
+
+            auto result = executeSshCommand(host, opts, suppressOutput: true);
+            if (result.success)
+            {
+                return HostEntry(
+                    ipv4: ip,
+                    description: result.output,
+                    user: user,
+                    port: port,
+                    sshSuccess: true,
+                );
+            }
+        }
+    }
+
+    return HostEntry(
+        ipv4: ip,
+        description: "",
+        user: users[0],
+        port: ports[0],
+        sshSuccess: false,
+    );
+}
+
+private ushort[] normalizeScanPorts(ushort[] rawPorts)
+{
+    auto ports = rawPorts.length > 0 ? rawPorts.dup : [cast(ushort) 22];
+    foreach (port; ports)
+    {
+        if (port == 0)
+            errorAndExit("Invalid SSH port: 0");
+    }
+
+    ushort[] deduped;
+    foreach (port; ports)
+    {
+        if (!deduped.canFind(port))
+            deduped ~= port;
+    }
+
+    return deduped;
+}
+
+private string[] normalizeScanUsers(string[] rawUsers)
+{
+    auto users = rawUsers.length > 0 ? rawUsers.map!(u => u.strip).array : ["root"];
+    users = users.filter!(u => u.length > 0).array;
+    if (users.empty)
+        users = ["root"];
+
+    string[] deduped;
+    foreach (user; users)
+    {
+        if (!deduped.canFind(user))
+            deduped ~= user;
+    }
+
+    return deduped;
 }
 
 /// Save SSH public keys to a file (parallel)
