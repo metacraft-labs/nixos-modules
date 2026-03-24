@@ -80,9 +80,8 @@ jobs:
     runs-on: ${{ inputs.non-nix-runner }}
     steps:
       - name: 'Post initial package status comment'
-        uses: marocchino/sticky-pull-request-comment@v2.9.4
+        uses: metacraft-labs/nixos-modules/.github/sticky-comment@main
         with:
-          recreate: true
           message: |
             Thanks for your Pull Request!
 
@@ -116,9 +115,8 @@ jobs:
 
       - name: Post CI matrix comment
         if: steps.generate-matrix.outputs.full_matrix
-        uses: marocchino/sticky-pull-request-comment@v2.9.4
+        uses: metacraft-labs/nixos-modules/.github/sticky-comment@main
         with:
-          recreate: true
           path: comment.md
 
     outputs:
@@ -189,9 +187,8 @@ jobs:
         run: ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} print-table
 
       - name: Post CI matrix comment
-        uses: marocchino/sticky-pull-request-comment@v2.9.4
+        uses: metacraft-labs/nixos-modules/.github/sticky-comment@main
         with:
-          recreate: true
           path: comment.md
 
   build:
@@ -265,9 +262,8 @@ jobs:
         run: ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} print-table
 
       - name: Update GitHub Comment
-        uses: marocchino/sticky-pull-request-comment@v2.9.4
+        uses: metacraft-labs/nixos-modules/.github/sticky-comment@main
         with:
-          recreate: true
           path: comment.md
 
       - run: exit 1
