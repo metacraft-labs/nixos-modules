@@ -18,7 +18,10 @@
       legacyPackages = {
         inputs = {
           nixpkgs = rec {
-            inherit (pkgs) cachix nix-eval-jobs;
+            inherit (pkgs) nix-eval-jobs;
+            cachix = pkgs.haskell.lib.justStaticExecutables (
+              pkgs.haskellPackages.cachix.override { inherit nix; }
+            );
             inherit nix;
             nixos-rebuild-ng = overrideNix pkgs.nixos-rebuild-ng;
             nix-fast-build = pkgs.nix-fast-build.override { inherit nix-eval-jobs; };
