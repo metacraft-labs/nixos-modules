@@ -32,6 +32,10 @@
         // optionalAttrs (system == "x86_64-linux" || system == "aarch64-darwin") {
           inherit (self'.legacyPackages.inputs.ethereum-nix) geth;
         }
+        // optionalAttrs isLinux {
+          disko = self'.legacyPackages.inputs.disko.default;
+          nixos-anywhere = self'.legacyPackages.inputs.nixos-anywhere.default;
+        }
         // optionalAttrs (system == "x86_64-linux") {
           inherit (pkgs) terraform;
           inherit (self'.legacyPackages.inputs.terranix) terranix;
