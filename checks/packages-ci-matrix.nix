@@ -34,8 +34,7 @@
           inherit (self'.legacyPackages.inputs.ethereum-nix) geth;
         }
         // optionalAttrs isLinux {
-          disko = self'.legacyPackages.inputs.disko.default;
-          nixos-anywhere = self'.legacyPackages.inputs.nixos-anywhere.default;
+          inherit (self'.legacyPackages.inputs) disko nixos-anywhere;
         }
         // optionalAttrs (system == "x86_64-linux") {
           inherit (pkgs) terraform;
