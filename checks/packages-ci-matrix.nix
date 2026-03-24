@@ -26,6 +26,7 @@
             nix
             nix-eval-jobs
             nix-fast-build
+            nixos-rebuild-ng
             ;
           inherit (self'.legacyPackages.inputs.ethereum-nix) foundry;
         }

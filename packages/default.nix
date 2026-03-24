@@ -20,6 +20,7 @@
           nixpkgs = rec {
             inherit (pkgs) cachix nix-eval-jobs;
             inherit nix;
+            nixos-rebuild-ng = overrideNix pkgs.nixos-rebuild-ng;
             nix-fast-build = pkgs.nix-fast-build.override { inherit nix-eval-jobs; };
           };
           agenix = inputs'.agenix.packages;
