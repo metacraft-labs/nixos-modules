@@ -10,24 +10,32 @@
       inherit (lib) optionalAttrs versionAtLeast;
       inherit (pkgs.stdenv.hostPlatform) system isLinux;
     in
+    let
+      nix = pkgs.nix-eval-jobs.passthru.nix;
+      overrideNix = pkg: pkg.override { inherit nix; };
+    in
     rec {
       legacyPackages = {
         inputs = {
           nixpkgs = rec {
             inherit (pkgs) cachix nix-eval-jobs;
-            nix = nix-eval-jobs.passthru.nix;
+            inherit nix;
             nix-fast-build = pkgs.nix-fast-build.override { inherit nix-eval-jobs; };
           };
           agenix = inputs'.agenix.packages;
           devenv = inputs'.devenv.packages;
-          disko = inputs'.disko.packages;
+          disko = inputs'.disko.packages // {
+            default = overrideNix inputs'.disko.packages.default;
+          };
           dlang-nix = inputs'.dlang-nix.packages;
           ethereum-nix = inputs'.ethereum-nix.packages;
           fenix = inputs'.fenix.packages;
           git-hooks-nix = inputs'.git-hooks-nix.packages;
           microvm = inputs'.microvm.packages;
           nix-fast-build = inputs'.nix-fast-build.packages;
-          nixos-anywhere = inputs'.nixos-anywhere.packages;
+          nixos-anywhere = inputs'.nixos-anywhere.packages // {
+            default = overrideNix inputs'.nixos-anywhere.packages.default;
+          };
           terranix = inputs'.terranix.packages;
           treefmt-nix = inputs'.treefmt-nix.packages;
         };
