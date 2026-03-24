@@ -1,0 +1,50 @@
+name: Sticky Pull Request Comment
+description: Posts or updates a single sticky comment on the current PR, replacing any previous one.
+
+inputs:
+  message:
+    description: Inline comment body text (mutually exclusive with `path`)
+    required: false
+    default: ''
+  path:
+    description: Path to a file whose contents become the comment body (mutually exclusive with `message`)
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Post sticky comment
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const message = `${{ inputs.message }}`;
+          const path = `${{ inputs.path }}`;
+          let content;
+          if (path) {
+            content = fs.readFileSync(path, 'utf8');
+          } else {
+            content = message;
+          }
+          const marker = '<!-- sticky-comment -->';
+          const body = marker + '\n' + content;
+          const { data: comments } = await github.rest.issues.listComments({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+          });
+          const existing = comments.find(c => c.body.includes(marker));
+          if (existing) {
+            await github.rest.issues.deleteComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: existing.id,
+            });
+          }
+          await github.rest.issues.createComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+            body,
+          });
