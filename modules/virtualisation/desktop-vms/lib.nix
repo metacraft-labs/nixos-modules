@@ -341,6 +341,42 @@ rec {
         ${xmlElement "model" attrs null}
       </video>'';
 
+  # Parse a PCI address string (BB:SS.F) into components for libvirt XML
+  # Example: "01:00.0" -> { domain = "0x0000"; bus = "0x01"; slot = "0x00"; function = "0x0"; }
+  # Reference: https://libvirt.org/formatdomain.html#host-device-assignment
+  parsePciAddress =
+    addr:
+    let
+      parts = builtins.match "([0-9a-fA-F]+):([0-9a-fA-F]+)\\.([0-9a-fA-F]+)" addr;
+    in
+    if parts == null then
+      throw "Invalid PCI address: ${addr}. Expected format: BB:SS.F (e.g., 01:00.0)"
+    else
+      {
+        domain = "0x0000";
+        bus = "0x${builtins.elemAt parts 0}";
+        slot = "0x${builtins.elemAt parts 1}";
+        function = "0x${builtins.elemAt parts 2}";
+      };
+
+  # Generate PCI hostdev XML for a single device passthrough
+  # Reference: https://libvirt.org/formatdomain.html#usb-pci-scsi-assignment
+  generatePciHostdevXml =
+    addr:
+    let
+      p = parsePciAddress addr;
+    in
+    ''
+      <hostdev mode="subsystem" type="pci" managed="yes">
+        <source>
+          <address domain="${p.domain}" bus="${p.bus}" slot="${p.slot}" function="${p.function}"/>
+        </source>
+      </hostdev>'';
+
+  # Generate PCI hostdev XML for multiple devices
+  generatePciHostdevsXml =
+    addrs: if addrs == [ ] then "" else concatMapStringsSep "\n" generatePciHostdevXml addrs;
+
   # Generate a complete libvirt domain XML for a desktop VM
   #
   # This function combines all the individual XML generators to produce
@@ -401,6 +437,8 @@ rec {
         freePageReporting = false;
         statsInterval = 5;
       },
+      pciDevices ? [ ],
+      lookingGlassMemoryMB ? 64,
     }:
     let
       memParsed = parseMemory memory;
@@ -497,12 +535,17 @@ rec {
           generateVncGraphicsXml { }
         else if display == "looking-glass" then
           # Looking Glass uses SPICE for input plus shared memory
-          generateSpiceGraphicsXml { } + "\n      " + generateLookingGlassXml { }
+          generateSpiceGraphicsXml { }
+          + "\n      "
+          + generateLookingGlassXml { memoryMB = lookingGlassMemoryMB; }
         else
           throw "Unknown display type: ${display}";
 
       # VirtIO-FS shared folders
       virtioFsXml = generateVirtioFsXml sharedFolders;
+
+      # PCI device passthrough (GPU, etc.)
+      pciHostdevsXml = generatePciHostdevsXml pciDevices;
 
       # TPM for Windows 11
       tpmXml = generateTpmXml { enable = tpm && osType == "windows"; };
@@ -627,6 +670,7 @@ rec {
           ${virtioFsXml}
           ${tpmXml}
           ${memballoonXml}
+          ${pciHostdevsXml}
           ${extraDevices}
         </devices>
       </domain>'';

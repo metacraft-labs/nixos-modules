@@ -66,6 +66,7 @@
         mapAttrs
         mapAttrsToList
         filterAttrs
+        concatStringsSep
         optionalString
         literalExpression
         ;
@@ -150,6 +151,8 @@
           inherit ovmfCodePath ovmfVarsPath;
           nvramPath = "/var/lib/libvirt/qemu/nvram/${name}_VARS.fd";
           extraDevices = vmCfg.extraDevices;
+          pciDevices = vmCfg.pciDevices;
+          lookingGlassMemoryMB = if cfg.lookingGlass.enable then cfg.lookingGlass.sharedMemoryMB else 64;
           # Memballoon configuration
           memballoon = vmCfg.memballoon;
         };
@@ -511,6 +514,20 @@
                 '''
               '';
             };
+
+            pciDevices = mkOption {
+              type = types.listOf types.str;
+              default = [ ];
+              description = ''
+                PCI device addresses to pass through to this VM (BDF format: "BB:SS.F").
+                Get addresses with: lspci -nn | grep -i nvidia
+                Include both GPU and audio functions for complete passthrough.
+              '';
+              example = [
+                "01:00.0"
+                "01:00.1"
+              ];
+            };
           };
         }
       );
@@ -647,6 +664,70 @@
           '';
         };
 
+        gpuPassthrough = {
+          enable = mkEnableOption ''
+            GPU passthrough via VFIO.
+
+            Configures IOMMU, VFIO kernel modules, and binds specified PCI
+            devices to the vfio-pci driver at boot for VM passthrough.
+          '';
+
+          pciIDs = mkOption {
+            type = types.listOf types.str;
+            default = [ ];
+            description = ''
+              PCI vendor:device IDs to bind to vfio-pci at boot.
+              Get IDs with: lspci -nn | grep -i nvidia
+              Only the GPU function ID is needed if it's unique across cards.
+            '';
+            example = [
+              "10de:1c82"
+              "10de:0fb9"
+            ];
+          };
+
+          cpuVendor = mkOption {
+            type = types.enum [
+              "intel"
+              "amd"
+            ];
+            default = "intel";
+            description = ''
+              CPU vendor, used to select the correct IOMMU kernel parameter
+              (intel_iommu=on vs amd_iommu=on).
+            '';
+          };
+        };
+
+        lookingGlass = {
+          enable = mkEnableOption ''
+            Looking Glass for near-native VM display performance.
+
+            Sets up the KVMFR kernel module, shared memory device,
+            and Looking Glass client. The VM must have the Looking Glass
+            Host application installed and a GPU passed through.
+
+            Reference: https://looking-glass.io/
+          '';
+
+          user = mkOption {
+            type = types.str;
+            default = "root";
+            description = "User who will run the Looking Glass client.";
+            example = "zahary";
+          };
+
+          sharedMemoryMB = mkOption {
+            type = types.int;
+            default = 128;
+            description = ''
+              KVMFR shared memory size in MB (must be a power of 2).
+              Minimum sizes: 32MB for 1080p SDR, 64MB for 1440p SDR,
+              128MB for 4K SDR, 256MB for 4K HDR.
+            '';
+          };
+        };
+
         vms = mkOption {
           type = types.attrsOf vmSubmodule;
           default = { };
@@ -696,7 +777,7 @@
                 packages = mkDefault [ ovmfPackage ];
               };
               # VirtIO-FS requires memory backing access
-              verbatimConfig = mkDefault ''
+              verbatimConfig = ''
                 memory_backing_dir = "/dev/shm"
               '';
             };
@@ -728,6 +809,47 @@
             });
           '';
         }
+
+        # GPU passthrough: IOMMU and VFIO configuration
+        (mkIf cfg.gpuPassthrough.enable {
+          boot.kernelParams = [
+            "${cfg.gpuPassthrough.cpuVendor}_iommu=on"
+            "iommu=pt"
+          ]
+          ++ lib.optional (
+            cfg.gpuPassthrough.pciIDs != [ ]
+          ) "vfio-pci.ids=${concatStringsSep "," cfg.gpuPassthrough.pciIDs}";
+
+          boot.initrd.kernelModules = [
+            "vfio_pci"
+            "vfio"
+            "vfio_iommu_type1"
+          ];
+        })
+
+        # Looking Glass: KVMFR shared memory and client
+        (mkIf cfg.lookingGlass.enable {
+          environment.systemPackages = [ pkgs.looking-glass-client ];
+
+          boot.extraModulePackages = [ config.boot.kernelPackages.kvmfr ];
+          boot.kernelModules = [ "kvmfr" ];
+          boot.extraModprobeConfig = ''
+            options kvmfr static_size_mb=${toString cfg.lookingGlass.sharedMemoryMB}
+          '';
+
+          services.udev.extraRules = ''
+            SUBSYSTEM=="kvmfr", OWNER="${cfg.lookingGlass.user}", GROUP="kvm", MODE="0660"
+          '';
+
+          virtualisation.libvirtd.qemu.verbatimConfig = lib.mkAfter ''
+            cgroup_device_acl = [
+              "/dev/null", "/dev/full", "/dev/zero",
+              "/dev/random", "/dev/urandom",
+              "/dev/ptmx", "/dev/kvm",
+              "/dev/kvmfr0"
+            ]
+          '';
+        })
 
         # Hugepages configuration (for "always-on" profile or explicit enable)
         (mkIf cfg.hugepages.enable {
