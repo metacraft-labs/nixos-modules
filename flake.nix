@@ -281,6 +281,28 @@
           _module.args.pkgs = import nixpkgs {
             inherit system;
             config.allowUnfree = true;
+            overlays = [
+              (
+                final: prev:
+                let
+                  unstable = inputs.nixpkgs-unstable.legacyPackages.${system};
+                in
+                {
+                  nix = prev.nix-eval-jobs.passthru.nix;
+                  cachix = unstable.cachix.override {
+                    haskellPackages = unstable.haskellPackages.override {
+                      overrides = hfinal: hprev: {
+                        hercules-ci-cnix-store = hprev.hercules-ci-cnix-store.overrideAttrs (old: {
+                          passthru = old.passthru // {
+                            nixPackage = final.nix;
+                          };
+                        });
+                      };
+                    };
+                  };
+                }
+              )
+            ];
           };
         };
 
