@@ -77,6 +77,7 @@ jobs:
           echo "mcl_flake_cmd=nix run --accept-flake-config github:metacraft-labs/nixos-modules/${WORKFLOW_SHA}#mcl" >> $GITHUB_OUTPUT
 
   post-initial-comment:
+    if: github.event_name == 'pull_request'
     runs-on: ${{ inputs.non-nix-runner }}
     steps:
       - name: 'Post initial package status comment'
@@ -114,7 +115,7 @@ jobs:
         run: ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} shard-matrix
 
       - name: Post CI matrix comment
-        if: steps.generate-matrix.outputs.full_matrix
+        if: github.event_name == 'pull_request' && steps.generate-matrix.outputs.full_matrix
         uses: metacraft-labs/nixos-modules/.github/sticky-comment@main
         with:
           path: comment.md
@@ -187,6 +188,7 @@ jobs:
         run: ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} print-table
 
       - name: Post CI matrix comment
+        if: github.event_name == 'pull_request'
         uses: metacraft-labs/nixos-modules/.github/sticky-comment@main
         with:
           path: comment.md
@@ -262,6 +264,7 @@ jobs:
         run: ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} print-table
 
       - name: Update GitHub Comment
+        if: github.event_name == 'pull_request'
         uses: metacraft-labs/nixos-modules/.github/sticky-comment@main
         with:
           path: comment.md
