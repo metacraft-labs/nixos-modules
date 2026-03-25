@@ -439,6 +439,11 @@ rec {
       },
       pciDevices ? [ ],
       lookingGlassMemoryMB ? 64,
+      # Limit guest physical address bits to match host IOMMU address width.
+      # Intel VT-d may only support 39-bit (512GB) — OVMF uses the guest's
+      # physical address width to place 64-bit PCI BARs, which can exceed
+      # the IOMMU range and cause VFIO_MAP_DMA failures.
+      maxPhysAddrBits ? null,
     }:
     let
       memParsed = parseMemory memory;
@@ -457,7 +462,11 @@ rec {
       # CPU configuration with host passthrough for best performance
       cpuXml = ''
         <cpu mode="host-passthrough" check="none">
-          <topology sockets="1" dies="1" clusters="1" cores="${toString vcpus}" threads="1"/>
+          <topology sockets="1" dies="1" clusters="1" cores="${toString vcpus}" threads="1"/>${
+            optionalString (maxPhysAddrBits != null) ''
+
+              <maxphysaddr mode="emulate" bits="${toString maxPhysAddrBits}"/>''
+          }
         </cpu>'';
 
       # Memory backing (hugepages + shared for virtiofs)
@@ -639,9 +648,21 @@ rec {
         else
           ''<memballoon model="none"/>'';
 
+      # QEMU command-line namespace — needed for host-phys-bits workaround.
+      # Libvirt's <maxphysaddr mode="emulate"> sets phys-bits but doesn't disable
+      # host-phys-bits, which overrides it in KVM host-passthrough mode.
+      needsQemuNs = maxPhysAddrBits != null;
+      qemuNsAttr = optionalString needsQemuNs " xmlns:qemu='http://libvirt.org/schemas/domain/qemu/1.0'";
+      qemuCommandlineXml = optionalString needsQemuNs ''
+
+        <qemu:commandline>
+          <qemu:arg value="-global"/>
+          <qemu:arg value="host-x86_64-cpu.host-phys-bits=false"/>
+        </qemu:commandline>'';
+
     in
     ''
-      <domain type="kvm">
+      <domain type="kvm"${qemuNsAttr}>
         <name>${name}</name>
         ${uuidLine}
         ${memoryXml}
@@ -672,6 +693,6 @@ rec {
           ${memballoonXml}
           ${pciHostdevsXml}
           ${extraDevices}
-        </devices>
+        </devices>${qemuCommandlineXml}
       </domain>'';
 }

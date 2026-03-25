@@ -155,6 +155,8 @@
           lookingGlassMemoryMB = if cfg.lookingGlass.enable then cfg.lookingGlass.sharedMemoryMB else 64;
           # Memballoon configuration
           memballoon = vmCfg.memballoon;
+          # IOMMU address width limit for GPU passthrough
+          maxPhysAddrBits = cfg.gpuPassthrough.maxPhysAddrBits;
         };
 
       # Write domain XML to a file
@@ -696,6 +698,26 @@
               CPU vendor, used to select the correct IOMMU kernel parameter
               (intel_iommu=on vs amd_iommu=on).
             '';
+          };
+
+          maxPhysAddrBits = mkOption {
+            type = types.nullOr types.int;
+            default = null;
+            description = ''
+              Limit guest physical address bits to match host IOMMU address width.
+
+              OVMF firmware uses the guest's physical address width (from CPUID) to
+              place 64-bit PCI BARs. If the host IOMMU supports fewer address bits
+              than the CPU reports, OVMF may place BARs beyond the IOMMU range,
+              causing VFIO_MAP_DMA failures.
+
+              Check your IOMMU address width with:
+                journalctl -k | grep "Host address width"
+
+              Common values: 39 (512GB, older Intel), 48 (256TB, newer Intel/AMD).
+              Set to null to use the CPU's native value (safe when IOMMU width >= CPU width).
+            '';
+            example = 39;
           };
         };
 
