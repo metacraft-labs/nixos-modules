@@ -444,6 +444,7 @@ rec {
       # physical address width to place 64-bit PCI BARs, which can exceed
       # the IOMMU range and cause VFIO_MAP_DMA failures.
       maxPhysAddrBits ? null,
+      extraQemuArgs ? [ ],
     }:
     let
       memParsed = parseMemory memory;
@@ -652,16 +653,20 @@ rec {
         else
           ''<memballoon model="none"/>'';
 
-      # QEMU command-line namespace — needed for host-phys-bits workaround.
-      # Libvirt's <maxphysaddr mode="emulate"> sets phys-bits but doesn't disable
-      # host-phys-bits, which overrides it in KVM host-passthrough mode.
-      needsQemuNs = maxPhysAddrBits != null;
+      # QEMU command-line namespace — needed for host-phys-bits workaround
+      # and any extra QEMU arguments (e.g. evdev input passthrough).
+      physBitsArgs = lib.optionals (maxPhysAddrBits != null) [
+        "-global"
+        "host-x86_64-cpu.host-phys-bits=false"
+      ];
+      allQemuArgs = physBitsArgs ++ extraQemuArgs;
+      needsQemuNs = allQemuArgs != [ ];
       qemuNsAttr = optionalString needsQemuNs " xmlns:qemu='http://libvirt.org/schemas/domain/qemu/1.0'";
+      qemuArgsXml = concatMapStringsSep "\n    " (arg: ''<qemu:arg value="${arg}"/>'') allQemuArgs;
       qemuCommandlineXml = optionalString needsQemuNs ''
 
         <qemu:commandline>
-          <qemu:arg value="-global"/>
-          <qemu:arg value="host-x86_64-cpu.host-phys-bits=false"/>
+          ${qemuArgsXml}
         </qemu:commandline>'';
 
     in
