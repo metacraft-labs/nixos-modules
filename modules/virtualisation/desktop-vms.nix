@@ -151,6 +151,7 @@
           inherit ovmfCodePath ovmfVarsPath;
           nvramPath = "/var/lib/libvirt/qemu/nvram/${name}_VARS.fd";
           extraDevices = vmCfg.extraDevices;
+          extraQemuArgs = vmCfg.extraQemuArgs;
           pciDevices = vmCfg.pciDevices;
           lookingGlassMemoryMB = if cfg.lookingGlass.enable then cfg.lookingGlass.sharedMemoryMB else 64;
           # Memballoon configuration
@@ -500,6 +501,19 @@
 
                 Reference: https://www.libvirt.org/formatdomain.html#memory-balloon-device
               '';
+            };
+
+            extraQemuArgs = mkOption {
+              type = types.listOf types.str;
+              default = [ ];
+              description = ''
+                Extra QEMU command-line arguments injected via qemu:commandline namespace.
+                Use this for evdev input passthrough, custom device options, etc.
+              '';
+              example = [
+                "-object"
+                "input-linux,id=kbd,evdev=/dev/input/event0,grab-toggle=ctrl-ctrl"
+              ];
             };
 
             extraDevices = mkOption {
