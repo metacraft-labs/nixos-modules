@@ -13,5 +13,6 @@
     ./pharos
     ./commands.nix
     ./virtualisation/desktop-vms.nix
+    ./nix-topology
   ];
 }
