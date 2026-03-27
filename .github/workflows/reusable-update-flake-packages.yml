@@ -36,7 +36,7 @@ on:
 
 jobs:
   updateFlakePackages:
-    runs-on: ${{ fromJSON(inputs.runner) }}
+    runs-on: ${{ fromJSON(inputs.runner || '["self-hosted", "nixos", "x86-64-v2", "bare-metal"]') }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
