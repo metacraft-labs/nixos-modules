@@ -47,6 +47,16 @@
                   # *.nix formatting
                   nixfmt.enable = true;
 
+                  # *.tf and *.tftest.hcl formatting (skips Terranix-generated .tf.json)
+                  terraform-format = {
+                    enable = true;
+                    name = "terraform-format";
+                    description = "Format Terraform/OpenTofu HCL files";
+                    entry = "${pkgs.opentofu}/bin/tofu fmt";
+                    types = [ "file" ];
+                    files = "\\.(tf|tftest\\.hcl)$";
+                  };
+
                   # *.{js,jsx,ts,tsx,css,html,md,json} formatting
                   prettier = {
                     enable = true;
