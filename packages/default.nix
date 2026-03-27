@@ -19,9 +19,10 @@
         inputs = {
           nixpkgs = rec {
             inherit (pkgs) nix-eval-jobs;
-            cachix = pkgs.haskell.lib.justStaticExecutables (
-              pkgs.haskellPackages.cachix.override { inherit nix; }
-            );
+            # NOTE: Do not override `nix` here — hercules-ci-cnix-store (a
+            # transitive dep) is compiled against nixpkgs' default Nix and the
+            # C++ ABI breaks when a different version is spliced in.
+            cachix = pkgs.haskell.lib.justStaticExecutables pkgs.haskellPackages.cachix;
             inherit nix;
             nixos-rebuild-ng = overrideNix pkgs.nixos-rebuild-ng;
             nix-fast-build = pkgs.nix-fast-build.override { inherit nix-eval-jobs; };
