@@ -55,6 +55,32 @@ dub --root ./packages/mcl/ build
 dub --root ./packages/mcl/ test -- -e coda
 ```
 
+### Coda API Tests
+
+Coda tests require environment variables:
+
+- `CODA_API_TOKEN` — Your Coda API token
+- `CODA_TEST_DOC_ID` — A test document ID to run tests against
+
+To set up a test document:
+
+```bash
+# Create a new test document (requires CODA_API_TOKEN)
+dub run --single scripts/create_test_coda_doc.d
+
+# The script prints the doc ID and URL.
+# Open the URL and manually add a table with at least one text column
+# (the Coda API does not support creating tables programmatically).
+
+# Add both variables to your .env:
+#   export CODA_API_TOKEN=<your token>
+#   export CODA_TEST_DOC_ID=<printed doc ID>
+
+# Source and run coda tests (use -t 1 to avoid rate limiting)
+source .env
+dub --root ./packages/mcl/ test -- -i coda -t 1
+```
+
 ### Run Specific Tests
 
 Use `-i` (include) to filter tests by regex pattern:
@@ -276,6 +302,39 @@ foreach (record; records)
    ```bash
    mcl host-info | jq .
    ```
+
+### Single-File Test Scripts
+
+Use dub single-file packages for quick testing of mcl modules:
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "test_heuristics"
+    dependency "mcl" path="."
++/
+import std.stdio : writeln;
+import mcl.commands.invoice_heuristics;
+
+void main()
+{
+    auto brand = extractBrandFromProduct("Logitech MK295");
+    writeln("Brand: ", brand);
+
+    auto matches = isBrandPlusSku("Logitech 920-009800");
+    writeln("Is brand+sku: ", matches);
+}
+```
+
+Run from the `packages/mcl/` directory:
+
+```bash
+cd packages/mcl
+chmod +x test_script.d
+./test_script.d
+# Or explicitly:
+dub run --single test_script.d
+```
 
 ## Dependencies
 
