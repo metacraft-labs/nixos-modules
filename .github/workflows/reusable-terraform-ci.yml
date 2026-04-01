@@ -237,7 +237,10 @@ jobs:
   # Fork PRs are excluded entirely — this is the fork-PR guard.
   # ---------------------------------------------------------------------------
   credentialed-plan:
-    if: inputs.mode == 'pr' && github.event.pull_request.head.repo.full_name == github.repository
+    if: >-
+      inputs.mode == 'pr'
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && (inputs.credentials_env_name != '' || inputs.agenix_plan_secret_path != '')
     needs: offline-checks
     runs-on: ${{ fromJSON(inputs.runner) }}
     steps:
@@ -374,7 +377,9 @@ jobs:
   # Requires GitHub Environment "production" approval gate.
   # ---------------------------------------------------------------------------
   apply:
-    if: inputs.mode == 'apply'
+    if: >-
+      inputs.mode == 'apply'
+      && (inputs.credentials_env_name != '' || inputs.agenix_apply_secret_path != '')
     needs: offline-checks
     runs-on: ${{ fromJSON(inputs.runner) }}
     environment: production
@@ -438,7 +443,9 @@ jobs:
   # Runs tofu plan with -detailed-exitcode and opens an issue if drift found.
   # ---------------------------------------------------------------------------
   drift-check:
-    if: inputs.mode == 'drift'
+    if: >-
+      inputs.mode == 'drift'
+      && (inputs.credentials_env_name != '' || inputs.agenix_plan_secret_path != '')
     runs-on: ${{ fromJSON(inputs.runner) }}
     steps:
       - name: Checkout
