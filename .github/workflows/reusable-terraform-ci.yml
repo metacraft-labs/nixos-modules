@@ -124,7 +124,9 @@ jobs:
 
       - name: Terranix
         if: inputs.terranix
-        run: nix develop --accept-flake-config --command terranix --working-directory ${{ inputs.working_directory }}
+        run: |
+          cd ${{ inputs.working_directory }}
+          nix develop --accept-flake-config --command bash -c 'terranix > config.tf.json'
 
       - name: Format check
         run: nix develop --accept-flake-config --command tofu fmt -check -recursive ${{ inputs.working_directory }}/
@@ -270,7 +272,9 @@ jobs:
 
       - name: Terranix
         if: inputs.terranix
-        run: nix develop --accept-flake-config --command terranix --working-directory ${{ inputs.working_directory }}
+        run: |
+          cd ${{ inputs.working_directory }}
+          nix develop --accept-flake-config --command bash -c 'terranix > config.tf.json'
 
       - name: Plan
         uses: dflook/tofu-plan@2b0b0a4074e31e43c19ca5a0e76d8f8956e6cc27 # v2
@@ -405,7 +409,9 @@ jobs:
 
       - name: Terranix
         if: inputs.terranix
-        run: nix develop --accept-flake-config --command terranix --working-directory ${{ inputs.working_directory }}
+        run: |
+          cd ${{ inputs.working_directory }}
+          nix develop --accept-flake-config --command bash -c 'terranix > config.tf.json'
 
       - name: Apply
         uses: dflook/tofu-apply@3d5bdd8e0ccc0e04e6b0e18f1a76e8e17a22e92a # v2
