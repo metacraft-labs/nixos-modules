@@ -126,7 +126,8 @@ jobs:
         if: inputs.terranix
         run: |
           cd ${{ inputs.working_directory }}
-          nix develop --accept-flake-config --command bash -c 'terranix > config.tf.json'
+          NIXPKGS=$(nix eval --raw nixpkgs#path --inputs-from . --accept-flake-config)
+          nix develop --accept-flake-config --command bash -c "terranix --pkgs '$NIXPKGS' > config.tf.json"
 
       - name: Format check
         run: nix develop --accept-flake-config --command tofu fmt -check -recursive ${{ inputs.working_directory }}/
@@ -274,7 +275,8 @@ jobs:
         if: inputs.terranix
         run: |
           cd ${{ inputs.working_directory }}
-          nix develop --accept-flake-config --command bash -c 'terranix > config.tf.json'
+          NIXPKGS=$(nix eval --raw nixpkgs#path --inputs-from . --accept-flake-config)
+          nix develop --accept-flake-config --command bash -c "terranix --pkgs '$NIXPKGS' > config.tf.json"
 
       - name: Plan
         uses: dflook/tofu-plan@2b0b0a4074e31e43c19ca5a0e76d8f8956e6cc27 # v2
@@ -411,7 +413,8 @@ jobs:
         if: inputs.terranix
         run: |
           cd ${{ inputs.working_directory }}
-          nix develop --accept-flake-config --command bash -c 'terranix > config.tf.json'
+          NIXPKGS=$(nix eval --raw nixpkgs#path --inputs-from . --accept-flake-config)
+          nix develop --accept-flake-config --command bash -c "terranix --pkgs '$NIXPKGS' > config.tf.json"
 
       - name: Apply
         uses: dflook/tofu-apply@3d5bdd8e0ccc0e04e6b0e18f1a76e8e17a22e92a # v2
