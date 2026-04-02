@@ -39,7 +39,7 @@ jobs:
     runs-on: ${{ fromJSON(inputs.runner || '["self-hosted", "nixos", "x86-64-v2", "bare-metal"]') }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.0.2
 
       - name: Setup Nix
         uses: metacraft-labs/nixos-modules/.github/setup-nix@main
