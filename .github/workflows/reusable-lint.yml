@@ -25,7 +25,7 @@ jobs:
   lint:
     runs-on: ${{ fromJSON(inputs.runner) }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.2
 
       - name: Setup Nix
         uses: metacraft-labs/nixos-modules/.github/setup-nix@main

@@ -104,7 +104,7 @@ jobs:
           nix-gitlab-token: ${{ secrets.NIX_GITLAB_TOKEN }}
           nix-gitlab-domain: ${{ vars.NIX_GITLAB_DOMAIN }}
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.2
 
       - name: Generate Shard Matrix
         id: generate-matrix
@@ -136,7 +136,7 @@ jobs:
         uses: metacraft-labs/nixos-modules/.github/setup-nix@main
         with: *setup-nix-no-push
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.2
 
       - name: Generate CI Matrix
         id: generate-matrix
@@ -217,7 +217,7 @@ jobs:
     continue-on-error: ${{ matrix.allowedToFail }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.2
 
       - name: Setup Nix
         uses: metacraft-labs/nixos-modules/.github/setup-nix@main
@@ -282,7 +282,7 @@ jobs:
             contains(needs.*.result, 'cancelled')
           )
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.2
         if: inputs.run-cachix-deploy
 
       - name: Deploy
