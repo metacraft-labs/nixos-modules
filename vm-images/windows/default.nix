@@ -1530,4 +1530,352 @@ rec {
           ;
       };
     };
+
+  # ============================================================================
+  # CI Runner Functions -- Bare-metal Windows provisioning
+  # ============================================================================
+
+  # Paths to the CI runner provisioning scripts in this directory
+  ciRunnerScripts = {
+    bootstrap = ./ci-runner/bootstrap.ps1;
+    provisionGithubRunner = ./ci-runner/provision-github-runner.ps1;
+    configureBenchmarkIsolation = ./ci-runner/configure-benchmark-isolation.ps1;
+  };
+
+  # Generate an Autounattend.xml tailored for CI runner bare-metal installation.
+  #
+  # This wraps the bare-metal installation concept with CI-specific defaults:
+  # - WinRM and SSH are enabled via bootstrap.ps1 injection
+  # - OOBE is fully skipped
+  # - Designed for bare-metal (no VirtIO drivers needed)
+  # - Optional Windows product key support
+  #
+  # Parameters:
+  #   username: Local admin account (default: "ci")
+  #   password: Initial password (default: "ChangeMe!")
+  #   computerName: Machine hostname (default: "CI-RUNNER")
+  #   timezone: Timezone (default: "UTC")
+  #   productKey: Windows product key (default: "" = no activation, 90-day grace)
+  #               Pass a KMS/GVLK key for volume licensing or a retail key.
+  #   locale: Locale (default: "en-US")
+  #   organization: Organization name in Windows setup (default: "")
+  #
+  # Returns: A derivation containing the Autounattend.xml file
+  generateCIRunnerAutounattend =
+    {
+      username ? "ci",
+      password ? "ChangeMe!",
+      computerName ? "CI-RUNNER",
+      timezone ? "UTC",
+      productKey ? "",
+      locale ? "en-US",
+      organization ? "",
+    }:
+    let
+      # Validate computer name
+      validatedComputerName =
+        let len = builtins.stringLength computerName;
+        in
+        if len > 15 then
+          throw "Computer name '${computerName}' exceeds 15 character Windows limit"
+        else if len == 0 then
+          throw "Computer name cannot be empty"
+        else
+          computerName;
+
+      windowsTimezone = toWindowsTimezone timezone;
+
+      # Product key XML snippet -- only included if a key is provided
+      productKeyXml =
+        if productKey == "" then
+          "<ProductKey><WillShowUI>OnError</WillShowUI></ProductKey>"
+        else
+          "<ProductKey><Key>${productKey}</Key><WillShowUI>OnError</WillShowUI></ProductKey>";
+
+      orgName = if organization == "" then "CI" else organization;
+
+      # The CI runner Autounattend template (inline, bare-metal variant)
+      ciAutounattendTemplate = pkgs.writeText "ci-runner-autounattend-template.xml" ''
+        <?xml version="1.0" encoding="utf-8"?>
+        <unattend xmlns="urn:schemas-microsoft-com:unattend">
+          <settings pass="windowsPE">
+            <component name="Microsoft-Windows-International-Core-WinPE"
+                       processorArchitecture="amd64"
+                       publicKeyToken="31bf3856ad364e35"
+                       language="neutral" versionScope="nonSxS"
+                       xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+                       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+              <SetupUILanguage><UILanguage>@LOCALE@</UILanguage></SetupUILanguage>
+              <InputLocale>@LOCALE@</InputLocale>
+              <SystemLocale>@LOCALE@</SystemLocale>
+              <UILanguage>@LOCALE@</UILanguage>
+              <UserLocale>@LOCALE@</UserLocale>
+            </component>
+            <component name="Microsoft-Windows-Setup"
+                       processorArchitecture="amd64"
+                       publicKeyToken="31bf3856ad364e35"
+                       language="neutral" versionScope="nonSxS"
+                       xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+                       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+              <UserData>
+                <AcceptEula>true</AcceptEula>
+                <FullName>@USERNAME@</FullName>
+                <Organization>@ORG@</Organization>
+                @PRODUCTKEY@
+              </UserData>
+              <DiskConfiguration>
+                <WillShowUI>OnError</WillShowUI>
+                <Disk wcm:action="add">
+                  <DiskID>0</DiskID>
+                  <WillWipeDisk>true</WillWipeDisk>
+                  <CreatePartitions>
+                    <CreatePartition wcm:action="add">
+                      <Order>1</Order><Size>260</Size><Type>EFI</Type>
+                    </CreatePartition>
+                    <CreatePartition wcm:action="add">
+                      <Order>2</Order><Size>16</Size><Type>MSR</Type>
+                    </CreatePartition>
+                    <CreatePartition wcm:action="add">
+                      <Order>3</Order><Extend>true</Extend><Type>Primary</Type>
+                    </CreatePartition>
+                  </CreatePartitions>
+                  <ModifyPartitions>
+                    <ModifyPartition wcm:action="add">
+                      <Order>1</Order><PartitionID>1</PartitionID><Format>FAT32</Format><Label>EFI</Label>
+                    </ModifyPartition>
+                    <ModifyPartition wcm:action="add">
+                      <Order>2</Order><PartitionID>2</PartitionID>
+                    </ModifyPartition>
+                    <ModifyPartition wcm:action="add">
+                      <Order>3</Order><PartitionID>3</PartitionID><Format>NTFS</Format><Label>Windows</Label><Letter>C</Letter>
+                    </ModifyPartition>
+                  </ModifyPartitions>
+                </Disk>
+              </DiskConfiguration>
+              <ImageInstall>
+                <OSImage><InstallTo><DiskID>0</DiskID><PartitionID>3</PartitionID></InstallTo></OSImage>
+              </ImageInstall>
+            </component>
+          </settings>
+
+          <settings pass="specialize">
+            <component name="Microsoft-Windows-Shell-Setup"
+                       processorArchitecture="amd64"
+                       publicKeyToken="31bf3856ad364e35"
+                       language="neutral" versionScope="nonSxS"
+                       xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+                       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+              <ComputerName>@COMPUTER_NAME@</ComputerName>
+              <TimeZone>@TIMEZONE@</TimeZone>
+            </component>
+            <component name="Microsoft-Windows-Deployment"
+                       processorArchitecture="amd64"
+                       publicKeyToken="31bf3856ad364e35"
+                       language="neutral" versionScope="nonSxS"
+                       xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+                       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+              <RunSynchronous>
+                <RunSynchronousCommand wcm:action="add">
+                  <Order>1</Order>
+                  <Path>reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\CloudContent" /v DisableWindowsConsumerFeatures /t REG_DWORD /d 1 /f</Path>
+                </RunSynchronousCommand>
+                <RunSynchronousCommand wcm:action="add">
+                  <Order>2</Order>
+                  <Path>reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\Windows Search" /v AllowCortana /t REG_DWORD /d 0 /f</Path>
+                </RunSynchronousCommand>
+                <RunSynchronousCommand wcm:action="add">
+                  <Order>3</Order>
+                  <Path>reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\DataCollection" /v AllowTelemetry /t REG_DWORD /d 0 /f</Path>
+                </RunSynchronousCommand>
+                <RunSynchronousCommand wcm:action="add">
+                  <Order>4</Order>
+                  <Path>cmd /c powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c</Path>
+                </RunSynchronousCommand>
+              </RunSynchronous>
+            </component>
+          </settings>
+
+          <settings pass="oobeSystem">
+            <component name="Microsoft-Windows-Shell-Setup"
+                       processorArchitecture="amd64"
+                       publicKeyToken="31bf3856ad364e35"
+                       language="neutral" versionScope="nonSxS"
+                       xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+                       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+              <OOBE>
+                <HideEULAPage>true</HideEULAPage>
+                <HideLocalAccountScreen>true</HideLocalAccountScreen>
+                <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+                <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+                <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+                <NetworkLocation>Work</NetworkLocation>
+                <ProtectYourPC>3</ProtectYourPC>
+                <SkipMachineOOBE>true</SkipMachineOOBE>
+                <SkipUserOOBE>true</SkipUserOOBE>
+              </OOBE>
+              <UserAccounts>
+                <LocalAccounts>
+                  <LocalAccount wcm:action="add">
+                    <Name>@USERNAME@</Name>
+                    <Group>Administrators</Group>
+                    <Password>
+                      <Value>@PASSWORD@</Value>
+                      <PlainText>true</PlainText>
+                    </Password>
+                  </LocalAccount>
+                </LocalAccounts>
+              </UserAccounts>
+              <AutoLogon>
+                <Enabled>true</Enabled>
+                <Username>@USERNAME@</Username>
+                <Password>
+                  <Value>@PASSWORD@</Value>
+                  <PlainText>true</PlainText>
+                </Password>
+                <LogonCount>1</LogonCount>
+              </AutoLogon>
+              <FirstLogonCommands>
+                <SynchronousCommand wcm:action="add">
+                  <Order>1</Order>
+                  <CommandLine>cmd /c powershell -ExecutionPolicy Bypass -File D:\bootstrap.ps1 > C:\bootstrap-log.txt 2>&amp;1 || powershell -ExecutionPolicy Bypass -File E:\bootstrap.ps1 > C:\bootstrap-log.txt 2>&amp;1</CommandLine>
+                  <Description>Run bootstrap script from install media</Description>
+                  <RequiresUserInput>false</RequiresUserInput>
+                </SynchronousCommand>
+              </FirstLogonCommands>
+            </component>
+            <component name="Microsoft-Windows-International-Core"
+                       processorArchitecture="amd64"
+                       publicKeyToken="31bf3856ad364e35"
+                       language="neutral" versionScope="nonSxS"
+                       xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+                       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+              <InputLocale>@LOCALE@</InputLocale>
+              <SystemLocale>@LOCALE@</SystemLocale>
+              <UILanguage>@LOCALE@</UILanguage>
+              <UserLocale>@LOCALE@</UserLocale>
+            </component>
+          </settings>
+        </unattend>
+      '';
+
+    in
+    pkgs.runCommand "ci-runner-autounattend.xml" {
+      inherit
+        username
+        password
+        validatedComputerName
+        windowsTimezone
+        productKeyXml
+        orgName
+        locale
+        ;
+      template = ciAutounattendTemplate;
+    } ''
+      ${pkgs.gnused}/bin/sed \
+        -e "s|@USERNAME@|$username|g" \
+        -e "s|@PASSWORD@|$password|g" \
+        -e "s|@COMPUTER_NAME@|$validatedComputerName|g" \
+        -e "s|@TIMEZONE@|$windowsTimezone|g" \
+        -e "s|@LOCALE@|$locale|g" \
+        -e "s|@ORG@|$orgName|g" \
+        -e "s|@PRODUCTKEY@|$productKeyXml|g" \
+        "$template" > "$out"
+
+      if ! ${pkgs.libxml2}/bin/xmllint --noout "$out" 2>/dev/null; then
+        echo "Warning: Generated CI runner autounattend.xml may have XML syntax issues"
+      fi
+
+      echo "Generated CI runner autounattend.xml:"
+      echo "  Username: $username"
+      echo "  Computer Name: $validatedComputerName"
+      echo "  Timezone: $windowsTimezone"
+    '';
+
+  # Build a directory ready to be written to a USB drive for bare-metal
+  # Windows CI runner installation.
+  #
+  # The output contains:
+  # - Autounattend.xml (CI runner variant)
+  # - bootstrap.ps1 (WinRM + SSH first-boot setup)
+  # - provision-github-runner.ps1 (runner registration)
+  # - configure-benchmark-isolation.ps1 (benchmark tuning)
+  #
+  # Parameters:
+  #   windowsIsoPath: Path to a Windows ISO file (string path, not derivation)
+  #   username, password, computerName, timezone, productKey, locale, organization:
+  #     Passed through to generateCIRunnerAutounattend
+  #   splitWimThreshold: Maximum WIM file size in MB before splitting (default: 4000)
+  #     Set to 0 to skip WIM splitting (e.g. when using NTFS USB).
+  #
+  # Returns: A derivation containing a directory with all files ready
+  #          to be copied to a USB drive alongside Windows ISO contents.
+  #
+  # Example:
+  #   buildBaremetalUSB {
+  #     windowsIsoPath = "/path/to/Win11_English_x64.iso";
+  #     computerName = "CI-BENCH-01";
+  #   }
+  buildBaremetalUSB =
+    {
+      windowsIsoPath,
+      username ? "ci",
+      password ? "ChangeMe!",
+      computerName ? "CI-RUNNER",
+      timezone ? "UTC",
+      productKey ? "",
+      locale ? "en-US",
+      organization ? "",
+      splitWimThreshold ? 4000,
+    }:
+    let
+      autounattendXml = generateCIRunnerAutounattend {
+        inherit
+          username
+          password
+          computerName
+          timezone
+          productKey
+          locale
+          organization
+          ;
+      };
+    in
+    pkgs.runCommand "windows-ci-usb-contents" {
+      nativeBuildInputs = with pkgs; [
+        p7zip
+        wimlib
+      ];
+      inherit autounattendXml;
+      windowsIso = windowsIsoPath;
+      threshold = toString splitWimThreshold;
+    } ''
+      mkdir -p "$out"
+
+      echo "Extracting Windows ISO contents..."
+      7z x -o"$out" "$windowsIso"
+
+      echo "Copying Autounattend.xml..."
+      cp "$autounattendXml" "$out/Autounattend.xml"
+
+      echo "Copying CI runner scripts..."
+      cp ${ciRunnerScripts.bootstrap} "$out/bootstrap.ps1"
+      cp ${ciRunnerScripts.provisionGithubRunner} "$out/provision-github-runner.ps1"
+      cp ${ciRunnerScripts.configureBenchmarkIsolation} "$out/configure-benchmark-isolation.ps1"
+
+      # Split install.wim if it exceeds the threshold (for FAT32 USB drives)
+      wim="$out/sources/install.wim"
+      if [ "$threshold" -gt 0 ] && [ -f "$wim" ]; then
+        wim_size_mb=$(( $(stat -c%s "$wim") / 1048576 ))
+        echo "install.wim size: $wim_size_mb MB (threshold: $threshold MB)"
+        if [ "$wim_size_mb" -gt "$threshold" ]; then
+          echo "Splitting install.wim into SWM files..."
+          wimlib-imagex split "$wim" "$out/sources/install.swm" "$threshold"
+          rm "$wim"
+          echo "install.wim split complete."
+        fi
+      fi
+
+      echo "USB contents ready at: $out"
+      ls -la "$out"
+    '';
 }
