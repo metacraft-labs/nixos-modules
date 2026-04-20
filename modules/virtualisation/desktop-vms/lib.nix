@@ -568,14 +568,18 @@ rec {
       # Network
       networkXml = generateNetworkXml { };
 
-      # Video
-      videoXml = generateVideoXml {
-        type = videoModel;
-        ram = videoRam;
-        vram = videoVram;
-        vgamem = videoVgamem;
-        heads = videoHeads;
-      };
+      # Video (skip when videoModel is "none", e.g. for GPU passthrough setups)
+      videoXml =
+        if videoModel == "none" then
+          ""
+        else
+          generateVideoXml {
+            type = videoModel;
+            ram = videoRam;
+            vram = videoVram;
+            vgamem = videoVgamem;
+            heads = videoHeads;
+          };
 
       # Input devices
       inputXml = ''

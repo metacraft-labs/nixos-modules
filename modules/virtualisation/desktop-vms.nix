@@ -346,6 +346,7 @@
 
             videoModel = mkOption {
               type = types.enum [
+                "none"
                 "virtio"
                 "qxl"
                 "vga"
@@ -355,6 +356,9 @@
               description = ''
                 Video device model for the VM.
 
+                - none: No virtual video device. Use this with GPU passthrough
+                  to avoid a secondary virtual adapter that can cause cross-adapter
+                  compositing overhead in the guest OS
                 - virtio: Modern paravirtualized GPU, best performance for Linux guests
                 - qxl: SPICE-native video device, best auto-resize support with SPICE guest tools
                 - vga: Standard VGA, maximum compatibility
