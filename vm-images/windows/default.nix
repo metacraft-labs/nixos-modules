@@ -72,6 +72,12 @@ let
   # safe regardless of the characters it contains.
   sh = lib.escapeShellArg;
 
+  # Escape the characters that are special in a sed `s` command's replacement
+  # string: backslash, ampersand, and the `|` delimiter we use below.
+  # Without this, values like the default VirtIO path ``E:\`` break sed with
+  # an "unterminated `s' command" error because the trailing `\` escapes `|`.
+  sedReplaceEscape = lib.replaceStrings [ "\\" "&" "|" ] [ "\\\\" "\\&" "\\|" ];
+
   # Default VirtIO driver path when the ISO is mounted as a secondary drive
   # In QEMU, we typically mount the VirtIO ISO as a second CD-ROM drive,
   # which Windows sees as E: (D: is usually the Windows installation media)
@@ -172,13 +178,19 @@ rec {
           pkgs.gnused
           pkgs.libxml2
         ];
-        inherit
-          username
-          password
-          windowsTimezone
-          normalizedVirtioPath
-          validatedComputerName
-          ;
+        # Sed-escape every replacement so values containing `\`, `&`, or the
+        # `|` delimiter (e.g. the default VirtIO path ``E:\``) don't break
+        # the s-command.
+        username = sedReplaceEscape username;
+        password = sedReplaceEscape password;
+        validatedComputerName = sedReplaceEscape validatedComputerName;
+        windowsTimezone = sedReplaceEscape windowsTimezone;
+        normalizedVirtioPath = sedReplaceEscape normalizedVirtioPath;
+        # Display-only (unescaped) copies for the summary printed below.
+        displayComputerName = validatedComputerName;
+        displayTimezone = windowsTimezone;
+        displayVirtioPath = normalizedVirtioPath;
+        displayUsername = username;
         template = autounattendTemplate;
       }
       ''
@@ -196,10 +208,10 @@ rec {
         fi
 
         echo "Generated autounattend.xml with:"
-        echo "  Username: $username"
-        echo "  Computer Name: $validatedComputerName"
-        echo "  Timezone: $windowsTimezone"
-        echo "  VirtIO Driver Path: $normalizedVirtioPath"
+        echo "  Username: $displayUsername"
+        echo "  Computer Name: $displayComputerName"
+        echo "  Timezone: $displayTimezone"
+        echo "  VirtIO Driver Path: $displayVirtioPath"
       '';
 
   # Create a floppy disk image containing the autounattend.xml
@@ -235,7 +247,9 @@ rec {
       ''
         # 1.44 MB floppy disk image (2880 sectors of 512 bytes)
         dd if=/dev/zero of=$out bs=512 count=2880
-        mkfs.vfat -n "AUTOUNATTEND" $out
+        # FAT12 volume labels are capped at 11 characters, so truncate
+        # "AUTOUNATTEND" (12 chars) to "UNATTEND" which is still meaningful.
+        mkfs.vfat -n "UNATTEND" $out
 
         # Windows Setup looks for this exact (case-insensitive) name.
         mcopy -i $out ${autounattendXml} ::Autounattend.xml
@@ -917,15 +931,21 @@ rec {
           pkgs.gnused
           pkgs.libxml2
         ];
-        inherit
-          username
-          password
-          validatedComputerName
-          windowsTimezone
-          productKeyXml
-          orgName
-          locale
-          ;
+        # Sed-escape every replacement so values containing `\`, `&`, or the
+        # `|` delimiter don't break the s-command. productKeyXml already
+        # contains `<`, `>`, `/` which sed treats as literal, and no sed
+        # specials unless the user-provided productKey includes them.
+        username = sedReplaceEscape username;
+        password = sedReplaceEscape password;
+        validatedComputerName = sedReplaceEscape validatedComputerName;
+        windowsTimezone = sedReplaceEscape windowsTimezone;
+        productKeyXml = sedReplaceEscape productKeyXml;
+        orgName = sedReplaceEscape orgName;
+        locale = sedReplaceEscape locale;
+        # Display-only (unescaped) copies for the summary printed below.
+        displayUsername = username;
+        displayComputerName = validatedComputerName;
+        displayTimezone = windowsTimezone;
         template = ciAutounattendTemplate;
       }
       ''
@@ -944,9 +964,9 @@ rec {
         fi
 
         echo "Generated CI runner autounattend.xml:"
-        echo "  Username: $username"
-        echo "  Computer Name: $validatedComputerName"
-        echo "  Timezone: $windowsTimezone"
+        echo "  Username: $displayUsername"
+        echo "  Computer Name: $displayComputerName"
+        echo "  Timezone: $displayTimezone"
       '';
 
   # Build a directory ready to be written to a USB drive for bare-metal
