@@ -249,6 +249,14 @@
         treefmt-nix.follows = "treefmt-nix";
       };
     };
+
+    nix-on-droid = {
+      url = "github:nix-community/nix-on-droid";
+      inputs = {
+        nixpkgs.follows = "nixpkgs-unstable";
+        home-manager.follows = "home-manager-unstable";
+      };
+    };
   };
 
   outputs =
