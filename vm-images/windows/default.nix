@@ -48,8 +48,29 @@ let
   # Path to the autounattend.xml template in this directory
   autounattendTemplate = ./autounattend.xml;
 
+  # Path to the CI-runner autounattend template (bare-metal variant)
+  ciAutounattendTemplate = ./ci-runner/autounattend-template.xml;
+
   # Path to the VirtIO driver check script
   virtioDriverCheckScript = ./virtio-driver-check.ps1;
+
+  # Paths to the extracted shell scripts (kept standalone for maintainability).
+  # Each script reads its configuration from environment variables and is
+  # wrapped below via `pkgs.writeShellApplication` which sets up PATH via
+  # `runtimeInputs` so the scripts can call bare command names.
+  scripts = {
+    waitForSsh = ./scripts/wait-for-ssh.sh;
+    shutdownWindows = ./scripts/shutdown-windows.sh;
+    healthCheck = ./scripts/health-check.sh;
+    runInstall = ./scripts/run-install.sh;
+    runVm = ./scripts/run-vm.sh;
+    buildVm = ./scripts/build-vm.sh;
+    bootTest = ./scripts/boot-test.sh;
+  };
+
+  # Shell-escape a build-time value so injecting it into the wrapper text is
+  # safe regardless of the characters it contains.
+  sh = lib.escapeShellArg;
 
   # Default VirtIO driver path when the ISO is mounted as a secondary drive
   # In QEMU, we typically mount the VirtIO ISO as a second CD-ROM drive,
@@ -147,6 +168,10 @@ rec {
     in
     pkgs.runCommand "autounattend.xml"
       {
+        nativeBuildInputs = [
+          pkgs.gnused
+          pkgs.libxml2
+        ];
         inherit
           username
           password
@@ -157,12 +182,7 @@ rec {
         template = autounattendTemplate;
       }
       ''
-        # Copy the template and perform substitutions
-        # Using sed for simple placeholder replacement
-        # The placeholders use @ delimiters to avoid conflicts with XML content
-
-        # Read template and perform substitutions
-        ${pkgs.gnused}/bin/sed \
+        sed \
           -e "s|@USERNAME@|$username|g" \
           -e "s|@PASSWORD@|$password|g" \
           -e "s|@COMPUTER_NAME@|$validatedComputerName|g" \
@@ -170,8 +190,7 @@ rec {
           -e "s|@VIRTIO_DRIVER_PATH@|$normalizedVirtioPath|g" \
           "$template" > "$out"
 
-        # Validate the XML structure (basic check)
-        if ! ${pkgs.libxml2}/bin/xmllint --noout "$out" 2>/dev/null; then
+        if ! xmllint --noout "$out" 2>/dev/null; then
           echo "Warning: Generated autounattend.xml may have XML syntax issues"
           echo "This might be due to special characters in the configuration values"
         fi
@@ -214,25 +233,19 @@ rec {
         inherit autounattendXml;
       }
       ''
-        # Create a 1.44 MB floppy disk image (standard size)
-        # 1.44 MB = 1474560 bytes = 2880 sectors of 512 bytes
+        # 1.44 MB floppy disk image (2880 sectors of 512 bytes)
         dd if=/dev/zero of=$out bs=512 count=2880
+        mkfs.vfat -n "AUTOUNATTEND" $out
 
-        # Create FAT12 filesystem (standard for floppy)
-        # -n sets the volume label
-        ${pkgs.dosfstools}/bin/mkfs.vfat -n "AUTOUNATTEND" $out
+        # Windows Setup looks for this exact (case-insensitive) name.
+        mcopy -i $out ${autounattendXml} ::Autounattend.xml
 
-        # Copy autounattend.xml to the floppy image root
-        # The file MUST be named Autounattend.xml (case-insensitive on Windows)
-        ${pkgs.mtools}/bin/mcopy -i $out ${autounattendXml} ::Autounattend.xml
-
-        # Copy any additional files
         ${lib.concatMapStringsSep "\n" (file: ''
-          ${pkgs.mtools}/bin/mcopy -i $out ${file.source} ::${file.name}
+          mcopy -i $out ${file.source} ::${file.name}
         '') additionalFiles}
 
         echo "Created floppy image with Autounattend.xml"
-        ${pkgs.mtools}/bin/mdir -i $out ::
+        mdir -i $out ::
       '';
 
   # Create an ISO image containing the autounattend.xml
@@ -361,203 +374,48 @@ rec {
       # VNC port calculation
       vncPort = 5900 + vncDisplay;
 
+      virtioIsoDefault = if virtio-win-drivers != null then "${virtio-win-drivers}" else "";
+
       # QEMU run script for Windows installation
-      runScript = pkgs.writeShellScriptBin "run-windows-install" ''
-        #!/usr/bin/env bash
-        set -e
-
-        # Configuration
-        WINDOWS_ISO="''${WINDOWS_ISO:-${windowsIsoPath}}"
-        VIRTIO_ISO="''${VIRTIO_ISO:-}"
-        DISK_IMAGE="''${DISK_IMAGE:-./windows.qcow2}"
-
-        # Check for Windows ISO
-        if [ ! -f "$WINDOWS_ISO" ]; then
-          echo "Error: Windows ISO not found: $WINDOWS_ISO"
-          echo "Please set WINDOWS_ISO environment variable to the path of your Windows ISO"
-          echo ""
-          echo "You can obtain a Windows ISO from:"
-          echo "  - https://www.microsoft.com/software-download/windows11"
-          echo "  - https://www.microsoft.com/software-download/windows10ISO"
-          exit 1
-        fi
-
-        # Check for VirtIO drivers ISO
-        if [ -z "$VIRTIO_ISO" ]; then
-          # Try to find it in common locations
-          if [ -f "${if virtio-win-drivers != null then virtio-win-drivers else "/nonexistent"}" ]; then
-            VIRTIO_ISO="${virtio-win-drivers}"
-          else
-            echo "Warning: VirtIO drivers ISO not found"
-            echo "Windows may not be able to see the VirtIO disk during installation"
-            echo ""
-            echo "Set VIRTIO_ISO environment variable to the path of virtio-win.iso"
-            echo "You can build it with: nix build .#virtio-win-drivers"
-            echo ""
-            read -p "Continue without VirtIO drivers? [y/N] " -n 1 -r
-            echo
-            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-              exit 1
-            fi
-          fi
-        fi
-
-        # Create disk image if it doesn't exist
-        if [ ! -f "$DISK_IMAGE" ]; then
-          echo "Creating ${toString diskSizeGB}GB QCOW2 disk image..."
-          ${pkgs.qemu_kvm}/bin/qemu-img create -f qcow2 "$DISK_IMAGE" ${toString diskSizeGB}G
-        fi
-
-        # Check for KVM support
-        if [ ! -r /dev/kvm ]; then
-          echo "Warning: KVM not available. Installation will be VERY slow."
-          echo "Please ensure:"
-          echo "  1. KVM kernel module is loaded (modprobe kvm_intel or kvm_amd)"
-          echo "  2. You have permission to access /dev/kvm"
-          KVM_FLAG=""
-        else
-          KVM_FLAG="-enable-kvm"
-        fi
-
-        # Build QEMU command
-        QEMU_ARGS=(
-          $KVM_FLAG
-          -m ${toString memoryMB}
-          -cpu host
-          -smp ${toString cpuCores}
-          -machine q35,accel=kvm
-
-          # UEFI firmware (OVMF)
-          -drive if=pflash,format=raw,readonly=on,file=${pkgs.OVMF.fd}/FV/OVMF_CODE.fd
-          -drive if=pflash,format=raw,file=./OVMF_VARS.fd
-
-          # VirtIO disk for Windows installation
-          -drive file="$DISK_IMAGE",if=virtio,format=qcow2,cache=writeback
-
-          # Windows installation ISO (as first CD-ROM)
-          -drive file="$WINDOWS_ISO",media=cdrom,index=0
-
-          # VirtIO drivers ISO (as second CD-ROM, drive E:)
-          ''${VIRTIO_ISO:+-drive file="$VIRTIO_ISO",media=cdrom,index=1}
-
-          # Autounattend media
-          ${
-            if useIso then
-              "-drive file=${autounattendMedia},media=cdrom,index=2"
-            else
-              "-drive file=${autounattendMedia},if=floppy,format=raw"
-          }
-
-          # VirtIO network
-          -netdev user,id=net0,hostfwd=tcp:127.0.0.1:${toString sshPort}-:22,hostfwd=tcp:127.0.0.1:${toString rdpPort}-:3389
-          -device virtio-net-pci,netdev=net0
-
-          # Display and input
-          -device virtio-vga
-          -device usb-ehci
-          -device usb-kbd
-          -device usb-tablet
-
-          # VNC for remote viewing
-          -vnc 0.0.0.0:${toString vncDisplay}
-
-          # QEMU monitor socket for automation
-          -monitor unix:qemu-monitor-socket,server,nowait
-
-          # Boot from CD-ROM first (for installation)
-          -boot order=d,menu=on
-
-          # Additional arguments from command line
-          "$@"
-        )
-
-        # Copy OVMF_VARS for this VM instance (must be writable)
-        if [ ! -f ./OVMF_VARS.fd ]; then
-          cp ${pkgs.OVMF.fd}/FV/OVMF_VARS.fd ./OVMF_VARS.fd
-          chmod +w ./OVMF_VARS.fd
-        fi
-
-        echo "============================================"
-        echo "Starting Windows VM Installation"
-        echo "============================================"
-        echo "Windows ISO: $WINDOWS_ISO"
-        echo "VirtIO ISO: ''${VIRTIO_ISO:-Not provided}"
-        echo "Disk Image: $DISK_IMAGE"
-        echo ""
-        echo "Network:"
-        echo "  SSH: localhost:${toString sshPort}"
-        echo "  RDP: localhost:${toString rdpPort}"
-        echo "  VNC: localhost:${toString vncPort}"
-        echo ""
-        echo "Credentials (after installation):"
-        echo "  Username: ${username}"
-        echo "  Password: ${password}"
-        echo "============================================"
-
-        exec ${pkgs.qemu_kvm}/bin/qemu-system-x86_64 "''${QEMU_ARGS[@]}"
-      '';
+      runScript = pkgs.writeShellApplication {
+        name = "run-windows-install";
+        runtimeInputs = [ pkgs.qemu_kvm ];
+        text = ''
+          export WINDOWS_ISO="''${WINDOWS_ISO:-${windowsIsoPath}}"
+          export VIRTIO_ISO="''${VIRTIO_ISO:-${virtioIsoDefault}}"
+          export DISK_IMAGE="''${DISK_IMAGE:-./windows.qcow2}"
+          export DISK_SIZE_GB=${sh (toString diskSizeGB)}
+          export MEMORY_MB=${sh (toString memoryMB)}
+          export CPU_CORES=${sh (toString cpuCores)}
+          export SSH_PORT=${sh (toString sshPort)}
+          export RDP_PORT=${sh (toString rdpPort)}
+          export VNC_DISPLAY=${sh (toString vncDisplay)}
+          export USERNAME=${sh username}
+          export PASSWORD=${sh password}
+          export OVMF_CODE="${pkgs.OVMF.fd}/FV/OVMF_CODE.fd"
+          export OVMF_VARS_SRC="${pkgs.OVMF.fd}/FV/OVMF_VARS.fd"
+          export AUTOUNATTEND_MEDIA="${autounattendMedia}"
+          export AUTOUNATTEND_MEDIA_TYPE=${sh (if useIso then "iso" else "floppy")}
+          exec bash ${scripts.runInstall} "$@"
+        '';
+      };
 
       # Run script for booting an already-installed Windows VM
-      runInstalledScript = pkgs.writeShellScriptBin "run-windows-vm" ''
-        #!/usr/bin/env bash
-        set -e
-
-        DISK_IMAGE="''${DISK_IMAGE:-./windows.qcow2}"
-
-        if [ ! -f "$DISK_IMAGE" ]; then
-          echo "Error: Disk image not found: $DISK_IMAGE"
-          echo "Run the installation first, or set DISK_IMAGE to the correct path."
-          exit 1
-        fi
-
-        # Copy OVMF_VARS if not present
-        if [ ! -f ./OVMF_VARS.fd ]; then
-          cp ${pkgs.OVMF.fd}/FV/OVMF_VARS.fd ./OVMF_VARS.fd
-          chmod +w ./OVMF_VARS.fd
-        fi
-
-        # Check for KVM support
-        if [ ! -r /dev/kvm ]; then
-          echo "Warning: KVM not available. VM will run slowly."
-          KVM_FLAG=""
-        else
-          KVM_FLAG="-enable-kvm"
-        fi
-
-        QEMU_ARGS=(
-          $KVM_FLAG
-          -m ${toString memoryMB}
-          -cpu host
-          -smp ${toString cpuCores}
-          -machine q35,accel=kvm
-
-          -drive if=pflash,format=raw,readonly=on,file=${pkgs.OVMF.fd}/FV/OVMF_CODE.fd
-          -drive if=pflash,format=raw,file=./OVMF_VARS.fd
-
-          -drive file="$DISK_IMAGE",if=virtio,format=qcow2,cache=writeback
-
-          -netdev user,id=net0,hostfwd=tcp:127.0.0.1:${toString sshPort}-:22,hostfwd=tcp:127.0.0.1:${toString rdpPort}-:3389
-          -device virtio-net-pci,netdev=net0
-
-          -device virtio-vga
-          -device usb-ehci
-          -device usb-kbd
-          -device usb-tablet
-
-          -vnc 0.0.0.0:${toString vncDisplay}
-          -monitor unix:qemu-monitor-socket,server,nowait
-
-          "$@"
-        )
-
-        echo "Starting Windows VM..."
-        echo "  SSH: localhost:${toString sshPort}"
-        echo "  RDP: localhost:${toString rdpPort}"
-        echo "  VNC: localhost:${toString vncPort}"
-        echo "  Username: ${username}"
-
-        exec ${pkgs.qemu_kvm}/bin/qemu-system-x86_64 "''${QEMU_ARGS[@]}"
-      '';
+      runInstalledScript = pkgs.writeShellApplication {
+        name = "run-windows-vm";
+        runtimeInputs = [ pkgs.qemu_kvm ];
+        text = ''
+          export MEMORY_MB=${sh (toString memoryMB)}
+          export CPU_CORES=${sh (toString cpuCores)}
+          export SSH_PORT=${sh (toString sshPort)}
+          export RDP_PORT=${sh (toString rdpPort)}
+          export VNC_DISPLAY=${sh (toString vncDisplay)}
+          export USERNAME=${sh username}
+          export OVMF_CODE="${pkgs.OVMF.fd}/FV/OVMF_CODE.fd"
+          export OVMF_VARS_SRC="${pkgs.OVMF.fd}/FV/OVMF_VARS.fd"
+          exec bash ${scripts.runVm} "$@"
+        '';
+      };
 
     in
     pkgs.symlinkJoin {
@@ -612,106 +470,22 @@ rec {
       sshRetries ? 50,
       sshRetryDelay ? 6,
     }:
-    pkgs.writeShellScriptBin "check-windows-vm-health" ''
-      #!/usr/bin/env bash
-      set -e
-
-      SSH_PORT="''${SSH_PORT:-${toString sshPort}}"
-      USERNAME="''${USERNAME:-${username}}"
-      PASSWORD="''${PASSWORD:-${password}}"
-      BOOT_TIMEOUT="${toString bootTimeoutSeconds}"
-      SSH_RETRIES="${toString sshRetries}"
-      SSH_RETRY_DELAY="${toString sshRetryDelay}"
-
-      RED='\033[0;31m'
-      GREEN='\033[0;32m'
-      YELLOW='\033[1;33m'
-      NC='\033[0m'
-
-      log_info() { echo -e "''${GREEN}[INFO]''${NC} $1"; }
-      log_warn() { echo -e "''${YELLOW}[WARN]''${NC} $1"; }
-      log_error() { echo -e "''${RED}[ERROR]''${NC} $1"; }
-
-      log_info "============================================"
-      log_info "Windows VM Health Check"
-      log_info "============================================"
-      log_info "SSH Port: $SSH_PORT"
-      log_info "Username: $USERNAME"
-      log_info "Timeout: $BOOT_TIMEOUT seconds"
-      log_info "============================================"
-
-      SSH_READY=false
-      START_TIME=$(date +%s)
-
-      for i in $(seq 1 "$SSH_RETRIES"); do
-        CURRENT_TIME=$(date +%s)
-        ELAPSED=$((CURRENT_TIME - START_TIME))
-
-        if [ "$ELAPSED" -ge "$BOOT_TIMEOUT" ]; then
-          log_error "Boot timeout exceeded ($BOOT_TIMEOUT seconds)"
-          exit 1
-        fi
-
-        log_info "SSH probe attempt $i/$SSH_RETRIES (elapsed: ''${ELAPSED}s)..."
-
-        # Try ssh-keyscan to check if SSH is listening
-        if ${pkgs.openssh}/bin/ssh-keyscan -p "$SSH_PORT" 127.0.0.1 2>/dev/null | grep -q "ssh-"; then
-          log_info "SSH is listening, attempting connection..."
-
-          # Try actual SSH connection
-          if ${pkgs.sshpass}/bin/sshpass -p "$PASSWORD" ${pkgs.openssh}/bin/ssh \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            -o ConnectTimeout=10 \
-            -p "$SSH_PORT" \
-            "$USERNAME@127.0.0.1" \
-            "echo 'SSH connection successful'" 2>/dev/null; then
-            SSH_READY=true
-            break
-          fi
-        fi
-
-        sleep "$SSH_RETRY_DELAY"
-      done
-
-      if [ "$SSH_READY" != "true" ]; then
-        log_error "Failed to establish SSH connection within timeout"
-        exit 1
-      fi
-
-      log_info "============================================"
-      log_info "SSH connection established!"
-      log_info "============================================"
-
-      # Run health check command (get Windows version)
-      log_info "Running health check: systeminfo"
-
-      SYSINFO_OUTPUT=$(${pkgs.sshpass}/bin/sshpass -p "$PASSWORD" ${pkgs.openssh}/bin/ssh \
-        -o StrictHostKeyChecking=no \
-        -o UserKnownHostsFile=/dev/null \
-        -p "$SSH_PORT" \
-        "$USERNAME@127.0.0.1" \
-        'powershell -Command "[System.Environment]::OSVersion.VersionString"' 2>/dev/null)
-
-      if [ -z "$SYSINFO_OUTPUT" ]; then
-        log_error "Health check command returned empty output"
-        exit 1
-      fi
-
-      log_info "Windows version information:"
-      echo "$SYSINFO_OUTPUT"
-
-      if echo "$SYSINFO_OUTPUT" | grep -qi "Windows"; then
-        log_info "Health check passed: Windows is responding correctly"
-      else
-        log_error "Health check failed: unexpected output"
-        exit 1
-      fi
-
-      log_info "============================================"
-      log_info "HEALTH CHECK PASSED"
-      log_info "============================================"
-    '';
+    pkgs.writeShellApplication {
+      name = "check-windows-vm-health";
+      runtimeInputs = [
+        pkgs.openssh
+        pkgs.sshpass
+      ];
+      text = ''
+        export SSH_PORT="''${SSH_PORT:-${toString sshPort}}"
+        export USERNAME="''${USERNAME:-${username}}"
+        export PASSWORD="''${PASSWORD:-${password}}"
+        export BOOT_TIMEOUT=${sh (toString bootTimeoutSeconds)}
+        export SSH_RETRIES=${sh (toString sshRetries)}
+        export SSH_RETRY_DELAY=${sh (toString sshRetryDelay)}
+        exec bash ${scripts.healthCheck} "$@"
+      '';
+    };
 
   # Build a Windows VM image with automated unattended installation
   #
@@ -800,316 +574,96 @@ rec {
       # Floppy is the standard/reliable method for Windows unattended installation
       autounattendFloppy = makeAutounattendFloppy { inherit autounattendXml; };
 
-      # QEMU arguments for Windows installation
-      # This configuration:
-      # - Uses UEFI boot via OVMF
-      # - Provides VirtIO disk (requires viostor driver from VirtIO ISO)
-      # - Provides VirtIO network (requires netkvm driver from VirtIO ISO)
-      # - Mounts Windows ISO as first CD-ROM (D:)
-      # - Mounts VirtIO drivers ISO as second CD-ROM (E:)
-      # - Mounts autounattend.xml on floppy (A:)
-      # - Enables VNC for monitoring installation progress
-      # - Forwards SSH and RDP ports for post-install access
-      qemuArgsInstall = ''
-        args=(
-          -enable-kvm
-          -m ${toString memoryMB}
-          -cpu host
-          -smp ${toString cpuCores}
-          -machine q35,accel=kvm
+      # Poll SSH until the VM is reachable with the given credentials.
+      waitForSshBin = pkgs.writeShellApplication {
+        name = "wait-for-ssh";
+        runtimeInputs = [
+          pkgs.openssh
+          pkgs.sshpass
+        ];
+        text = ''
+          export SSH_PORT=${sh (toString sshPort)}
+          export USERNAME=${sh username}
+          export PASSWORD=${sh password}
+          export TIMEOUT=${sh (toString installTimeoutSeconds)}
+          exec bash ${scripts.waitForSsh} "$@"
+        '';
+      };
 
-          # UEFI firmware (OVMF)
-          # OVMF_CODE.fd is read-only firmware, OVMF_VARS.fd stores NVRAM variables
-          -drive if=pflash,format=raw,readonly=on,file=${pkgs.OVMF.fd}/FV/OVMF_CODE.fd
-          -drive if=pflash,format=raw,file="$WORK_DIR/OVMF_VARS.fd"
+      # Send a Windows shutdown command over SSH.
+      shutdownBin = pkgs.writeShellApplication {
+        name = "shutdown-windows";
+        runtimeInputs = [
+          pkgs.openssh
+          pkgs.sshpass
+        ];
+        text = ''
+          export SSH_PORT=${sh (toString sshPort)}
+          export USERNAME=${sh username}
+          export PASSWORD=${sh password}
+          exec bash ${scripts.shutdownWindows} "$@"
+        '';
+      };
 
-          # VirtIO disk for Windows installation
-          # Windows will see this after viostor driver is loaded
-          -drive file="$WORK_DIR/windows.qcow2",if=virtio,format=qcow2,cache=writeback
-
-          # Windows installation ISO (first CD-ROM, typically D:)
-          -drive file="${windowsIso}",media=cdrom,index=0,readonly=on
-
-          # VirtIO drivers ISO (second CD-ROM, typically E:)
-          # Contains drivers: viostor, netkvm, vioserial, balloon, qxldod
-          -drive file="${virtioDriversIso}",media=cdrom,index=1,readonly=on
-
-          # Autounattend floppy (A:)
-          # Windows Setup automatically searches for Autounattend.xml on floppy
-          -drive file="${autounattendFloppy}",if=floppy,format=raw,readonly=on
-
-          # VirtIO network with port forwarding
-          # SSH (22) and RDP (3389) are forwarded to host ports
-          -netdev user,id=net0,hostfwd=tcp:127.0.0.1:${toString sshPort}-:22,hostfwd=tcp:127.0.0.1:${toString rdpPort}-:3389
-          -device virtio-net-pci,netdev=net0
-
-          # Display: VirtIO VGA for best performance
-          -device virtio-vga
-
-          # USB for keyboard and mouse input
-          -device usb-ehci
-          -device usb-kbd
-          -device usb-tablet
-
-          # VNC for remote viewing (useful for debugging installation)
-          -vnc 0.0.0.0:${toString vncDisplay}
-
-          # QEMU monitor socket for automation/control
-          -monitor unix:"$WORK_DIR/qemu-monitor-socket",server,nowait
-
-          # Boot from CD-ROM first (Windows installation media)
-          -boot order=d,menu=on
-
-          # Disable snapshot mode - we want persistent changes
-          -no-reboot
-        )
-      '';
-
-      # QEMU arguments for running installed Windows (post-installation)
-      qemuArgsRun = ''
-        args=(
-          -enable-kvm
-          -m ${toString memoryMB}
-          -cpu host
-          -smp ${toString cpuCores}
-          -machine q35,accel=kvm
-
-          -drive if=pflash,format=raw,readonly=on,file=${pkgs.OVMF.fd}/FV/OVMF_CODE.fd
-          -drive if=pflash,format=raw,file="$WORK_DIR/OVMF_VARS.fd"
-
-          -drive file="$WORK_DIR/windows.qcow2",if=virtio,format=qcow2,cache=writeback
-
-          -netdev user,id=net0,hostfwd=tcp:127.0.0.1:${toString sshPort}-:22,hostfwd=tcp:127.0.0.1:${toString rdpPort}-:3389
-          -device virtio-net-pci,netdev=net0
-
-          -device virtio-vga
-          -device usb-ehci
-          -device usb-kbd
-          -device usb-tablet
-
-          -vnc 0.0.0.0:${toString vncDisplay}
-          -monitor unix:"$WORK_DIR/qemu-monitor-socket",server,nowait
-        )
-      '';
-
-      # Wait for SSH to become available (indicates Windows has booted)
-      waitForSshScript = pkgs.writeShellScript "wait-for-ssh" ''
-        SSH_PORT="${toString sshPort}"
-        USERNAME="${username}"
-        PASSWORD="${password}"
-        TIMEOUT="${toString installTimeoutSeconds}"
-
-        echo "Waiting for SSH to become available (timeout: $TIMEOUT seconds)..."
-        START_TIME=$(date +%s)
-
-        while true; do
-          CURRENT_TIME=$(date +%s)
-          ELAPSED=$((CURRENT_TIME - START_TIME))
-
-          if [ "$ELAPSED" -ge "$TIMEOUT" ]; then
-            echo "ERROR: Timeout waiting for SSH after $TIMEOUT seconds"
-            return 1
-          fi
-
-          # Try ssh-keyscan to check if SSH is listening
-          if ${pkgs.openssh}/bin/ssh-keyscan -p "$SSH_PORT" 127.0.0.1 2>/dev/null | grep -q "ssh-"; then
-            echo "SSH is listening, attempting connection..."
-
-            # Try actual SSH connection
-            if ${pkgs.sshpass}/bin/sshpass -p "$PASSWORD" ${pkgs.openssh}/bin/ssh \
-              -o StrictHostKeyChecking=no \
-              -o UserKnownHostsFile=/dev/null \
-              -o ConnectTimeout=10 \
-              -p "$SSH_PORT" \
-              "$USERNAME@127.0.0.1" \
-              "echo 'SSH connection successful'" 2>/dev/null; then
-              echo "SSH connection established!"
-              return 0
-            fi
-          fi
-
-          echo "SSH not ready yet (elapsed: ''${ELAPSED}s)..."
-          sleep 10
-        done
-      '';
-
-      # Graceful shutdown via SSH
-      shutdownScript = pkgs.writeShellScript "shutdown-windows" ''
-        SSH_PORT="${toString sshPort}"
-        USERNAME="${username}"
-        PASSWORD="${password}"
-
-        echo "Initiating graceful shutdown via SSH..."
-
-        # Send shutdown command via SSH
-        ${pkgs.sshpass}/bin/sshpass -p "$PASSWORD" ${pkgs.openssh}/bin/ssh \
-          -o StrictHostKeyChecking=no \
-          -o UserKnownHostsFile=/dev/null \
-          -o ConnectTimeout=10 \
-          -p "$SSH_PORT" \
-          "$USERNAME@127.0.0.1" \
-          "shutdown /s /t 5 /f" 2>/dev/null || true
-
-        echo "Shutdown command sent, waiting for VM to terminate..."
-        sleep 30
-      '';
-
-      # Main build script that orchestrates the Windows installation
-      buildScript = pkgs.writeShellScript "build-windows-vm" ''
-        set -ex
-
-        WORK_DIR="$(pwd)"
-        export WORK_DIR
-
-        echo "============================================"
-        echo "Windows VM Build - ${name}"
-        echo "============================================"
-        echo "Windows ISO: ${windowsIso}"
-        echo "VirtIO ISO: ${virtioDriversIso}"
-        echo "Disk Size: ${toString diskSize}GB"
-        echo "Memory: ${toString memoryMB}MB"
-        echo "CPU Cores: ${toString cpuCores}"
-        echo "VNC Port: ${toString vncPort}"
-        echo "SSH Port: ${toString sshPort}"
-        echo "RDP Port: ${toString rdpPort}"
-        echo "Username: ${username}"
-        echo "Computer Name: ${computerName}"
-        echo "============================================"
-
-        # Verify Windows ISO exists
-        if [ ! -f "${windowsIso}" ]; then
-          echo "ERROR: Windows ISO not found: ${windowsIso}"
-          exit 1
-        fi
-
-        # Verify VirtIO drivers ISO exists
-        if [ ! -f "${virtioDriversIso}" ]; then
-          echo "ERROR: VirtIO drivers ISO not found: ${virtioDriversIso}"
-          exit 1
-        fi
-
-        # Create QCOW2 disk image for Windows
-        echo "Creating ${toString diskSize}GB QCOW2 disk image..."
-        ${pkgs.qemu_kvm}/bin/qemu-img create -f qcow2 "$WORK_DIR/windows.qcow2" ${toString diskSize}G
-
-        # Copy OVMF_VARS for this VM instance (must be writable for NVRAM)
-        cp ${pkgs.OVMF.fd}/FV/OVMF_VARS.fd "$WORK_DIR/OVMF_VARS.fd"
-        chmod +w "$WORK_DIR/OVMF_VARS.fd"
-
-        echo "============================================"
-        echo "Stage 1: Windows Unattended Installation"
-        echo "VNC available at: localhost:${toString vncPort}"
-        echo "============================================"
-        echo ""
-        echo "The installation will proceed automatically via autounattend.xml."
-        echo "You can monitor progress via VNC if needed."
-        echo ""
-
-        # Start QEMU for Windows installation
-        ${qemuArgsInstall}
-        ${pkgs.qemu_kvm}/bin/qemu-system-x86_64 "''${args[@]}" &
-        QEMU_PID=$!
-
-        # Wait for QEMU to start
-        sleep 10
-
-        # Wait for SSH to become available (indicates installation is complete)
-        echo "Waiting for Windows installation to complete..."
-        echo "This typically takes 15-30 minutes depending on hardware."
-        echo ""
-
-        if ${waitForSshScript}; then
-          echo "============================================"
-          echo "Windows installation completed successfully!"
-          echo "============================================"
-
-          ${
-            if automationConfig != null && yaml-automation-runner != null then
-              ''
-                echo "Running post-installation YAML automation..."
-                ${yaml-automation-runner}/bin/yaml-automation-runner \
-                  --config ${automationConfig} \
-                  --vnc localhost:${toString vncPort} \
-                  --debug \
-                  || echo "Automation completed or encountered issues."
-              ''
-            else if automationConfig != null then
-              ''
-                echo "Warning: automationConfig provided but yaml-automation-runner not available."
-                echo "Skipping post-installation automation."
-              ''
-            else
-              ''
-                echo "No post-installation automation configured."
-              ''
-          }
-
-          # Graceful shutdown
-          ${shutdownScript}
-
-          # Wait for QEMU to exit
-          echo "Waiting for VM to shut down..."
-          wait $QEMU_PID || true
-
+      # Shell snippet for post-install automation (empty when not configured).
+      automationCmd =
+        if automationConfig != null && yaml-automation-runner != null then
+          "${yaml-automation-runner}/bin/yaml-automation-runner"
+          + " --config ${automationConfig}"
+          + " --vnc localhost:${toString vncPort}"
+          + " --debug"
         else
-          echo "ERROR: Windows installation did not complete within timeout."
-          echo "Check VNC at localhost:${toString vncPort} for status."
+          "";
 
-          # Kill QEMU on failure
-          kill $QEMU_PID 2>/dev/null || true
-          wait $QEMU_PID || true
+      # Main build script that orchestrates the Windows installation.
+      buildVmBin = pkgs.writeShellApplication {
+        name = "build-windows-vm";
+        runtimeInputs = [ pkgs.qemu_kvm ];
+        text = ''
+          export NAME=${sh name}
+          export WINDOWS_ISO="${windowsIso}"
+          export VIRTIO_ISO="${virtioDriversIso}"
+          export AUTOUNATTEND_MEDIA="${autounattendFloppy}"
+          export AUTOUNATTEND_MEDIA_TYPE=floppy
+          export OVMF_CODE="${pkgs.OVMF.fd}/FV/OVMF_CODE.fd"
+          export OVMF_VARS_SRC="${pkgs.OVMF.fd}/FV/OVMF_VARS.fd"
+          export WAIT_FOR_SSH="${waitForSshBin}/bin/wait-for-ssh"
+          export SHUTDOWN_WINDOWS="${shutdownBin}/bin/shutdown-windows"
+          export SSH_PORT=${sh (toString sshPort)}
+          export RDP_PORT=${sh (toString rdpPort)}
+          export VNC_DISPLAY=${sh (toString vncDisplay)}
+          export MEMORY_MB=${sh (toString memoryMB)}
+          export CPU_CORES=${sh (toString cpuCores)}
+          export DISK_SIZE_GB=${sh (toString diskSize)}
+          export USERNAME=${sh username}
+          export PASSWORD=${sh password}
+          export COMPUTER_NAME=${sh computerName}
+          export INSTALL_TIMEOUT_SECS=${sh (toString installTimeoutSeconds)}
+          export AUTOMATION_CMD=${sh automationCmd}
+          exec bash ${scripts.buildVm} "$@"
+        '';
+      };
 
-          exit 1
-        fi
-
-        echo "============================================"
-        echo "Windows VM build complete!"
-        echo "Output: $WORK_DIR/windows.qcow2"
-        echo "============================================"
-      '';
-
-      # Create the run script for the resulting VM
-      runScript = pkgs.writeShellScriptBin "run-vm" ''
-        #!/usr/bin/env bash
-        set -e
-
-        SCRIPT_DIR="$(cd "$(dirname "''${BASH_SOURCE[0]}")" && pwd)"
-        VM_DIR="''${SCRIPT_DIR}/.."
-
-        # Check for KVM support
-        if [ ! -r /dev/kvm ]; then
-          echo "Error: KVM not available. Please ensure:"
-          echo "  1. KVM kernel module is loaded (modprobe kvm_intel or kvm_amd)"
-          echo "  2. You have permission to access /dev/kvm"
-          exit 1
-        fi
-
-        # Verify disk image exists
-        if [ ! -f "$VM_DIR/windows.qcow2" ]; then
-          echo "Error: Disk image not found: $VM_DIR/windows.qcow2"
-          exit 1
-        fi
-
-        # Copy OVMF_VARS if not already present (for writable NVRAM)
-        if [ ! -f "$VM_DIR/OVMF_VARS.fd" ]; then
-          cp ${pkgs.OVMF.fd}/FV/OVMF_VARS.fd "$VM_DIR/OVMF_VARS.fd"
-          chmod +w "$VM_DIR/OVMF_VARS.fd"
-        fi
-
-        WORK_DIR="$VM_DIR"
-        export WORK_DIR
-
-        ${qemuArgsRun}
-
-        echo "Starting Windows VM..."
-        echo "SSH: ssh -p ${toString sshPort} ${username}@localhost"
-        echo "RDP: localhost:${toString rdpPort}"
-        echo "VNC: localhost:${toString vncPort}"
-        echo "Username: ${username}"
-        echo ""
-
-        exec ${pkgs.qemu_kvm}/bin/qemu-system-x86_64 "''${args[@]}" "$@"
-      '';
+      # Run script that ships with the built VM output (in $out/bin/run-vm).
+      # It locates the VM directory relative to itself so users can simply
+      # execute `./result/bin/run-vm`.
+      runScript = pkgs.writeShellApplication {
+        name = "run-vm";
+        runtimeInputs = [ pkgs.qemu_kvm ];
+        text = ''
+          script_dir="$(cd "$(dirname "''${BASH_SOURCE[0]}")" && pwd)"
+          export VM_DIR="''${VM_DIR:-$script_dir/..}"
+          export OVMF_CODE="${pkgs.OVMF.fd}/FV/OVMF_CODE.fd"
+          export OVMF_VARS_SRC="${pkgs.OVMF.fd}/FV/OVMF_VARS.fd"
+          export SSH_PORT=${sh (toString sshPort)}
+          export RDP_PORT=${sh (toString rdpPort)}
+          export VNC_DISPLAY=${sh (toString vncDisplay)}
+          export MEMORY_MB=${sh (toString memoryMB)}
+          export CPU_CORES=${sh (toString cpuCores)}
+          export USERNAME=${sh username}
+          exec bash ${scripts.runVm} "$@"
+        '';
+      };
 
       impureAttrs = lib.optionalAttrs allowImpure {
         # Mark as impure for manual verification runs (requires impure-derivations feature).
@@ -1121,12 +675,6 @@ rec {
     pkgs.runCommand name
       (
         {
-          nativeBuildInputs = [
-            pkgs.qemu_kvm
-            pkgs.openssh
-            pkgs.sshpass
-          ];
-
           passthru = {
             inherit
               runScript
@@ -1145,13 +693,8 @@ rec {
         // impureAttrs
       )
       ''
-        # Create output directory structure
         mkdir -p $out/bin
-
-        # Run the build
-        ${buildScript}
-
-        # Copy results to output
+        ${buildVmBin}/bin/build-windows-vm
         cp windows.qcow2 $out/
         cp OVMF_VARS.fd $out/
         cp ${runScript}/bin/run-vm $out/bin/
@@ -1187,78 +730,23 @@ rec {
       username ? "admin",
       password ? "admin",
     }:
-    let
-      vncPort = 5900 + vncDisplay;
-    in
-    pkgs.writeShellScriptBin "run-windows-vm" ''
-      #!/usr/bin/env bash
-      set -e
-
-      # VM directory can be provided as argument or environment variable
-      VM_DIR="''${1:-''${VM_DIR:-}}"
-
-      if [ -z "$VM_DIR" ]; then
-        echo "Error: VM directory not specified"
-        echo "Usage: $0 <vm-directory>"
-        echo "   or: VM_DIR=<vm-directory> $0"
-        exit 1
-      fi
-
-      # Verify required files exist
-      if [ ! -f "$VM_DIR/windows.qcow2" ]; then
-        echo "Error: Disk image not found: $VM_DIR/windows.qcow2"
-        exit 1
-      fi
-
-      # Copy OVMF_VARS if not present (must be writable)
-      if [ ! -f "$VM_DIR/OVMF_VARS.fd" ]; then
-        cp ${pkgs.OVMF.fd}/FV/OVMF_VARS.fd "$VM_DIR/OVMF_VARS.fd"
-        chmod +w "$VM_DIR/OVMF_VARS.fd"
-      fi
-
-      # Check for KVM support
-      if [ ! -r /dev/kvm ]; then
-        echo "Error: KVM not available. Please ensure:"
-        echo "  1. KVM kernel module is loaded (modprobe kvm_intel or kvm_amd)"
-        echo "  2. You have permission to access /dev/kvm"
-        exit 1
-      fi
-
-      args=(
-        -enable-kvm
-        -m ${toString memoryMB}
-        -cpu host
-        -smp ${toString cpuCores}
-        -machine q35,accel=kvm
-
-        -drive if=pflash,format=raw,readonly=on,file=${pkgs.OVMF.fd}/FV/OVMF_CODE.fd
-        -drive if=pflash,format=raw,file="$VM_DIR/OVMF_VARS.fd"
-
-        -drive file="$VM_DIR/windows.qcow2",if=virtio,format=qcow2,cache=writeback
-
-        -netdev user,id=net0,hostfwd=tcp:127.0.0.1:${toString sshPort}-:22,hostfwd=tcp:127.0.0.1:${toString rdpPort}-:3389
-        -device virtio-net-pci,netdev=net0
-
-        -device virtio-vga
-        -device usb-ehci
-        -device usb-kbd
-        -device usb-tablet
-
-        -vnc 0.0.0.0:${toString vncDisplay}
-        -monitor unix:qemu-monitor-socket,server,nowait
-
-        "''${@:2}"
-      )
-
-      echo "Starting Windows VM from: $VM_DIR"
-      echo "SSH will be available at: localhost:${toString sshPort}"
-      echo "RDP will be available at: localhost:${toString rdpPort}"
-      echo "VNC will be available at: localhost:${toString vncPort}"
-      echo "Username: ${username}"
-      echo ""
-
-      exec ${pkgs.qemu_kvm}/bin/qemu-system-x86_64 "''${args[@]}"
-    '';
+    # `password` is accepted for API parity but not consumed here.
+    assert builtins.isString password;
+    pkgs.writeShellApplication {
+      name = "run-windows-vm";
+      runtimeInputs = [ pkgs.qemu_kvm ];
+      text = ''
+        export OVMF_CODE="${pkgs.OVMF.fd}/FV/OVMF_CODE.fd"
+        export OVMF_VARS_SRC="${pkgs.OVMF.fd}/FV/OVMF_VARS.fd"
+        export SSH_PORT=${sh (toString sshPort)}
+        export RDP_PORT=${sh (toString rdpPort)}
+        export VNC_DISPLAY=${sh (toString vncDisplay)}
+        export MEMORY_MB=${sh (toString memoryMB)}
+        export CPU_CORES=${sh (toString cpuCores)}
+        export USERNAME=${sh username}
+        exec bash ${scripts.runVm} "$@"
+      '';
+    };
 
   # Create a cached boot test script for a pre-built Windows VM
   #
@@ -1320,197 +808,25 @@ rec {
       };
 
       # Test script that orchestrates boot, health check, and shutdown
-      testScript = pkgs.writeShellScriptBin "test-windows-vm-boot" ''
-        #!/usr/bin/env bash
-        set -e
-
-        # Configuration
-        VM_DIR="${vmDir}"
-        SSH_PORT="${toString sshPort}"
-        USERNAME="${username}"
-        PASSWORD="${password}"
-        BOOT_TIMEOUT="${toString bootTimeoutSeconds}"
-        SSH_RETRIES="${toString sshRetries}"
-        SSH_RETRY_DELAY="${toString sshRetryDelay}"
-
-        # Colors for output
-        RED='\033[0;31m'
-        GREEN='\033[0;32m'
-        YELLOW='\033[1;33m'
-        NC='\033[0m' # No Color
-
-        log_info() {
-          echo -e "''${GREEN}[INFO]''${NC} $1"
-        }
-
-        log_warn() {
-          echo -e "''${YELLOW}[WARN]''${NC} $1"
-        }
-
-        log_error() {
-          echo -e "''${RED}[ERROR]''${NC} $1"
-        }
-
-        cleanup() {
-          log_info "Cleaning up..."
-          if [ -n "$QEMU_PID" ] && kill -0 "$QEMU_PID" 2>/dev/null; then
-            log_info "Sending SIGTERM to QEMU (PID: $QEMU_PID)"
-            kill "$QEMU_PID" 2>/dev/null || true
-            # Wait briefly for graceful shutdown
-            sleep 5
-            # Force kill if still running
-            if kill -0 "$QEMU_PID" 2>/dev/null; then
-              log_warn "QEMU still running, sending SIGKILL"
-              kill -9 "$QEMU_PID" 2>/dev/null || true
-            fi
-          fi
-          # Clean up monitor socket
-          rm -f qemu-monitor-socket
-        }
-
-        trap cleanup EXIT
-
-        log_info "============================================"
-        log_info "Windows VM Cached Boot Test"
-        log_info "============================================"
-        log_info "VM Directory: $VM_DIR"
-        log_info "SSH Port: $SSH_PORT"
-        log_info "Boot Timeout: $BOOT_TIMEOUT seconds"
-        log_info "============================================"
-
-        # Verify VM directory exists
-        if [ ! -d "$VM_DIR" ]; then
-          log_error "VM directory not found: $VM_DIR"
-          exit 1
-        fi
-
-        # Verify required files
-        if [ ! -f "$VM_DIR/windows.qcow2" ]; then
-          log_error "Disk image not found: $VM_DIR/windows.qcow2"
-          exit 1
-        fi
-
-        log_info "Starting Windows VM..."
-
-        # Start QEMU in the background with nographic mode for testing
-        ${runScript}/bin/run-windows-vm "$VM_DIR" -nographic -serial none &
-        QEMU_PID=$!
-
-        log_info "QEMU started with PID: $QEMU_PID"
-        log_info "VNC available at: localhost:${toString vncPort}"
-
-        # Wait for SSH to become available
-        log_info "Waiting for SSH to become available (up to $BOOT_TIMEOUT seconds)..."
-
-        SSH_READY=false
-        START_TIME=$(date +%s)
-
-        for i in $(seq 1 "$SSH_RETRIES"); do
-          CURRENT_TIME=$(date +%s)
-          ELAPSED=$((CURRENT_TIME - START_TIME))
-
-          if [ "$ELAPSED" -ge "$BOOT_TIMEOUT" ]; then
-            log_error "Boot timeout exceeded ($BOOT_TIMEOUT seconds)"
-            break
-          fi
-
-          log_info "SSH probe attempt $i/$SSH_RETRIES (elapsed: ''${ELAPSED}s)..."
-
-          # Try ssh-keyscan first to check if SSH is listening
-          if ${pkgs.openssh}/bin/ssh-keyscan -p "$SSH_PORT" 127.0.0.1 2>/dev/null | grep -q "ssh-"; then
-            log_info "SSH is listening, attempting connection..."
-
-            # Try actual SSH connection
-            if ${pkgs.sshpass}/bin/sshpass -p "$PASSWORD" ${pkgs.openssh}/bin/ssh \
-              -o StrictHostKeyChecking=no \
-              -o UserKnownHostsFile=/dev/null \
-              -o ConnectTimeout=10 \
-              -p "$SSH_PORT" \
-              "$USERNAME@127.0.0.1" \
-              "echo 'SSH connection successful'" 2>/dev/null; then
-              SSH_READY=true
-              break
-            fi
-          fi
-
-          # Check if QEMU is still running
-          if ! kill -0 "$QEMU_PID" 2>/dev/null; then
-            log_error "QEMU process died unexpectedly"
-            exit 1
-          fi
-
-          sleep "$SSH_RETRY_DELAY"
-        done
-
-        if [ "$SSH_READY" != "true" ]; then
-          log_error "Failed to establish SSH connection within timeout"
-          exit 1
-        fi
-
-        log_info "============================================"
-        log_info "SSH connection established!"
-        log_info "============================================"
-
-        # Run health check command (get Windows version info via PowerShell)
-        log_info "Running health check: Windows version query"
-
-        SYSINFO_OUTPUT=$(${pkgs.sshpass}/bin/sshpass -p "$PASSWORD" ${pkgs.openssh}/bin/ssh \
-          -o StrictHostKeyChecking=no \
-          -o UserKnownHostsFile=/dev/null \
-          -p "$SSH_PORT" \
-          "$USERNAME@127.0.0.1" \
-          'powershell -Command "[System.Environment]::OSVersion.VersionString"' 2>/dev/null)
-
-        if [ -z "$SYSINFO_OUTPUT" ]; then
-          log_error "Health check command returned empty output"
-          exit 1
-        fi
-
-        log_info "Windows version information:"
-        echo "$SYSINFO_OUTPUT"
-
-        # Verify we got valid Windows version info
-        if echo "$SYSINFO_OUTPUT" | grep -qi "Windows"; then
-          log_info "Health check passed: Windows is responding correctly"
-        else
-          log_error "Health check failed: unexpected output"
-          exit 1
-        fi
-
-        # Graceful shutdown via SSH
-        log_info "============================================"
-        log_info "Initiating graceful shutdown..."
-        log_info "============================================"
-
-        ${pkgs.sshpass}/bin/sshpass -p "$PASSWORD" ${pkgs.openssh}/bin/ssh \
-          -o StrictHostKeyChecking=no \
-          -o UserKnownHostsFile=/dev/null \
-          -p "$SSH_PORT" \
-          "$USERNAME@127.0.0.1" \
-          "shutdown /s /t 5 /f" 2>/dev/null || true
-
-        log_info "Shutdown command sent, waiting for VM to terminate..."
-
-        # Wait for QEMU to exit gracefully (up to 60 seconds for Windows shutdown)
-        for i in $(seq 1 60); do
-          if ! kill -0 "$QEMU_PID" 2>/dev/null; then
-            log_info "VM shut down gracefully"
-            break
-          fi
-          sleep 1
-        done
-
-        # If still running, the cleanup trap will handle it
-        if kill -0 "$QEMU_PID" 2>/dev/null; then
-          log_warn "VM did not shut down gracefully, will be killed by cleanup"
-        fi
-
-        log_info "============================================"
-        log_info "TEST PASSED: Windows VM cached boot test successful!"
-        log_info "============================================"
-
-        exit 0
-      '';
+      testScript = pkgs.writeShellApplication {
+        name = "test-windows-vm-boot";
+        runtimeInputs = [
+          pkgs.openssh
+          pkgs.sshpass
+        ];
+        text = ''
+          export VM_DIR=${sh (toString vmDir)}
+          export RUN_VM="${runScript}/bin/run-windows-vm"
+          export SSH_PORT=${sh (toString sshPort)}
+          export USERNAME=${sh username}
+          export PASSWORD=${sh password}
+          export BOOT_TIMEOUT=${sh (toString bootTimeoutSeconds)}
+          export SSH_RETRIES=${sh (toString sshRetries)}
+          export SSH_RETRY_DELAY=${sh (toString sshRetryDelay)}
+          export VNC_DISPLAY=${sh (toString vncDisplay)}
+          exec bash ${scripts.bootTest} "$@"
+        '';
+      };
     in
     pkgs.symlinkJoin {
       name = "windows-cached-boot-test";
@@ -1594,174 +910,13 @@ rec {
           "<ProductKey><Key>${productKey}</Key><WillShowUI>OnError</WillShowUI></ProductKey>";
 
       orgName = if organization == "" then "CI" else organization;
-
-      # The CI runner Autounattend template (inline, bare-metal variant)
-      ciAutounattendTemplate = pkgs.writeText "ci-runner-autounattend-template.xml" ''
-        <?xml version="1.0" encoding="utf-8"?>
-        <unattend xmlns="urn:schemas-microsoft-com:unattend">
-          <settings pass="windowsPE">
-            <component name="Microsoft-Windows-International-Core-WinPE"
-                       processorArchitecture="amd64"
-                       publicKeyToken="31bf3856ad364e35"
-                       language="neutral" versionScope="nonSxS"
-                       xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
-                       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-              <SetupUILanguage><UILanguage>@LOCALE@</UILanguage></SetupUILanguage>
-              <InputLocale>@LOCALE@</InputLocale>
-              <SystemLocale>@LOCALE@</SystemLocale>
-              <UILanguage>@LOCALE@</UILanguage>
-              <UserLocale>@LOCALE@</UserLocale>
-            </component>
-            <component name="Microsoft-Windows-Setup"
-                       processorArchitecture="amd64"
-                       publicKeyToken="31bf3856ad364e35"
-                       language="neutral" versionScope="nonSxS"
-                       xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
-                       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-              <UserData>
-                <AcceptEula>true</AcceptEula>
-                <FullName>@USERNAME@</FullName>
-                <Organization>@ORG@</Organization>
-                @PRODUCTKEY@
-              </UserData>
-              <DiskConfiguration>
-                <WillShowUI>OnError</WillShowUI>
-                <Disk wcm:action="add">
-                  <DiskID>0</DiskID>
-                  <WillWipeDisk>true</WillWipeDisk>
-                  <CreatePartitions>
-                    <CreatePartition wcm:action="add">
-                      <Order>1</Order><Size>260</Size><Type>EFI</Type>
-                    </CreatePartition>
-                    <CreatePartition wcm:action="add">
-                      <Order>2</Order><Size>16</Size><Type>MSR</Type>
-                    </CreatePartition>
-                    <CreatePartition wcm:action="add">
-                      <Order>3</Order><Extend>true</Extend><Type>Primary</Type>
-                    </CreatePartition>
-                  </CreatePartitions>
-                  <ModifyPartitions>
-                    <ModifyPartition wcm:action="add">
-                      <Order>1</Order><PartitionID>1</PartitionID><Format>FAT32</Format><Label>EFI</Label>
-                    </ModifyPartition>
-                    <ModifyPartition wcm:action="add">
-                      <Order>2</Order><PartitionID>2</PartitionID>
-                    </ModifyPartition>
-                    <ModifyPartition wcm:action="add">
-                      <Order>3</Order><PartitionID>3</PartitionID><Format>NTFS</Format><Label>Windows</Label><Letter>C</Letter>
-                    </ModifyPartition>
-                  </ModifyPartitions>
-                </Disk>
-              </DiskConfiguration>
-              <ImageInstall>
-                <OSImage><InstallTo><DiskID>0</DiskID><PartitionID>3</PartitionID></InstallTo></OSImage>
-              </ImageInstall>
-            </component>
-          </settings>
-
-          <settings pass="specialize">
-            <component name="Microsoft-Windows-Shell-Setup"
-                       processorArchitecture="amd64"
-                       publicKeyToken="31bf3856ad364e35"
-                       language="neutral" versionScope="nonSxS"
-                       xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
-                       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-              <ComputerName>@COMPUTER_NAME@</ComputerName>
-              <TimeZone>@TIMEZONE@</TimeZone>
-            </component>
-            <component name="Microsoft-Windows-Deployment"
-                       processorArchitecture="amd64"
-                       publicKeyToken="31bf3856ad364e35"
-                       language="neutral" versionScope="nonSxS"
-                       xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
-                       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-              <RunSynchronous>
-                <RunSynchronousCommand wcm:action="add">
-                  <Order>1</Order>
-                  <Path>reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\CloudContent" /v DisableWindowsConsumerFeatures /t REG_DWORD /d 1 /f</Path>
-                </RunSynchronousCommand>
-                <RunSynchronousCommand wcm:action="add">
-                  <Order>2</Order>
-                  <Path>reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\Windows Search" /v AllowCortana /t REG_DWORD /d 0 /f</Path>
-                </RunSynchronousCommand>
-                <RunSynchronousCommand wcm:action="add">
-                  <Order>3</Order>
-                  <Path>reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\DataCollection" /v AllowTelemetry /t REG_DWORD /d 0 /f</Path>
-                </RunSynchronousCommand>
-                <RunSynchronousCommand wcm:action="add">
-                  <Order>4</Order>
-                  <Path>cmd /c powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c</Path>
-                </RunSynchronousCommand>
-              </RunSynchronous>
-            </component>
-          </settings>
-
-          <settings pass="oobeSystem">
-            <component name="Microsoft-Windows-Shell-Setup"
-                       processorArchitecture="amd64"
-                       publicKeyToken="31bf3856ad364e35"
-                       language="neutral" versionScope="nonSxS"
-                       xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
-                       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-              <OOBE>
-                <HideEULAPage>true</HideEULAPage>
-                <HideLocalAccountScreen>true</HideLocalAccountScreen>
-                <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
-                <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
-                <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
-                <NetworkLocation>Work</NetworkLocation>
-                <ProtectYourPC>3</ProtectYourPC>
-                <SkipMachineOOBE>true</SkipMachineOOBE>
-                <SkipUserOOBE>true</SkipUserOOBE>
-              </OOBE>
-              <UserAccounts>
-                <LocalAccounts>
-                  <LocalAccount wcm:action="add">
-                    <Name>@USERNAME@</Name>
-                    <Group>Administrators</Group>
-                    <Password>
-                      <Value>@PASSWORD@</Value>
-                      <PlainText>true</PlainText>
-                    </Password>
-                  </LocalAccount>
-                </LocalAccounts>
-              </UserAccounts>
-              <AutoLogon>
-                <Enabled>true</Enabled>
-                <Username>@USERNAME@</Username>
-                <Password>
-                  <Value>@PASSWORD@</Value>
-                  <PlainText>true</PlainText>
-                </Password>
-                <LogonCount>1</LogonCount>
-              </AutoLogon>
-              <FirstLogonCommands>
-                <SynchronousCommand wcm:action="add">
-                  <Order>1</Order>
-                  <CommandLine>cmd /c powershell -ExecutionPolicy Bypass -File D:\bootstrap.ps1 > C:\bootstrap-log.txt 2>&amp;1 || powershell -ExecutionPolicy Bypass -File E:\bootstrap.ps1 > C:\bootstrap-log.txt 2>&amp;1</CommandLine>
-                  <Description>Run bootstrap script from install media</Description>
-                  <RequiresUserInput>false</RequiresUserInput>
-                </SynchronousCommand>
-              </FirstLogonCommands>
-            </component>
-            <component name="Microsoft-Windows-International-Core"
-                       processorArchitecture="amd64"
-                       publicKeyToken="31bf3856ad364e35"
-                       language="neutral" versionScope="nonSxS"
-                       xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
-                       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-              <InputLocale>@LOCALE@</InputLocale>
-              <SystemLocale>@LOCALE@</SystemLocale>
-              <UILanguage>@LOCALE@</UILanguage>
-              <UserLocale>@LOCALE@</UserLocale>
-            </component>
-          </settings>
-        </unattend>
-      '';
-
     in
     pkgs.runCommand "ci-runner-autounattend.xml"
       {
+        nativeBuildInputs = [
+          pkgs.gnused
+          pkgs.libxml2
+        ];
         inherit
           username
           password
@@ -1774,7 +929,7 @@ rec {
         template = ciAutounattendTemplate;
       }
       ''
-        ${pkgs.gnused}/bin/sed \
+        sed \
           -e "s|@USERNAME@|$username|g" \
           -e "s|@PASSWORD@|$password|g" \
           -e "s|@COMPUTER_NAME@|$validatedComputerName|g" \
@@ -1784,7 +939,7 @@ rec {
           -e "s|@PRODUCTKEY@|$productKeyXml|g" \
           "$template" > "$out"
 
-        if ! ${pkgs.libxml2}/bin/xmllint --noout "$out" 2>/dev/null; then
+        if ! xmllint --noout "$out" 2>/dev/null; then
           echo "Warning: Generated CI runner autounattend.xml may have XML syntax issues"
         fi
 
