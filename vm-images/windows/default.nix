@@ -1574,7 +1574,8 @@ rec {
     let
       # Validate computer name
       validatedComputerName =
-        let len = builtins.stringLength computerName;
+        let
+          len = builtins.stringLength computerName;
         in
         if len > 15 then
           throw "Computer name '${computerName}' exceeds 15 character Windows limit"
@@ -1759,37 +1760,39 @@ rec {
       '';
 
     in
-    pkgs.runCommand "ci-runner-autounattend.xml" {
-      inherit
-        username
-        password
-        validatedComputerName
-        windowsTimezone
-        productKeyXml
-        orgName
-        locale
-        ;
-      template = ciAutounattendTemplate;
-    } ''
-      ${pkgs.gnused}/bin/sed \
-        -e "s|@USERNAME@|$username|g" \
-        -e "s|@PASSWORD@|$password|g" \
-        -e "s|@COMPUTER_NAME@|$validatedComputerName|g" \
-        -e "s|@TIMEZONE@|$windowsTimezone|g" \
-        -e "s|@LOCALE@|$locale|g" \
-        -e "s|@ORG@|$orgName|g" \
-        -e "s|@PRODUCTKEY@|$productKeyXml|g" \
-        "$template" > "$out"
+    pkgs.runCommand "ci-runner-autounattend.xml"
+      {
+        inherit
+          username
+          password
+          validatedComputerName
+          windowsTimezone
+          productKeyXml
+          orgName
+          locale
+          ;
+        template = ciAutounattendTemplate;
+      }
+      ''
+        ${pkgs.gnused}/bin/sed \
+          -e "s|@USERNAME@|$username|g" \
+          -e "s|@PASSWORD@|$password|g" \
+          -e "s|@COMPUTER_NAME@|$validatedComputerName|g" \
+          -e "s|@TIMEZONE@|$windowsTimezone|g" \
+          -e "s|@LOCALE@|$locale|g" \
+          -e "s|@ORG@|$orgName|g" \
+          -e "s|@PRODUCTKEY@|$productKeyXml|g" \
+          "$template" > "$out"
 
-      if ! ${pkgs.libxml2}/bin/xmllint --noout "$out" 2>/dev/null; then
-        echo "Warning: Generated CI runner autounattend.xml may have XML syntax issues"
-      fi
+        if ! ${pkgs.libxml2}/bin/xmllint --noout "$out" 2>/dev/null; then
+          echo "Warning: Generated CI runner autounattend.xml may have XML syntax issues"
+        fi
 
-      echo "Generated CI runner autounattend.xml:"
-      echo "  Username: $username"
-      echo "  Computer Name: $validatedComputerName"
-      echo "  Timezone: $windowsTimezone"
-    '';
+        echo "Generated CI runner autounattend.xml:"
+        echo "  Username: $username"
+        echo "  Computer Name: $validatedComputerName"
+        echo "  Timezone: $windowsTimezone"
+      '';
 
   # Build a directory ready to be written to a USB drive for bare-metal
   # Windows CI runner installation.
@@ -1840,42 +1843,44 @@ rec {
           ;
       };
     in
-    pkgs.runCommand "windows-ci-usb-contents" {
-      nativeBuildInputs = with pkgs; [
-        p7zip
-        wimlib
-      ];
-      inherit autounattendXml;
-      windowsIso = windowsIsoPath;
-      threshold = toString splitWimThreshold;
-    } ''
-      mkdir -p "$out"
+    pkgs.runCommand "windows-ci-usb-contents"
+      {
+        nativeBuildInputs = with pkgs; [
+          p7zip
+          wimlib
+        ];
+        inherit autounattendXml;
+        windowsIso = windowsIsoPath;
+        threshold = toString splitWimThreshold;
+      }
+      ''
+        mkdir -p "$out"
 
-      echo "Extracting Windows ISO contents..."
-      7z x -o"$out" "$windowsIso"
+        echo "Extracting Windows ISO contents..."
+        7z x -o"$out" "$windowsIso"
 
-      echo "Copying Autounattend.xml..."
-      cp "$autounattendXml" "$out/Autounattend.xml"
+        echo "Copying Autounattend.xml..."
+        cp "$autounattendXml" "$out/Autounattend.xml"
 
-      echo "Copying CI runner scripts..."
-      cp ${ciRunnerScripts.bootstrap} "$out/bootstrap.ps1"
-      cp ${ciRunnerScripts.provisionGithubRunner} "$out/provision-github-runner.ps1"
-      cp ${ciRunnerScripts.configureBenchmarkIsolation} "$out/configure-benchmark-isolation.ps1"
+        echo "Copying CI runner scripts..."
+        cp ${ciRunnerScripts.bootstrap} "$out/bootstrap.ps1"
+        cp ${ciRunnerScripts.provisionGithubRunner} "$out/provision-github-runner.ps1"
+        cp ${ciRunnerScripts.configureBenchmarkIsolation} "$out/configure-benchmark-isolation.ps1"
 
-      # Split install.wim if it exceeds the threshold (for FAT32 USB drives)
-      wim="$out/sources/install.wim"
-      if [ "$threshold" -gt 0 ] && [ -f "$wim" ]; then
-        wim_size_mb=$(( $(stat -c%s "$wim") / 1048576 ))
-        echo "install.wim size: $wim_size_mb MB (threshold: $threshold MB)"
-        if [ "$wim_size_mb" -gt "$threshold" ]; then
-          echo "Splitting install.wim into SWM files..."
-          wimlib-imagex split "$wim" "$out/sources/install.swm" "$threshold"
-          rm "$wim"
-          echo "install.wim split complete."
+        # Split install.wim if it exceeds the threshold (for FAT32 USB drives)
+        wim="$out/sources/install.wim"
+        if [ "$threshold" -gt 0 ] && [ -f "$wim" ]; then
+          wim_size_mb=$(( $(stat -c%s "$wim") / 1048576 ))
+          echo "install.wim size: $wim_size_mb MB (threshold: $threshold MB)"
+          if [ "$wim_size_mb" -gt "$threshold" ]; then
+            echo "Splitting install.wim into SWM files..."
+            wimlib-imagex split "$wim" "$out/sources/install.swm" "$threshold"
+            rm "$wim"
+            echo "install.wim split complete."
+          fi
         fi
-      fi
 
-      echo "USB contents ready at: $out"
-      ls -la "$out"
-    '';
+        echo "USB contents ready at: $out"
+        ls -la "$out"
+      '';
 }
