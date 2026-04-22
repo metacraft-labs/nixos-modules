@@ -1,0 +1,117 @@
+<domain type="kvm">
+  <name>test-pinned</name>
+  <uuid>00000000-0000-0000-0000-000000000005</uuid>
+  <memory unit="GiB">32</memory>
+<currentMemory unit="GiB">32</currentMemory>
+  <vcpu placement="static">8</vcpu>
+  <cpu mode="host-passthrough" check="none">
+  <topology sockets="1" dies="1" clusters="1" cores="8" threads="1"/>
+</cpu>
+  <memoryBacking>
+  <hugepages/>
+</memoryBacking>
+  <cputune>
+  <vcpupin cpuset="0-1" vcpu="0"/>
+    <vcpupin cpuset="2-3" vcpu="1"/>
+    <vcpupin cpuset="4-5" vcpu="2"/>
+    <vcpupin cpuset="6-7" vcpu="3"/>
+    <vcpupin cpuset="8-9" vcpu="4"/>
+    <vcpupin cpuset="10-11" vcpu="5"/>
+    <vcpupin cpuset="12-13" vcpu="6"/>
+    <vcpupin cpuset="14-15" vcpu="7"/>
+</cputune>
+  <os>
+  <type arch="x86_64" machine="q35">hvm</type>
+  <loader readonly="yes" secure="yes" type="pflash">/nix/store/placeholder-ovmf/FV/OVMF_CODE.fd</loader>
+  <nvram template="/nix/store/placeholder-ovmf/FV/OVMF_VARS.fd">/var/lib/libvirt/qemu/nvram/test-pinned_VARS.fd</nvram>
+  <boot dev="hd"/>
+</os>
+  <features>
+  <acpi/>
+  <apic/>
+  <hyperv mode="passthrough">
+    <relaxed state="on"/>
+    <vapic state="on"/>
+    <spinlocks state="on" retries="8191"/>
+    <vpindex state="on"/>
+    <runtime state="on"/>
+    <synic state="on"/>
+    <stimer state="on"/>
+    <reset state="on"/>
+    <frequencies state="on"/>
+  </hyperv>
+  <smm state="on"/>
+</features>
+  <clock offset="localtime">
+  <timer name="rtc" tickpolicy="catchup"/>
+  <timer name="pit" tickpolicy="delay"/>
+  <timer name="hpet" present="no"/>
+  <timer name="hypervclock" present="yes"/>
+</clock>
+  <on_poweroff>destroy</on_poweroff>
+  <on_reboot>restart</on_reboot>
+  <on_crash>destroy</on_crash>
+  <pm>
+  <suspend-to-mem enabled="no"/>
+  <suspend-to-disk enabled="no"/>
+</pm>
+  <devices>
+    <emulator>/run/current-system/sw/bin/qemu-system-x86_64</emulator>
+    <disk type="volume" device="disk">
+  <driver name="qemu" type="qcow2" cache="writeback"/>
+  <source pool="default" volume="test-pinned.qcow2"/>
+  <target dev="vda" bus="virtio"/>
+</disk>
+    <interface type="network">
+
+  <source network="default"/>
+  <model type="virtio"/>
+</interface>
+    <graphics type="spice" port="5900" autoport="yes" listen="127.0.0.1">
+  <listen type="address" address="127.0.0.1"/>
+  <image compression="auto_glz"/>
+  <streaming mode="filter"/>
+  <gl enable="no"/>
+</graphics>
+    <video>
+  <model type="virtio"/>
+</video>
+    <input type="tablet" bus="usb">
+  <address type="usb" bus="0" port="1"/>
+</input>
+<input type="mouse" bus="ps2"/>
+<input type="keyboard" bus="ps2"/>
+    <serial type="pty">
+  <target type="isa-serial" port="0">
+    <model name="isa-serial"/>
+  </target>
+</serial>
+<console type="pty">
+  <target type="serial" port="0"/>
+</console>
+    <channel type="unix">
+  <target type="virtio" name="org.qemu.guest_agent.0"/>
+</channel>
+<channel type="spicevmc">
+  <target type="virtio" name="com.redhat.spice.0"/>
+</channel>
+    <controller type="usb" model="qemu-xhci" ports="15">
+  <address type="pci" domain="0x0000" bus="0x02" slot="0x00" function="0x0"/>
+</controller>
+    <sound model="ich9">
+  <codec type="micro"/>
+  <audio id="1"/>
+</sound>
+<audio id="1" type="spice"/>
+
+    <tpm model="tpm-crb">
+  <backend type="emulator" version="2.0"/>
+</tpm>
+    <memballoon model="virtio" autodeflate='on' freePageReporting='on'>
+          <stats period='10'/>
+  <address type="pci" domain="0x0000" bus="0x05" slot="0x00" function="0x0"/>
+</memballoon>
+
+
+  </devices>
+</domain>

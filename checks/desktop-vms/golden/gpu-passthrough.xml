@@ -1,0 +1,126 @@
+<domain type="kvm" xmlns:qemu='http://libvirt.org/schemas/domain/qemu/1.0'>
+  <name>test-gpu-passthrough</name>
+  <uuid>00000000-0000-0000-0000-000000000002</uuid>
+  <memory unit="GiB">16</memory>
+<currentMemory unit="GiB">16</currentMemory>
+  <vcpu placement="static">8</vcpu>
+  <cpu mode="host-passthrough" check="none">
+  <topology sockets="1" dies="1" clusters="1" cores="8" threads="1"/>
+<maxphysaddr mode="emulate" bits="39"/>
+</cpu>
+
+
+  <os>
+  <type arch="x86_64" machine="q35">hvm</type>
+  <loader readonly="yes" secure="yes" type="pflash">/nix/store/placeholder-ovmf/FV/OVMF_CODE.fd</loader>
+  <nvram template="/nix/store/placeholder-ovmf/FV/OVMF_VARS.fd">/var/lib/libvirt/qemu/nvram/test-gpu_VARS.fd</nvram>
+  <boot dev="hd"/>
+</os>
+  <features>
+  <acpi/>
+  <apic/>
+  <hyperv mode="passthrough">
+    <relaxed state="on"/>
+    <vapic state="on"/>
+    <spinlocks state="on" retries="8191"/>
+    <vpindex state="on"/>
+    <runtime state="on"/>
+    <synic state="on"/>
+    <stimer state="on"/>
+    <reset state="on"/>
+    <frequencies state="on"/>
+  </hyperv>
+  <smm state="on"/>
+</features>
+  <clock offset="localtime">
+  <timer name="rtc" tickpolicy="catchup"/>
+  <timer name="pit" tickpolicy="delay"/>
+  <timer name="hpet" present="no"/>
+  <timer name="hypervclock" present="yes"/>
+</clock>
+  <on_poweroff>destroy</on_poweroff>
+  <on_reboot>restart</on_reboot>
+  <on_crash>destroy</on_crash>
+  <pm>
+  <suspend-to-mem enabled="no"/>
+  <suspend-to-disk enabled="no"/>
+</pm>
+  <devices>
+    <emulator>/run/current-system/sw/bin/qemu-system-x86_64</emulator>
+    <disk type="volume" device="disk">
+  <driver name="qemu" type="qcow2" cache="writeback"/>
+  <source pool="default" volume="test-gpu.qcow2"/>
+  <target dev="vda" bus="virtio"/>
+</disk>
+    <interface type="network">
+  <mac address="52:54:00:aa:bb:cc"/>
+  <source network="default"/>
+  <model type="virtio"/>
+</interface>
+    <graphics type="spice" port="5900" autoport="yes" listen="127.0.0.1">
+  <listen type="address" address="127.0.0.1"/>
+  <image compression="auto_glz"/>
+  <streaming mode="filter"/>
+  <gl enable="no"/>
+</graphics>
+      <shmem name="looking-glass">
+  <model type="ivshmem-plain"/>
+  <size unit="M">64</size>
+</shmem>
+    <video>
+  <model type="none"/>
+</video>
+    <input type="tablet" bus="usb">
+  <address type="usb" bus="0" port="1"/>
+</input>
+<input type="mouse" bus="ps2"/>
+<input type="keyboard" bus="ps2"/>
+    <serial type="pty">
+  <target type="isa-serial" port="0">
+    <model name="isa-serial"/>
+  </target>
+</serial>
+<console type="pty">
+  <target type="serial" port="0"/>
+</console>
+    <channel type="unix">
+  <target type="virtio" name="org.qemu.guest_agent.0"/>
+</channel>
+<channel type="spicevmc">
+  <target type="virtio" name="com.redhat.spice.0"/>
+</channel>
+    <controller type="usb" model="qemu-xhci" ports="15">
+  <address type="pci" domain="0x0000" bus="0x02" slot="0x00" function="0x0"/>
+</controller>
+    <sound model="ich9">
+  <codec type="micro"/>
+  <audio id="1"/>
+</sound>
+<audio id="1" type="spice"/>
+
+    <tpm model="tpm-crb">
+  <backend type="emulator" version="2.0"/>
+</tpm>
+    <memballoon model="virtio">
+          <stats period='5'/>
+  <address type="pci" domain="0x0000" bus="0x05" slot="0x00" function="0x0"/>
+</memballoon>
+    <hostdev mode="subsystem" type="pci" managed="yes">
+  <source>
+    <address domain="0x0000" bus="0x08" slot="0x00" function="0x0"/>
+  </source>
+</hostdev>
+<hostdev mode="subsystem" type="pci" managed="yes">
+  <source>
+    <address domain="0x0000" bus="0x08" slot="0x00" function="0x1"/>
+  </source>
+</hostdev>
+
+  </devices>
+<qemu:commandline>
+  <qemu:arg value="-global"/>
+    <qemu:arg value="host-x86_64-cpu.host-phys-bits=false"/>
+    <qemu:arg value="-object"/>
+    <qemu:arg value="input-linux,id=kbd,evdev=/dev/input/event0,repeat=on,grab-toggle=ctrl-ctrl"/>
+</qemu:commandline>
+</domain>
