@@ -153,6 +153,7 @@
           extraDevices = vmCfg.extraDevices;
           extraQemuArgs = vmCfg.extraQemuArgs;
           pciDevices = vmCfg.pciDevices;
+          macAddress = vmCfg.macAddress;
           lookingGlassMemoryMB = if cfg.lookingGlass.enable then cfg.lookingGlass.sharedMemoryMB else 64;
           # Memballoon configuration
           memballoon = vmCfg.memballoon;
@@ -254,6 +255,21 @@
                 Generate with: uuidgen
               '';
               example = "550e8400-e29b-41d4-a716-446655440000";
+            };
+
+            macAddress = mkOption {
+              type = types.nullOr types.str;
+              default = null;
+              description = ''
+                Fixed MAC address for the VM's network interface.
+                If not specified, libvirt will generate a random one.
+
+                Use a fixed MAC address to ensure the VM gets a consistent IP
+                from DHCP static host reservations on the libvirt default network.
+
+                Find the current MAC with: virsh domiflist <vm-name>
+              '';
+              example = "52:54:00:73:d8:5d";
             };
 
             memory = mkOption {

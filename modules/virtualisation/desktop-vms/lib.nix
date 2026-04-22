@@ -438,6 +438,7 @@ rec {
         statsInterval = 5;
       },
       pciDevices ? [ ],
+      macAddress ? null,
       lookingGlassMemoryMB ? 64,
       # Limit guest physical address bits to match host IOMMU address width.
       # Intel VT-d may only support 39-bit (512GB) — OVMF uses the guest's
@@ -567,7 +568,7 @@ rec {
       };
 
       # Network
-      networkXml = generateNetworkXml { };
+      networkXml = generateNetworkXml { mac = macAddress; };
 
       # Video (skip when videoModel is "none", e.g. for GPU passthrough setups)
       videoXml =
