@@ -570,10 +570,14 @@ rec {
       # Network
       networkXml = generateNetworkXml { mac = macAddress; };
 
-      # Video (skip when videoModel is "none", e.g. for GPU passthrough setups)
+      # Video — "none" emits <model type='none'/> to suppress libvirt's
+      # automatic default video device (important for GPU passthrough)
       videoXml =
         if videoModel == "none" then
-          ""
+          ''
+            <video>
+              <model type="none"/>
+            </video>''
         else
           generateVideoXml {
             type = videoModel;
