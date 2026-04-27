@@ -69,7 +69,7 @@ jobs:
           echo "EOF" >> "$GITHUB_OUTPUT"
 
       - name: Diff NixOS system closures
-        uses: natsukium/nix-diff-action@v1.0.3
+        uses: natsukium/nix-diff-action@v1.1.0
         with:
           mode: full
           comment-strategy: update
