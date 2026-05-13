@@ -1,0 +1,59 @@
+{
+  "workflowFile": ".github/workflows/reusable-flake-checks-ci-matrix.yml",
+  "workflowName": "ci-matrix",
+  "jobs": [
+    "compute-mcl-ref",
+    "post-initial-comment",
+    "shard-matrix",
+    "eval-matrix",
+    "merge-matrices",
+    "build",
+    "results"
+  ],
+  "deployPath": {
+    "entryJob": "results",
+    "deployStep": "Deploy",
+    "deployCondition": "inputs.run-cachix-deploy",
+    "mclCommand": "deploy-spec"
+  },
+  "criticalSteps": [
+    "Compute reusable workflow SHA and set mcl nix run command",
+    "Setup Nix",
+    "Generate Shard Matrix",
+    "Generate CI Matrix",
+    "Merge matrices",
+    "Build ${{ matrix.name }}",
+    "Push to Cachix ${{ matrix.name }}",
+    "Print CI Matrix",
+    "Update GitHub Comment",
+    "Deploy"
+  ],
+  "criticalCommands": [
+    "nix build -L --no-link --keep-going --show-trace",
+    "cachix push ${{ vars.CACHIX_CACHE }} ${{ matrix.output }}",
+    "deploy-spec"
+  ],
+  "environmentInputs": [
+    "CACHIX_CACHE",
+    "CACHIX_AUTH_TOKEN",
+    "CACHIX_ACTIVATE_TOKEN",
+    "SYSTEM_TO_GITHUB_RUNNER_LABELS",
+    "SUBSTITUTERS",
+    "TRUSTED_PUBLIC_KEYS",
+    "NIX_GITHUB_TOKEN",
+    "NIX_GITLAB_TOKEN",
+    "NIX_GITLAB_DOMAIN"
+  ],
+  "monitoringPath": {
+    "serviceOption": "services.cachix-deploy-metrics",
+    "sourceFiles": [
+      "metacraft-labs/infra/services/monitoring/cachix-deploy-metrics/default.nix",
+      "modules/cachix-deploy-metrics/default.nix",
+      "packages/cachix-deploy-metrics/default.nix",
+      "packages/cachix-deploy-metrics/main.d"
+    ],
+    "exporterEndpoint": "/metrics",
+    "defaultPort": 9160,
+    "apiSource": "https://app.cachix.org/api/v1/deploy/agent/<workspace>/<agent>"
+  }
+}
