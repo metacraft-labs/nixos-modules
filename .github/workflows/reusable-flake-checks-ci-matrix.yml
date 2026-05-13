@@ -237,8 +237,85 @@ jobs:
 
       # TODO: replace with `attic`
       - name: Push to Cachix ${{ matrix.name }}
+        shell: bash
+        env:
+          DEPLOY_TARGET: ${{ matrix.name }}
+          DEPLOY_SYSTEM: ${{ matrix.system }}
+          DEPLOY_STORE_PATH: ${{ matrix.output }}
+          DEPLOY_CACHE: ${{ vars.CACHIX_CACHE }}
         run: |
-          cachix push ${{ vars.CACHIX_CACHE }} ${{ matrix.output }}
+          mkdir -p .result
+          started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          set +e
+          cachix push "$DEPLOY_CACHE" "$DEPLOY_STORE_PATH" 2> >(tee .result/cache-push.stderr >&2)
+          status=$?
+          set -e
+          finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          export started_at finished_at status
+          python3 <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          store_path = os.environ["DEPLOY_STORE_PATH"]
+          store_hash = re.match(r"^/nix/store/([^-]+)-", store_path).group(1)
+          sha = os.environ.get("GITHUB_SHA", "unknown")[:7]
+          run_id = os.environ.get("GITHUB_RUN_ID", "local")
+          status = int(os.environ["status"]) if "status" in os.environ else None
+          stderr_summary = Path(".result/cache-push.stderr").read_text()[:500].strip()
+          event = {
+              "schemaVersion": 1,
+              "deploymentId": f"gh-{run_id}-{sha}-{os.environ['DEPLOY_TARGET']}",
+              "correlationId": f"gh-{run_id}-{sha}-{os.environ['DEPLOY_TARGET']}-{store_hash}",
+              "phase": "cache-push",
+              "target": {
+                  "name": os.environ["DEPLOY_TARGET"],
+                  "system": os.environ["DEPLOY_SYSTEM"],
+                  "kind": "unknown",
+                  "transport": "cachix-agent",
+              },
+              "backend": {
+                  "cache": os.environ["DEPLOY_CACHE"],
+                  "substituters": [f"https://{os.environ['DEPLOY_CACHE']}.cachix.org"],
+                  "controller": "cachix-deploy",
+              },
+              "storePaths": {
+                  "system": store_path,
+                  "closure": {
+                      "count": 1,
+                      "totalBytes": None,
+                      "rootHashes": [store_hash],
+                  },
+              },
+              "timestamps": {
+                  "startedAt": os.environ["started_at"],
+                  "finishedAt": os.environ["finished_at"],
+              },
+              "command": {
+                  "name": "cachix push",
+                  "argv": ["cachix", "push", os.environ["DEPLOY_CACHE"], store_path],
+                  "status": "succeeded" if status == 0 else "failed",
+                  "exitCode": status,
+              },
+          }
+          if status != 0:
+              event["error"] = {
+                  "code": "cache_push_failed",
+                  "message": "Cache push failed",
+                  "retryable": False,
+                  "details": {"stderrSummary": stderr_summary},
+              }
+          Path(".result/deployment-cache-push-events.jsonl").write_text(json.dumps(event, separators=(",", ":")) + "\n")
+          PY
+          exit "$status"
+
+      - uses: actions/upload-artifact@v7
+        if: always() && inputs.run-cachix-deploy
+        with:
+          name: deployment-cache-push-${{ github.run_id }}-${{ strategy.job-index }}
+          path: .result/deployment-cache-push-events.jsonl
+          if-no-files-found: warn
 
   results:
     runs-on: ${{ fromJSON(inputs.runners).x86_64-linux }}
@@ -290,4 +367,36 @@ jobs:
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
           CACHIX_ACTIVATE_TOKEN: '${{ secrets.CACHIX_ACTIVATE_TOKEN }}'
           SYSTEM_TO_GITHUB_RUNNER_LABELS: ${{ inputs.runners }}
-        run: ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} deploy-spec
+          MCL_DEPLOY_EVENT_LOG: .result/deployment-events.jsonl
+        run: |
+          mkdir -p .result
+          ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} deploy-spec
+
+      - name: Generate Deployment Summary
+        if: always() && inputs.run-cachix-deploy
+        run: |
+          if [[ -f .result/deployment-events.jsonl ]]; then
+            ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} deploy-status summarize \
+              .result/deployment-events.jsonl \
+              --output .result/deployment-summary.md \
+              --json-output .result/deployment-summary.json
+            cat .result/deployment-summary.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo '# Deployment Summary'
+              echo
+              echo 'No deployment events were written.'
+            } | tee .result/deployment-summary.md >> "$GITHUB_STEP_SUMMARY"
+            printf '{"finalState":"unknown","targetCount":0,"failureCount":0,"targets":[]}\n' \
+              > .result/deployment-summary.json
+          fi
+
+      - uses: actions/upload-artifact@v7
+        if: always() && inputs.run-cachix-deploy
+        with:
+          name: deployment-events-${{ github.run_id }}
+          path: |
+            .result/deployment-events.jsonl
+            .result/deployment-summary.md
+            .result/deployment-summary.json
+          if-no-files-found: warn

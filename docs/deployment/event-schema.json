@@ -131,7 +131,10 @@
               "minimum": 1
             },
             "totalBytes": {
-              "type": "integer",
+              "type": [
+                "integer",
+                "null"
+              ],
               "minimum": 0
             },
             "rootHashes": {
