@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "deploymentId": "gh-123456789-abcdef0-app-server-01",
+  "target": {
+    "name": "app-server-01",
+    "system": "x86_64-linux"
+  },
+  "gitRevision": "0123456789abcdef0123456789abcdef01234567",
+  "sequence": 42,
+  "manifestSignature": {
+    "algorithm": "minisign-ed25519",
+    "keyId": "deploy-manifest-example",
+    "signature": "trusted-comment: deployment manifest\nuntrusted-comment: example\nRUTexampleSignatureValue"
+  },
+  "desiredSystemPath": "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-nixos-system-app-server-01-25.11",
+  "cacheRequirements": {
+    "closure": {
+      "count": 1284,
+      "totalBytes": 2949120000,
+      "rootHashes": [
+        "0123456789abcdfghijklmnpqrsvwxyz",
+        "11111111111111111111111111111111"
+      ]
+    },
+    "substituters": [
+      {
+        "url": "https://cache.example.invalid",
+        "trustedPublicKey": "cache.example.invalid-1:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+      }
+    ],
+    "availability": {
+      "mode": "closure-substitutable",
+      "requiredBeforeActivation": true
+    }
+  },
+  "healthChecks": [
+    {
+      "name": "service-ready",
+      "kind": "systemd",
+      "target": "metacraft-app.service",
+      "timeoutSeconds": 120
+    },
+    {
+      "name": "http-ready",
+      "kind": "http",
+      "target": "http://127.0.0.1:8080/healthz",
+      "timeoutSeconds": 30
+    }
+  ],
+  "rollbackPolicy": {
+    "mode": "automatic",
+    "maxAttempts": 1,
+    "onHealthCheckFailure": "rollback"
+  },
+  "currentState": "accepted",
+  "supersededState": {
+    "deploymentId": "gh-123456700-abcdef0-app-server-01",
+    "sequence": 41,
+    "supersededAt": "2026-05-13T09:00:00Z"
+  },
+  "retryTimestamps": [
+    "2026-05-13T09:05:00Z"
+  ]
+}

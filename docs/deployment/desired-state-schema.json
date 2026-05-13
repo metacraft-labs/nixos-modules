@@ -1,0 +1,277 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://metacraft-labs.invalid/schemas/deployment-desired-state.json",
+  "title": "DeploymentDesiredState",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "deploymentId",
+    "target",
+    "gitRevision",
+    "sequence",
+    "manifestSignature",
+    "desiredSystemPath",
+    "cacheRequirements",
+    "healthChecks",
+    "rollbackPolicy",
+    "currentState",
+    "supersededState",
+    "retryTimestamps"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "deploymentId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "system"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "system": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "gitRevision": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "manifestSignature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "algorithm",
+        "keyId",
+        "signature"
+      ],
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "minLength": 1
+        },
+        "keyId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "signature": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "desiredSystemPath": {
+      "type": "string",
+      "pattern": "^/nix/store/[0-9a-df-np-sv-z]{32}-.+"
+    },
+    "cacheRequirements": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "closure",
+        "substituters",
+        "availability"
+      ],
+      "properties": {
+        "closure": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "count",
+            "totalBytes",
+            "rootHashes"
+          ],
+          "properties": {
+            "count": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "totalBytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "rootHashes": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 32
+              }
+            }
+          }
+        },
+        "substituters": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "url",
+              "trustedPublicKey"
+            ],
+            "properties": {
+              "url": {
+                "type": "string",
+                "minLength": 1
+              },
+              "trustedPublicKey": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "availability": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "requiredBeforeActivation"
+          ],
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": [
+                "all-roots-substitutable",
+                "closure-substitutable",
+                "best-effort",
+                "none"
+              ]
+            },
+            "requiredBeforeActivation": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+    "healthChecks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "kind",
+          "timeoutSeconds"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "command",
+              "http",
+              "tcp",
+              "systemd",
+              "custom"
+            ]
+          },
+          "target": {
+            "type": "string",
+            "minLength": 1
+          },
+          "timeoutSeconds": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    },
+    "rollbackPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "maxAttempts",
+        "onHealthCheckFailure"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "automatic",
+            "manual",
+            "disabled"
+          ]
+        },
+        "maxAttempts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "onHealthCheckFailure": {
+          "type": "string",
+          "enum": [
+            "rollback",
+            "mark-failed",
+            "manual-intervention"
+          ]
+        }
+      }
+    },
+    "currentState": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "accepted",
+        "reconciling",
+        "succeeded",
+        "failed",
+        "superseded",
+        "rolled-back"
+      ]
+    },
+    "supersededState": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "deploymentId",
+        "sequence",
+        "supersededAt"
+      ],
+      "properties": {
+        "deploymentId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "supersededAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "retryTimestamps": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "date-time"
+      }
+    }
+  }
+}

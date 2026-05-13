@@ -1,0 +1,26 @@
+# Deployment Baseline
+
+This directory records the M0 deployment audit and event model. It is
+documentation, schema, examples, and static validation only. It does not change
+the production deployment path.
+
+## Contents
+
+- [current-cachix-flow.md](current-cachix-flow.md): current CI-to-target
+  Cachix deploy flow, inputs, and monitoring path.
+- [event-model.md](event-model.md): backend-neutral event, phase, desired-state,
+  and correlation-id model.
+- [backend-assumptions.md](backend-assumptions.md): Cachix-specific assumptions
+  that should become backend abstractions.
+- [rehearsal-harness.md](rehearsal-harness.md): current observed rehearsal
+  prior art and generic harness candidates.
+- [cache-and-deploy-risk-register.md](cache-and-deploy-risk-register.md): M0
+  risk register.
+- [event-schema.json](event-schema.json): `DeploymentEvent` JSON schema.
+- [desired-state-schema.json](desired-state-schema.json): desired-state record
+  JSON schema.
+
+Private operational observations from the current infrastructure repository are
+kept in [private-inventory.md](private-inventory.md). Generic docs should not
+copy private hostnames, domains, repository names, or escalation paths from that
+file.
