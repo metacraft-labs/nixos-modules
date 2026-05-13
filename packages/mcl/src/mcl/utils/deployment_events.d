@@ -32,6 +32,7 @@ struct DeploymentEventContext
     string system = "x86_64-linux";
     string kind = "server";
     string transport = "cachix-agent";
+    string controller = "cachix-deploy";
 }
 
 string deploymentEventLogPathFromEnv()
@@ -189,7 +190,7 @@ JSONValue deploymentEventJson(
     JSONValue[string] backend = [
         "cache": JSONValue(context.cache),
         "substituters": JSONValue(context.substituters.map!(s => JSONValue(s)).array),
-        "controller": JSONValue("cachix-deploy"),
+        "controller": JSONValue(context.controller),
     ];
     JSONValue[string] storePaths = [
         "system": JSONValue(systemPath),

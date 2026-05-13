@@ -6,6 +6,7 @@ private enum commandModulesToExport =
 [
     "mcl.commands.deploy_spec" : ["deploy_spec"],
     "mcl.commands.deploy_status" : ["deploy_status"],
+    "mcl.commands.cache" : ["cache"],
     "mcl.commands.ci_matrix" : ["ci_matrix", "print_table", "merge_ci_matrices"],
     "mcl.commands.shard_matrix" : ["shard_matrix"],
     "mcl.commands.ci" : ["ci"],

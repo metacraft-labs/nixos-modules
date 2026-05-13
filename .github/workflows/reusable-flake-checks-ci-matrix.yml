@@ -32,12 +32,20 @@ on:
         default: false
         required: false
         type: 'boolean'
+      deployment-cache-push-backends:
+        description: 'Comma-separated cache push backends for deployment closures: cachix, attic, none'
+        default: 'cachix'
+        required: false
+        type: string
     secrets:
       CACHIX_AUTH_TOKEN:
         description: 'Cachix auth token'
         required: true
       CACHIX_ACTIVATE_TOKEN:
         description: 'Cachix activate token'
+        required: false
+      ATTIC_TOKEN:
+        description: 'Attic push token for optional deployment closure mirroring'
         required: false
       NIX_GITHUB_TOKEN:
         description: GitHub token to add as access-token in nix.conf
@@ -235,80 +243,83 @@ jobs:
           nix build -L --no-link --keep-going --show-trace \
             '.#${{ matrix.attrPath }}'
 
-      # TODO: replace with `attic`
-      - name: Push to Cachix ${{ matrix.name }}
+      - name: Push deployment closure caches ${{ matrix.name }}
         shell: bash
         env:
           DEPLOY_TARGET: ${{ matrix.name }}
           DEPLOY_SYSTEM: ${{ matrix.system }}
           DEPLOY_STORE_PATH: ${{ matrix.output }}
-          DEPLOY_CACHE: ${{ vars.CACHIX_CACHE }}
+          DEPLOYMENT_CACHE_PUSH_BACKENDS: ${{ inputs.deployment-cache-push-backends }}
+          CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
+          ATTIC_CACHE: ${{ vars.ATTIC_CACHE }}
+          ATTIC_SUBSTITUTER: ${{ vars.ATTIC_SUBSTITUTER }}
+          ATTIC_ENDPOINT: ${{ vars.ATTIC_ENDPOINT }}
+          ATTIC_TRUSTED_PUBLIC_KEY: ${{ vars.ATTIC_TRUSTED_PUBLIC_KEY }}
+          ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
+          DEPLOYMENT_TRUSTED_PUBLIC_KEYS: ${{ vars.TRUSTED_PUBLIC_KEYS }}
         run: |
           mkdir -p .result
-          started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          set +e
-          cachix push "$DEPLOY_CACHE" "$DEPLOY_STORE_PATH" 2> >(tee .result/cache-push.stderr >&2)
-          status=$?
-          set -e
-          finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          export started_at finished_at status
-          python3 <<'PY'
-          import json
-          import os
-          import re
-          from pathlib import Path
+          IFS=',' read -ra backends <<< "$DEPLOYMENT_CACHE_PUSH_BACKENDS"
+          for backend in "${backends[@]}"; do
+            backend="$(echo "$backend" | xargs)"
+            [[ -n "$backend" ]] || continue
 
-          store_path = os.environ["DEPLOY_STORE_PATH"]
-          store_hash = re.match(r"^/nix/store/([^-]+)-", store_path).group(1)
-          sha = os.environ.get("GITHUB_SHA", "unknown")[:7]
-          run_id = os.environ.get("GITHUB_RUN_ID", "local")
-          status = int(os.environ["status"]) if "status" in os.environ else None
-          stderr_summary = Path(".result/cache-push.stderr").read_text()[:500].strip()
-          event = {
-              "schemaVersion": 1,
-              "deploymentId": f"gh-{run_id}-{sha}-{os.environ['DEPLOY_TARGET']}",
-              "correlationId": f"gh-{run_id}-{sha}-{os.environ['DEPLOY_TARGET']}-{store_hash}",
-              "phase": "cache-push",
-              "target": {
-                  "name": os.environ["DEPLOY_TARGET"],
-                  "system": os.environ["DEPLOY_SYSTEM"],
-                  "kind": "unknown",
-                  "transport": "cachix-agent",
-              },
-              "backend": {
-                  "cache": os.environ["DEPLOY_CACHE"],
-                  "substituters": [f"https://{os.environ['DEPLOY_CACHE']}.cachix.org"],
-                  "controller": "cachix-deploy",
-              },
-              "storePaths": {
-                  "system": store_path,
-                  "closure": {
-                      "count": 1,
-                      "totalBytes": None,
-                      "rootHashes": [store_hash],
-                  },
-              },
-              "timestamps": {
-                  "startedAt": os.environ["started_at"],
-                  "finishedAt": os.environ["finished_at"],
-              },
-              "command": {
-                  "name": "cachix push",
-                  "argv": ["cachix", "push", os.environ["DEPLOY_CACHE"], store_path],
-                  "status": "succeeded" if status == 0 else "failed",
-                  "exitCode": status,
-              },
-          }
-          if status != 0:
-              event["error"] = {
-                  "code": "cache_push_failed",
-                  "message": "Cache push failed",
-                  "retryable": False,
-                  "details": {"stderrSummary": stderr_summary},
-              }
-          Path(".result/deployment-cache-push-events.jsonl").write_text(json.dumps(event, separators=(",", ":")) + "\n")
-          PY
-          exit "$status"
+            case "$backend" in
+              cachix)
+                cache="$CACHIX_CACHE"
+                substituter="https://${CACHIX_CACHE}.cachix.org"
+                ;;
+              attic)
+                cache="$ATTIC_CACHE"
+                substituter="$ATTIC_SUBSTITUTER"
+                : "${ATTIC_TOKEN:?ATTIC_TOKEN is required when deployment-cache-push-backends includes attic}"
+                : "${ATTIC_CACHE:?ATTIC_CACHE is required when deployment-cache-push-backends includes attic}"
+                : "${ATTIC_SUBSTITUTER:?ATTIC_SUBSTITUTER is required when deployment-cache-push-backends includes attic}"
+                : "${ATTIC_TRUSTED_PUBLIC_KEY:?ATTIC_TRUSTED_PUBLIC_KEY is required when deployment-cache-push-backends includes attic}"
+
+                attic_endpoint="$ATTIC_ENDPOINT"
+                if [[ -z "$attic_endpoint" ]]; then
+                  attic_endpoint="${ATTIC_SUBSTITUTER%/$ATTIC_CACHE}"
+                fi
+                attic_endpoint="${attic_endpoint%/}/"
+                nix shell nixpkgs#attic-client -c \
+                  attic login --set-default deployment "$attic_endpoint" "$ATTIC_TOKEN"
+                ;;
+              none)
+                cache="none"
+                substituter=""
+                ;;
+              *)
+                echo "Unsupported deployment cache backend: $backend" >&2
+                exit 1
+                ;;
+            esac
+
+            trusted_args=()
+            for key in $DEPLOYMENT_TRUSTED_PUBLIC_KEYS; do
+              trusted_args+=(--trusted-public-key "$key")
+            done
+            if [[ "$backend" == attic ]]; then
+              trusted_args+=(--trusted-public-key "$ATTIC_TRUSTED_PUBLIC_KEY")
+            fi
+
+            substituter_args=()
+            if [[ -n "$substituter" ]]; then
+              substituter_args+=(--substituter "$substituter" --require-substitute)
+            fi
+
+            ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} -- cache push-closure \
+              --backend "$backend" \
+              --cache "$cache" \
+              --target "$DEPLOY_TARGET" \
+              --system "$DEPLOY_SYSTEM" \
+              --kind unknown \
+              --transport cachix-agent \
+              --event-log .result/deployment-cache-push-events.jsonl \
+              "${substituter_args[@]}" \
+              "${trusted_args[@]}" \
+              "$DEPLOY_STORE_PATH"
+          done
 
       - uses: actions/upload-artifact@v7
         if: always() && inputs.run-cachix-deploy
