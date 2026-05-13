@@ -1,7 +1,11 @@
 { ... }:
 {
   perSystem =
-    { pkgs, ... }:
+    {
+      pkgs,
+      self',
+      ...
+    }:
     let
       docs = ../docs/deployment;
       workflow = ../.github/workflows/reusable-flake-checks-ci-matrix.yml;
@@ -247,6 +251,30 @@
           done
 
           touch "$out"
+        '';
+
+        deployment-summary-artifact = pkgs.runCommand "deployment-summary-artifact" { } ''
+          mkdir -p "$out"
+          cat > events.jsonl <<'EOF'
+          {"schemaVersion":1,"deploymentId":"gh-123456789-abcdef0-app-server-01","correlationId":"gh-123456789-abcdef0-app-server-01-0123456789abcdfghijklmnpqrsvwxyz","phase":"evaluate","target":{"name":"app-server-01","system":"x86_64-linux","kind":"server","transport":"cachix-agent"},"backend":{"cache":"example-private-cache","substituters":["https://example-private-cache.cachix.org","https://cache.nixos.org"],"controller":"cachix-deploy"},"storePaths":{"system":"/nix/store/0123456789abcdfghijklmnpqrsvwxyz-nixos-system-app-server-01-25.11"},"timestamps":{"startedAt":"2026-05-13T09:00:00Z","finishedAt":"2026-05-13T09:01:00Z"},"command":{"name":"nix-eval-jobs","argv":["nix-eval-jobs"],"status":"succeeded","exitCode":0}}
+          {"schemaVersion":1,"deploymentId":"gh-123456789-abcdef0-app-server-01","correlationId":"gh-123456789-abcdef0-app-server-01-0123456789abcdfghijklmnpqrsvwxyz","phase":"activate-requested","target":{"name":"app-server-01","system":"x86_64-linux","kind":"server","transport":"cachix-agent"},"backend":{"cache":"example-private-cache","substituters":["https://example-private-cache.cachix.org","https://cache.nixos.org"],"controller":"cachix-deploy"},"storePaths":{"system":"/nix/store/0123456789abcdfghijklmnpqrsvwxyz-nixos-system-app-server-01-25.11","closure":{"count":2,"totalBytes":null,"rootHashes":["0123456789abcdfghijklmnpqrsvwxyz"]}},"timestamps":{"startedAt":"2026-05-13T09:01:00Z","finishedAt":"2026-05-13T09:01:05Z"},"command":{"name":"cachix deploy activate","argv":["cachix","deploy","activate"],"status":"failed","exitCode":23},"error":{"code":"activation_request_failed","message":"Activation request failed","retryable":false,"details":{"stderrSummary":"fixture activation failure"}}}
+          EOF
+
+          ${self'.packages.mcl}/bin/mcl deploy-status summarize events.jsonl \
+            --output "$out/deployment-summary.md" \
+            --json-output "$out/deployment-summary.json"
+
+          grep -Fq "app-server-01" "$out/deployment-summary.md"
+          grep -Fq "Activation request failed" "$out/deployment-summary.md"
+          grep -Fq "fixture activation failure" "$out/deployment-summary.md"
+          ${pkgs.python3}/bin/python3 <<PY
+          import json
+          from pathlib import Path
+          summary = json.loads(Path("$out/deployment-summary.json").read_text())
+          assert summary["finalState"] == "failed", summary
+          assert summary["failureCount"] == 1, summary
+          assert summary["targetCount"] == 1, summary
+          PY
         '';
       };
     };

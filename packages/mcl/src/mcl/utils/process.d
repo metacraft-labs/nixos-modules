@@ -11,6 +11,17 @@ import std.json : JSONValue, parseJSON;
 
 bool isRoot() => geteuid() == 0;
 
+struct ProcessResult
+{
+    int exitCode;
+    string stdout;
+    string stderr;
+
+    bool succeeded() const => exitCode == 0;
+}
+
+alias ProcessRunner = ProcessResult delegate(string[] args);
+
 T execute(T = string)(string args, bool printCommand = true, bool returnErr = false, Redirect redirect = Redirect.all) if (is(T == string) || is(T == ProcessPipes) || is(T == JSONValue))
 {
     return execute!T(args.strip.split(" "), printCommand, returnErr, redirect);
@@ -90,6 +101,39 @@ unittest
     assert(execute(["echo", "hello"]) == "hello");
     assert(execute(["true"]) == "");
     // assertThrown(execute(["false"]), "Command `false` failed with status 1");
+}
+
+ProcessResult runProcessCapture(string[] args, bool echoOutput = false)
+{
+    import std.array : join;
+    import std.algorithm : map, canFind;
+    import std.conv : to;
+    import std.process : pipeProcess, wait, escapeShellCommand;
+    import std.logger : tracef;
+    import std.stdio : stdout, stderr;
+
+    const bold = "\033[1m";
+    const normal = "\033[0m";
+    auto cmd = args.map!(x => x.canFind("*") ? x : x.escapeShellCommand()).join(" ");
+
+    tracef("$ %s%s%s", bold, cmd, normal);
+
+    auto pipes = pipeProcess(args, Redirect.stdout | Redirect.stderr);
+    string stdoutText = pipes.stdout.byLine().join("\n").to!string;
+    string stderrText = pipes.stderr.byLine().join("\n").to!string;
+    int status = wait(pipes.pid);
+
+    if (echoOutput && stdoutText != "")
+        stdout.writeln(stdoutText);
+    if (echoOutput && stderrText != "")
+        stderr.writeln(stderrText);
+
+    return ProcessResult(status, stdoutText, stderrText);
+}
+
+ProcessResult runProcessInlineCapture(string[] args)
+{
+    return runProcessCapture(args, true);
 }
 
 void spawnProcessInline(string[] args)

@@ -30,7 +30,7 @@
   ],
   "criticalCommands": [
     "nix build -L --no-link --keep-going --show-trace",
-    "cachix push ${{ vars.CACHIX_CACHE }} ${{ matrix.output }}",
+    "cachix push \"$DEPLOY_CACHE\" \"$DEPLOY_STORE_PATH\"",
     "deploy-spec"
   ],
   "environmentInputs": [
