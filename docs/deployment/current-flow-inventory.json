@@ -23,20 +23,24 @@
     "Generate CI Matrix",
     "Merge matrices",
     "Build ${{ matrix.name }}",
-    "Push to Cachix ${{ matrix.name }}",
+    "Push deployment closure caches ${{ matrix.name }}",
     "Print CI Matrix",
     "Update GitHub Comment",
     "Deploy"
   ],
   "criticalCommands": [
     "nix build -L --no-link --keep-going --show-trace",
-    "cachix push \"$DEPLOY_CACHE\" \"$DEPLOY_STORE_PATH\"",
+    "cache push-closure",
     "deploy-spec"
   ],
   "environmentInputs": [
     "CACHIX_CACHE",
     "CACHIX_AUTH_TOKEN",
     "CACHIX_ACTIVATE_TOKEN",
+    "ATTIC_TOKEN",
+    "ATTIC_CACHE",
+    "ATTIC_SUBSTITUTER",
+    "DEPLOYMENT_CACHE_PUSH_BACKENDS",
     "SYSTEM_TO_GITHUB_RUNNER_LABELS",
     "SUBSTITUTERS",
     "TRUSTED_PUBLIC_KEYS",

@@ -22,6 +22,7 @@ let
       alejandra
       openssh
       cachix
+      attic-client
     ])
     ++ lib.optionals (isLinux && isx86) [
       dmidecode
