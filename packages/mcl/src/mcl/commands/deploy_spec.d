@@ -23,6 +23,28 @@ struct DeploySpecArgs {
     mixin CiMatrixBaseArgs!();
 }
 
+private void pushDeploymentClosure(DeploySpec spec, string cachixCache)
+{
+    infof(
+        "Pushing deployment closure for %s agents to Cachix cache '%s'.",
+        spec.agents.length,
+        cachixCache
+    );
+
+    spawnProcessInline([
+        "bash", "-euo", "pipefail", "-c",
+        q{
+cache="$1"
+shift
+
+nix-store -r "$@"
+nix-store -qR "$@" | cachix push "$cache"
+        },
+        "mcl-push-deployment-closure",
+        cachixCache,
+    ] ~ spec.agents.values);
+}
+
 export int deploy_spec(DeploySpecArgs args)
 {
     const deploySpecFile = resultDir.buildPath("cachix-deploy-spec.json");
@@ -62,6 +84,8 @@ export int deploy_spec(DeploySpecArgs args)
 
     if (!spec.agents.length)
         return 0;
+
+    pushDeploymentClosure(spec, args.cachixCache);
 
     spawnProcessInline([
         "cachix", "deploy", "activate", deploySpecFile, "--async"
