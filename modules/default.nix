@@ -4,9 +4,11 @@
     ./lido
     ./pyroscope
     ./aztec
+    ./cachix-deploy
     ./folder-size-metrics
     ./shard-split
     ./random-alerts
+    ./tailscale
     ./host-info.nix
     ./secrets.nix
     ./mcl-disko
