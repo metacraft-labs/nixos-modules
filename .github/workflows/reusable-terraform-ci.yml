@@ -73,6 +73,36 @@ on:
         required: false
         default: ''
 
+      aws_region:
+        description: 'AWS region used when assuming AWS OIDC roles'
+        type: string
+        required: false
+        default: 'us-east-1'
+
+      aws_plan_role_arn:
+        description: 'AWS IAM role ARN to assume for PR plans via GitHub OIDC'
+        type: string
+        required: false
+        default: ''
+
+      aws_apply_role_arn:
+        description: 'AWS IAM role ARN to assume for applies via GitHub OIDC'
+        type: string
+        required: false
+        default: ''
+
+      aws_drift_role_arn:
+        description: 'AWS IAM role ARN to assume for drift checks via GitHub OIDC; defaults to aws_plan_role_arn when empty'
+        type: string
+        required: false
+        default: ''
+
+      aws_role_duration_seconds:
+        description: 'AWS STS role session duration for Terraform jobs'
+        type: string
+        required: false
+        default: '3600'
+
     secrets:
       AGENIX_CI_PRIVATE_KEY:
         description: 'SSH private key for agenix secret decryption'
@@ -88,6 +118,7 @@ permissions:
   contents: read
   pull-requests: write
   issues: write
+  id-token: write
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -240,7 +271,7 @@ jobs:
     if: >-
       inputs.mode == 'pr'
       && github.event.pull_request.head.repo.full_name == github.repository
-      && (inputs.credentials_env_name != '' || inputs.agenix_plan_secret_path != '')
+      && (inputs.credentials_env_name != '' || inputs.agenix_plan_secret_path != '' || inputs.aws_plan_role_arn != '')
     needs: offline-checks
     runs-on: ${{ fromJSON(inputs.runner) }}
     steps:
@@ -266,6 +297,15 @@ jobs:
             "${{ inputs.agenix_plan_secret_path }}")"
           echo "::add-mask::$TOKEN"
           echo "${{ inputs.credentials_env_name }}=$TOKEN" >> "$GITHUB_ENV"
+
+      - name: Configure AWS credentials for plan
+        if: inputs.aws_plan_role_arn != ''
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          aws-region: ${{ inputs.aws_region }}
+          role-to-assume: ${{ inputs.aws_plan_role_arn }}
+          role-session-name: terraform-plan-${{ github.run_id }}
+          role-duration-seconds: ${{ inputs.aws_role_duration_seconds }}
 
       - name: Lockfile existence gate
         run: |
@@ -341,21 +381,21 @@ jobs:
           curl -fsSL "$POLICY_SCRIPT_URL" -o /tmp/tofu-plan-policy.py
 
           PLAN_JSON="${{ steps.plan.outputs.json_plan_path }}"
-          POLICY_ARGS=""
+          POLICY_ARGS=()
 
           # Check PR labels for policy mode
           LABELS=$(gh pr view "${{ github.event.pull_request.number }}" --json labels -q '.labels[].name' 2>/dev/null || echo "")
 
           if echo "$LABELS" | grep -q 'import-only'; then
-            POLICY_ARGS="$POLICY_ARGS --mode import-only"
+            POLICY_ARGS+=(--mode import-only)
           fi
 
           if echo "$LABELS" | grep -q 'scope-expansion'; then
-            POLICY_ARGS="$POLICY_ARGS --scope-expansion"
+            POLICY_ARGS+=(--scope-expansion)
           fi
 
           # Run policy check
-          python3 /tmp/tofu-plan-policy.py "$PLAN_JSON" $POLICY_ARGS
+          python3 /tmp/tofu-plan-policy.py "$PLAN_JSON" "${POLICY_ARGS[@]}"
 
       - name: Sensitive-change gate
         if: inputs.sensitive_change_label != '' && steps.plan.outputs.changes == 'true'
@@ -379,7 +419,7 @@ jobs:
   apply:
     if: >-
       inputs.mode == 'apply'
-      && (inputs.credentials_env_name != '' || inputs.agenix_apply_secret_path != '')
+      && (inputs.credentials_env_name != '' || inputs.agenix_apply_secret_path != '' || inputs.aws_apply_role_arn != '')
     needs: offline-checks
     runs-on: ${{ fromJSON(inputs.runner) }}
     environment: production
@@ -414,6 +454,15 @@ jobs:
           echo "::add-mask::$TOKEN"
           echo "${{ inputs.credentials_env_name }}=$TOKEN" >> "$GITHUB_ENV"
 
+      - name: Configure AWS credentials for apply
+        if: inputs.aws_apply_role_arn != ''
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          aws-region: ${{ inputs.aws_region }}
+          role-to-assume: ${{ inputs.aws_apply_role_arn }}
+          role-session-name: terraform-apply-${{ github.run_id }}
+          role-duration-seconds: ${{ inputs.aws_role_duration_seconds }}
+
       - name: Terranix
         if: inputs.terranix
         run: |
@@ -445,7 +494,7 @@ jobs:
   drift-check:
     if: >-
       inputs.mode == 'drift'
-      && (inputs.credentials_env_name != '' || inputs.agenix_plan_secret_path != '')
+      && (inputs.credentials_env_name != '' || inputs.agenix_plan_secret_path != '' || inputs.aws_plan_role_arn != '' || inputs.aws_drift_role_arn != '')
     runs-on: ${{ fromJSON(inputs.runner) }}
     steps:
       - name: Checkout
@@ -470,6 +519,15 @@ jobs:
             "${{ inputs.agenix_plan_secret_path }}")"
           echo "::add-mask::$TOKEN"
           echo "${{ inputs.credentials_env_name }}=$TOKEN" >> "$GITHUB_ENV"
+
+      - name: Configure AWS credentials for drift
+        if: inputs.aws_plan_role_arn != '' || inputs.aws_drift_role_arn != ''
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          aws-region: ${{ inputs.aws_region }}
+          role-to-assume: ${{ inputs.aws_drift_role_arn != '' && inputs.aws_drift_role_arn || inputs.aws_plan_role_arn }}
+          role-session-name: terraform-drift-${{ github.run_id }}
+          role-duration-seconds: ${{ inputs.aws_role_duration_seconds }}
 
       - name: Init
         run: |
