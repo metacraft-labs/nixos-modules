@@ -111,7 +111,7 @@ mock_provider "cloudflare" {
   mock_resource "cloudflare_dns_record" {
     defaults = {
       id       = "mock-record-id"
-      hostname = "test.blocksense.network"
+      hostname = "test.example.com"
     }
   }
 }
@@ -147,7 +147,7 @@ run "creates_cname_record" {
   variables {
     name  = "www"
     type  = "CNAME"
-    value = "blocksense.network"
+    value = "example.com"
   }
 
   assert {
@@ -221,7 +221,7 @@ For reusable mock defaults across multiple test files, create
 mock_resource "cloudflare_dns_record" {
   defaults = {
     id       = "mock-record-id"
-    hostname = "mock.blocksense.network"
+    hostname = "mock.example.com"
   }
 }
 

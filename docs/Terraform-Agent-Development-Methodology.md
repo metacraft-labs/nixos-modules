@@ -100,8 +100,8 @@ retain full approval authority over what gets provisioned.
 │                                                                          │
 │  Note: For projects with staging (separate zone/prefix), apply staging   │
 │  first, verify, then promote to production. For projects without staging │
-│  (e.g. Cloudflare agent-harbor), apply targets production directly       │
-│  behind the Environment approval gate. See project status docs.          │
+│  (e.g. account-wide provider resources), apply targets production        │
+│  directly behind the Environment approval gate. See project status docs. │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -450,7 +450,7 @@ jobs:
       - name: Post-apply smoke tests
         run: |
           failed=0
-          for domain in apt.agent-harbor.com yum.agent-harbor.com apk.agent-harbor.com arch.agent-harbor.com; do
+          for domain in api.example.com status.example.com; do
             status=$(curl -fsSL -o /dev/null -w '%{http_code}' "https://${domain}/")
             if [ "$status" != "200" ]; then
               echo "::error::Smoke test FAILED: https://${domain}/ returned HTTP ${status}"
@@ -756,8 +756,7 @@ wrong transform rule expression, wrong phase):
 
 ```bash
 # Example: verify R2 custom domains serve index.html
-for domain in apt.agent-harbor.com yum.agent-harbor.com \
-              apk.agent-harbor.com arch.agent-harbor.com; do
+for domain in api.example.com status.example.com; do
   status=$(curl -fsSL -o /dev/null -w '%{http_code}' "https://${domain}/")
   content_type=$(curl -fsSL -o /dev/null -w '%{content_type}' "https://${domain}/")
   if [ "$status" != "200" ] || [[ "$content_type" != *"text/html"* ]]; then
@@ -913,6 +912,58 @@ environment variables (`GOOGLE_APPLICATION_CREDENTIALS`), Workload
 Identity Federation, or `gcloud auth application-default login` — never
 inline credentials.
 
+### Human cloud credential profiles
+
+Human-operated bootstrap and break-glass commands need a credential selection
+mechanism that is ergonomic, auditable, and safe to reuse across many
+infrastructure repositories. The standard pattern is:
+
+1. Use one local CLI profile per repository, cloud account, and privilege
+   level. Example AWS names: `example-prod-admin`, `example-prod-readonly`,
+   `customer-a-bootstrap`. Avoid relying on the ambient default profile.
+2. Have the Nix dev shell select the repository's default human profile by
+   exporting the provider-specific profile environment variable, such as
+   `AWS_PROFILE`, and print the selected profile when the shell starts.
+3. Make credentialed scripts fail loudly when the expected profile variable is
+   missing. This usually means the command is running outside the repository
+   dev shell or the operator has not made an explicit profile choice.
+4. Keep deployment facts in git, not in the operator environment. Account ID,
+   region, state backend names, repository identity, protected branch names,
+   and notification recipients are part of the deployment contract. Scripts
+   should compare the authenticated caller identity with the tracked account ID
+   before running a credentialed plan or apply.
+5. Keep `.env` files gitignored and limited to local operator overrides such
+   as choosing a different profile for this checkout. Do not put deployment
+   facts, tokens, state backend secrets, or provider credentials in `.env`.
+6. Prefer short-lived, browser- or identity-provider-backed credentials over
+   long-lived access keys. For AWS accounts that do not use IAM Identity
+   Center, prefer `aws login --profile <profile> --region <region>` with AWS
+   CLI v2.32.0 or newer. IAM Identity Center (`aws sso login`) remains a valid
+   alternative when the account is configured for it.
+7. Assume not every Terraform/OpenTofu provider or wrapper understands the
+   cloud CLI's newest profile format. If necessary, export short-lived
+   credentials into the subprocess environment immediately before invoking
+   OpenTofu. For AWS console-login profiles, use:
+
+   ```bash
+   eval "$(aws configure export-credentials --profile "$AWS_PROFILE" --format env)"
+   tofu plan
+   ```
+
+   Never print this output, commit it, or store it in a file. Treat it as
+   process-local credential material.
+
+8. For stronger separation between different customers or companies, profile
+   names are usually enough. If hard local isolation is required, set
+   provider-specific config/cache locations per checkout, such as
+   `AWS_CONFIG_FILE`, `AWS_SHARED_CREDENTIALS_FILE`, and
+   `AWS_LOGIN_CACHE_DIRECTORY`.
+
+For AWS console-login profiles, the non-secret profile mapping lives in
+`~/.aws/config` and temporary login cache material lives under
+`~/.aws/login/cache` by default. Those locations are workstation state, not
+repository state.
+
 ---
 
 ## Agent Prompt Guidelines
@@ -931,6 +982,9 @@ guidelines in the prompt or in a `CLAUDE.md` file:
 - Use `command = plan` in test run blocks (never `apply` against real
   providers).
 - Do not commit `.tfstate` files, `.tfvars` files, or credentials.
+- Do not inspect, print, or modify local cloud credential caches such as
+  `~/.aws/login/cache`. Human credential setup belongs in runbooks and
+  operator scripts, not in agent-authored infrastructure changes.
 - Follow the existing naming conventions and directory structure.
 - Include a clear PR description explaining the intent and expected
   infrastructure changes.
@@ -1084,6 +1138,8 @@ risk to live infrastructure.
 - [dflook/tofu-plan](https://github.com/dflook/tofu-plan) — GitHub Action for plan-as-PR-comment
 - [dflook/tofu-apply](https://github.com/dflook/tofu-apply) — GitHub Action for gated apply
 - [GitHub Environments](https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment)
+- [AWS CLI console login](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sign-in.html)
+- [AWS CLI export-credentials](https://docs.aws.amazon.com/cli/latest/reference/configure/export-credentials.html)
 - [Terraform Testing Guide](Terraform-Testing.md)
 
 Project-specific guides (in consuming repositories):
