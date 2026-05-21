@@ -1,6 +1,6 @@
-{ ... }:
+{ inputs, ... }:
 {
-  flake.modules.nixos.mcl-netbird =
+  flake.modules.nixos."netbird-with-agenix" =
     {
       config,
       lib,
@@ -8,7 +8,7 @@
       ...
     }:
     let
-      cfg = config.mcl.netbird;
+      cfg = config.services."netbird-with-agenix";
       client = config.services.netbird.clients.${cfg.clientName};
       optionalArrayArg =
         flag: value:
@@ -17,13 +17,28 @@
         '';
     in
     {
-      options.mcl.netbird = with lib; {
+      imports = [
+        inputs.agenix.nixosModules.default
+      ];
+
+      options.services."netbird-with-agenix" = with lib; {
         enable = mkEnableOption (mdDoc "NetBird client enrolled with an agenix-managed setup key");
 
         clientName = mkOption {
           type = types.str;
-          default = "agent-harbor";
+          default = "default";
           description = mdDoc "Name of the NetBird client instance.";
+        };
+
+        setupKeySecretFile = mkOption {
+          type = types.path;
+          description = mdDoc "Encrypted age file containing the NetBird setup key.";
+        };
+
+        setupKeySecretName = mkOption {
+          type = types.str;
+          default = "netbird/default/setup-key";
+          description = mdDoc "Name of the agenix secret that materializes the NetBird setup key.";
         };
 
         port = mkOption {
@@ -34,14 +49,8 @@
 
         interface = mkOption {
           type = types.str;
-          default = "nb-agent-harbor";
+          default = "nb-default";
           description = mdDoc "Network interface managed by this NetBird client.";
-        };
-
-        setupKeyPath = mkOption {
-          type = types.path;
-          default = "/etc/netbird-agent-harbor/setup-key";
-          description = mdDoc "Path where the NetBird setup key is materialized.";
         };
 
         hostnameOverride = mkOption {
@@ -103,7 +112,7 @@
       };
 
       config = lib.mkIf cfg.enable {
-        mcl.secrets.services."netbird-${cfg.clientName}".secrets.setup-key.path = cfg.setupKeyPath;
+        age.secrets.${cfg.setupKeySecretName}.file = cfg.setupKeySecretFile;
 
         services.netbird = {
           enable = false;
@@ -115,7 +124,7 @@
             openFirewall = cfg.openFirewall;
             login = {
               enable = true;
-              setupKeyFile = cfg.setupKeyPath;
+              setupKeyFile = config.age.secrets.${cfg.setupKeySecretName}.path;
             };
             config =
               cfg.extraConfig
