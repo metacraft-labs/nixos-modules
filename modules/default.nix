@@ -6,9 +6,10 @@
     ./aztec
     ./cachix-deploy
     ./folder-size-metrics
-    ./netbird
+    ./netbird-with-agenix
     ./shard-split
     ./random-alerts
+    ./tailscale-with-agenix
     ./host-info.nix
     ./secrets.nix
     ./mcl-disko
