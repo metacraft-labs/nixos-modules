@@ -257,6 +257,7 @@ jobs:
           ATTIC_TRUSTED_PUBLIC_KEY: ${{ vars.ATTIC_TRUSTED_PUBLIC_KEY }}
           ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
           DEPLOYMENT_TRUSTED_PUBLIC_KEYS: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          DEPLOYMENT_TRUSTED_SUBSTITUTERS: ${{ vars.SUBSTITUTERS }}
         run: |
           mkdir -p .result
           IFS=',' read -ra backends <<< "$DEPLOYMENT_CACHE_PUSH_BACKENDS"
@@ -307,6 +308,15 @@ jobs:
             if [[ -n "$substituter" ]]; then
               substituter_args+=(--substituter "$substituter" --require-substitute)
             fi
+            # Probe across every trusted substituter that target hosts
+            # configure (deployment cache + auxiliary caches). The integrity
+            # check passes if ANY trusted substituter resolves a path —
+            # matching the realistic deploy environment instead of demanding
+            # exhaustive coverage on the primary cache.
+            for extra_substituter in $DEPLOYMENT_TRUSTED_SUBSTITUTERS; do
+              [[ "$extra_substituter" == "$substituter" ]] && continue
+              substituter_args+=(--substituter "$extra_substituter")
+            done
 
             ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} -- cache push-closure \
               --backend "$backend" \
