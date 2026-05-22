@@ -201,7 +201,7 @@ jobs:
           path: comment.md
 
   build:
-    needs: [shard-matrix, merge-matrices]
+    needs: [compute-mcl-ref, shard-matrix, merge-matrices]
     if: >-
       always() &&
       (
