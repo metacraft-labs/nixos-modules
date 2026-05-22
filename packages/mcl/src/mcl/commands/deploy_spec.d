@@ -41,15 +41,9 @@ struct DeploySpecDependencies
     ProcessRunner queryProcess;
 }
 
-private void pushDeploymentClosure(DeploySpec spec, string cachixCache)
+private string[] pushDeploymentClosureCommand(DeploySpec spec, string cachixCache)
 {
-    infof(
-        "Pushing deployment closure for %s agents to Cachix cache '%s'.",
-        spec.agents.length,
-        cachixCache
-    );
-
-    spawnProcessInline([
+    return [
         "bash", "-euo", "pipefail", "-c",
         q{
 cache="$1"
@@ -60,7 +54,7 @@ nix-store -qR "$@" | cachix push "$cache"
         },
         "mcl-push-deployment-closure",
         cachixCache,
-    ] ~ spec.agents.values);
+    ] ~ spec.agents.values;
 }
 
 export int deploy_spec(DeploySpecArgs args)
@@ -215,7 +209,36 @@ int deploySpecImpl(DeploySpecArgs args, DeploySpecDependencies deps, string depl
     if (!spec.agents.length)
         return 0;
 
-    pushDeploymentClosure(spec, args.cachixCache);
+    infof(
+        "Pushing deployment closure for %s agents to Cachix cache '%s'.",
+        spec.agents.length,
+        args.cachixCache
+    );
+
+    auto pushCommand = pushDeploymentClosureCommand(spec, args.cachixCache);
+    auto pushResult = deps.runProcess(pushCommand);
+
+    if (eventLoggingEnabled)
+        foreach (target, systemPath; spec.agents)
+            appendDeploymentEvent(eventLogPath, deploymentEventJson(
+                context,
+                "cache-push",
+                target,
+                systemPath,
+                "mcl-push-deployment-closure",
+                pushCommand,
+                pushResult.succeeded ? "succeeded" : "failed",
+                pushResult.exitCode,
+                queryClosureSummary(systemPath, queryRunner),
+                pushResult.succeeded ? "" : "Closure push failed before activation",
+                "closure_push_failed",
+                pushResult.succeeded ? "" : pushResult.stderr.stderrSummary,
+                [
+                    "deploySpecFile": JSONValue(deploySpecFile),
+                ],
+            ));
+
+    enforce(pushResult.succeeded, "Closure push failed.");
 
     auto activateCommand = [
         "cachix", "deploy", "activate", deploySpecFile, "--async"
@@ -293,12 +316,14 @@ unittest
     assert(deploySpecImpl(args, DeploySpecDependencies(&fakeRunner), specFile) == 0);
 
     auto events = eventLog.readText.splitLines.filter!(line => line != "").map!(line => line.parseJSON).array;
-    assert(events.length == 2);
+    assert(events.length == 3);
     assert(events[0]["phase"].str == "evaluate");
-    assert(events[1]["phase"].str == "activate-requested");
+    assert(events[1]["phase"].str == "cache-push");
     assert(events[1]["command"]["status"].str == "succeeded");
-    assert(events[1]["storePaths"]["closure"]["count"].integer == 2);
-    assert(events[1]["storePaths"]["closure"]["totalBytes"].integer == 18);
+    assert(events[2]["phase"].str == "activate-requested");
+    assert(events[2]["command"]["status"].str == "succeeded");
+    assert(events[2]["storePaths"]["closure"]["count"].integer == 2);
+    assert(events[2]["storePaths"]["closure"]["totalBytes"].integer == 18);
 }
 
 @("test_deploy_event_log_failure_shape")
@@ -329,7 +354,12 @@ unittest
     {
         if (command.length >= 2 && command[0] == "nix" && command[1] == "path-info")
             return ProcessResult(0, `{}`, "");
-        return ProcessResult(23, "", "activation stderr details");
+        // Activation fails; closure push and other commands succeed so this
+        // test exercises the activation failure path specifically.
+        if (command.length >= 3 && command[0] == "cachix"
+            && command[1] == "deploy" && command[2] == "activate")
+            return ProcessResult(23, "", "activation stderr details");
+        return ProcessResult(0, "", "");
     }
 
     writeJsonFile(DeploySpec(agents: [
