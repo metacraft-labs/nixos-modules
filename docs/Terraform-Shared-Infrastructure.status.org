@@ -36,8 +36,8 @@
 
   Security model: No single actor (human or agent) can both produce and
   approve an infrastructure change. Agents open PRs but cannot merge or
-  approve. Humans review the plan comment, approve the GitHub Environment
-  gate, and merge. This separation-of-duties principle underlies all CI
+  approve. Humans review the plan comment and merge into the target
+  environment branch. This separation-of-duties principle underlies all CI
   safety gates below.
 
   Consuming repo prerequisites (not shared — each repo must implement):
@@ -52,10 +52,12 @@
     OIDC/Workload Identity Federation, or GitHub Actions secrets.
   - CODEOWNERS file requiring infra reviewer for Terraform directories,
     backends, bootstrap, .terraform.lock.hcl, and workflow files
-  - Branch protection on main (required reviews + required status checks);
+  - Branch protection on deployment branches (required reviews + required status checks);
     sensitive paths (bootstrap/, backends/, workflow files, .terraform.lock.hcl,
     CODEOWNERS) require 2 human approvals
-  - GitHub Environment "production" configured with required reviewers
+  - GitHub Environments configured as apply credential boundaries. Required
+    Environment reviewers are optional project-specific exceptions; the default
+    approval path is merging into the target deployment branch.
   - BACKEND_CONFIG_FILE repository variable set (e.g. backends/gcs.hcl) —
     centralizes backend choice so switching backends requires changing one
     variable, not editing every workflow file
@@ -198,7 +200,7 @@
   specified in the consuming repos' status docs:
   - blocksense/infra M0 requires: fork-PR guard, denylist, plan safety gate,
     sensitive-change gate (parameterized), plan-as-PR-comment, GitHub
-    Environment approval gate, post-apply smoke tests (as hook/step),
+    Environment credential boundary, post-apply smoke tests (as hook/step),
     plan comparison on apply (reject if plan changed since PR comment)
   - old-metacraft/infra M2 requires: fork-PR guard, denylist, plan safety gate,
     post-apply smoke tests (verify cloud instances boot and register as runners)
@@ -206,8 +208,8 @@
 
   The reusable workflow must accept split credentials: a read-only token/key
   for the plan job and a read-write token/key for the apply job. The apply
-  job's credentials are only available in the "production" GitHub Environment,
-  which requires manual approval from designated reviewers.
+  job's credentials are only available in the GitHub Environment associated
+  with the target deployment branch.
 
   Depends on: M0 (dev shell tools must be available).
   Blocks: blocksense/infra M0 (CI workflow deliverables), old-metacraft/infra M2
@@ -220,8 +222,8 @@
     - [X] Plan-on-PR job: runs tofu plan, posts result as PR comment using
           dflook/tofu-plan (updates single comment, shows resource counts,
           collapses long plans)
-    - [X] Apply-on-merge job: runs tofu apply with GitHub Environment approval
-          gate; uses dflook/tofu-apply which re-generates the plan and compares
+    - [X] Apply-on-merge job: runs tofu apply with a GitHub Environment
+          credential boundary; uses dflook/tofu-apply which re-generates the plan and compares
           it to the one posted in the PR comment — if anything changed (e.g.
           concurrent merges, external drift), the apply is rejected with a
           "plan-changed" failure, preventing application of unreviewed changes
@@ -292,7 +294,9 @@
           changing one variable, not editing every workflow file)
     - [ ] Path trigger patterns (consuming repo specifies; bootstrap/ always excluded)
     - [X] Read-only credentials for plan job (e.g. read-only API token, OIDC/WIF)
-    - [X] Read-write credentials for apply job (only in "production" environment)
+    - [X] Read-write credentials for apply job (only in the target GitHub Environment)
+    - [X] Apply GitHub Environment name (defaults to production; consuming repos
+          can map branches such as testing/staging/main to matching environments)
     - [X] Sensitive-change label name (optional, project-specific)
     - [X] Post-apply smoke test command (optional, project-specific)
     - [X] Provider allowlist for denylist check (project-specific, e.g. "cloudflare,google"
@@ -326,8 +330,8 @@
       description: Plan output is posted as a PR comment after successful plan
       status: pending
 
-    - test_name: verify_apply_environment_gate
-      description: Apply job requires GitHub Environment approval before running
+    - test_name: verify_apply_environment_boundary
+      description: Apply job runs inside the configured GitHub Environment for the target branch
       status: pending
 
     - test_name: verify_plan_comparison_on_apply
@@ -395,7 +399,7 @@
       status: pending
 
     - test_name: verify_end_to_end_consuming_repo
-      description: A consuming repo can call the reusable workflow and complete the full pipeline — offline checks run, credentialed plan posts a comment, fork-PR guard skips credentials for fork PRs, apply requires production environment approval
+      description: A consuming repo can call the reusable workflow and complete the full pipeline — offline checks run, credentialed plan posts a comment, fork-PR guard skips credentials for fork PRs, merge to the target branch applies through that branch's GitHub Environment
       status: pending
 
 *** Outstanding Tasks
@@ -409,9 +413,8 @@
     - [X] Support agenix-based secret decryption as a credential delivery method
           alongside OIDC and static keys
     - [X] Implement plan-as-PR-comment using dflook/tofu-plan (not dflook/terraform-plan);
-          ensure plan-as-PR-comment output serves as the "staging preview" (the GitHub
-          Environment approval gate is the staging gate, and reviewers interpret the
-          plan comment as preview — see blocksense/infra staging semantics)
+          ensure plan-as-PR-comment output serves as the pre-merge preview for the
+          target branch environment
     - [X] Implement plan comparison in apply job using dflook/tofu-apply (reject if
           plan changed since PR comment — prevents applying unreviewed changes)
     - [X] Design post-apply smoke test hook: consuming repos provide a script path
