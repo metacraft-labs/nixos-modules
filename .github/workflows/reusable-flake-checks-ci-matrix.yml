@@ -309,14 +309,22 @@ jobs:
               substituter_args+=(--substituter "$substituter" --require-substitute)
             fi
             # Probe across every trusted substituter that target hosts
-            # configure (deployment cache + auxiliary caches). The integrity
-            # check passes if ANY trusted substituter resolves a path —
-            # matching the realistic deploy environment instead of demanding
-            # exhaustive coverage on the primary cache.
-            for extra_substituter in $DEPLOYMENT_TRUSTED_SUBSTITUTERS; do
+            # configure (deployment cache + auxiliary caches +
+            # cache.nixos.org). The integrity check passes if ANY trusted
+            # substituter resolves a path — matching the realistic deploy
+            # environment instead of demanding exhaustive coverage on the
+            # primary cache. cache.nixos.org is hard-coded because every
+            # NixOS host trusts it implicitly via nix.conf defaults and it
+            # is not typically listed in repo SUBSTITUTERS.
+            for extra_substituter in $DEPLOYMENT_TRUSTED_SUBSTITUTERS https://cache.nixos.org; do
               [[ "$extra_substituter" == "$substituter" ]] && continue
               substituter_args+=(--substituter "$extra_substituter")
             done
+            # cache.nixos.org's signing key is universally trusted on NixOS
+            # hosts; add it to the probe's trusted-public-keys list so
+            # nix copy --from cache.nixos.org accepts the signatures.
+            trusted_args+=(--trusted-public-key
+              "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=")
 
             ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} -- cache push-closure \
               --backend "$backend" \
