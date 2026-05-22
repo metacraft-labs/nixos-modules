@@ -32,18 +32,16 @@ retain full approval authority over what gets provisioned.
    `tofu plan` with real credentials and posts the output as a PR comment.
    Reviewers see the exact infrastructure diff before approving.
 
-4. **Apply happens only after human approval.** Merging the PR (or
-   explicitly approving it) triggers `tofu apply`. No agent or automation
-   can bypass this gate.
+4. **Apply happens only after human approval.** Merging the PR into the
+   target environment branch triggers `tofu apply` for that environment.
+   No agent or automation can bypass branch protection and merge review.
 
-5. **Environments are promoted sequentially (where staging exists).**
-   When the target system has a staging environment, changes deploy there
-   first; production apply is a separate, gated step. When the target
-   system has no true staging (e.g. Cloudflare zone-scoped configs), use
-   the plan-as-PR-comment as the preview, enforce stricter policy gates,
-   require post-apply smoke tests, and gate production apply behind a
-   GitHub Environment approval rule. See the project's status document
-   for which approach applies.
+5. **Branches represent deployment environments.** A repository can map
+   branches such as `testing`, `staging`, and `main` to matching apply
+   environments. Promotion is a merge from one branch to the next. GitHub
+   Environments are still useful as credential boundaries for apply jobs,
+   but required Environment reviewers are an optional project-specific
+   control, not the default approval mechanism.
 
 ---
 
@@ -90,18 +88,17 @@ retain full approval authority over what gets provisioned.
 │ 17. Review the plan comment (infrastructure diff)                        │
 │ 18. Approve and merge                                                    │
 └────────────────────────────┬─────────────────────────────────────────────┘
-                             │  merge to main
+                             │  merge to target branch
                              v
 ┌──────────────────────────────────────────────────────────────────────────┐
 │  CI — post-merge (automated, real credentials)                           │
 │                                                                          │
-│ 19. tofu apply             (behind GitHub Environment approval gate)     │
+│ 19. tofu apply             (for the branch's target environment)         │
 │ 20. Post apply result as commit status or comment                        │
 │                                                                          │
-│  Note: For projects with staging (separate zone/prefix), apply staging   │
-│  first, verify, then promote to production. For projects without staging │
-│  (e.g. account-wide provider resources), apply targets production        │
-│  directly behind the Environment approval gate. See project status docs. │
+│  Note: Branches map to environments. For example, merging to `testing`   │
+│  applies testing, then merging testing into `main` applies production.   │
+│  Projects without a lower environment can map `main` directly to prod.   │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -196,8 +193,8 @@ validation pipeline. This is implemented using GitHub Actions.
 
 > **Security note:** The PR plan job uses a **read-only** API token (or
 > equivalent credentials) that cannot modify resources. The write token is
-> only available in the post-merge apply job, behind a GitHub Environment
-> approval gate. See the consuming repository's access token guide for
+> only available in the post-merge apply job for the target branch's GitHub
+> Environment. See the consuming repository's access token guide for
 > project-specific token configuration.
 
 ### Pipeline steps
@@ -373,8 +370,8 @@ feedback (`gh pr view --comments`), pushes fixes, and the cycle repeats.
 
 ## Phase 4: Apply on Merge
 
-After approval and merge to `main`, CI runs `tofu apply` to provision the
-changes.
+After approval and merge to the target environment branch, CI runs
+`tofu apply` to provision the changes for that environment.
 
 ### Safety mechanisms
 
@@ -395,8 +392,9 @@ changes.
 
 - **Write token isolation:** The apply job uses a separate read-write
   token (e.g. `api_token_apply`). This token is only available in the
-  `production` GitHub Environment, which requires manual approval from
-  designated reviewers.
+  GitHub Environment associated with the target branch. By default, merge
+  approval is the human approval gate; repositories may add required
+  Environment reviewers for exceptional high-risk environments.
 
 - **Post-apply smoke tests:** After a successful apply, automated curl
   checks verify that key endpoints respond as expected (see
@@ -424,7 +422,7 @@ permissions:
 jobs:
   apply:
     runs-on: ['self-hosted', 'Linux', 'x86-64-v2']
-    environment: production # requires approval from designated reviewers
+    environment: production # scopes apply credentials for the target branch
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
@@ -471,10 +469,12 @@ jobs:
 
 ---
 
-## Phase 5: Staging / Production Promotion
+## Phase 5: Branch-Based Environment Promotion
 
-For services that require staged rollouts, the pattern extends to multiple
-environments with separate state files and approval gates.
+For services that require staged rollouts, branches represent deployment
+environments. Each target branch has its own Terraform root, backend state,
+provider credentials, and GitHub Environment. Promotion is done by merging
+from a lower branch into a higher branch.
 
 ### Directory structure
 
@@ -507,39 +507,45 @@ backends. This ensures:
 ### Promotion workflow
 
 ```
-PR opened
+PR opened against testing
   │
-  ├─ CI: plan staging     → PR comment (staging plan)
+  ├─ CI: plan testing     → PR comment (testing plan)
+  │
+  v
+Human reviews plan, approves PR
+  │
+  v
+Merge to testing
+  │
+  ├─ CI: apply testing
+  │
+  v
+Testing verified (manual or automated smoke test)
+  │
+  v
+PR opened from testing to main
+  │
   ├─ CI: plan production  → PR comment (production plan)
   │
   v
-Human reviews both plans, approves PR
+Human reviews production plan, approves PR
   │
   v
 Merge to main
   │
-  ├─ CI: apply staging    (automatic)
-  │
-  v
-Staging verified (manual or automated smoke test)
-  │
-  v
-Production apply triggered via:
-  - Manual workflow_dispatch
-  - GitHub Environment protection rules (required reviewers)
-  - Project-specific promotion pipeline
+  └─ CI: apply production
 ```
 
-### GitHub Environment protection rules
+### GitHub Environment credential boundaries
 
 GitHub Actions [environments](https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment)
-provide built-in approval gates:
+bind apply credentials and deployment metadata to a named target environment:
 
 ```yaml
 jobs:
   apply-production:
     runs-on: ['self-hosted', 'Linux', 'x86-64-v2']
-    environment: production # requires approval from designated reviewers
+    environment: production # exposes only production-scoped apply credentials
     steps:
       - uses: dflook/tofu-apply@v2
         with:
@@ -548,8 +554,10 @@ jobs:
           backend_config_file: backends/production-gcs.hcl
 ```
 
-The `environment: production` setting pauses the job until a designated
-reviewer approves it in the GitHub UI.
+The default methodology treats the merge into the target branch as the
+deployment approval. If a repository configures required reviewers on the
+GitHub Environment, the job pauses for an additional approval in the GitHub UI;
+that should be a deliberate project-specific exception.
 
 ### Staging semantics
 
@@ -558,8 +566,8 @@ those cases, "staging" means one of:
 
 - A separate environment/account/zone/namespace if available.
 - A separate hostname or prefix within the same scope.
-- If neither exists, staging is omitted and the apply job targets production
-  directly behind the GitHub Environment approval gate.
+- If neither exists, staging is omitted and merging to the production branch
+  applies production directly.
 
 Document which approach applies for each project so reviewers know what
 protections exist.
@@ -606,8 +614,8 @@ not run on untrusted code. Hardening measures:
 The CI plan and apply jobs run on self-hosted runners, which introduces
 risks not present with GitHub-hosted runners. GitHub's docs are explicit
 that jobs on self-hosted runners are **not** isolated containers, even
-when GitHub Environments are used — the environment approval gate is a
-release-control mechanism, not a sandbox.
+when GitHub Environments are used. Environment protection rules and
+branch-scoped credentials are release-control mechanisms, not a sandbox.
 
 - **Ephemeral runners (required):** Run Terraform jobs in ephemeral
   containers or VMs that are destroyed after each job. This ensures
@@ -774,8 +782,8 @@ GitHub identity. To limit risk:
 
 - Use a dedicated GitHub App or bot account with minimal permissions:
   create branches, create/update PRs, read PR comments and CI status.
-- The agent identity must **not** be able to: approve PRs, merge PRs,
-  approve environment deployments, or edit workflow files / CODEOWNERS.
+- The agent identity must **not** be able to: approve PRs, merge PRs, change
+  GitHub Environment protection rules, or edit workflow files / CODEOWNERS.
 - For changes in sensitive paths, require **2 human approvals** — the
   agent cannot substitute for a human reviewer. Sensitive paths include:
   - `bootstrap/**`
@@ -1020,12 +1028,12 @@ guidelines in the prompt or in a `CLAUDE.md` file:
 
 ## Security Model Summary
 
-| Actor          | Provider credentials | Can plan            | Can apply   | Can approve |
-| -------------- | -------------------- | ------------------- | ----------- | ----------- |
-| AI agent       | None                 | Offline only (mock) | No          | No          |
-| CI (PR job)    | Read-only (`plan`)   | Yes                 | No          | No          |
-| CI (merge job) | Read-write (`apply`) | Yes                 | Yes (gated) | No          |
-| Human reviewer | None (sees plan)     | No                  | No          | Yes         |
+| Actor          | Provider credentials | Can plan            | Can apply | Can approve |
+| -------------- | -------------------- | ------------------- | --------- | ----------- |
+| AI agent       | None                 | Offline only (mock) | No        | No          |
+| CI (PR job)    | Read-only (`plan`)   | Yes                 | No        | No          |
+| CI (merge job) | Read-write (`apply`) | Yes                 | Yes       | No          |
+| Human reviewer | None (sees plan)     | No                  | No        | Yes         |
 
 The key insight: **no single actor can both produce and approve an
 infrastructure change.** The agent writes code, CI produces the plan,
@@ -1035,8 +1043,8 @@ or malicious provisioning.
 Additional security boundaries:
 
 - **Token isolation:** The read-only plan token cannot modify resources
-  even if leaked. The write token is only accessible in the `production`
-  GitHub Environment.
+  even if leaked. The write token is only accessible in the GitHub
+  Environment associated with the target deployment branch.
 - **Action SHA pinning:** All third-party GitHub Actions are pinned by
   commit SHA to prevent supply-chain compromises via tag mutation.
 - **Denylist policy:** CI blocks `data "external"`, `local-exec`,
@@ -1059,8 +1067,8 @@ Additional security boundaries:
   after each job), restrict network egress, and use a dedicated runner
   group. Fork PRs must never run on self-hosted runners.
 - **Agent identity:** Agents use a dedicated GitHub App with minimal
-  permissions (create branches/PRs only). They cannot approve, merge, or
-  deploy.
+  permissions (create branches/PRs only). They cannot approve PRs, merge,
+  or change deployment controls.
 - **Refactor safety:** Post-import renames and structural changes require
   `moved` blocks to prevent accidental destroy/recreate.
 - **Bootstrap layer separation:** CI prerequisites (state bucket, IAM,
@@ -1103,9 +1111,9 @@ The typical development cycle when an agent is working on a task:
 12.  Agent marks PR as ready for review (if draft):
        gh pr ready
 13.  Human reviews plan comment + code diff, approves and merges
-14.  Merge → CI applies (behind GitHub Environment approval gate)
-15.  If staging exists: verify staging, then promote to production
-     If no staging: apply targets production directly (see project status docs)
+14.  Merge → CI applies to the target branch's environment
+15.  If testing/staging exists: verify there, then promote by merging onward
+     If no lower environment exists: merge to the production branch directly
 ```
 
 Steps 2–7 happen entirely offline with no credentials. Steps 8–12 use

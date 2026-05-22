@@ -43,6 +43,12 @@ on:
         required: false
         default: ''
 
+      environment_name:
+        description: 'GitHub Environment used by apply jobs as the credential boundary for the target branch.'
+        type: string
+        required: false
+        default: 'production'
+
       terranix:
         description: 'Run terranix to generate .tf.json before tofu init'
         type: boolean
@@ -415,8 +421,9 @@ jobs:
           rm -f "$RUNNER_TEMP/ci-key"
 
   # ---------------------------------------------------------------------------
-  # Job 3: Apply (merge-to-main mode only)
-  # Requires GitHub Environment "production" approval gate.
+  # Job 3: Apply (merge-to-target-branch mode only)
+  # Uses a GitHub Environment as the apply credential boundary. Consuming repos
+  # decide whether that environment also has reviewer protection rules.
   # ---------------------------------------------------------------------------
   apply:
     if: >-
@@ -424,7 +431,7 @@ jobs:
       && (inputs.credentials_env_name != '' || inputs.agenix_apply_secret_path != '' || inputs.aws_apply_role_arn != '')
     needs: offline-checks
     runs-on: ${{ fromJSON(inputs.runner) }}
-    environment: production
+    environment: ${{ inputs.environment_name }}
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
