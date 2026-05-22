@@ -262,7 +262,15 @@ jobs:
           mkdir -p .result
           IFS=',' read -ra backends <<< "$DEPLOYMENT_CACHE_PUSH_BACKENDS"
           for backend in "${backends[@]}"; do
-            backend="$(echo "$backend" | xargs)"
+            # Trim leading/trailing whitespace without external commands.
+            # `xargs` is not on PATH for aarch64-darwin runners (their PATH
+            # contains only Nix-store paths and findutils isn't pulled in by
+            # the github-runner darwin module), so a bash builtin is the
+            # portable choice.
+            shopt -s extglob
+            backend="${backend##+([[:space:]])}"
+            backend="${backend%%+([[:space:]])}"
+            shopt -u extglob
             [[ -n "$backend" ]] || continue
 
             case "$backend" in
