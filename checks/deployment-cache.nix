@@ -122,7 +122,12 @@
       });
     in
     {
-      checks = {
+      # NixOS VM tests below build a NixOS guest, which is only possible on
+      # Linux builders. aarch64-darwin runners would try to build aarch64-linux
+      # systemd unit derivations and fail with "required system or feature not
+      # available". Gate the whole attrset on Linux so the matrix doesn't even
+      # schedule these on Darwin.
+      checks = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         deployment-attic-push-substitute-vm = pkgs.testers.nixosTest {
           name = "deployment-attic-push-substitute-vm";
 
