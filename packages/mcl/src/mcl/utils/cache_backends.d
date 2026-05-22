@@ -282,10 +282,25 @@ int pushClosure(CachePushRequest request, ProcessRunner runProcess, ProcessRunne
 
     if (pushResult.succeeded && request.requireSubstitute && plan.substituters.length)
     {
+        // A path is considered substitutable if ANY trusted substituter
+        // resolves it. Target hosts are configured with multiple substituters
+        // (deployment cache + auxiliary caches), so "the closure is resolvable
+        // for deploys" — not "every path lives on the primary cache" — is what
+        // matters. Record only the most informative failure per path when no
+        // substituter resolves it.
         foreach (root; request.storePaths)
             foreach (path; queryClosurePaths(root, queryRunner))
-                probes ~= probeCacheSubstitute(path, plan.substituters[0],
-                    request.trustedPublicKeys, queryRunner);
+            {
+                CacheProbeResult last;
+                foreach (substituter; plan.substituters)
+                {
+                    last = probeCacheSubstitute(path, substituter,
+                        request.trustedPublicKeys, queryRunner);
+                    if (last.successful)
+                        break;
+                }
+                probes ~= last;
+            }
     }
 
     const probeFailed = probes.any!(probe => !probe.successful);
