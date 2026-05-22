@@ -324,6 +324,8 @@ jobs:
       - name: Plan
         uses: dflook/tofu-plan@3f5dc358343fb58cd60f83b019e810315aa8258f # v2.2.3
         id: plan
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         with:
           path: ${{ inputs.working_directory }}
           label: ${{ inputs.working_directory }}
@@ -473,6 +475,8 @@ jobs:
       - name: Apply
         uses: dflook/tofu-apply@c254eb5b2e48978c05587373100d26b604c2182d # v2.2.3
         id: apply
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         with:
           path: ${{ inputs.working_directory }}
           label: ${{ inputs.working_directory }}
