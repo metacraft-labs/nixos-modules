@@ -243,7 +243,17 @@ jobs:
           nix build -L --no-link --keep-going --show-trace \
             '.#${{ matrix.attrPath }}'
 
+      # Cache push runs only when we're actually deploying (i.e. on main).
+      # On PR check runs the build itself already validates that the closure
+      # is buildable; redoing the push + per-path substitute probe on every
+      # matrix job would multiply runtime by 10x — a single NixOS system
+      # closure has thousands of paths and the probe's nix-copy fallback
+      # has timed out 6h+ jobs in the past (infra#965 first attempt).
+      #
+      # The artifact upload below is already gated on run-cachix-deploy;
+      # the push step itself needs the same gate.
       - name: Push deployment closure caches ${{ matrix.name }}
+        if: inputs.run-cachix-deploy
         shell: bash
         env:
           DEPLOY_TARGET: ${{ matrix.name }}
