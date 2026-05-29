@@ -174,24 +174,20 @@ CacheProbeResult probeCacheSubstitute(
         return CacheProbeResult(path, classifyProbeFailure(pathInfo.stderr), pathInfo.exitCode,
             pathInfo.stderr.stderrSummary);
 
-    auto tempStore = deleteme ~ ".mcl-cache-probe-store";
-    scope(exit)
-        if (tempStore.exists)
-            tempStore.rmdirRecurse;
-    mkdirRecurse(tempStore);
-
-    auto copyCommand = [
-        "nix", "copy", "--from", substituter, "--to", "file://" ~ tempStore, path,
-    ];
-    if (trustedPublicKeys.length)
-        copyCommand ~= ["--option", "trusted-public-keys", trustedPublicKeys.join(" ")];
-
-    auto copy = runner(copyCommand);
-    if (copy.succeeded)
-        return CacheProbeResult(path, "successful-substitute", 0, "");
-
-    return CacheProbeResult(path, classifyProbeFailure(copy.stderr), copy.exitCode,
-        copy.stderr.stderrSummary);
+    // `nix path-info` performs a `HEAD /<hash>.narinfo` against the
+    // substituter — this is sufficient evidence that the path is
+    // resolvable from that cache. Doing a full `nix copy` to verify
+    // (the previous implementation) downloaded every probed path,
+    // re-verified its signature, and re-imported into a throwaway local
+    // store. On a NixOS system closure that's thousands of paths times
+    // dozens of MB; one infra deploy in main observed the probe stuck
+    // for 2h24m on a single path (`gnome-settings-daemon`) before being
+    // killed. The signature trust check the copy was doing is
+    // redundant: every path the deploy targets will have its signature
+    // re-verified at install time on the target host. The probe's job
+    // is just to answer "is this path available from a trusted cache?"
+    // and the narinfo HEAD does that without any download.
+    return CacheProbeResult(path, "successful-substitute", 0, "");
 }
 
 string classifyProbeFailure(string stderr)
