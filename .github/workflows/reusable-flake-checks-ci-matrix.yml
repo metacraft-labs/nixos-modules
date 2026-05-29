@@ -423,7 +423,10 @@ jobs:
         if: always() && inputs.run-cachix-deploy
         run: |
           if [[ -f .result/deployment-events.jsonl ]]; then
-            ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} deploy-status summarize \
+            # `--` separates `nix run` flags from mcl's flags. Without it,
+            # `nix run` greedily parses `--output` as one of its own and
+            # exits with "unrecognised flag '--output'".
+            ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} -- deploy-status summarize \
               .result/deployment-events.jsonl \
               --output .result/deployment-summary.md \
               --json-output .result/deployment-summary.json
