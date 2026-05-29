@@ -41,22 +41,6 @@ struct DeploySpecDependencies
     ProcessRunner queryProcess;
 }
 
-private string[] pushDeploymentClosureCommand(DeploySpec spec, string cachixCache)
-{
-    return [
-        "bash", "-euo", "pipefail", "-c",
-        q{
-cache="$1"
-shift
-
-nix-store -r "$@"
-nix-store -qR "$@" | cachix push "$cache"
-        },
-        "mcl-push-deployment-closure",
-        cachixCache,
-    ] ~ spec.agents.values;
-}
-
 export int deploy_spec(DeploySpecArgs args)
 {
     return deploySpecImpl(args, DeploySpecDependencies(
@@ -215,9 +199,31 @@ int deploySpecImpl(DeploySpecArgs args, DeploySpecDependencies deps, string depl
         args.cachixCache
     );
 
-    auto pushCommand = pushDeploymentClosureCommand(spec, args.cachixCache);
-    auto pushResult = deps.runProcess(pushCommand);
-
+    // NOTE: deploy_spec used to run a second `nix-store -r ... | cachix push`
+    // here, but that turned out to be redundant *and* prone to failure on the
+    // Final Results runner.
+    //
+    //   * Redundant: the matrix-build step in the reusable workflow already
+    //     ran `mcl cache push-closure` for every machine on the per-machine
+    //     runner where the closure was actually built. By the time deploy_spec
+    //     runs on the aggregator (Final Results) runner, the closure narinfos
+    //     are on the configured Cachix cache and the activation only needs
+    //     `cachix deploy activate` to point the agent at the deploy spec.
+    //
+    //   * Prone to failure: the aggregator runner does not have the closure
+    //     in its local /nix/store (matrix builds happen on other runners).
+    //     The old `nix-store -r ...` step needed to substitute every system
+    //     closure first — and when nix-eval-jobs reports `isCached` based on
+    //     narinfo presence alone (without verifying the NAR is also there),
+    //     a half-pushed cache entry would let shard-matrix skip the per-
+    //     machine build step, leaving deploy_spec unable to substitute,
+    //     unable to build, and unable to push. The whole deploy then fails
+    //     at the redundant push step (`don't know how to build these paths`).
+    //
+    // The activate step below is sufficient: cachix-agent on the target host
+    // substitutes from the configured caches, and the agent fails clearly if
+    // a NAR is missing. Emit a single skipped `cache-push` event per agent
+    // so the deployment event log still records the phase.
     if (eventLoggingEnabled)
         foreach (target, systemPath; spec.agents)
             appendDeploymentEvent(eventLogPath, deploymentEventJson(
@@ -226,19 +232,21 @@ int deploySpecImpl(DeploySpecArgs args, DeploySpecDependencies deps, string depl
                 target,
                 systemPath,
                 "mcl-push-deployment-closure",
-                pushCommand,
-                pushResult.succeeded ? "succeeded" : "failed",
-                pushResult.exitCode,
+                ["skipped-by-deploy-spec"],
+                "skipped",
+                0,
                 queryClosureSummary(systemPath, queryRunner),
-                pushResult.succeeded ? "" : "Closure push failed before activation",
-                "closure_push_failed",
-                pushResult.succeeded ? "" : pushResult.stderr.stderrSummary,
+                "",
+                "command_failed",
+                "",
                 [
                     "deploySpecFile": JSONValue(deploySpecFile),
+                    "reason": JSONValue(
+                        "Per-machine matrix push handles the closure upload; "
+                        ~ "deploy_spec runs on the aggregator and only triggers activation."
+                    ),
                 ],
             ));
-
-    enforce(pushResult.succeeded, "Closure push failed.");
 
     auto activateCommand = [
         "cachix", "deploy", "activate", deploySpecFile, "--async"
@@ -318,8 +326,12 @@ unittest
     auto events = eventLog.readText.splitLines.filter!(line => line != "").map!(line => line.parseJSON).array;
     assert(events.length == 3);
     assert(events[0]["phase"].str == "evaluate");
+    // deploy_spec no longer invokes its own cache push; it records a
+    // "skipped" cache-push event to keep the event sequence shape stable
+    // for consumers. The per-machine matrix push step in the workflow is
+    // the actual cache push.
     assert(events[1]["phase"].str == "cache-push");
-    assert(events[1]["command"]["status"].str == "succeeded");
+    assert(events[1]["command"]["status"].str == "skipped");
     assert(events[2]["phase"].str == "activate-requested");
     assert(events[2]["command"]["status"].str == "succeeded");
     assert(events[2]["storePaths"]["closure"]["count"].integer == 2);
