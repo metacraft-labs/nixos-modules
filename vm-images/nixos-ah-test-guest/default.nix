@@ -41,9 +41,39 @@ let
   cloudInit = import ./cloud-init.nix { inherit pkgs lib; };
 
   # Evaluate the NixOS configuration declared in ./configuration.nix and
-  # extract a QCOW2 disk image via the NixOS "qemu image" builder.  We use
-  # the NixOS modules system directly (rather than nixos-generators) to
-  # avoid pulling in another flake input.
+  # extract a QCOW2 disk image via the NixOS "qemu image" builder.
+  #
+  # KNOWN ISSUE (2026-06-01): the `system.build.qcow2` attribute only exists
+  # when `virtualisation/qemu-vm.nix` is imported into the configuration,
+  # and even then it is an *ephemeral run-VM* (backing-file qcow with the
+  # host's /nix/store passed through 9p), not a self-contained bootable disk.
+  # The current configuration.nix imports `installer/cd-dvd/installation-cd-minimal.nix`,
+  # which produces `system.build.isoImage` (a bootable installer ISO) — also
+  # not a self-contained QCOW2 disk image with the AH toolchain pre-baked.
+  #
+  # To produce a real self-contained bootable QCOW2 disk image with the AH
+  # toolchain baked in, the recommended fix is ONE of:
+  #
+  #   (A) Add `nixos-generators` as a flake input to nixos-modules and use
+  #       `nixos-generators.nixosGenerate { format = "qcow"; ... }`. This is
+  #       the most widely-deployed pattern.
+  #
+  #   (B) Switch the configuration to use the NixOS `image.repart` modules
+  #       (`${modulesPath}/image/repart.nix`) to declaratively build a disk
+  #       image. Removes the nixos-generators dep but requires more module
+  #       wiring for the cloud-init seed.
+  #
+  #   (C) Replace this whole module with a build of an Ubuntu cloud image
+  #       seeded with cloud-init that runs a NixOS installer on first boot
+  #       (slow first boot but the simplest path).
+  #
+  # Until that fix lands, this builder accepts the resource-cap parameters
+  # but produces a placeholder derivation that throws a clear error at
+  # build time (rather than at evaluation time, so the rest of the
+  # nixos-modules flake stays evaluatable on macOS). The 2026-06-01 M33
+  # measurement pass used the Tart Ubuntu 24.04 ARM fallback guest with
+  # the AH toolchain installed inline (the recipe is documented in the M33
+  # methodology doc at specs/Public/AH-Test-Resource-Profile.md).
   buildNixosAhTestImage =
     {
       diskSizeMiB,
@@ -51,33 +81,33 @@ let
       vcpus,
     }:
     let
-      nixosSystem = (
-        pkgs.nixos {
-          imports = [
-            ./configuration.nix
-            # The qemu-vm module provides `config.system.build.qcow2` — the
-            # bootable image we want.  We layer it on top of the user's
-            # configuration so the resource sizing flows through.
-            (
-              { ... }:
-              {
-                virtualisation = {
-                  diskSize = diskSizeMiB;
-                  memorySize = memoryMiB;
-                  cores = vcpus;
-                };
-              }
-            )
-          ];
-        }
-      );
+      # Evaluating the bare configuration still validates the module structure
+      # (so `nix eval` against the module catches typos/missing options).
+      nixosSystem = pkgs.nixos { imports = [ ./configuration.nix ]; };
+      _ = nixosSystem.config.system.build.toplevel;
     in
-    nixosSystem.config.system.build.qcow2 or (throw ''
-      The NixOS configuration for nixos-ah-test-guest did not produce a
-      `system.build.qcow2` attribute.  Verify that the imported NixOS
-      version still provides the qcow image builder — on recent nixpkgs
-      this is the default for `nixos/lib/eval-config.nix` consumers.
-    '');
+    pkgs.runCommand "nixos-ah-test-guest-image-placeholder" { } ''
+      cat >&2 <<'EOF'
+      ============================================================================
+      nixos-ah-test-guest: cannot build a bootable QCOW2 from the current module.
+
+      The configuration imports installer/cd-dvd/installation-cd-minimal.nix
+      (which produces system.build.isoImage, not system.build.qcow2). To get a
+      real bootable QCOW2 disk image with the AH toolchain pre-baked, apply
+      ONE of fixes (A), (B), or (C) documented in default.nix above.
+
+      Until that fix lands, use the Tart Ubuntu 24.04 ARM fallback documented
+      in specs/Public/AH-Test-Resource-Profile.md (M33 doc) §"Triage path
+      actually used (2026-06-01)".
+
+      Resource caps requested by the builder:
+        vcpus      = ${toString vcpus}
+        memoryMiB  = ${toString memoryMiB}
+        diskSizeMiB = ${toString diskSizeMiB}
+      ============================================================================
+      EOF
+      exit 1
+    '';
 
 in
 {

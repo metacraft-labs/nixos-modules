@@ -195,6 +195,27 @@ guest, follow this update procedure:
 
 ## Limitations / known issues
 
+- **(BLOCKING, 2026-06-01)** The current module **cannot yet produce a
+  bootable QCOW2 disk image**. The configuration imports
+  `installer/cd-dvd/installation-cd-minimal.nix`, which exposes
+  `system.build.isoImage` (a bootable installer ISO), not
+  `system.build.qcow2` (a self-contained bootable disk). The
+  `default.nix` builder reaches for `system.build.qcow2` and so fails
+  at build time with an explanatory `runCommand` placeholder. The fix
+  is documented inline in `default.nix` and requires one of: (A) add
+  `nixos-generators` as a flake input, (B) switch to the
+  `${modulesPath}/image/repart.nix` declarative image builder, or
+  (C) replace this with an Ubuntu-cloud-image + first-boot-NixOS
+  install workflow. Until the fix lands, the M33 measurement pass uses
+  the Tart Ubuntu 24.04 ARM fallback (see
+  `agent-harbor/main/specs/Public/AH-Test-Resource-Profile.md` §
+  "Triage path actually used (2026-06-01)" for the exact recipe).
+
+  Note that the *evaluation* of the module is clean — `nix eval` of
+  `makeNixosAhTestGuest {}.drvPath` returns a derivation path; the
+  failure only surfaces during the actual build. This keeps the rest
+  of the nixos-modules flake evaluatable on macOS.
+
 - The `qemu-system-aarch64` launcher in `default.nix` uses
   `accel=hvf` on macOS hosts. HVF acceleration on macOS works well for
   CPU-bound workloads but has lower throughput on heavy I/O than KVM on
