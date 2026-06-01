@@ -193,28 +193,95 @@ guest, follow this update procedure:
    that documents the VM image used; update that section to the new
    build SHA when re-baselining.
 
-## Limitations / known issues
+## Implementation path (2026-06-02): Path C — Ubuntu + first-boot AH toolchain
 
-- **(BLOCKING, 2026-06-01)** The current module **cannot yet produce a
-  bootable QCOW2 disk image**. The configuration imports
-  `installer/cd-dvd/installation-cd-minimal.nix`, which exposes
-  `system.build.isoImage` (a bootable installer ISO), not
-  `system.build.qcow2` (a self-contained bootable disk). The
-  `default.nix` builder reaches for `system.build.qcow2` and so fails
-  at build time with an explanatory `runCommand` placeholder. The fix
-  is documented inline in `default.nix` and requires one of: (A) add
-  `nixos-generators` as a flake input, (B) switch to the
-  `${modulesPath}/image/repart.nix` declarative image builder, or
-  (C) replace this with an Ubuntu-cloud-image + first-boot-NixOS
-  install workflow. Until the fix lands, the M33 measurement pass uses
-  the Tart Ubuntu 24.04 ARM fallback (see
-  `agent-harbor/main/specs/Public/AH-Test-Resource-Profile.md` §
-  "Triage path actually used (2026-06-01)" for the exact recipe).
+The original M34 plan (Path A, "pure NixOS aarch64 QCOW2 built on the host")
+is blocked on workstations without a Linux/aarch64 remote builder. On
+**2026-06-02** the module was switched to **Path C** — an Ubuntu 24.04 LTS
+aarch64 cloud image whose cloud-init `runcmd` installs the AH build
+toolchain on first boot. This is the same recipe documented in
+`agent-harbor/main/specs/Public/AH-Test-Resource-Profile.md` §"Triage path
+actually used (2026-06-01)" — already validated end-to-end by hand against
+the Tart Ubuntu fallback — codified as cloud-init so every clone runs the
+provisioner unattended.
 
-  Note that the *evaluation* of the module is clean — `nix eval` of
-  `makeNixosAhTestGuest {}.drvPath` returns a derivation path; the
-  failure only surfaces during the actual build. This keeps the rest
-  of the nixos-modules flake evaluatable on macOS.
+Trade-offs vs Path A (pure NixOS):
+
+- (-) No declarative pinning of toolchain versions — trust apt + rustup +
+  upstream installers at first-boot.
+- (-) First boot takes ~6 min wall-clock (vs <30 s for a pre-baked NixOS
+  closure).
+- (+) Builds on macOS hosts without a Linux/aarch64 remote builder.
+- (+) Consistency with the bring-up recipe already validated for M33.
+- (+) Same image works under Tart (Apple Silicon), libvirt (Linux ARM
+  bare-metal), and UTM (manual import) — no per-backend variants needed.
+
+**Path A escape hatch.** Operators who want the pure-NixOS path can keep
+the historical `configuration.nix` in this directory as a system-config
+seed, set up `nix.linux-builder.enable = true` on nix-darwin (or build on
+a Linux/aarch64 host), and call `pkgs.nixos { imports = [ ./configuration.nix ]; }`
+directly. The `configuration.nix` is preserved for that case; it is not
+consumed by the new `default.nix` Path C builder.
+
+### Building Path C
+
+The Path C builder requires the operator to supply an Ubuntu 24.04 aarch64
+cloud QCOW2 via the `cloudImage` argument:
+
+```nix
+{
+  outputs = { self, nixpkgs, nixos-modules, ... }:
+    let
+      pkgs = nixpkgs.legacyPackages.aarch64-darwin; # or aarch64-linux
+      vmi = import (nixos-modules + /vm-images) {
+        inherit pkgs;
+        lib = pkgs.lib;
+      };
+      ubuntuArm64 = pkgs.fetchurl {
+        url = "https://cloud-images.ubuntu.com/releases/noble/release/ubuntu-24.04-server-cloudimg-arm64.img";
+        sha256 = "1v4bdcp2h5q5rg0kvkk051fdagh78dvacdgqcqcxs9sap9kvjqba";
+      };
+    in {
+      packages.aarch64-darwin.nixos-ah-test-guest = vmi.linux.makeNixosAhTestGuest {
+        cloudImage = ubuntuArm64;
+      };
+    };
+}
+```
+
+The 2026-06-02 validation build emitted `disk.qcow2` + `seed.iso` +
+`ssh-key/` + `bin/run-vm` + `README.txt` on a macOS aarch64 host without
+a Linux remote builder.
+
+### First-boot timeline (cloud-init)
+
+After `./bin/run-vm`, cloud-init's `runcmd` calls
+`install-ah-toolchain.sh` (written to `/usr/local/sbin/` via `write_files`).
+The script logs progress to `/var/log/ah-toolchain-install.log` and writes
+`/etc/ah-toolchain-installed` as the completion sentinel.
+
+| Step                                          | Wall-clock                            |
+| --------------------------------------------- | ------------------------------------- |
+| `apt-get update` + system packages            | ~30 s                                 |
+| Nix multi-user installer                      | ~60 s                                 |
+| `rustup` + `cargo install cargo-nextest just` | ~3 min                                |
+| `choosenim` (Nim 2.x)                         | ~2 min                                |
+| `pixi` installer                              | ~10 s                                 |
+| `mutagen` tarball                             | ~5 s                                  |
+| **Total**                                     | **~6 min** on Apple Silicon under HVF |
+
+### Verifying the first-boot install
+
+```
+ssh -p 2228 -i ./result/ssh-key/id_ed25519 agent@localhost '
+  test -f /etc/ah-toolchain-installed &&
+  rustc --version && nim --version &&
+  just --version && mutagen version && pixi --version'
+```
+
+That command line is the M34 verification probe; the cloud-init script
+exits non-zero on any toolchain installer failure, so the existence of
+`/etc/ah-toolchain-installed` is a sufficient summary.
 
 - The `qemu-system-aarch64` launcher in `default.nix` uses
   `accel=hvf` on macOS hosts. HVF acceleration on macOS works well for

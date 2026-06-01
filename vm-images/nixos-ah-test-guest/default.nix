@@ -1,37 +1,37 @@
-# NixOS-on-aarch64 Guest Image for the Agent Harbor Test Suite
+# M34 AH-test-guest image builder — Path C (Ubuntu cloud image + Nix-on-first-boot).
 #
-# This module builds a bootable aarch64-linux NixOS image whose system
-# configuration is defined in ./configuration.nix.  The image is intended
-# to be the canonical "safe place" to run `just test-all` against the AH
-# (Agent Harbor) workspace — see the Multi-OS-VM-Automation-Campaign
-# milestone file (M33, M34) for context.
+# This module produces a bootable VM disk + cloud-init seed for the Agent Harbor
+# test suite (`just test-all`) on aarch64-linux. M34's original plan (Path A:
+# pure NixOS aarch64 QCOW2 evaluated on the host) is blocked on macOS workstations
+# without a Linux/aarch64 remote builder, so M34 ships **Path C**:
 #
-# The image is produced as a QCOW2 disk via
-# `nixos-generators -f qcow` style derivation but expressed directly with
-# the NixOS image-builder modules so consumers don't need an extra flake
-# input.  It is bootable under:
+#   - Base: Ubuntu 24.04 LTS aarch64 cloud image (operator-provided URL or
+#     pre-fetched derivation).
+#   - First boot: cloud-init installs Nix multi-user + the AH build toolchain
+#     (rustup, nim, just, pixi, mutagen, system libs) via `apt-get` and the
+#     upstream installers documented in
+#     `specs/Public/AH-Test-Resource-Profile.md`'s "Triage path actually used".
+#   - The recipe matches the one validated by hand on 2026-06-01 (see M33 doc).
 #
-#   - Tart-Linux-ARM on Apple Silicon macOS hosts (`tart run`).
-#   - libvirt/QEMU on aarch64-linux hosts (`virsh`).
-#   - UTM on macOS hosts (manual import).
+# Trade-off vs Path A (pure NixOS): we lose declarative pinning of toolchain
+# versions and trust apt/rustup defaults at first-boot. We gain: builds on a
+# macOS workstation without a Linux/aarch64 remote builder; ~30 min wall-clock
+# vs hours for a full NixOS aarch64 closure pull; consistency with the
+# bring-up recipe already documented in the M33 measurement pass.
 #
-# A cloud-init NoCloud seed ISO is generated alongside the disk so the
-# guest auto-authorizes the operator's SSH key on first boot.  The seed
-# pattern matches ../ubuntu/cloud-init.nix.
+# Operators who want the pure-NixOS path (Path A) should set up
+# nix-darwin's linux-builder (`nix.linux-builder.enable = true`) on macOS or
+# build on a Linux/aarch64 host, then use the historical configuration.nix in
+# this directory as the system-config seed. See README.md §"Path A escape hatch".
 #
-# Outputs of `makeNixosAhTestGuest`:
-#
-#   $out/disk.qcow2           — the bootable VM disk image
-#   $out/seed.iso             — cloud-init NoCloud seed (SSH key + hostname)
-#   $out/ssh-key/id_ed25519   — private key for the seeded SSH access
+# Outputs:
+#   $out/disk.qcow2           — Ubuntu cloud image with extra storage allocated
+#   $out/seed.iso             — cloud-init NoCloud seed (SSH key + first-boot
+#                               Nix install + AH toolchain install)
+#   $out/ssh-key/id_ed25519   — private key for SSH access
 #   $out/ssh-key/id_ed25519.pub
-#   $out/bin/run-vm           — convenience launcher (qemu-system-aarch64)
-#   $out/README.txt           — quick-start instructions
-#
-# References:
-#   - Multi-OS-VM-Automation-Campaign.milestones.org § M33, M34
-#   - AH flake: /Users/zahary/blocksense/agent-harbor/main/flake.nix
-#   - vm-images/ubuntu/default.nix (the structural template this file mirrors)
+#   $out/bin/run-vm           — qemu-system-aarch64 launcher
+#   $out/README.txt           — quick-start
 {
   pkgs,
   lib,
@@ -40,95 +40,185 @@
 let
   cloudInit = import ./cloud-init.nix { inherit pkgs lib; };
 
-  # Evaluate the NixOS configuration declared in ./configuration.nix and
-  # extract a QCOW2 disk image via the NixOS "qemu image" builder.
-  #
-  # KNOWN ISSUE (2026-06-01): the `system.build.qcow2` attribute only exists
-  # when `virtualisation/qemu-vm.nix` is imported into the configuration,
-  # and even then it is an *ephemeral run-VM* (backing-file qcow with the
-  # host's /nix/store passed through 9p), not a self-contained bootable disk.
-  # The current configuration.nix imports `installer/cd-dvd/installation-cd-minimal.nix`,
-  # which produces `system.build.isoImage` (a bootable installer ISO) — also
-  # not a self-contained QCOW2 disk image with the AH toolchain pre-baked.
-  #
-  # To produce a real self-contained bootable QCOW2 disk image with the AH
-  # toolchain baked in, the recommended fix is ONE of:
-  #
-  #   (A) Add `nixos-generators` as a flake input to nixos-modules and use
-  #       `nixos-generators.nixosGenerate { format = "qcow"; ... }`. This is
-  #       the most widely-deployed pattern.
-  #
-  #   (B) Switch the configuration to use the NixOS `image.repart` modules
-  #       (`${modulesPath}/image/repart.nix`) to declaratively build a disk
-  #       image. Removes the nixos-generators dep but requires more module
-  #       wiring for the cloud-init seed.
-  #
-  #   (C) Replace this whole module with a build of an Ubuntu cloud image
-  #       seeded with cloud-init that runs a NixOS installer on first boot
-  #       (slow first boot but the simplest path).
-  #
-  # Until that fix lands, this builder accepts the resource-cap parameters
-  # but produces a placeholder derivation that throws a clear error at
-  # build time (rather than at evaluation time, so the rest of the
-  # nixos-modules flake stays evaluatable on macOS). The 2026-06-01 M33
-  # measurement pass used the Tart Ubuntu 24.04 ARM fallback guest with
-  # the AH toolchain installed inline (the recipe is documented in the M33
-  # methodology doc at specs/Public/AH-Test-Resource-Profile.md).
-  buildNixosAhTestImage =
+  # First-boot script that installs the AH build toolchain on Ubuntu.
+  # Mirrors the recipe captured in specs/Public/AH-Test-Resource-Profile.md
+  # §"Triage path actually used (2026-06-01)" — what the operator ran by
+  # hand against the Tart Ubuntu fallback guest. Captured here so cloud-init
+  # runs it automatically on first boot of every clone.
+  ahToolchainInstallScript = pkgs.writeText "install-ah-toolchain.sh" ''
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    LOG=/var/log/ah-toolchain-install.log
+    exec > >(tee -a "$LOG") 2>&1
+    echo "=== AH toolchain install start: $(date -Iseconds) ==="
+
+    # 1. System libraries from the AH nix/devshell.nix Linux branch + the M33
+    #    instrumentation toolchain.
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y --no-install-recommends \
+      build-essential pkg-config libssl-dev libseccomp-dev libcap-dev \
+      fuse3 libfuse3-dev libuv1-dev btrfs-progs cmake ninja-build \
+      clang lld libclang-dev git curl wget jq time sysstat lsof htop strace \
+      python3 python3-pip nodejs npm libdbus-1-dev protobuf-compiler \
+      libprotobuf-dev libx11-dev libxkbcommon-dev libxcb1-dev libwayland-dev \
+      mold rsync libasound2-dev libudev-dev xz-utils ca-certificates
+
+    # 2. Nix multi-user (the official installer; same as Ubuntu cloud-init's
+    #    installNix path, but invoked here so we can sequence it relative to
+    #    the toolchain installers below).
+    if [ ! -d /nix/store ]; then
+      echo "Installing Nix multi-user..."
+      curl -L https://nixos.org/nix/install | sh -s -- --daemon --yes
+    fi
+
+    # Trust the AH cachix substituters so the first `nix develop` against the
+    # AH source tree pulls from cache rather than rebuilding from source.
+    mkdir -p /etc/nix
+    cat > /etc/nix/nix.conf <<EOF
+    experimental-features = nix-command flakes
+    trusted-users = root agent
+    substituters = https://cache.nixos.org https://agent-harbor.cachix.org https://mcl-public-cache.cachix.org https://nix-community.cachix.org
+    trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= agent-harbor.cachix.org-1:OkD+ev9p7Lt5iEgN+1OUjFwm9TmTrEKDoYqcUe11/y0= mcl-public-cache.cachix.org-1:F1S4tQGZ6jiyxA9OOL/2J64KO0pcKzv+jHcKv+IO4iE= nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=
+    EOF
+    systemctl restart nix-daemon 2>/dev/null || true
+
+    # 3. Per-user AH toolchain (Rust + Nim + just + pixi + mutagen). Installed
+    #    as the `agent` user so the binaries land in /home/agent/.cargo + /opt
+    #    and the agent's interactive shell picks them up via /etc/profile.d.
+    AGENT_HOME=/home/agent
+    sudo -u agent bash -lc '
+      set -euo pipefail
+      cd "$HOME"
+
+      # Rust via rustup (stable channel). The fenix-pinned toolchain comes in
+      # via `nix develop` once the operator clones AH; this is the bootstrap
+      # so `cargo` is on PATH before the devshell exists.
+      if ! command -v rustup >/dev/null 2>&1; then
+        curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile default
+      fi
+      source "$HOME/.cargo/env"
+      cargo install --locked cargo-nextest || true
+
+      # Nim 2.x via choosenim (apt nim is 1.6).
+      if ! command -v nim >/dev/null 2>&1; then
+        curl https://nim-lang.org/choosenim/init.sh -sSf | sh -s -- -y
+      fi
+
+      # just (cargo install)
+      command -v just >/dev/null 2>&1 || cargo install just --locked
+
+      # pixi (upstream installer; binary release).
+      command -v pixi >/dev/null 2>&1 || curl -fsSL https://pixi.sh/install.sh | bash
+
+      # mutagen (linux_arm64 release tarball).
+      if ! command -v mutagen >/dev/null 2>&1; then
+        MUT_VER=0.18.1
+        TMP=$(mktemp -d)
+        curl -fsSL "https://github.com/mutagen-io/mutagen/releases/download/v${"$"}{MUT_VER}/mutagen_linux_arm64_v${"$"}{MUT_VER}.tar.gz" -o "$TMP/mutagen.tgz"
+        tar -xzf "$TMP/mutagen.tgz" -C "$TMP"
+        sudo install -m 0755 "$TMP/mutagen" /usr/local/bin/mutagen
+        rm -rf "$TMP"
+      fi
+    '
+
+    # 4. Resource-cap env vars (consumed by the M36 just test-in-vm wrapper +
+    #    M37 host-starvation guard). Match the defaults documented in
+    #    nixos-ah-test-guest/configuration.nix.
+    cat > /etc/profile.d/ah-test-guest.sh <<'EOF'
+    export AH_TEST_GUEST_VCPUS=8
+    export AH_TEST_GUEST_MEMORY_MIB=16384
+    export AH_TEST_GUEST_DISK_MIB=102400
+    export AH_TEST_RECOMMENDED_TEST_THREADS=4
+    EOF
+    chmod 0644 /etc/profile.d/ah-test-guest.sh
+
+    # 5. Mark the install as complete so subsequent boots no-op.
+    touch /etc/ah-toolchain-installed
+
+    echo "=== AH toolchain install complete: $(date -Iseconds) ==="
+  '';
+
+  # Cloud-init user-data for Path C — combines the Ubuntu makeLinuxVM
+  # installNix path with the bespoke AH-toolchain install script above.
+  makeAhPathCSeed =
     {
-      diskSizeMiB,
-      memoryMiB,
-      vcpus,
+      hostname,
+      username,
+      sshPublicKey,
     }:
     let
-      # Evaluating the bare configuration still validates the module structure
-      # (so `nix eval` against the module catches typos/missing options).
-      nixosSystem = pkgs.nixos { imports = [ ./configuration.nix ]; };
-      _ = nixosSystem.config.system.build.toplevel;
+      installScriptB64 = pkgs.runCommand "ah-toolchain-install-b64" { } ''
+        base64 -w 0 ${ahToolchainInstallScript} > $out
+      '';
+
+      userData = pkgs.writeText "user-data" ''
+        #cloud-config
+
+        hostname: ${hostname}
+        preserve_hostname: false
+
+        users:
+          - name: ${username}
+            sudo: ALL=(ALL) NOPASSWD:ALL
+            groups: [sudo, users]
+            lock_passwd: true
+            ssh_authorized_keys:
+              - ${sshPublicKey}
+            shell: /bin/bash
+
+        ssh_pwauth: false
+        disable_root: true
+
+        package_update: true
+        package_upgrade: false
+
+        write_files:
+          - path: /usr/local/sbin/install-ah-toolchain.sh
+            permissions: '0755'
+            owner: root:root
+            encoding: b64
+            content: ${builtins.readFile installScriptB64}
+
+        runcmd:
+          - [ /usr/local/sbin/install-ah-toolchain.sh ]
+
+        final_message: "M34 Path C cloud-init complete: AH toolchain installed. SSH as ${username}@<host>."
+      '';
+
+      metaData = pkgs.writeText "meta-data" ''
+        instance-id: ${hostname}
+        local-hostname: ${hostname}
+      '';
     in
-    pkgs.runCommand "nixos-ah-test-guest-image-placeholder" { } ''
-      cat >&2 <<'EOF'
-      ============================================================================
-      nixos-ah-test-guest: cannot build a bootable QCOW2 from the current module.
-
-      The configuration imports installer/cd-dvd/installation-cd-minimal.nix
-      (which produces system.build.isoImage, not system.build.qcow2). To get a
-      real bootable QCOW2 disk image with the AH toolchain pre-baked, apply
-      ONE of fixes (A), (B), or (C) documented in default.nix above.
-
-      Until that fix lands, use the Tart Ubuntu 24.04 ARM fallback documented
-      in specs/Public/AH-Test-Resource-Profile.md (M33 doc) §"Triage path
-      actually used (2026-06-01)".
-
-      Resource caps requested by the builder:
-        vcpus      = ${toString vcpus}
-        memoryMiB  = ${toString memoryMiB}
-        diskSizeMiB = ${toString diskSizeMiB}
-      ============================================================================
-      EOF
-      exit 1
+    pkgs.runCommand "nixos-ah-test-guest-seed" { } ''
+      mkdir -p $out
+      cp ${userData} $out/user-data
+      cp ${metaData} $out/meta-data
     '';
 
 in
 {
-  # Build a complete nixos-ah-test-guest package (disk image + cloud-init seed
-  # + SSH key + launcher script).  Parameters are intentionally minimal:
-  # everything that affects the *contents* of the image is declared inside
-  # ./configuration.nix; the arguments here only tune resource ceilings for
-  # the host-side launcher and the seeded hostname.
+  # M34 builder — Path C (Ubuntu cloud image + Nix-on-first-boot AH toolchain).
   #
   # Parameters:
-  #   hostname    — instance hostname (default "nixos-ah-test-guest")
-  #   username    — SSH login (default "agent" — matches NixOS configuration)
-  #   sshPort     — host port to forward to the guest's SSH (default 2228;
-  #                 chosen to avoid colliding with the Ubuntu/macOS/Windows
-  #                 forwards already documented in ../../flake-parts module)
-  #   memoryMiB   — RAM allocation (default 16 GiB — see configuration.nix
-  #                 commentary on M33 measurement goals)
-  #   vcpus       — vCPU count (default 8 — half a 16-core host)
-  #   diskSizeMiB — virtual disk size (default 100 GiB)
+  #   cloudImage  — path to an Ubuntu 24.04 aarch64 cloud QCOW2. Operator
+  #                 supplies this; we don't bundle iso-fetchers' aarch64
+  #                 variant yet. Suggested download:
+  #                   https://cloud-images.ubuntu.com/releases/noble/release/ubuntu-24.04-server-cloudimg-arm64.img
+  #                 Pin the sha256 in the consumer flake via vmImages.fetchUbuntuCloudImage
+  #                 once iso-fetchers grows an arm64 variant; until then,
+  #                 use a flake input with pkgs.fetchurl directly.
+  #   hostname    — default "nixos-ah-test-guest"
+  #   username    — default "agent"
+  #   sshPort     — host port forwarded to guest:22 (default 2228)
+  #   memoryMiB   — RAM (default 16 GiB)
+  #   vcpus       — vCPUs (default 8)
+  #   diskSizeMiB — virtual disk (default 100 GiB)
   makeNixosAhTestGuest =
     {
+      cloudImage ? null,
       hostname ? "nixos-ah-test-guest",
       username ? "agent",
       sshPort ? 2228,
@@ -139,7 +229,7 @@ in
     let
       sshKey = cloudInit.generateTestSSHKey { name = "nixos-ah-test-guest-key"; };
 
-      cloudInitConfig = cloudInit.makeCloudInitConfig {
+      seed = makeAhPathCSeed {
         inherit hostname username;
         sshPublicKey = sshKey.publicKey;
       };
@@ -150,18 +240,50 @@ in
             nativeBuildInputs = [ pkgs.cloud-utils ];
           }
           ''
-            cloud-localds $out ${cloudInitConfig}/user-data ${cloudInitConfig}/meta-data
+            cloud-localds $out ${seed}/user-data ${seed}/meta-data
           '';
 
-      qcow = buildNixosAhTestImage {
-        inherit diskSizeMiB memoryMiB vcpus;
-      };
+      # If the operator didn't supply a cloud image, fail loudly at build
+      # time (rather than at evaluation) with a clear pointer to the URL.
+      cloudImageResolved =
+        if cloudImage != null then
+          cloudImage
+        else
+          pkgs.runCommand "nixos-ah-test-guest-cloud-image-required" { } ''
+            cat >&2 <<'EOF'
+            ============================================================================
+            nixos-ah-test-guest (M34, Path C) requires a cloud-image input.
 
-      # aarch64 launcher.  We use `qemu-system-aarch64` directly so the same
-      # output works on Linux/aarch64 (KVM accel) and on macOS/aarch64
-      # (HVF accel via the `hvf` machine type) without per-host launcher
-      # variants.  Tart users will typically `tart create --from-disk` from
-      # $out/disk.qcow2 and ignore this launcher entirely.
+            Pass `cloudImage = <path>` when calling makeNixosAhTestGuest. The
+            expected file is an Ubuntu 24.04 aarch64 server cloud QCOW2:
+
+              https://cloud-images.ubuntu.com/releases/noble/release/ubuntu-24.04-server-cloudimg-arm64.img
+
+            Fetch via pkgs.fetchurl in the consumer flake:
+
+              pkgs.fetchurl {
+                url = "https://cloud-images.ubuntu.com/releases/noble/release/ubuntu-24.04-server-cloudimg-arm64.img";
+                sha256 = "<run nix-prefetch-url to fill in>";
+              }
+            ============================================================================
+            EOF
+            exit 1
+          '';
+
+      diskGiB = (diskSizeMiB + 1023) / 1024;
+
+      vmDisk =
+        pkgs.runCommand "nixos-ah-test-guest-disk.qcow2"
+          {
+            nativeBuildInputs = [ pkgs.qemu ];
+          }
+          ''
+            # Create a QCOW2 overlay on top of the cloud image. Operators who
+            # need a self-contained disk (no backing reference) should rebase
+            # with `qemu-img convert -O qcow2 disk.qcow2 standalone.qcow2`.
+            qemu-img create -f qcow2 -F qcow2 -b ${cloudImageResolved} $out ${toString diskGiB}G
+          '';
+
       runScript = pkgs.writeShellScript "run-nixos-ah-test-guest" ''
         set -euo pipefail
         SCRIPT_DIR="$(cd "$(dirname "''${BASH_SOURCE[0]}")" && pwd)"
@@ -176,7 +298,6 @@ in
           exit 1
         fi
 
-        # Pick the best available acceleration for the host architecture.
         UNAME_S="$(uname -s)"
         UNAME_M="$(uname -m)"
         ACCEL=""
@@ -196,7 +317,24 @@ in
         fi
 
         QEMU="${pkgs.qemu}/bin/qemu-system-aarch64"
-        FW="${pkgs.OVMF.fd}/FV/AAVMF_CODE.fd"
+
+        # UEFI firmware: prefer host-installed AAVMF (Homebrew QEMU on macOS,
+        # /usr/share/AAVMF on Linux distros) over a Nix-built one because the
+        # ARM EDK2 build is brittle on aarch64-darwin (CLANGPDB toolchain
+        # gap). Operators who want a Nix-pinned firmware should rebuild this
+        # module under Linux/aarch64 where pkgs.OVMF.fd is well-supported.
+        if [ -n "''${AH_VM_FIRMWARE:-}" ]; then
+          FW="$AH_VM_FIRMWARE"
+        elif [ -r /opt/homebrew/share/qemu/edk2-aarch64-code.fd ]; then
+          FW=/opt/homebrew/share/qemu/edk2-aarch64-code.fd
+        elif [ -r /usr/share/AAVMF/AAVMF_CODE.fd ]; then
+          FW=/usr/share/AAVMF/AAVMF_CODE.fd
+        elif [ -r /usr/share/qemu/edk2-aarch64-code.fd ]; then
+          FW=/usr/share/qemu/edk2-aarch64-code.fd
+        else
+          echo "ERROR: no AAVMF UEFI firmware found. Set AH_VM_FIRMWARE=<path>." >&2
+          exit 1
+        fi
 
         echo "Starting ${hostname}..."
         echo "  SSH: localhost:$SSH_PORT (VM port 22)"
@@ -226,17 +364,11 @@ in
       {
         nativeBuildInputs = [ pkgs.qemu ];
         meta = {
-          description = "NixOS aarch64 guest image preloaded with the AH build toolchain (M34)";
-          platforms = [ "aarch64-linux" ];
-          longDescription = ''
-            A NixOS aarch64 VM image baked with every prerequisite the Agent
-            Harbor test suite (`just test-all`) needs: Rust, Nim, pixi, just,
-            Nix, mutagen, FUSE, btrfs-progs, and the system libraries the AH
-            devshell references for Linux builds.  Intended to be booted via
-            Tart-Linux-ARM, libvirt, or UTM on an Apple Silicon host so the
-            AH test suite can run in isolation from the host (the suite is
-            known to hang macOS hosts when run natively).
-          '';
+          description = "Ubuntu 24.04 aarch64 guest with AH build toolchain installed on first boot (M34 Path C)";
+          platforms = [
+            "aarch64-linux"
+            "aarch64-darwin"
+          ];
         };
         passthru = {
           inherit
@@ -247,16 +379,14 @@ in
             vcpus
             diskSizeMiB
             ;
+          path = "C";
+          ahToolchainInstallScript = ahToolchainInstallScript;
         };
       }
       ''
         mkdir -p $out/bin $out/ssh-key
 
-        # Copy the QCOW2 disk image produced by the NixOS image builder.
-        # Some NixOS versions expose the qcow under a versioned filename;
-        # we glob to be robust to that.
-        cp ${qcow}/nixos.qcow2 $out/disk.qcow2 2>/dev/null || \
-          cp $(find ${qcow} -name '*.qcow2' | head -1) $out/disk.qcow2
+        cp ${vmDisk} $out/disk.qcow2
         chmod 644 $out/disk.qcow2
 
         cp ${seedISO} $out/seed.iso
@@ -271,13 +401,13 @@ in
         chmod +x $out/bin/run-vm
 
         cat > $out/README.txt <<EOF
-        nixos-ah-test-guest — NixOS aarch64 guest for the AH test suite
-        ================================================================
+        nixos-ah-test-guest (M34, Path C: Ubuntu + first-boot AH toolchain)
+        ====================================================================
 
-        Defaults baked into this image:
+        Defaults:
           hostname:  ${hostname}
           username:  ${username}
-          ssh port:  ${toString sshPort} (host) → 22 (guest)
+          ssh port:  ${toString sshPort} (host) -> 22 (guest)
           memory:    ${toString memoryMiB} MiB
           vcpus:     ${toString vcpus}
           disk:      ${toString diskSizeMiB} MiB
@@ -290,28 +420,35 @@ in
         Quick start (Tart on macOS):
           tart create --from-disk ./disk.qcow2 ah-test-guest
           tart run ah-test-guest
-          # SSH key is in ssh-key/id_ed25519; tart will assign an IP visible via
-          # `tart ip ah-test-guest`.
+          # cloud-init takes ~5-10 min on first boot (apt + rustup + nim + pixi)
 
-        Quick start (UTM on macOS):
-          File → New → Virtualize → Linux, then point the disk image at
-          disk.qcow2.  Attach seed.iso as a CD-ROM for first-boot SSH key
-          injection.
+        First-boot timeline (cloud-init runcmd → install-ah-toolchain.sh):
+          ~30s   apt-get update + system packages
+          ~60s   Nix multi-user installer
+          ~3min  rustup + cargo-install (cargo-nextest, just)
+          ~2min  choosenim (Nim 2.x)
+          ~10s   pixi installer
+          ~5s    mutagen tarball
+          ===================================================
+          ~6min  total wall-clock on Apple Silicon under hvf
 
         Verifying the toolchain (M34 verification test):
-          ssh -p ${toString sshPort} -i ssh-key/id_ed25519 ${username}@localhost \\
-            'rustc --version && nim --version && just --version && mutagen version'
+          ssh -p ${toString sshPort} -i ssh-key/id_ed25519 ${username}@localhost '
+            test -f /etc/ah-toolchain-installed &&
+            rustc --version && nim --version &&
+            just --version && mutagen version && pixi --version'
 
-        Running the AH test suite inside the guest (M33 triage):
+        Running the AH test suite inside the guest (M36 just test-in-vm):
           ssh -p ${toString sshPort} -i ssh-key/id_ed25519 ${username}@localhost
           # Inside the guest:
           git clone https://github.com/blocksense-network/agent-harbor /home/${username}/agent-harbor
           cd /home/${username}/agent-harbor
-          nix develop .#default
-          /usr/bin/time -v just test-all
-
-        See README.md alongside this module for a full discussion of how to
-        update the image when AH's flake inputs change.
+          source ~/.cargo/env
+          just test-in-vm
         EOF
       '';
+
+  # Re-export the cloud-init helpers so consumers can build custom seeds
+  # without re-importing the cloud-init module.
+  inherit (cloudInit) makeCloudInitConfig generateTestSSHKey;
 }
