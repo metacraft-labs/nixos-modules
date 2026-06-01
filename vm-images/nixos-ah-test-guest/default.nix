@@ -53,6 +53,13 @@ let
     exec > >(tee -a "$LOG") 2>&1
     echo "=== AH toolchain install start: $(date -Iseconds) ==="
 
+    # cloud-init runcmd executes us as root with an empty environment. The
+    # official Nix installer (step 2) and several rustup/pixi sub-installers
+    # abort with "$HOME is not set" under `set -u`. Seed HOME for the root
+    # phases; the per-user phase below runs under `sudo -u agent bash -lc`
+    # which establishes its own HOME from /etc/passwd.
+    export HOME=/root
+
     # 1. System libraries from the AH nix/devshell.nix Linux branch + the M33
     #    instrumentation toolchain.
     export DEBIAN_FRONTEND=noninteractive
@@ -101,9 +108,17 @@ let
       source "$HOME/.cargo/env"
       cargo install --locked cargo-nextest || true
 
-      # Nim 2.x via choosenim (apt nim is 1.6).
+      # Nim 2.x via Nix (choosenim has no linux_arm64 build — "platform is
+      # not supported" — so we delegate to the multi-user Nix installed in
+      # step 2 instead. Single-user profile so the agent's interactive shell
+      # picks it up via ~/.nix-profile/bin, which /etc/profile.d/nix.sh adds
+      # to PATH.).
       if ! command -v nim >/dev/null 2>&1; then
-        curl https://nim-lang.org/choosenim/init.sh -sSf | sh -s -- -y
+        # /etc/profile.d/nix.sh is sourced by `bash -lc`, so `nix-env` is on
+        # PATH here. Guard with an explicit source for robustness if the
+        # profile snippet isn't installed yet.
+        if [ -f /etc/profile.d/nix.sh ]; then . /etc/profile.d/nix.sh; fi
+        nix-env -iA nixpkgs.nim2
       fi
 
       # just (cargo install)
