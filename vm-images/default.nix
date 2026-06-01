@@ -176,6 +176,17 @@ let
   cloudInit = import ./ubuntu/cloud-init.nix { inherit pkgs lib; };
 
   # ==========================================================================
+  # Import NixOS aarch64 AH-test-suite guest builder (M34)
+  #
+  # This guest is a full NixOS configuration (not a cloud image) preloaded
+  # with the toolchain the Agent Harbor `just test-all` suite needs.  It is
+  # intended to run on aarch64-linux (Apple Silicon hosts via Tart-Linux-ARM,
+  # libvirt on aarch64 Linux, or UTM).  See vm-images/nixos-ah-test-guest/
+  # README.md for the full context.
+  # ==========================================================================
+  nixosAhTestGuestBuilder = import ./nixos-ah-test-guest { inherit pkgs lib; };
+
+  # ==========================================================================
   # Import Darwin (macOS) VM builder
   # ==========================================================================
   darwinBuilder =
@@ -268,6 +279,14 @@ in
       # Parameters: { name? }
       inherit (cloudInit) generateTestSSHKey;
     };
+
+    # Build the NixOS aarch64 guest preloaded with the AH `just test-all`
+    # toolchain (M34).  This is *not* a cloud-image-based VM — it's a full
+    # NixOS configuration evaluated to a QCOW2 disk via the NixOS image
+    # builder.  Intended for aarch64-linux hosts (Apple Silicon via Tart,
+    # bare-metal Ampere via libvirt).  Parameters:
+    #   { hostname?, username?, sshPort?, memoryMiB?, vcpus?, diskSizeMiB? }
+    inherit (nixosAhTestGuestBuilder) makeNixosAhTestGuest;
   };
 
   # ==========================================================================
@@ -371,6 +390,7 @@ in
       isoFetchers
       linuxBuilder
       cloudInit
+      nixosAhTestGuestBuilder
       darwinBuilder
       windowsBuilder
       ;
