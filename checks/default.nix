@@ -9,6 +9,7 @@
     ./deployment-production-cutover.nix
     ./deployment-pull-agent.nix
     ./deployment-reconciler.nix
+    ./linux-vm-cloud-init
     ./packages-ci-matrix.nix
     ./pre-commit.nix
     ./secret-integration
