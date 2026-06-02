@@ -1,13 +1,15 @@
 module mcl.commands.secret;
 
-import std.algorithm : filter, map, each;
-import std.array : array, join;
+import std.algorithm : filter, map, each, sort, startsWith;
+import std.array : array, join, appender;
+import std.digest.sha : sha256Of, toHexString;
 import std.file : exists, isDir, dirEntries, SpanMode, mkdirRecurse,
     remove, write, read, deleteme;
+import std.format : format;
 import std.path : buildPath, baseName, stripExtension, dirName;
 import std.process : environment;
 import std.logger : infof, warningf;
-import std.stdio : writeln;
+import std.stdio : writeln, writefln, stderr;
 import std.regex : ctRegex, matchFirst;
 import std.string : replace, split, strip, endsWith;
 
@@ -74,6 +76,7 @@ struct SecretArgs
         SecretEditArgs,
         SecretReEncryptArgs,
         SecretReEncryptAllArgs,
+        SecretVerifyArgs,
         Default!UnknownCommandArgs
     ) cmd;
 }
@@ -129,6 +132,28 @@ struct SecretReEncryptAllArgs
     string configPath;
 }
 
+@(Command("verify")
+    .Description("Verify a secret decrypts and that declared recipients match the .age header"))
+struct SecretVerifyArgs
+{
+    @(NamedArgument(["service"])
+        .Required()
+        .Placeholder("NAME")
+        .Description("Service to which the secret belongs"))
+    string service;
+
+    @(NamedArgument(["secret"])
+        .Required()
+        .Placeholder("NAME")
+        .Description("Secret to verify"))
+    string secret;
+
+    @(NamedArgument(["secrets-folder"])
+        .Placeholder("PATH")
+        .Description("Specifies the location where secrets are saved"))
+    string secretsFolder;
+}
+
 // =============================================================================
 // Public Entry Point
 // =============================================================================
@@ -139,6 +164,7 @@ export int secret(SecretArgs args)
         (SecretEditArgs a) => secretEdit(args, a),
         (SecretReEncryptArgs a) => secretReEncrypt(args, a),
         (SecretReEncryptAllArgs a) => secretReEncryptAll(args, a),
+        (SecretVerifyArgs a) => secretVerify(args, a),
         (UnknownCommandArgs _) => unknownCommand(),
     );
 }
@@ -214,6 +240,25 @@ private int secretReEncryptAll(SecretArgs common, SecretReEncryptAllArgs args)
     }
 
     return 0;
+}
+
+private int secretVerify(SecretArgs common, SecretVerifyArgs args)
+{
+    validateVmFlag(common.vm, common.configurationType);
+
+    auto tmpfs = TmpFS.create("mcl-secret-identity-keys");
+    const confAttr = common.configurationType.enumToString;
+    auto machineFolder = resolveMachineFolder(common.machine, confAttr, common.extraNixOptions);
+    auto recipients = resolveRecipients(common, confAttr, args.service);
+
+    auto secretsFolder = args.secretsFolder.length > 0
+        ? args.secretsFolder
+        : common.vm
+            ? DEFAULT_VM_SECRETS_PATH ~ args.service
+            : machineFolder.buildPath("secrets", args.service);
+
+    auto secretFile = secretsFolder.buildPath(args.secret ~ ".age");
+    return verifySecret(secretFile, recipients, resolveIdentity(common.identity, tmpfs), args.service);
 }
 
 private int unknownCommand()
@@ -327,6 +372,140 @@ private void reEncryptFolder(string secretsFolder, string[] recipients, string[]
         if (status != 0)
             errorAndExit("Re-encryption failed");
     }
+}
+
+private int verifySecret(string secretFile, string[] recipients, string[] identityArgs, string service)
+{
+    import std.process : pipeProcess, wait, Redirect;
+    import std.path : absolutePath;
+
+    if (!secretFile.exists)
+        errorAndExit("Secret file does not exist: " ~ secretFile);
+
+    // Decrypt to memory: never write plaintext to disk, never print it.
+    auto decryptCmd = ["age", "--decrypt"] ~ identityArgs ~ ["--", secretFile];
+    auto pipes = pipeProcess(decryptCmd, Redirect.stdout | Redirect.stderr);
+
+    auto buf = appender!(ubyte[])();
+    foreach (chunk; pipes.stdout.byChunk(4096))
+        buf.put(chunk);
+
+    auto stderrBuf = appender!(ubyte[])();
+    foreach (chunk; pipes.stderr.byChunk(4096))
+        stderrBuf.put(chunk);
+
+    auto status = wait(pipes.pid);
+    if (status != 0)
+    {
+        import std.conv : to;
+        auto stderrText = (cast(char[]) stderrBuf.data).idup;
+        stderr.writeln("DECRYPT FAILED — none of the tried identities matched a recipient (or wrong passphrase).");
+        if (identityArgs.length > 0)
+        {
+            stderr.writeln("Tried identities:");
+            for (size_t i = 1; i < identityArgs.length; i += 2)
+                stderr.writeln("  ", identityArgs[i]);
+        }
+        if (stderrText.strip.length > 0)
+            stderr.writeln("age stderr: ", stderrText.strip);
+        return 1;
+    }
+
+    auto plaintext = buf.data;
+    if (plaintext.length == 0)
+    {
+        stderr.writeln("DECRYPT FAILED — empty plaintext");
+        return 1;
+    }
+
+    auto digest = sha256Of(plaintext);
+    auto sha = toHexString(digest).idup;
+
+    writeln("OK");
+    writeln("  file:           ", secretFile.absolutePath);
+    writefln("  plaintext_size: %d bytes", plaintext.length);
+    writeln("  plaintext_sha:  ", sha);
+    writeln();
+
+    // Section 2: declared recipients from the Nix module.
+    writefln("Declared recipients (from mcl.secrets.services.%s.recipients, %d):",
+        service, recipients.length);
+    foreach (pubkey; recipients)
+    {
+        auto fields = pubkey.strip.split;
+        string type = fields.length >= 1 ? fields[0] : "<unknown>";
+        string comment;
+        if (fields.length >= 3)
+        {
+            comment = fields[2 .. $].join(" ");
+        }
+        else if (fields.length >= 2)
+        {
+            // No comment — synthesise a short fingerprint from the key material.
+            auto material = fields[1];
+            auto fp = material.length > 12 ? material[0 .. 12] : material;
+            comment = "<no-comment fp:" ~ fp ~ "...>";
+        }
+        else
+        {
+            comment = "<malformed pubkey>";
+        }
+        writefln("  %-14s %s", type, comment);
+    }
+    writeln();
+
+    // Section 3: actual encrypted stanzas in the .age header.
+    auto headerBytes = cast(string) read(secretFile);
+    auto stanzaTypes = parseAgeRecipientStanzas(headerBytes);
+    writefln("Encrypted recipient stanzas in .age (%d):", stanzaTypes.length);
+    string[] sortedTypes = stanzaTypes.dup;
+    sortedTypes.sort();
+    int[string] typeCounts;
+    foreach (t; sortedTypes)
+        typeCounts[t] = (t in typeCounts) ? typeCounts[t] + 1 : 1;
+    // Print each unique type once with its count, preserving sorted order.
+    bool[string] printed;
+    foreach (t; sortedTypes)
+    {
+        if (t in printed) continue;
+        printed[t] = true;
+        writefln("  %-14s x%d", t, typeCounts[t]);
+    }
+
+    // Section 4: consistency check.
+    if (recipients.length != stanzaTypes.length)
+    {
+        writeln();
+        writefln("WARNING: stanza count (%d) != declared recipient count (%d).",
+            stanzaTypes.length, recipients.length);
+        writeln("  This usually means `mcl secret re-encrypt` wasn't run after editing");
+        writeln("  the recipients list for service `", service, "`.");
+        writeln("  Fix: mcl secret re-encrypt --machine <machine> --service ", service);
+    }
+
+    return 0;
+}
+
+/// Parse the age header of a file and return the list of recipient stanza
+/// types (the first token after `-> `). The header runs from the first line
+/// (`age-encryption.org/v1`) until the first line beginning with `---`
+/// (the HMAC marker). Each stanza begins with `-> <type> <args...>`.
+private string[] parseAgeRecipientStanzas(string fileContents)
+{
+    string[] types;
+    foreach (line; fileContents.split("\n"))
+    {
+        if (line.startsWith("---"))
+            break;
+        if (line.startsWith("-> "))
+        {
+            auto rest = line[3 .. $];
+            auto fields = rest.split;
+            if (fields.length > 0)
+                types ~= fields[0];
+        }
+    }
+    return types;
 }
 
 // =============================================================================
@@ -477,4 +656,45 @@ unittest
 unittest
 {
     assert(recipientArgs(["key1"]) == ["-r", "key1"]);
+}
+
+@("parseAgeRecipientStanzas extracts stanza types from header")
+unittest
+{
+    import std.conv : to;
+    auto header =
+        "age-encryption.org/v1\n" ~
+        "-> ssh-rsa abcDEF\n" ~
+        "AAAAAwerAB+payload+more\n" ~
+        "-> ssh-ed25519 xyz123\n" ~
+        "payload-line\n" ~
+        "-> X25519 someBase64\n" ~
+        "payload\n" ~
+        "--- HMAC-base64-here\n" ~
+        "-> not-a-recipient\n" ~  // after the marker, must be ignored
+        "binary-ciphertext-bytes...";
+
+    auto types = parseAgeRecipientStanzas(header);
+    assert(types.length == 3, "expected 3 stanzas, got " ~ types.length.to!string);
+    assert(types[0] == "ssh-rsa");
+    assert(types[1] == "ssh-ed25519");
+    assert(types[2] == "X25519");
+}
+
+@("parseAgeRecipientStanzas returns empty on empty file")
+unittest
+{
+    assert(parseAgeRecipientStanzas("") == []);
+}
+
+@("parseAgeRecipientStanzas ignores lines after --- marker")
+unittest
+{
+    auto header =
+        "age-encryption.org/v1\n" ~
+        "-> ssh-rsa key1\n" ~
+        "--- hmac\n" ~
+        "-> ssh-rsa key2\n";
+    auto types = parseAgeRecipientStanzas(header);
+    assert(types == ["ssh-rsa"]);
 }
