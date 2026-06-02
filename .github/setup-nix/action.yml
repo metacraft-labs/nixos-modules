@@ -46,6 +46,20 @@ inputs:
     description: The name of the devShell to build and export to GITHUB_ENV (e.g. 'default' for .#devShells.default)
     required: false
     default: ''
+  use-nix-cache:
+    description: Whether to use nix-community/cache-nix-action to cache /nix/store in GHA (opt-in)
+    type: boolean
+    required: false
+    default: false
+  nix-cache-key:
+    description: The primary key to use for the Nix GHA cache
+    required: false
+    default: nix-${{ runner.os }}-${{ hashFiles('**/flake.lock') }}
+  nix-cache-restore-prefixes:
+    description: The fallback restore prefixes for the Nix GHA cache
+    required: false
+    default: |
+      nix-${{ runner.os }}-
 
 runs:
   using: 'composite'
@@ -113,6 +127,13 @@ runs:
       with:
         name: ${{ inputs.cachix-cache }}
         authToken: ${{ inputs.cachix-auth-token }}
+
+    - name: Restore/Save Nix Store GHA Cache
+      uses: nix-community/cache-nix-action@v7
+      if: ${{ fromJSON(inputs.use-nix-cache || 'false') }}
+      with:
+        primary-key: ${{ inputs.nix-cache-key }}
+        restore-prefixes-first-match: ${{ inputs.nix-cache-restore-prefixes }}
 
     - name: Build & activate the Nix Dev Shell
       if: ${{ fromJSON(inputs.use-direnv || 'false') || inputs.devshell != '' }}
