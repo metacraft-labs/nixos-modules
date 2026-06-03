@@ -9,6 +9,7 @@ top@{ config, ... }:
     }:
     let
       flake = top.config.flake;
+      indent = prefix: text: prefix + lib.replaceStrings [ "\n" ] [ "\n${prefix}" ] text;
       deployPrivateKey = pkgs.writeText "mcl-deploy-test-key" ''
         -----BEGIN OPENSSH PRIVATE KEY-----
         b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
@@ -79,6 +80,71 @@ top@{ config, ... }:
       successHealthCommand = "generation|5|${successHealthScript}";
       rollbackHealthCommand = "health-fails|5|false";
       supersededHealthCommand = "generation|5|${supersededHealthScript}";
+      atticCacheName = "mcl-deploy-apply-cache";
+      atticEnvironmentFile = pkgs.runCommand "deployment-reconciler-atticd-env" { } ''
+        echo ATTIC_SERVER_TOKEN_RS256_SECRET_BASE64="$(${lib.getExe pkgs.openssl} genrsa -traditional 4096 | ${pkgs.coreutils}/bin/base64 -w0)" > "$out"
+      '';
+      atticServerNode = {
+        networking.firewall.allowedTCPPorts = [ 8080 ];
+        services.atticd = {
+          enable = true;
+          environmentFile = atticEnvironmentFile;
+          settings = {
+            listen = "[::]:8080";
+            api-endpoint = "http://attic:8080/";
+            allowed-hosts = [
+              "attic:8080"
+              "localhost:8080"
+              "127.0.0.1:8080"
+            ];
+          };
+        };
+      };
+      createAtticCacheScript = client: ''
+        attic.wait_for_unit("atticd.service")
+        attic.wait_for_open_port(8080)
+
+        token = attic.succeed(
+            "atticd-atticadm make-token "
+            "--sub deployment-reconciler-restore-test "
+            "--validity 1y "
+            "--create-cache '*' "
+            "--pull '*' "
+            "--push '*' "
+            "--delete '*' "
+            "--configure-cache '*' "
+            "--configure-cache-retention '*'"
+        ).strip()
+        ${client}.succeed(f"attic login --set-default local http://attic:8080 {token}")
+        ${client}.succeed("attic cache create --public ${atticCacheName}")
+        cache_info = ${client}.succeed("attic cache info ${atticCacheName} 2>&1")
+        public_key = ""
+        for line in cache_info.splitlines():
+            marker = "Public Key:"
+            if marker in line:
+                public_key = line.split(marker, 1)[1].strip()
+                break
+        assert public_key, "Attic cache info did not expose a public key"
+      '';
+      slowMcl = pkgs.writeShellApplication {
+        name = "mcl";
+        runtimeInputs = [
+          pkgs.coreutils
+        ];
+        text = ''
+          set -euo pipefail
+          if [ "''${1:-}" != deploy-reconcile ]; then
+            echo "fake mcl only supports deploy-reconcile" >&2
+            exit 64
+          fi
+
+          mkdir -p /var/lib/mcl-test
+          printf 'start:%s\n' "$$" >> /var/lib/mcl-test/reconciler-runs
+          touch /var/lib/mcl-test/reconciler-started
+          sleep 12
+          printf 'end:%s\n' "$$" >> /var/lib/mcl-test/reconciler-runs
+        '';
+      };
 
       timerSystem = lib.nixosSystem {
         system = pkgs.stdenv.hostPlatform.system;
@@ -606,6 +672,188 @@ top@{ config, ... }:
                     "assert ('complete', 'succeeded') in phases, phases\n"
                     "PY"
                 )
+          '';
+        };
+
+        deployment-direct-ssh-attic-restore-vm = pkgs.testers.nixosTest {
+          name = "deployment-direct-ssh-attic-restore-vm";
+
+          nodes = {
+            attic = atticServerNode;
+
+            controller = {
+              nix.settings.experimental-features = [
+                "nix-command"
+                "flakes"
+              ];
+              environment.systemPackages = [
+                self'.packages.mcl
+                pkgs.attic-client
+                pkgs.openssh
+                pkgs.python3
+              ];
+            };
+
+            target =
+              { ... }:
+              {
+                imports = [ flake.modules.nixos.deployment-forced-command-apply ];
+
+                networking.hostName = "target";
+                nix.settings.experimental-features = [
+                  "nix-command"
+                  "flakes"
+                ];
+                environment.systemPackages = [
+                  pkgs.nix
+                  pkgs.python3
+                ];
+                services.openssh = {
+                  enable = true;
+                  settings.PasswordAuthentication = false;
+                };
+                services.mcl-deployment-ssh-apply = {
+                  enable = true;
+                  package = self'.packages.mcl;
+                  targetName = "target";
+                  manifestPrincipal = "mcl-deployment";
+                  manifestPublicKeys = [ manifestPublicKey ];
+                  authorizedKeys = [ deployPublicKey ];
+                  switchCommand = "${successSwitchScript}";
+                  generationCommand = "${generationScript}";
+                };
+              };
+          };
+
+          testScript = ''
+            import shlex
+
+            start_all()
+
+            with subtest("create public Attic cache"):
+            ${indent "    " (createAtticCacheScript "controller")}
+
+            with subtest("create runtime closure and push it to Attic"):
+                controller.succeed("install -m 0600 ${deployPrivateKey} /tmp/deploy-key")
+                controller.succeed("install -m 0600 ${manifestPrivateKey} /tmp/manifest-key")
+                closure = controller.succeed(
+                    "payload=$(mktemp -d); "
+                    "printf 'deployment restore fixture\\n' > \"$payload/file\"; "
+                    "nix-store --add \"$payload\""
+                ).strip()
+                substituter = "http://attic:8080/${atticCacheName}"
+                controller.succeed(f"attic push ${atticCacheName} {shlex.quote(closure)}")
+
+            with subtest("target starts without the runtime closure"):
+                target.wait_for_unit("sshd.service")
+                target.fail(f"nix path-info {shlex.quote(closure)}")
+
+            with subtest("create signed manifest requiring Attic substitution"):
+                restored_health = f"restored|5|test -e {closure}/file"
+                controller.succeed(
+                    "mcl deploy-plan "
+                    "--target target "
+                    f"--desired-system-path {shlex.quote(closure)} "
+                    "--git-revision 0123456789abcdef0123456789abcdef01234567 "
+                    "--sequence 1 "
+                    f"--health-command {shlex.quote(restored_health)} "
+                    f"--substituter {shlex.quote(substituter)} "
+                    f"--trusted-public-key {shlex.quote(public_key)} "
+                    "--availability-mode all-roots-substitutable "
+                    "--require-availability "
+                    "--signing-key /tmp/manifest-key "
+                    "--signing-key-id mcl-deployment "
+                    "--output /tmp/manifest.json"
+                )
+
+            with subtest("forced command restores from Attic with default nix copy path"):
+                controller.succeed(
+                    "ssh -i /tmp/deploy-key "
+                    "-o StrictHostKeyChecking=no "
+                    "-o UserKnownHostsFile=/dev/null "
+                    "deploy@target < /tmp/manifest.json"
+                )
+
+            with subtest("target now has the restored closure and converged"):
+                target.succeed(f"nix path-info {shlex.quote(closure)}")
+                target.succeed(f"test -e {shlex.quote(closure + '/file')}")
+                target.succeed("grep -qx success /var/lib/mcl-test/switch-runs")
+                target.succeed("test \"$(cat /var/lib/mcl-test/current-generation)\" = '${successGeneration}'")
+
+            with subtest("events prove default restore succeeded before switch and health"):
+                target.succeed(
+                    "python3 - <<'PY'\n"
+                    "import json\n"
+                    f"closure = {closure!r}\n"
+                    f"substituter = {substituter!r}\n"
+                    f"public_key = {public_key!r}\n"
+                    "events = [json.loads(line) for line in open('/var/log/mcl/deployments/target.jsonl') if line.strip()]\n"
+                    "phases = [event['phase'] for event in events]\n"
+                    "assert phases.index('agent-restore') < phases.index('switch') < phases.index('healthcheck') < phases.index('complete'), phases\n"
+                    "restore = next(event for event in events if event['phase'] == 'agent-restore')\n"
+                    "assert restore['command']['status'] == 'succeeded', restore\n"
+                    "assert restore['command']['argv'][0:3] == ['nix', 'copy', '--from'], restore\n"
+                    "assert restore['command']['argv'][3] == substituter, restore\n"
+                    "assert restore['command']['argv'][4] == closure, restore\n"
+                    "assert restore['command']['argv'][-3:] == ['--option', 'trusted-public-keys', public_key], restore\n"
+                    "assert restore['backend']['substituters'] == [substituter], restore\n"
+                    "health = next(event for event in events if event['phase'] == 'healthcheck')\n"
+                    "assert health['command']['status'] == 'succeeded', health\n"
+                    "complete = next(event for event in events if event['phase'] == 'complete')\n"
+                    "assert complete['command']['status'] == 'succeeded', complete\n"
+                    "PY"
+                )
+                target.succeed(
+                    "python3 - <<'PY'\n"
+                    "import json\n"
+                    "state = json.load(open('/var/lib/mcl/deployments/converged/gh-local-unknown-target.json'))\n"
+                    f"assert state['desiredSystemPath'] == {closure!r}, state\n"
+                    "assert state['currentState'] == 'succeeded', state\n"
+                    "PY"
+                )
+          '';
+        };
+
+        deployment-reconciler-lock-contention-vm = pkgs.testers.nixosTest {
+          name = "deployment-reconciler-lock-contention-vm";
+
+          nodes = {
+            controller =
+              { ... }:
+              {
+                imports = [ flake.modules.nixos.deployment-reconciler-timer ];
+
+                services.mcl-deployment-reconciler = {
+                  enable = true;
+                  package = slowMcl;
+                  stateDir = "/var/lib/mcl/deployments";
+                  eventLog = "/var/log/mcl/deployments/reconciler.jsonl";
+                  interval = "1min";
+                  jitter = "0";
+                  lockFile = "/run/lock/mcl-test-reconciler.lock";
+                  targets = [ "target" ];
+                  targetHosts.target = "target";
+                  dryRun = true;
+                };
+              };
+          };
+
+          testScript = ''
+            start_all()
+            controller.wait_for_unit("multi-user.target")
+
+            with subtest("first service run holds the configured flock lock"):
+                controller.succeed("systemctl start --no-block mcl-deployment-reconciler.service")
+                controller.wait_until_succeeds("test -e /var/lib/mcl-test/reconciler-started")
+                controller.fail("${pkgs.util-linux}/bin/flock -n /run/lock/mcl-test-reconciler.lock ${lib.getExe slowMcl} deploy-reconcile --manual-contender")
+                controller.succeed("test \"$(grep -c '^start:' /var/lib/mcl-test/reconciler-runs)\" = 1")
+                controller.succeed("test \"$(grep -c '^end:' /var/lib/mcl-test/reconciler-runs || true)\" = 0")
+
+            with subtest("lock releases after the service exits"):
+                controller.wait_until_succeeds("test \"$(grep -c '^end:' /var/lib/mcl-test/reconciler-runs)\" = 1")
+                controller.succeed("${pkgs.util-linux}/bin/flock -n /run/lock/mcl-test-reconciler.lock ${lib.getExe slowMcl} deploy-reconcile --after-service")
+                controller.succeed("test \"$(grep -c '^start:' /var/lib/mcl-test/reconciler-runs)\" = 2")
+                controller.succeed("test \"$(grep -c '^end:' /var/lib/mcl-test/reconciler-runs)\" = 2")
           '';
         };
 
