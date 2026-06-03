@@ -7,6 +7,7 @@
     ./cachix-deploy
     ./folder-size-metrics
     ./deployment-event-metrics
+    ./deployment
     ./netbird-with-agenix
     ./shard-split
     ./random-alerts

@@ -26,6 +26,7 @@ struct ClosureSummary
 struct DeploymentEventContext
 {
     string eventLogPath;
+    string deploymentId;
     string correlationId;
     string cache;
     string[] substituters;
@@ -220,7 +221,9 @@ JSONValue deploymentEventJson(
     }
 
     event["schemaVersion"] = JSONValue(1);
-    event["deploymentId"] = JSONValue(deploymentIdFor(target, systemPath));
+    event["deploymentId"] = JSONValue(
+        context.deploymentId == "" ? deploymentIdFor(target, systemPath) : context.deploymentId
+    );
     event["correlationId"] = JSONValue(
         context.correlationId == ""
             ? correlationIdFor(event["deploymentId"].str, systemPath)
