@@ -61,7 +61,6 @@
 
       packages = {
         cachix-deploy-metrics = pkgs.callPackage ./cachix-deploy-metrics { };
-        deployment-event-metrics = pkgs.callPackage ./deployment-event-metrics { };
         lido-withdrawals-automation = pkgs.callPackage ./lido-withdrawals-automation { };
         pyroscope = pkgs.callPackage ./pyroscope { };
         random-alerts = pkgs.callPackage ./random-alerts { };
@@ -74,6 +73,7 @@
         aztec = pkgs.callPackage ./aztec { };
       }
       // optionalAttrs isLinux {
+        deployment-event-metrics = pkgs.callPackage ./deployment-event-metrics { };
         folder-size-metrics = pkgs.callPackage ./folder-size-metrics { };
         ci-image = pkgs.callPackage ./ci-image {
           inherit (inputs'.nix2container.packages) nix2container;

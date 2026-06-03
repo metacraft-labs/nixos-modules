@@ -16,7 +16,7 @@ on:
     secrets:
       CACHIX_AUTH_TOKEN:
         description: 'Cachix auth token'
-        required: true
+        required: false
       NIX_GITHUB_TOKEN:
         description: GitHub token to add as access-token in nix.conf
         required: false

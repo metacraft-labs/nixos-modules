@@ -29,7 +29,7 @@ on:
         required: false
       CACHIX_AUTH_TOKEN:
         description: 'Cachix auth token'
-        required: true
+        required: false
       CREATE_PR_APP_ID:
         description: ID of the GitHub App used for opening pull requests.
         required: true

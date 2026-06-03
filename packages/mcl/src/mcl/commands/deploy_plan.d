@@ -226,6 +226,25 @@ unittest
     args.output = manifestPath;
     args.stateDir = stateDir;
 
+    const hadGitHubRunId = "GITHUB_RUN_ID" in environment;
+    const oldGitHubRunId = environment.get("GITHUB_RUN_ID", "");
+    const hadGitHubSha = "GITHUB_SHA" in environment;
+    const oldGitHubSha = environment.get("GITHUB_SHA", "");
+    scope(exit)
+    {
+        if (hadGitHubRunId)
+            environment["GITHUB_RUN_ID"] = oldGitHubRunId;
+        else
+            environment.remove("GITHUB_RUN_ID");
+
+        if (hadGitHubSha)
+            environment["GITHUB_SHA"] = oldGitHubSha;
+        else
+            environment.remove("GITHUB_SHA");
+    }
+    environment.remove("GITHUB_RUN_ID");
+    environment.remove("GITHUB_SHA");
+
     assert(deployPlanImpl(args, (string[] command) => runProcessCapture(command)) == 0);
     auto manifest = manifestPath.readText.parseJSON;
     assert(manifest["deploymentId"].str == "gh-local-unknown-app-1");
