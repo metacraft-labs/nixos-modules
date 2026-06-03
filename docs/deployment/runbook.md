@@ -1,0 +1,211 @@
+# Deployment Operator Runbook
+
+This runbook is for human operators who are not using Codex skills. It covers
+the Attic/deployment migration operation surface in generic terms. Private
+target groups, URLs, and escalation paths belong in the infrastructure
+repository.
+
+## Normal Investigation
+
+Start with the deployment event artifact when it exists:
+
+```sh
+gh run view "$RUN_ID" --log
+gh run download "$RUN_ID" --dir .result/deployment-artifacts
+mcl deploy-status summarize .result/deployment-artifacts/events.jsonl \
+  --output .result/deployment-summary.md \
+  --json-output .result/deployment-summary.json
+```
+
+Classify the final phase. `evaluate`, `build`, and `cache-push` are
+controller-side. `activate-requested` is transport or reconciler-side.
+`agent-restore`, `switch`, `healthcheck`, `rollback`, and `complete` are
+target-side and require target journals:
+
+```sh
+ssh "$TARGET" 'sudo journalctl -u mcl-deploy-agent.service -u mcl-deployment-reconciler.service -b --no-pager -n 200'
+```
+
+For cache suspicion, verify the exact desired system path:
+
+```sh
+nix path-info --store "$SUBSTITUTER" --recursive "$SYSTEM_PATH" \
+  --option trusted-public-keys "$TRUSTED_PUBLIC_KEY"
+```
+
+Evidence to preserve: GitHub run URL, event JSONL, deployment summary, target
+journal excerpt, desired manifest, cache query result, and health-check output.
+
+## Normal Deployment
+
+Use the repository wrapper where available:
+
+```sh
+just deploy-machine "$TARGET"
+just deploy-machine-direct-ssh "$TARGET" "$SSH_HOST" deploy
+```
+
+The direct SSH path expands to:
+
+```sh
+mcl cache push-closure --backend attic --cache "$CACHE" --target "$TARGET" \
+  --transport ssh --substituter "$ATTIC_SUBSTITUTER" \
+  --trusted-public-key "$ATTIC_TRUSTED_PUBLIC_KEY" --require-substitute "$SYSTEM_PATH"
+mcl deploy-plan --target "$TARGET" --desired-system-path "$SYSTEM_PATH" \
+  --git-revision "$GIT_REVISION" --sequence "$SEQUENCE" \
+  --signing-key "$MCL_DEPLOY_MANIFEST_SIGNING_KEY" --output "$MANIFEST"
+mcl deploy-ssh "$TARGET" --manifest "$MANIFEST" --ssh-host "$SSH_HOST" \
+  --ssh-user deploy --identity-file "$MCL_DEPLOY_SSH_IDENTITY" \
+  --ssh-option BatchMode=yes --ssh-option StrictHostKeyChecking=yes
+```
+
+Confirm success with `mcl deploy-status summarize`, target journal evidence,
+and any service-specific health checks from the manifest.
+
+## Desired-state Reconciliation
+
+The state directory contains:
+
+- `desired/`: signed desired-state manifests observed by the controller or
+  target agent.
+- `targets/`: latest manifest per target.
+- `current/`: accepted or pending status.
+- `failed/`: failed status.
+- `superseded/`: older deployments replaced by a higher sequence.
+- `converged/`: completed deployments.
+- `agent-status/`: pull-agent retry and non-retryable status.
+
+Inspect retry behavior with:
+
+```sh
+mcl deploy-reconcile --state-dir "$STATE_DIR" --event-log "$EVENTS_JSONL" --dry-run
+systemctl status mcl-deployment-reconciler.service mcl-deployment-reconciler.timer
+systemctl status mcl-deploy-agent.service mcl-deploy-agent.timer
+```
+
+`pending`, `accepted`, and retryable `failed` can be retried when no newer
+sequence exists. `superseded`, `converged`, `succeeded`, ambiguous same-sequence
+state, invalid signatures, wrong target, and exhausted retry budget are
+terminal until a human approves repair.
+
+## Safe Direct SSH Deploy
+
+Direct SSH is the break-glass and canary path when central deploy services are
+unavailable or not yet trusted. Requirements:
+
+- human approval for target and rollback condition;
+- verified SSH host key;
+- restricted deploy SSH key;
+- signed manifest;
+- cache substitute proof or explicit accepted cache risk;
+- event and journal artifact capture.
+
+Run:
+
+```sh
+just deploy-machine-direct-ssh "$TARGET" "$SSH_HOST" deploy
+```
+
+The target must receive a signed manifest on stdin. It must not provide an
+interactive shell for the deploy key.
+
+## Rollback
+
+Rollback the target directly:
+
+```sh
+just rollback-machine-direct-ssh "$TARGET" "$SSH_HOST" deploy "$GENERATION"
+ssh -t "deploy@$SSH_HOST" 'sudo nixos-rebuild switch --rollback'
+```
+
+Capture the old generation, failed generation, rollback command, final
+generation, target journal, and event JSONL. Do not delete failed state files
+until the incident is reviewed.
+
+## Forced-command SSH Boundary
+
+`services.mcl-deployment-ssh-apply` installs a restricted deploy user and an
+authorized key with a forced command. The key has
+`restrict,no-agent-forwarding,no-X11-forwarding,no-port-forwarding,no-pty`.
+The forced command invokes `sudo -n` for the root apply wrapper only.
+
+The root wrapper runs:
+
+```sh
+mcl deploy-apply --manifest - --allowed-signers "$ALLOWED_SIGNERS" \
+  --target "$TARGET" --reject-ssh-original-command
+```
+
+The wrapper verifies the manifest signature, expected target, cache
+requirements, health checks, and rollback policy before writing target-local
+state. Any non-empty `SSH_ORIGINAL_COMMAND` must be rejected.
+
+## Cache Operation
+
+Controller-side cache repair:
+
+```sh
+mcl cache push-closure --backend attic --cache "$CACHE" --target "$TARGET" \
+  --transport ssh --substituter "$ATTIC_SUBSTITUTER" \
+  --trusted-public-key "$ATTIC_TRUSTED_PUBLIC_KEY" --require-substitute "$SYSTEM_PATH"
+```
+
+Target-side cache verification:
+
+```sh
+just attic-verify-host-substituters --check-env
+just attic-verify-host-substituters --dry-run
+just attic-verify-host-substituters --dry-run --resolve-netbird-peers
+```
+
+Stop before rotating cache keys, broadening tokens, bypassing trusted public
+keys, or activating a manifest that requires unavailable cache coverage.
+
+## Incus/LXC Rehearsal
+
+Runtime rehearsal is the planned M7 production gate. Until the generic harness
+exists, check-env and dry-run results are useful evidence but not production
+enablement.
+
+```sh
+bash scripts/deployment-incus-rehearsal.sh break-glass --check-env
+bash scripts/deployment-incus-rehearsal.sh break-glass --check-runtime
+bash scripts/deployment-incus-rehearsal.sh break-glass --dry-run
+bash scripts/deployment-incus-rehearsal.sh break-glass
+bash scripts/deployment-incus-rehearsal.sh topology-pull-agent-offline --check-env
+bash scripts/deployment-incus-rehearsal.sh topology-pull-agent-offline --dry-run
+bash scripts/deployment-incus-rehearsal.sh topology-pull-agent-offline
+```
+
+The rehearsal topology must model controller, cache, monitoring collector,
+direct targets, intermittently reachable targets, and optional pull-agent
+targets. Networks must model control, cache, home-lab-like, remote-server-like,
+and optional workstation reachability. Failure injections must include target
+partition, older and newer desired states, cache missing object or corruption,
+forced-command misuse, health-check failure, rollback, and lock contention.
+
+Evidence required before production enablement: topology inventory, network
+graph, generated credentials, failure injection log, event JSONL, target
+journals, cache logs, metrics snapshot, final state for every target, and a
+mapping from rehearsal roles to rollout groups.
+
+## Updating Deployment Code
+
+Deployment code changes must not strand the control plane.
+
+1. Keep the existing production path available during the migration.
+2. Add or update deterministic unit and NixOS VM checks first.
+3. Rehearse direct SSH and rollback before changing controller or target agent
+   code in production.
+4. Stage changes so the code that can repair the controller is deployed before
+   code that depends on the new controller behavior.
+5. Do not remove Cachix Deploy fallback until the production gate says so.
+
+## Human Approval Required
+
+Ask for human approval before production deploys, rollback, cache key rotation,
+secret edits, retry budget increases, target-host remapping, bypassing SSH host
+key checks, bypassing manifest signature checks, clearing non-retryable state,
+or accepting a runtime-pending rehearsal as a passed production gate. Never
+proceed when bypassing SSH host key checks or bypassing manifest signature
+checks would be required.

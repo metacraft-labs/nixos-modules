@@ -18,6 +18,9 @@ the production deployment path.
   incident queries, and current target-side observability limits.
 - [pull-agent.md](pull-agent.md): M5 optional target-side pull agent shape,
   state model, locking, retries, and current verification status.
+- [runbook.md](runbook.md): M6 human operator runbook for investigation,
+  normal deploy, cache operation, break-glass direct SSH, rollback,
+  reconciliation, and Incus/LXC rehearsal gates.
 - [cache-and-deploy-risk-register.md](cache-and-deploy-risk-register.md): M0
   risk register.
 - [event-schema.json](event-schema.json): `DeploymentEvent` JSON schema.

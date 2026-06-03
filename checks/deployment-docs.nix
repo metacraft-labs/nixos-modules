@@ -7,7 +7,9 @@
       ...
     }:
     let
+      repoRoot = ../.;
       docs = ../docs/deployment;
+      skills = ../docs/skills;
       workflow = ../.github/workflows/reusable-flake-checks-ci-matrix.yml;
     in
     {
@@ -223,11 +225,9 @@
         '';
 
         deployment-general-private-split = pkgs.runCommand "deployment-general-private-split" { } ''
-          cd ${docs}
-
           forbidden='solunska|gpu-server|cache\.metacraft-labs\.com|metacraft-private-infrastructure'
-          generic_files=$(find . -type f \
-            ! -path './private-inventory.md' \
+          generic_files=$(find ${docs} ${skills} -type f \
+            ! -path '${docs}/private-inventory.md' \
             \( -name '*.md' -o -name '*.json' -o -name '*.jsonl' \))
 
           if grep -Eni "$forbidden" $generic_files; then
@@ -235,7 +235,7 @@
             exit 1
           fi
 
-          private=private-inventory.md
+          private=${docs}/private-inventory.md
           for term in \
             solunska \
             gpu-server \
@@ -250,6 +250,394 @@
             fi
           done
 
+          touch "$out"
+        '';
+
+        deployment-skill-doc-command-references =
+          pkgs.runCommand "deployment-skill-doc-command-references" { }
+            ''
+              ${pkgs.python3}/bin/python3 <<'PY'
+              import json
+              import re
+              import shlex
+              from pathlib import Path
+
+              repo = Path("${repoRoot}")
+              docs = Path("${docs}")
+              skills = Path("${skills}")
+              surface = json.loads((docs / "operator-command-surface.json").read_text())
+
+              skill_names = [
+                  "deployment-investigation",
+                  "deployment-operation",
+                  "cache-operation",
+                  "deployment-break-glass",
+                  "deployment-reconciler",
+                  "deployment-e2e-rehearsal",
+              ]
+              required_sections = [
+                  "## Prerequisites",
+                  "## Commands",
+                  "## Workflow",
+                  "## Evidence",
+                  "## Stop And Ask",
+                  "## Rollback",
+              ]
+
+              def require(condition, message):
+                  if not condition:
+                      raise SystemExit(message)
+
+              def read(path):
+                  require(path.is_file(), f"missing required file: {path}")
+                  return path.read_text()
+
+              skill_paths = [skills / name / "SKILL.md" for name in skill_names]
+              runbook = docs / "runbook.md"
+              all_docs = skill_paths + [runbook]
+              for name, path in zip(skill_names, skill_paths):
+                  text = read(path)
+                  frontmatter = re.match(r"---\n(.*?)\n---\n", text, re.S)
+                  require(frontmatter, f"{path}: missing YAML frontmatter")
+                  require(f"name: {name}" in frontmatter.group(1), f"{path}: frontmatter name mismatch")
+                  require("description:" in frontmatter.group(1), f"{path}: missing description")
+                  for section in required_sections:
+                      require(section in text, f"{path}: missing required section {section}")
+                  require("```sh" in text, f"{path}: missing shell command block")
+
+              require(read(runbook).startswith("# Deployment Operator Runbook"), "runbook title drifted")
+
+              for command, spec in surface["mclCommands"].items():
+                  source = repo / spec["source"]
+                  source_text = read(source)
+                  for token in spec["tokens"]:
+                      require(token in source_text, f"{command}: source token missing from {source}: {token}")
+
+              required_by_file = {
+                  "docs/skills/deployment-investigation/SKILL.md": [
+                      "mcl deploy-status summarize",
+                      "gh run view",
+                      "gh run download",
+                      "nix path-info --store",
+                  ],
+                  "docs/skills/deployment-operation/SKILL.md": [
+                      "just deploy-machine",
+                      "just deploy-machine-direct-ssh",
+                      "mcl cache push-closure",
+                      "mcl deploy-plan",
+                      "mcl deploy-ssh",
+                      "mcl deploy-status summarize",
+                  ],
+                  "docs/skills/cache-operation/SKILL.md": [
+                      "mcl cache push-closure",
+                      "nix path-info --store",
+                      "just attic-verify-host-substituters",
+                  ],
+                  "docs/skills/deployment-break-glass/SKILL.md": [
+                      "just deploy-machine-direct-ssh",
+                      "mcl deploy-plan",
+                      "mcl deploy-ssh",
+                      "just rollback-machine-direct-ssh",
+                  ],
+                  "docs/skills/deployment-reconciler/SKILL.md": [
+                      "mcl deploy-reconcile",
+                      "mcl deploy-agent",
+                      "systemctl status mcl-deployment-reconciler.service",
+                      "systemctl status mcl-deploy-agent.service",
+                  ],
+                  "docs/skills/deployment-e2e-rehearsal/SKILL.md": [
+                      "deployment-direct-ssh-success-vm",
+                      "deployment-direct-ssh-rollback-vm",
+                      "deployment-direct-ssh-attic-restore-vm",
+                      "deployment-reconciler-timer-retry-vm",
+                      "deployment-reconciler-lock-contention-vm",
+                      "deployment-pull-agent-latest-vm",
+                      "deployment-pull-agent-rejects-invalid-vm",
+                      "deployment-pull-agent-lock-contention-vm",
+                      "bash scripts/deployment-incus-rehearsal.sh",
+                  ],
+                  "docs/deployment/runbook.md": [
+                      "mcl deploy-status summarize",
+                      "just deploy-machine-direct-ssh",
+                      "mcl cache push-closure",
+                      "mcl deploy-plan",
+                      "mcl deploy-ssh",
+                      "mcl deploy-reconcile",
+                      "mcl deploy-apply",
+                      "just attic-verify-host-substituters",
+                      "bash scripts/deployment-incus-rehearsal.sh",
+                  ],
+              }
+
+              for rel, terms in required_by_file.items():
+                  path = repo / rel
+                  text = read(path)
+                  for term in terms:
+                      require(term in text, f"{rel}: missing documented command/check {term!r}")
+
+              allowed_mcl_commands = set(surface["mclCommands"])
+              allowed_just_targets = set(surface["infraJustTargets"])
+
+              def shell_blocks(text):
+                  in_block = False
+                  for line in text.splitlines():
+                      if line.startswith("```"):
+                          fence = line.strip()
+                          if not in_block and fence in {"```sh", "```bash"}:
+                              in_block = True
+                              continue
+                          if in_block:
+                              in_block = False
+                              continue
+                      if in_block:
+                          stripped = line.strip()
+                          if stripped and not stripped.startswith("#"):
+                              yield stripped
+
+              def parse_command_line(line):
+                  try:
+                      return shlex.split(line.rstrip("\\"))
+                  except ValueError as error:
+                      raise SystemExit(f"invalid shell command line in M6 docs: {line!r}: {error}") from error
+
+              def doc_label(path):
+                  if path == runbook:
+                      return "docs/deployment/runbook.md"
+                  return f"docs/skills/{path.parent.name}/SKILL.md"
+
+              for path in all_docs:
+                  rel = doc_label(path)
+                  for line in shell_blocks(read(path)):
+                      tokens = parse_command_line(line)
+                      if not tokens:
+                          continue
+                      if tokens[0] == "mcl":
+                          prefixes = [
+                              " ".join(tokens[:width])
+                              for width in range(min(len(tokens), 3), 1, -1)
+                          ]
+                          require(
+                              any(prefix in allowed_mcl_commands for prefix in prefixes),
+                              f"{rel}: documented stale or uninventoried mcl command: {line!r}",
+                          )
+                      if tokens[0] == "just":
+                          require(
+                              len(tokens) >= 2 and tokens[1] in allowed_just_targets,
+                              f"{rel}: documented stale or uninventoried just target: {line!r}",
+                          )
+
+              all_text = "\n".join(read(path) for path in all_docs)
+              for command in surface["mclCommands"]:
+                  if command in all_text:
+                      continue
+                  require(command == "mcl deploy-apply", f"mcl command not referenced by docs: {command}")
+              for target in surface["infraJustTargets"]:
+                  if target in all_text:
+                      continue
+                  require(target in {"deploy-machine-cachix", "deploy-machine-remote-switch"}, f"Just target not referenced by docs: {target}")
+
+              forbidden_test_words = re.compile(r"\b(skip|skipped|ignore|ignored|placeholder)\b", re.I)
+              for path in all_docs:
+                  text = read(path)
+                  matches = [m.group(0) for m in forbidden_test_words.finditer(text)]
+                  allowed = {"pending"} if path.name == "runbook.md" else set()
+                  require(not matches, f"{path}: weak-test wording is not allowed in M6 docs: {matches}")
+              PY
+              touch "$out"
+            '';
+
+        deployment-break-glass-runbook-sections =
+          pkgs.runCommand "deployment-break-glass-runbook-sections" { }
+            ''
+              ${pkgs.python3}/bin/python3 <<'PY'
+              from pathlib import Path
+
+              skill = Path("${skills}") / "deployment-break-glass" / "SKILL.md"
+              runbook = Path("${docs}") / "runbook.md"
+              skill_text = skill.read_text()
+              runbook_text = runbook.read_text()
+
+              def require(term, text, label):
+                  if term not in text:
+                      raise SystemExit(f"{label}: missing {term!r}")
+
+              for section in [
+                  "## Prerequisites",
+                  "## Commands",
+                  "## Workflow",
+                  "## Forced-command SSH Boundary",
+                  "## Evidence",
+                  "## Stop And Ask",
+                  "## Rollback",
+              ]:
+                  require(section, skill_text, str(skill))
+
+              for section in [
+                  "## Safe Direct SSH Deploy",
+                  "## Rollback",
+                  "## Forced-command SSH Boundary",
+                  "## Human Approval Required",
+              ]:
+                  require(section, runbook_text, str(runbook))
+
+              for term in [
+                  "human approval",
+                  "verified host key",
+                  "MCL_DEPLOY_MANIFEST_SIGNING_KEY",
+                  "MCL_DEPLOY_SSH_IDENTITY",
+                  "just deploy-machine-direct-ssh",
+                  "mcl deploy-plan",
+                  "mcl deploy-ssh",
+                  "just rollback-machine-direct-ssh",
+                  "BatchMode=yes",
+                  "StrictHostKeyChecking=yes",
+                  "--reject-ssh-original-command",
+                  "allowed-signers",
+                  "sudo -n",
+                  "SSH_ORIGINAL_COMMAND",
+                  "restrict,no-agent-forwarding,no-X11-forwarding,no-port-forwarding,no-pty",
+                  "manifest signature",
+                  "manifest target",
+              ]:
+                  require(term, skill_text, str(skill))
+
+              for term in [
+                  "verified SSH host key",
+                  "restricted deploy SSH key",
+                  "signed manifest",
+                  "cache substitute proof",
+                  "interactive shell",
+                  "sudo -n",
+                  "mcl deploy-apply --manifest - --allowed-signers",
+                  "--reject-ssh-original-command",
+                  "bypassing SSH host key checks",
+                  "bypassing manifest signature checks",
+              ]:
+                  require(term, runbook_text, str(runbook))
+              PY
+              touch "$out"
+            '';
+
+        deployment-reconciler-skill-doc = pkgs.runCommand "deployment-reconciler-skill-doc" { } ''
+          ${pkgs.python3}/bin/python3 <<'PY'
+          from pathlib import Path
+
+          repo = Path("${repoRoot}")
+          skill = Path("${skills}") / "deployment-reconciler" / "SKILL.md"
+          runbook = Path("${docs}") / "runbook.md"
+          state_source = repo / "packages/mcl/src/mcl/utils/deploy_state.d"
+          agent_source = repo / "packages/mcl/src/mcl/commands/deploy_agent.d"
+
+          combined = skill.read_text() + "\n" + runbook.read_text()
+          for term in [
+              "latest-only",
+              "pending",
+              "accepted",
+              "superseded",
+              "failed",
+              "converged",
+              "succeeded",
+              "retryable",
+              "retry budget",
+              "non-retryable",
+              "maxAttempts",
+              "same-sequence",
+              "different deployment id",
+              "flock -n",
+              "targets/<target>.json",
+              "desired/",
+              "current/",
+              "failed/",
+              "superseded/",
+              "converged/",
+              "agent-status/",
+              "mcl deploy-reconcile --state-dir",
+              "mcl deploy-agent --target",
+              "mcl-deployment-reconciler.service",
+              "mcl-deploy-agent.service",
+          ]:
+              if term not in combined:
+                  raise SystemExit(f"reconciler docs missing {term!r}")
+
+          source_text = state_source.read_text()
+          for token in [
+              '"desired"',
+              '"current"',
+              '"failed"',
+              '"superseded"',
+              '"converged"',
+              '"targets"',
+              '"agent-status"',
+              "recordDesiredManifest",
+              "supersededStateForLatest",
+          ]:
+              if token not in source_text:
+                  raise SystemExit(f"deploy_state source missing expected token {token!r}")
+
+          agent_text = agent_source.read_text()
+          for token in [
+              '"non-retryable"',
+              '"retry_budget_exhausted"',
+              "maxAttempts",
+              "latestCandidate",
+          ]:
+              if token not in agent_text:
+                  raise SystemExit(f"deploy_agent source missing expected token {token!r}")
+          PY
+          touch "$out"
+        '';
+
+        deployment-e2e-rehearsal-skill-doc = pkgs.runCommand "deployment-e2e-rehearsal-skill-doc" { } ''
+          ${pkgs.python3}/bin/python3 <<'PY'
+          import json
+          from pathlib import Path
+
+          docs = Path("${docs}")
+          skill = Path("${skills}") / "deployment-e2e-rehearsal" / "SKILL.md"
+          runbook = docs / "runbook.md"
+          surface = json.loads((docs / "operator-command-surface.json").read_text())
+          text = skill.read_text()
+          combined = text + "\n" + runbook.read_text()
+          normalized = " ".join(combined.split())
+
+          for check in surface["nixChecks"]:
+              if check not in text:
+                  raise SystemExit(f"e2e skill missing NixOS VM check {check}")
+
+          for scenario in surface["rehearsalScenarios"]:
+              if scenario not in combined:
+                  raise SystemExit(f"e2e docs missing rehearsal scenario {scenario}")
+
+          for term in [
+              "Incus/LXC",
+              "--check-env",
+              "--check-runtime",
+              "--dry-run",
+              "bash scripts/deployment-incus-rehearsal.sh break-glass --check-env",
+              "bash scripts/deployment-incus-rehearsal.sh break-glass --check-runtime",
+              "bash scripts/deployment-incus-rehearsal.sh break-glass --dry-run",
+              "bash scripts/deployment-incus-rehearsal.sh break-glass",
+              "topology-pull-agent-offline",
+              "Runtime launch is acceptable pending until the generic M7 harness exists",
+              "controller or CI runner",
+              "Attic cache",
+              "monitoring or status collector",
+              "network partition",
+              "stale desired state",
+              "newer desired state while offline",
+              "cache object missing or corruption",
+              "forced-command SSH misuse",
+              "health-check failure",
+              "rollback",
+              "lock contention",
+              "production enablement",
+              "event JSONL",
+              "target journals",
+              "metrics snapshot",
+          ]:
+              if " ".join(term.split()) not in normalized:
+                  raise SystemExit(f"e2e rehearsal docs missing {term!r}")
+          PY
           touch "$out"
         '';
 

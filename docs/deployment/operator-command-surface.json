@@ -1,0 +1,73 @@
+{
+  "mclCommands": {
+    "mcl cache push-closure": {
+      "source": "packages/mcl/src/mcl/commands/cache.d",
+      "tokens": [
+        "Command(\"cache\")",
+        "Command(\"push-closure\")"
+      ]
+    },
+    "mcl deploy-agent": {
+      "source": "packages/mcl/src/mcl/commands/deploy_agent.d",
+      "tokens": [
+        "Command(\"deploy-agent\")"
+      ]
+    },
+    "mcl deploy-apply": {
+      "source": "packages/mcl/src/mcl/commands/deploy_apply.d",
+      "tokens": [
+        "Command(\"deploy-apply\")"
+      ]
+    },
+    "mcl deploy-plan": {
+      "source": "packages/mcl/src/mcl/commands/deploy_plan.d",
+      "tokens": [
+        "Command(\"deploy-plan\")"
+      ]
+    },
+    "mcl deploy-reconcile": {
+      "source": "packages/mcl/src/mcl/commands/deploy_reconcile.d",
+      "tokens": [
+        "Command(\"deploy-reconcile\")"
+      ]
+    },
+    "mcl deploy-ssh": {
+      "source": "packages/mcl/src/mcl/commands/deploy_ssh.d",
+      "tokens": [
+        "Command(\"deploy-ssh\")"
+      ]
+    },
+    "mcl deploy-status summarize": {
+      "source": "packages/mcl/src/mcl/commands/deploy_status.d",
+      "tokens": [
+        "Command(\"deploy-status\")",
+        "Command(\"summarize\")"
+      ]
+    }
+  },
+  "infraJustTargets": [
+    "attic-verify-host-substituters",
+    "deploy-machine",
+    "deploy-machine-cachix",
+    "deploy-machine-direct-ssh",
+    "deploy-machine-remote-switch",
+    "rollback-machine-direct-ssh"
+  ],
+  "nixChecks": [
+    "deployment-direct-ssh-success-vm",
+    "deployment-direct-ssh-rollback-vm",
+    "deployment-direct-ssh-attic-restore-vm",
+    "deployment-reconciler-timer-retry-vm",
+    "deployment-reconciler-lock-contention-vm",
+    "deployment-pull-agent-latest-vm",
+    "deployment-pull-agent-rejects-invalid-vm",
+    "deployment-pull-agent-lock-contention-vm"
+  ],
+  "rehearsalScripts": [
+    "scripts/deployment-incus-rehearsal.sh"
+  ],
+  "rehearsalScenarios": [
+    "break-glass",
+    "topology-pull-agent-offline"
+  ]
+}
