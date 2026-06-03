@@ -9,10 +9,12 @@ inputs:
     default: false
   cachix-cache:
     description: The name of the cachix cache to use
-    required: true
+    required: false
+    default: ''
   cachix-auth-token:
     description: Cachix auth token
-    required: true
+    required: false
+    default: ''
   trusted-public-keys:
     description: Trusted public keys
     required: false
@@ -118,12 +120,16 @@ runs:
           netrc-file = $HOME/.config/nix/netrc
         EOF
 
-        cat << EOF > "$HOME/.config/nix/netrc"
-          machine ${{inputs.cachix-cache}}.cachix.org password ${{inputs.cachix-auth-token}}
+        touch "$HOME/.config/nix/netrc"
+        chmod 0600 "$HOME/.config/nix/netrc"
+        if [[ -n "${{ inputs.cachix-cache }}" && -n "${{ inputs.cachix-auth-token }}" ]]; then
+          cat << EOF >> "$HOME/.config/nix/netrc"
+          machine ${{ inputs.cachix-cache }}.cachix.org password ${{ inputs.cachix-auth-token }}
         EOF
+        fi
 
     - uses: cachix/cachix-action@v15
-      if: ${{ fromJSON(inputs.push-to-cache || 'false') }}
+      if: ${{ fromJSON(inputs.push-to-cache || 'false') && inputs.cachix-cache != '' && inputs.cachix-auth-token != '' }}
       with:
         name: ${{ inputs.cachix-cache }}
         authToken: ${{ inputs.cachix-auth-token }}

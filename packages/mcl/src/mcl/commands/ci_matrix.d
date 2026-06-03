@@ -189,7 +189,7 @@ mixin template CiMatrixBaseArgs()
     import std.json : parseJSON;
     import std.stdio : writeln, stderr, stdout;
 
-    import argparse : Command, Description, NamedArgument, Required, Parse, Placeholder, EnvFallback;
+    import argparse : Command, Description, NamedArgument, Placeholder, EnvFallback;
 
     import mcl.utils.json : fromJSON;
     import mcl.utils.cachix : cachixNixStoreUrl;
@@ -220,7 +220,6 @@ mixin template CiMatrixBaseArgs()
     @(NamedArgument(["cachix-cache"])
         .Placeholder("cache-name")
         .EnvFallback("CACHIX_CACHE")
-        .Required()
     )
     string cachixCache;
 
@@ -238,19 +237,37 @@ mixin template CiMatrixBaseArgs()
 
     string[] binaryCacheUrls() const
     {
-        import std.algorithm.iteration : map;
+        import std.algorithm.iteration : filter, joiner, map;
         import std.range : array, chain;
-        return (this.cachixCache ~ this.extraCachixCaches)
+        import std.string : split;
+
+        const string[] cachixCaches = (
+            this.cachixCache.length
+                ? [this.cachixCache]
+                : []
+        )
+            .chain(this.extraCachixCaches)
+            .filter!(cache => cache.length)
+            .array;
+
+        return cachixCaches
             .map!cachixNixStoreUrl
-            .chain(this.extraCacheUrls)
+            .chain(this.extraCacheUrls.map!(urls => urls.split).joiner)
+            .filter!(url => url.length)
             .array
             .to!(string[]);
+    }
+
+    string[string] cacheStatusAuthHeaders() const
+    {
+        return this.cachixAuthToken.length
+            ? ["Authorization": "Bearer " ~ this.cachixAuthToken]
+            : null;
     }
 
     @(NamedArgument(["cachix-auth-token"])
         .Placeholder("token")
         .EnvFallback("CACHIX_AUTH_TOKEN")
-        .Required()
     )
     string cachixAuthToken;
 
@@ -280,6 +297,41 @@ mixin template CiMatrixBaseArgs()
 struct CiMatrixArgs
 {
     mixin CiMatrixBaseArgs!();
+}
+
+@("ci matrix cache URLs do not require Cachix")
+unittest
+{
+    auto args = CiMatrixArgs(
+        cachixCache: "",
+        extraCachixCaches: ["", "team-cache"],
+        extraCacheUrls: ["https://attic.example/cache https://mirror.example/cache", ""],
+        cachixAuthToken: "",
+    );
+
+    assert(args.binaryCacheUrls == [
+        "https://team-cache.cachix.org",
+        "https://attic.example/cache",
+        "https://mirror.example/cache",
+    ]);
+    assert(args.cacheStatusAuthHeaders is null);
+}
+
+@("ci matrix cache status authorization is optional")
+unittest
+{
+    auto args = CiMatrixArgs(
+        cachixCache: "primary-cache",
+        extraCachixCaches: [],
+        extraCacheUrls: ["https://cache.nixos.org"],
+        cachixAuthToken: "secret",
+    );
+
+    assert(args.binaryCacheUrls == [
+        "https://primary-cache.cachix.org",
+        "https://cache.nixos.org",
+    ]);
+    assert(args.cacheStatusAuthHeaders["Authorization"] == "Bearer secret");
 }
 
 @(Command("print-table", "print_table")
@@ -336,17 +388,13 @@ Package[] checkCacheStatus(T)(Package[] packages, auto ref T args)
         @MaxWidth(80) string output;
     }
 
-    immutable string[string] cachixAuthHeaders = [
-        "Authorization": "Bearer " ~ args.cachixAuthToken
-    ];
-
     const useOscLinks = supportsOscLinks();
     foreach (ref pkg; packages.parallel) {
         // Skip cache check if already has cached URLs
         if (pkg.cachedAt.empty)
         {
             pkg.cachedAt ~= args.binaryCacheUrls
-                .filter!(url => pkg.isCached(url, cachixAuthHeaders))
+                .filter!(url => pkg.isCached(url, args.cacheStatusAuthHeaders))
                 .map!(url => pkg.getNarInfoUrl(url))
                 .array;
         }
@@ -488,10 +536,6 @@ Package[] nixEvalJobs(T)(string flakeAttrPath, auto ref T args)
     {
         errorf("Command `%s` failed with error:\n---\n%s\n---", commandString, msg);
     }
-
-    immutable string[string] cachixAuthHeaders = [
-        "Authorization": "Bearer " ~ args.cachixAuthToken
-    ];
 
     const errorsReported = pipes.stdout.byLine.fold!((errorsReported, line) {
         auto json = parseJSON(line);
