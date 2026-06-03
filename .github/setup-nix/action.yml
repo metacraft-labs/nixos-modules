@@ -115,7 +115,7 @@ runs:
 
           substituters = https://cache.nixos.org ${{inputs.substituters}}
           trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= ${{inputs.trusted-public-keys}}
-          netrc-file = $HOME/.config/nix/netrc"
+          netrc-file = $HOME/.config/nix/netrc
         EOF
 
         cat << EOF > "$HOME/.config/nix/netrc"
