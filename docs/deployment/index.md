@@ -14,6 +14,8 @@ the production deployment path.
   that should become backend abstractions.
 - [rehearsal-harness.md](rehearsal-harness.md): current observed rehearsal
   prior art and generic harness candidates.
+- [monitoring.md](monitoring.md): M3 deployment and Attic cache metrics,
+  incident queries, and current target-side observability limits.
 - [cache-and-deploy-risk-register.md](cache-and-deploy-risk-register.md): M0
   risk register.
 - [event-schema.json](event-schema.json): `DeploymentEvent` JSON schema.

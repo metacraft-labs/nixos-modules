@@ -4,6 +4,7 @@
     ./desktop-vms
     ./deployment-docs.nix
     ./deployment-cache.nix
+    ./deployment-monitoring.nix
     ./packages-ci-matrix.nix
     ./pre-commit.nix
     ./secret-integration

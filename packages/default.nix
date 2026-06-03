@@ -61,6 +61,7 @@
 
       packages = {
         cachix-deploy-metrics = pkgs.callPackage ./cachix-deploy-metrics { };
+        deployment-event-metrics = pkgs.callPackage ./deployment-event-metrics { };
         lido-withdrawals-automation = pkgs.callPackage ./lido-withdrawals-automation { };
         pyroscope = pkgs.callPackage ./pyroscope { };
         random-alerts = pkgs.callPackage ./random-alerts { };

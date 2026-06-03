@@ -6,6 +6,7 @@
     ./aztec
     ./cachix-deploy
     ./folder-size-metrics
+    ./deployment-event-metrics
     ./netbird-with-agenix
     ./shard-split
     ./random-alerts
