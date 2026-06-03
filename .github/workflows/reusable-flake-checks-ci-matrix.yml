@@ -270,6 +270,33 @@ jobs:
           DEPLOYMENT_TRUSTED_SUBSTITUTERS: ${{ vars.SUBSTITUTERS }}
         run: |
           mkdir -p .result
+          if [[ -n "$ATTIC_TOKEN" && -n "$ATTIC_SUBSTITUTER" ]]; then
+            attic_host="${ATTIC_SUBSTITUTER#http://}"
+            attic_host="${attic_host#https://}"
+            attic_host="${attic_host%%/*}"
+            if [[ -z "$attic_host" ]]; then
+              echo "Could not derive Attic host from ATTIC_SUBSTITUTER" >&2
+              exit 1
+            fi
+
+            nix_netrc="$HOME/.config/nix/netrc"
+            mkdir -p "${nix_netrc%/*}"
+            touch "$nix_netrc"
+            chmod 0600 "$nix_netrc"
+
+            has_attic_netrc_entry=false
+            while read -r kind machine _; do
+              if [[ "$kind" == "machine" && "$machine" == "$attic_host" ]]; then
+                has_attic_netrc_entry=true
+                break
+              fi
+            done < "$nix_netrc"
+
+            if [[ "$has_attic_netrc_entry" == false ]]; then
+              printf 'machine %s password %s\n' "$attic_host" "$ATTIC_TOKEN" >> "$nix_netrc"
+            fi
+          fi
+
           IFS=',' read -ra backends <<< "$DEPLOYMENT_CACHE_PUSH_BACKENDS"
           for backend in "${backends[@]}"; do
             # Trim leading/trailing whitespace without external commands.
