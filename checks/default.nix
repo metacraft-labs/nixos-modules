@@ -5,6 +5,7 @@
     ./deployment-docs.nix
     ./deployment-cache.nix
     ./deployment-monitoring.nix
+    ./deployment-pull-agent.nix
     ./deployment-reconciler.nix
     ./packages-ci-matrix.nix
     ./pre-commit.nix

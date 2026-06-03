@@ -5,6 +5,7 @@ import std.meta : ApplyLeft, staticMap;
 private enum commandModulesToExport =
 [
     "mcl.commands.deploy_apply" : ["deploy_apply"],
+    "mcl.commands.deploy_agent" : ["deploy_agent"],
     "mcl.commands.deploy_plan" : ["deploy_plan"],
     "mcl.commands.deploy_reconcile" : ["deploy_reconcile"],
     "mcl.commands.deploy_spec" : ["deploy_spec"],

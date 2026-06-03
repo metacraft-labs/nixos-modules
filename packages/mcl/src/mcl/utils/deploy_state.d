@@ -13,10 +13,10 @@ import mcl.utils.deploy_manifest : manifestDeploymentId, manifestDesiredSystemPa
     manifestSequence, manifestTarget;
 import mcl.utils.deployment_events : utcTimestamp;
 
-string safeTargetName(string target)
+string safePathComponent(string value)
 {
     string result;
-    foreach (ch; target)
+    foreach (ch; value)
     {
         const ok = (ch >= 'a' && ch <= 'z')
             || (ch >= 'A' && ch <= 'Z')
@@ -29,15 +29,26 @@ string safeTargetName(string target)
     return result == "" ? "unknown" : result;
 }
 
+string safeTargetName(string target) => safePathComponent(target);
+
 void ensureDeployStateDirs(string stateDir)
 {
-    foreach (name; ["desired", "current", "failed", "superseded", "converged", "targets", "locks"])
+    foreach (name; [
+        "desired",
+        "current",
+        "failed",
+        "superseded",
+        "converged",
+        "targets",
+        "locks",
+        "agent-status",
+    ])
         mkdirRecurse(stateDir.buildPath(name));
 }
 
 string manifestStatePath(string stateDir, string category, string deploymentId)
 {
-    return stateDir.buildPath(category, deploymentId ~ ".json");
+    return stateDir.buildPath(category, safePathComponent(deploymentId) ~ ".json");
 }
 
 string targetLatestPath(string stateDir, string target)
@@ -199,6 +210,32 @@ unittest
     assert(recordDesiredManifest(stateDir, newManifest));
     assert(manifestDeploymentId(loadLatestManifest(stateDir, "app-1").get) == "deploy-42");
     assert(manifestStatePath(stateDir, "superseded", "deploy-41").exists);
+}
+
+@("test_deploy_state_sanitizes_deployment_id_paths")
+unittest
+{
+    import std.file : deleteme, rmdirRecurse;
+    import mcl.utils.deploy_manifest : ManifestBuildRequest, buildManifest;
+
+    auto stateDir = deleteme ~ ".state.sanitize-deployment-id";
+    scope(exit)
+    {
+        if (stateDir.exists) stateDir.rmdirRecurse;
+    }
+
+    auto manifest = buildManifest(ManifestBuildRequest(
+        deploymentId: "../targets/owned",
+        target: "app-1",
+        gitRevision: "0123456789abcdef0123456789abcdef01234567",
+        sequence: 1,
+        desiredSystemPath: "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-system",
+    ));
+
+    assert(recordDesiredManifest(stateDir, manifest));
+    assert(stateDir.buildPath("desired", ".._targets_owned.json").exists);
+    assert(!stateDir.buildPath("targets", "owned.json").exists);
+    assert(stateDir.buildPath("targets", "app-1.json").exists);
 }
 
 @("test_latest_only_state_rejects_stale_deployment")

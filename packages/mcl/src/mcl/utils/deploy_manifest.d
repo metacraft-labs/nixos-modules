@@ -3,11 +3,13 @@ module mcl.utils.deploy_manifest;
 import std.algorithm : canFind, map, sort;
 import std.array : array, join, split;
 import std.conv : to;
-import std.file : deleteme, exists, readText, remove, write;
+import std.file : deleteme, exists, mkdir, readText, remove, rmdirRecurse, tempDir,
+    write;
 import std.json : JSONOptions, JSONType, JSONValue, parseJSON;
-import std.path : baseName;
+import std.path : baseName, buildPath;
 import std.string : strip;
 import std.typecons : Nullable;
+import std.uuid : randomUUID;
 
 import mcl.utils.deployment_events : ClosureSummary, storePathHash, utcTimestamp;
 import mcl.utils.process : ProcessInputRunner, ProcessResult, ProcessRunner,
@@ -225,15 +227,11 @@ JSONValue signManifest(
     ]);
 
     auto payload = canonicalJson(unsigned);
-    auto temp = deleteme;
-    auto payloadPath = temp ~ ".payload.json";
+    auto temp = tempDir.buildPath("mcl-manifest-sign-" ~ randomUUID.toString);
+    temp.mkdir;
+    auto payloadPath = temp.buildPath("payload.json");
     auto sigPath = payloadPath ~ ".sig";
-    scope(exit)
-    {
-        if (temp.exists) temp.remove;
-        if (payloadPath.exists) payloadPath.remove;
-        if (sigPath.exists) sigPath.remove;
-    }
+    scope(exit) if (temp.exists) temp.rmdirRecurse;
 
     payloadPath.write(payload);
     auto result = runner([
@@ -277,14 +275,13 @@ bool verifyManifestSignature(
     enforce(trustedPublicKey != "" || allowedSignersPath != "",
         "A trusted manifest public key or allowed signers file is required.");
 
-    auto temp = deleteme;
-    auto sigPath = temp ~ ".sig";
-    auto allowedPath = allowedSignersPath == "" ? temp ~ ".allowed-signers" : allowedSignersPath;
+    auto temp = tempDir.buildPath("mcl-manifest-verify-" ~ randomUUID.toString);
+    temp.mkdir;
+    auto sigPath = temp.buildPath("signature.sig");
+    auto allowedPath = allowedSignersPath == "" ? temp.buildPath("allowed-signers") : allowedSignersPath;
     scope(exit)
     {
-        if (temp.exists) temp.remove;
-        if (sigPath.exists) sigPath.remove;
-        if (allowedSignersPath == "" && allowedPath.exists) allowedPath.remove;
+        if (temp.exists) temp.rmdirRecurse;
     }
 
     sigPath.write(manifestSignature(manifest));

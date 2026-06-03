@@ -18,11 +18,14 @@ let
       gitMinimal
       jc
       util-linux
+      bash
+      coreutils
       xorg.xrandr
       alejandra
       openssh
       cachix
       attic-client
+      curl
     ])
     ++ lib.optionals (isLinux && isx86) [
       dmidecode

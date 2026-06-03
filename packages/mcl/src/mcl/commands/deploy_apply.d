@@ -89,6 +89,16 @@ struct DeployApplyArgs
         .Description("Command that prints the current system generation path")
         .EnvFallback("MCL_DEPLOY_GENERATION_COMMAND"))
     string generationCommand = "readlink -f /run/current-system";
+
+    @(NamedArgument(["transport"])
+        .Placeholder("NAME")
+        .Description("Deployment transport recorded in target-side events"))
+    string transport = "ssh";
+
+    @(NamedArgument(["controller"])
+        .Placeholder("NAME")
+        .Description("Deployment controller recorded in target-side events"))
+    string controller = "mcl-reconciler";
 }
 
 struct DeployApplyDependencies
@@ -139,7 +149,7 @@ bool automaticRollbackRequested(JSONValue manifest)
 
 ProcessResult shell(ProcessRunner runner, string command)
 {
-    return runner(["sh", "-c", command]);
+    return runner(["/bin/sh", "-c", command]);
 }
 
 int deployApplyImpl(DeployApplyArgs args, DeployApplyDependencies deps)
@@ -173,8 +183,8 @@ int deployApplyImpl(DeployApplyArgs args, DeployApplyDependencies deps)
         substituters: manifestSubstituters(manifest),
         system: manifestSystem(manifest),
         kind: "server",
-        transport: "ssh",
-        controller: "mcl-reconciler",
+        transport: args.transport,
+        controller: args.controller,
     );
     auto closure = queryClosureSummary(manifestDesiredSystemPath(manifest), queryRunner);
 

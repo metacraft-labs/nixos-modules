@@ -16,6 +16,8 @@ the production deployment path.
   prior art and generic harness candidates.
 - [monitoring.md](monitoring.md): M3 deployment and Attic cache metrics,
   incident queries, and current target-side observability limits.
+- [pull-agent.md](pull-agent.md): M5 optional target-side pull agent shape,
+  state model, locking, retries, and current verification status.
 - [cache-and-deploy-risk-register.md](cache-and-deploy-risk-register.md): M0
   risk register.
 - [event-schema.json](event-schema.json): `DeploymentEvent` JSON schema.
