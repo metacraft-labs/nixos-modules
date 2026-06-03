@@ -184,6 +184,60 @@
                     "assert event['metadata']['coverage']['probedPathCount'] > 0, event\n"
                     "assert {probe['outcome'] for probe in event['metadata']['probes']} == {'successful-substitute'}, event\n"
                     "PY"
+            )
+          '';
+        };
+
+        deployment-cache-corruption-vm = pkgs.testers.nixosTest {
+          name = "deployment-cache-corruption-vm";
+
+          nodes = {
+            client = lib.recursiveUpdate clientBaseNode {
+              environment.systemPackages = clientBaseNode.environment.systemPackages ++ [
+                self'.packages.mcl
+              ];
+            };
+          };
+
+          testScript = ''
+            start_all()
+
+            with subtest("missing substitute fails the cache integrity gate"):
+                client.fail(
+                    "mcl cache push-closure "
+                    "--backend none "
+                    "--cache missing-cache "
+                    "--target missing-cache-target "
+                    "--system x86_64-linux "
+                    "--kind vm "
+                    "--transport nixos-test "
+                    "--substituter http://127.0.0.1:9/missing-cache "
+                    "--require-substitute "
+                    "--event-log /tmp/cache-corruption-events.jsonl "
+                    "${fixture}"
+                )
+
+            with subtest("failure event identifies the unavailable substitute"):
+                client.succeed(
+                    "python3 - <<'PY'\n"
+                    "import json\n"
+                    "events = [json.loads(line) for line in open('/tmp/cache-corruption-events.jsonl') if line.strip()]\n"
+                    "assert len(events) == 1, events\n"
+                    "event = events[0]\n"
+                    "assert event['phase'] == 'cache-push', event\n"
+                    "assert event['backend']['controller'] == 'none', event\n"
+                    "assert event['backend']['substituters'] == ['http://127.0.0.1:9/missing-cache'], event\n"
+                    "assert event['command']['status'] == 'failed', event\n"
+                    "assert event['error']['code'] == 'cache_probe_failed', event\n"
+                    "assert 'Cache substitute integrity probe failed' in event['error']['message'], event\n"
+                    "coverage = event['metadata']['coverage']\n"
+                    "assert coverage['complete'] is False, coverage\n"
+                    "assert coverage['probedPathCount'] > 0, coverage\n"
+                    "assert coverage['successfulSubstituteCount'] == 0, coverage\n"
+                    "outcomes = {probe['outcome'] for probe in event['metadata']['probes']}\n"
+                    "assert outcomes <= {'narinfo-missing', 'narinfo-present-object-unavailable', 'signature-not-trusted'}, outcomes\n"
+                    "assert outcomes, event\n"
+                    "PY"
                 )
           '';
         };

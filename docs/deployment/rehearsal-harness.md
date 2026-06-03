@@ -1,7 +1,7 @@
 # Rehearsal Harness Inventory
 
-M0 only inventories current prior art. It does not add or change a rehearsal
-runtime.
+M0 inventoried prior art and did not add a rehearsal runtime. M7 adds the
+generic command shape and image builder described here.
 
 ## Observed Current State
 
@@ -15,14 +15,15 @@ harness work:
 - Server default virtualisation configuration that enables Incus.
 - GitHub runner MicroVM/container configuration with forwarded SSH ports.
 
-I did not find checked-in Incus/LXC rehearsal scripts with `--check-env`,
-`--check-runtime`, `--dry-run`, runtime launch, service smoke checks, and
-pending-runtime diagnostics. Those modes are therefore a desired harness
-interface, not existing named scripts in the current observed tree.
+M7 adds `scripts/deployment-incus-rehearsal.sh` with `--check-env`,
+`--check-runtime`, `--dry-run`, runtime launch dispatch, and `pending-runtime`
+diagnostics. The generic script validates declarative topology inventories and
+retains the existing Attic cache runtime scenario. Private topologies wrap this
+generic script from the infrastructure repository.
 
-## Generic Harness Utilities To Extract Later
+## Generic Harness Utilities
 
-- Build a NixOS system or LXC-compatible image from a flake attr.
+- Build a NixOS LXC-compatible image from a flake attr.
 - Print a dry-run deployment plan with target, store path, closure summary,
   cache backend, and activation transport.
 - Check local prerequisites for Nix, Incus or LXC, KVM, network bridge support,

@@ -163,18 +163,31 @@ keys, or activating a manifest that requires unavailable cache coverage.
 
 ## Incus/LXC Rehearsal
 
-Runtime rehearsal is the planned M7 production gate. Until the generic harness
-exists, check-env and dry-run results are useful evidence but not production
-enablement.
+Runtime rehearsal is the M7 production gate. Check-env and dry-run results are
+useful evidence, but they are not production enablement. A `pending-runtime`
+result is acceptable only as an explicit blocker when no local daemon or
+complete runtime evidence is available.
 
 ```sh
-bash scripts/deployment-incus-rehearsal.sh break-glass --check-env
-bash scripts/deployment-incus-rehearsal.sh break-glass --check-runtime
-bash scripts/deployment-incus-rehearsal.sh break-glass --dry-run
-bash scripts/deployment-incus-rehearsal.sh break-glass
-bash scripts/deployment-incus-rehearsal.sh topology-pull-agent-offline --check-env
-bash scripts/deployment-incus-rehearsal.sh topology-pull-agent-offline --dry-run
-bash scripts/deployment-incus-rehearsal.sh topology-pull-agent-offline
+just test-deployment-incus-rehearsal
+just deployment-incus-rehearsal full-topology --check-env
+just deployment-incus-rehearsal full-topology --dry-run
+bash scripts/deployment-incus-rehearsal.sh full-topology --check-env
+bash scripts/deployment-incus-rehearsal.sh full-topology --check-runtime
+bash scripts/deployment-incus-rehearsal.sh full-topology --dry-run
+bash scripts/deployment-incus-rehearsal.sh full-topology
+bash scripts/deployment-incus-rehearsal.sh full-topology-failures --check-env
+bash scripts/deployment-incus-rehearsal.sh full-topology-failures --dry-run
+bash scripts/deployment-incus-rehearsal.sh full-topology-failures
+bash scripts/deployment-incus-rehearsal.sh offline-latest-only --check-env
+bash scripts/deployment-incus-rehearsal.sh offline-latest-only --dry-run
+bash scripts/deployment-incus-rehearsal.sh offline-latest-only
+bash scripts/deployment-incus-rehearsal.sh forced-command --check-env
+bash scripts/deployment-incus-rehearsal.sh forced-command --dry-run
+bash scripts/deployment-incus-rehearsal.sh forced-command
+bash scripts/deployment-incus-rehearsal.sh pull-agent --check-env
+bash scripts/deployment-incus-rehearsal.sh pull-agent --dry-run
+bash scripts/deployment-incus-rehearsal.sh pull-agent
 ```
 
 The rehearsal topology must model controller, cache, monitoring collector,
@@ -187,7 +200,25 @@ forced-command misuse, health-check failure, rollback, and lock contention.
 Evidence required before production enablement: topology inventory, network
 graph, generated credentials, failure injection log, event JSONL, target
 journals, cache logs, metrics snapshot, final state for every target, and a
-mapping from rehearsal roles to rollout groups.
+mapping from rehearsal roles to rollout groups. Removal of Cachix Deploy is
+blocked until the deterministic M7 VM checks pass, full-topology Incus/LXC
+runtime evidence is captured, and two successful live canary cycles are
+recorded.
+
+Game-day checklist:
+
+1. Confirm the local Incus/LXC daemon, bridge networking, and test storage.
+2. Confirm the topology inventory maps every rehearsal target to a rollout
+   group and Avahi policy.
+3. Run the VM checks for Attic push/substitute, cache failure, forced-command
+   deploy, rollback, lock contention, pull-agent latest-only, and scheduled
+   local canary.
+4. Run `--check-env`, `--check-runtime`, and `--dry-run` for all topology
+   scenarios.
+5. Run the runtime scenarios and capture event JSONL, journals, cache logs,
+   metrics, topology graph, and final state.
+6. Compare rehearsal roles with the production rollout groups before selecting
+   any live canary target.
 
 ## Updating Deployment Code
 

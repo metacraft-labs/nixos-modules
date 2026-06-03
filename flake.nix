@@ -329,5 +329,9 @@
             users = import ./modules/users.nix utils;
           };
         };
+
+      flake.lib.deploymentIncusRehearsal = import ./lib/deployment/incus-rehearsal.nix {
+        inherit lib nixpkgs;
+      };
     };
 }

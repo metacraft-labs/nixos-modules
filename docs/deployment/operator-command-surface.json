@@ -47,13 +47,17 @@
   },
   "infraJustTargets": [
     "attic-verify-host-substituters",
+    "deployment-incus-rehearsal",
     "deploy-machine",
     "deploy-machine-cachix",
     "deploy-machine-direct-ssh",
     "deploy-machine-remote-switch",
-    "rollback-machine-direct-ssh"
+    "rollback-machine-direct-ssh",
+    "test-deployment-incus-rehearsal"
   ],
   "nixChecks": [
+    "deployment-attic-push-substitute-vm",
+    "deployment-cache-corruption-vm",
     "deployment-direct-ssh-success-vm",
     "deployment-direct-ssh-rollback-vm",
     "deployment-direct-ssh-attic-restore-vm",
@@ -61,13 +65,19 @@
     "deployment-reconciler-lock-contention-vm",
     "deployment-pull-agent-latest-vm",
     "deployment-pull-agent-rejects-invalid-vm",
-    "deployment-pull-agent-lock-contention-vm"
+    "deployment-pull-agent-lock-contention-vm",
+    "deployment-scheduled-canary-local-vm",
+    "deployment-incus-rehearsal-image",
+    "deployment-incus-rehearsal-script-static"
   ],
   "rehearsalScripts": [
     "scripts/deployment-incus-rehearsal.sh"
   ],
   "rehearsalScenarios": [
-    "break-glass",
-    "topology-pull-agent-offline"
+    "full-topology",
+    "full-topology-failures",
+    "offline-latest-only",
+    "forced-command",
+    "pull-agent"
   ]
 }

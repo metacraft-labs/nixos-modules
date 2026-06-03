@@ -810,6 +810,126 @@ top@{ config, ... }:
                     f"assert state['desiredSystemPath'] == {closure!r}, state\n"
                     "assert state['currentState'] == 'succeeded', state\n"
                     "PY"
+            )
+          '';
+        };
+
+        deployment-scheduled-canary-local-vm = pkgs.testers.nixosTest {
+          name = "deployment-scheduled-canary-local-vm";
+
+          nodes = {
+            controller =
+              { ... }:
+              {
+                imports = [ flake.modules.nixos.deployment-reconciler-timer ];
+
+                environment.systemPackages = [
+                  self'.packages.mcl
+                  pkgs.openssh
+                  pkgs.python3
+                ];
+                services.mcl-deployment-reconciler = {
+                  enable = true;
+                  package = self'.packages.mcl;
+                  stateDir = "/var/lib/mcl/canary-deployments";
+                  eventLog = "/var/log/mcl/deployments/local-canary-reconciler.jsonl";
+                  interval = "4h";
+                  jitter = "0";
+                  lockFile = "/run/lock/mcl-local-canary-reconciler.lock";
+                  targets = [ "local-canary" ];
+                  targetHosts.local-canary = "target";
+                  identityFile = "/run/mcl-test/deploy-key";
+                  sshOptions = [
+                    "StrictHostKeyChecking=no"
+                    "UserKnownHostsFile=/dev/null"
+                    "ConnectTimeout=2"
+                  ];
+                };
+              };
+
+            target =
+              { ... }:
+              {
+                imports = [ flake.modules.nixos.deployment-forced-command-apply ];
+
+                networking.hostName = "target";
+                environment.systemPackages = [ pkgs.python3 ];
+                services.openssh = {
+                  enable = true;
+                  settings.PasswordAuthentication = false;
+                };
+                services.mcl-deployment-ssh-apply = {
+                  enable = true;
+                  package = self'.packages.mcl;
+                  targetName = "local-canary";
+                  manifestPrincipal = "mcl-deployment";
+                  manifestPublicKeys = [ manifestPublicKey ];
+                  authorizedKeys = [ deployPublicKey ];
+                  restoreCommand = "${restoreScript}";
+                  switchCommand = "${successSwitchScript}";
+                  generationCommand = "${generationScript}";
+                };
+              };
+          };
+
+          testScript = ''
+            start_all()
+            controller.wait_for_unit("multi-user.target")
+            target.wait_for_unit("sshd.service")
+
+            with subtest("prepare a local-only scheduled canary manifest"):
+                controller.succeed("install -d -m 0700 /run/mcl-test")
+                controller.succeed("install -m 0600 ${deployPrivateKey} /run/mcl-test/deploy-key")
+                controller.succeed("install -m 0600 ${manifestPrivateKey} /tmp/manifest-key")
+                controller.succeed(
+                    "${fakeClosureEnv} GITHUB_RUN_ID=7001 GITHUB_SHA=7777777777777777777777777777777777777777 "
+                    "mcl deploy-plan "
+                    "--target local-canary "
+                    "--desired-system-path ${successSystemPath} "
+                    "--git-revision 7777777777777777777777777777777777777777 "
+                    "--sequence 7001 "
+                    "--health-command ${lib.escapeShellArg successHealthCommand} "
+                    "--signing-key /tmp/manifest-key "
+                    "--signing-key-id mcl-deployment "
+                    "--output /tmp/local-canary-manifest.json "
+                    "--state-dir /var/lib/mcl/canary-deployments"
+                )
+
+            with subtest("timer configuration is scheduled but production-free"):
+                controller.succeed("systemctl cat mcl-deployment-reconciler.timer | grep -q 'OnUnitActiveSec=4h'")
+                controller.succeed("systemctl cat mcl-deployment-reconciler.timer | grep -q 'RandomizedDelaySec=0'")
+                controller.succeed("test ! -e /var/lib/mcl-test/restore-runs")
+                controller.succeed("! grep -R -E 'gpu-server|solunska|hetzner|nedislav|eli' /var/lib/mcl/canary-deployments /var/log/mcl 2>/dev/null")
+
+            with subtest("scheduled canary service applies through the reconciler path"):
+                controller.succeed("systemctl start mcl-deployment-reconciler.service")
+                target.succeed("grep -qx restore /var/lib/mcl-test/restore-runs")
+                target.succeed("grep -qx success /var/lib/mcl-test/switch-runs")
+                target.succeed("test \"$(cat /var/lib/mcl-test/current-generation)\" = '${successGeneration}'")
+
+            with subtest("canary evidence is local, latest, and converged"):
+                controller.succeed(
+                    "python3 - <<'PY'\n"
+                    "import json\n"
+                    "events = [json.loads(line) for line in open('/var/log/mcl/deployments/local-canary-reconciler.jsonl') if line.strip()]\n"
+                    "assert any(event['phase'] == 'activate-requested' and event['command']['status'] == 'succeeded' for event in events), events\n"
+                    "assert all(event['target']['name'] == 'local-canary' for event in events), events\n"
+                    "state = json.load(open('/var/lib/mcl/canary-deployments/converged/gh-7001-7777777-local-canary.json'))\n"
+                    "assert state['currentState'] == 'succeeded', state\n"
+                    "assert state['desiredSystemPath'] == '${successSystemPath}', state\n"
+                    "PY"
+                )
+                target.succeed(
+                    "python3 - <<'PY'\n"
+                    "import json\n"
+                    "events = [json.loads(line) for line in open('/var/log/mcl/deployments/local-canary.jsonl') if line.strip()]\n"
+                    "phases = [(event['phase'], event['command']['status']) for event in events]\n"
+                    "assert ('agent-restore', 'succeeded') in phases, phases\n"
+                    "assert ('switch', 'succeeded') in phases, phases\n"
+                    "assert ('healthcheck', 'succeeded') in phases, phases\n"
+                    "assert ('complete', 'succeeded') in phases, phases\n"
+                    "assert all(event['target']['name'] == 'local-canary' for event in events), events\n"
+                    "PY"
                 )
           '';
         };

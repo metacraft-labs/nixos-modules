@@ -5,31 +5,56 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 scenario="${1:-}"
 mode="${2:-run}"
 
-image="${MCL_ATTIC_INCUS_IMAGE:-images:nixos/25.11}"
-prefix="${MCL_ATTIC_INCUS_PREFIX:-mcl-attic-cache-${USER:-user}}"
-cache_container="${MCL_ATTIC_INCUS_SERVER:-${prefix}-server}"
-client_container="${MCL_ATTIC_INCUS_CLIENT:-${prefix}-client}"
+attic_image="${MCL_ATTIC_INCUS_IMAGE:-images:nixos/25.11}"
+attic_prefix="${MCL_ATTIC_INCUS_PREFIX:-mcl-attic-cache-${USER:-user}}"
+cache_container="${MCL_ATTIC_INCUS_SERVER:-${attic_prefix}-server}"
+client_container="${MCL_ATTIC_INCUS_CLIENT:-${attic_prefix}-client}"
 host_port="${MCL_ATTIC_INCUS_PORT:-38180}"
 cache_name="${MCL_ATTIC_CACHE_NAME:-example-deploy-cache}"
-runtime_probe_timeout="${MCL_ATTIC_INCUS_RUNTIME_PROBE_TIMEOUT:-10}"
+runtime_probe_timeout="${MCL_DEPLOYMENT_INCUS_RUNTIME_PROBE_TIMEOUT:-${MCL_ATTIC_INCUS_RUNTIME_PROBE_TIMEOUT:-10}}"
+topology_file="${MCL_DEPLOYMENT_INCUS_TOPOLOGY:-$repo_root/tests/deployment/incus-topology-example.json}"
+topology_prefix="${MCL_DEPLOYMENT_INCUS_PREFIX:-mcl-deployment-${USER:-user}}"
+detect_nix_system() {
+  if [[ -n "${MCL_DEPLOYMENT_INCUS_SYSTEM:-}" ]]; then
+    echo "$MCL_DEPLOYMENT_INCUS_SYSTEM"
+    return 0
+  fi
+  if command -v nix >/dev/null 2>&1; then
+    nix --extra-experimental-features 'nix-command flakes' eval --raw --impure --expr builtins.currentSystem 2>/dev/null && return 0
+  fi
+  echo x86_64-linux
+}
+topology_image_attr="${MCL_DEPLOYMENT_INCUS_IMAGE_ATTR:-.#packages.$(detect_nix_system).deployment-incus-rehearsal-image}"
 nix_features=(--extra-experimental-features "nix-command flakes")
 attic_server_pkg=""
 attic_client_pkg=""
 openssl_pkg=""
 host_system=""
+cli=""
 
 usage() {
   cat >&2 <<'USAGE'
-usage: deployment-incus-rehearsal.sh attic-cache [--check-env|--check-runtime|--dry-run]
+usage: deployment-incus-rehearsal.sh SCENARIO [--check-env|--check-runtime|--dry-run|run]
 
 Scenarios:
-  attic-cache   Rehearse an Attic cache plus client substitute flow.
+  attic-cache              Rehearse an Attic cache plus client substitute flow.
+  full-topology            Model runner, cache, monitoring, and all rollout groups.
+  full-topology-failures   Model the full failure matrix.
+  offline-latest-only      Model older/newer desired state while a target is offline.
+  forced-command           Model forced-command SSH credential boundaries.
+  pull-agent               Model optional target-side pull-agent reconciliation.
 
 Modes:
-  --check-env       Verify local script dependencies only.
+  --check-env       Verify local script dependencies and topology inventory.
   --check-runtime   Verify an Incus or LXC daemon is reachable.
-  --dry-run         Print the planned launch commands without creating containers.
-  run               Launch the runtime rehearsal.
+  --dry-run         Print launch plan without creating containers.
+  run               Launch the runtime rehearsal when implemented for the scenario.
+
+Environment:
+  MCL_DEPLOYMENT_INCUS_TOPOLOGY       JSON topology inventory for topology scenarios.
+  MCL_DEPLOYMENT_INCUS_PREFIX         Prefix for runtime container and network names.
+  MCL_DEPLOYMENT_INCUS_IMAGE_ATTR     Generic NixOS LXC image attribute.
+  MCL_DEPLOYMENT_INCUS_RUNTIME_PROBE_TIMEOUT
 USAGE
 }
 
@@ -59,20 +84,73 @@ runtime_cmd() {
   return 1
 }
 
+is_topology_scenario() {
+  case "$scenario" in
+    full-topology | full-topology-failures | offline-latest-only | forced-command | pull-agent)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 check_port() {
   [[ "$host_port" =~ ^[0-9]+$ ]] || die "MCL_ATTIC_INCUS_PORT is not numeric: $host_port"
   (( host_port > 0 && host_port < 65536 )) || die "MCL_ATTIC_INCUS_PORT is outside TCP range: $host_port"
 }
 
+validate_topology() {
+  [[ -f "$topology_file" ]] || die "missing topology inventory: $topology_file"
+  jq -e --arg scenario "$scenario" '
+    (.networks | map(.name)) as $networkNames
+    | (.targetGroups | map(.name)) as $targetGroupNames
+    | def controlsText($name):
+        ([.scenarios[] | select(.name == $name) | .controls[]] | join(" ") | ascii_downcase);
+    (.schemaVersion == 1)
+    and (.networks | type == "array" and length >= 4)
+    and (.roles | type == "array" and length >= 6)
+    and (.targetGroups | type == "array" and length >= 4)
+    and (.credentials | type == "object")
+    and (.scenarios | type == "array" and any(.[]; .name == $scenario))
+    and any(.roles[]; .role == "orchestrator")
+    and any(.roles[]; .role == "attic-cache")
+    and any(.roles[]; .role == "monitoring")
+    and any(.roles[]; .targetGroup == "home-lab-gpu" and .avahi == true)
+    and any(.roles[]; .targetGroup == "solunska" and .avahi == true)
+    and any(.roles[]; .targetGroup == "hetzner" and .avahi == false)
+    and any(.roles[]; .targetGroup == "workstation" and .avahi == false)
+    and all(.roles[]; . as $role | (.networks | type == "array" and length > 0 and all(. as $network | $networkNames | index($network))))
+    and all(.roles[]; . as $role | ((has("targetGroup") | not) or ($targetGroupNames | index($role.targetGroup))))
+    and all(.roles[] | select(.targetGroup == "home-lab-gpu" or .targetGroup == "solunska"); (.networks | index("home-lab")))
+    and all(.roles[] | select(.targetGroup == "hetzner"); (.networks | index("hetzner")))
+    and all(.roles[] | select(.targetGroup == "workstation"); (.networks | index("workstation")))
+    and (controlsText("full-topology") | contains("runner") and contains("attic") and contains("monitoring") and contains("hetzner") and contains("workstation") and contains("deploy"))
+    and (controlsText("full-topology-failures") | contains("partition") and contains("missing cache") and contains("invalid") and contains("signature") and contains("switch failure") and contains("health-check failure") and contains("rollback") and contains("lock contention"))
+    and (controlsText("offline-latest-only") | contains("deployment 41") and contains("deployment 42") and contains("offline") and contains("only deployment 42 applies"))
+    and (controlsText("forced-command") | contains("arbitrary shell") and contains("rejected") and contains("signed manifest") and contains("signature"))
+    and (controlsText("pull-agent") | contains("signed manifests") and contains("partition") and contains("newer desired state") and contains("latest"))
+  ' "$topology_file" >/dev/null || die "topology inventory is missing required M7 roles, groups, networks, scenario controls, or Avahi policy"
+}
+
 check_env() {
   require_command bash
-  require_command curl
   require_command mktemp
-  require_command nix
   require_command sed
   require_command timeout
-  check_port
   bash -n "$repo_root/scripts/deployment-incus-rehearsal.sh"
+
+  if [[ "$scenario" == "attic-cache" ]]; then
+    require_command curl
+    require_command nix
+    check_port
+  elif is_topology_scenario; then
+    require_command jq
+    validate_topology
+  else
+    usage
+    exit 64
+  fi
 
   if runtime_cmd >/dev/null; then
     echo "deployment-incus-rehearsal: container client: $(runtime_cmd)"
@@ -91,13 +169,13 @@ check_runtime() {
   echo "deployment-incus-rehearsal: runtime is available via $cli"
 }
 
-dry_run() {
+dry_run_attic_cache() {
   check_env
   local client
   client="$(runtime_cmd || echo incus)"
   cat <<EOF
 attic-cache rehearsal plan:
-  1. Launch ${client}:${image} containers ${cache_container} and ${client_container}.
+  1. Launch ${client}:${attic_image} containers ${cache_container} and ${client_container}.
   2. Start atticd in ${cache_container} on port 8080 and proxy it to 127.0.0.1:${host_port}.
   3. Create public Attic cache ${cache_name} with a deterministic test token.
   4. Build a small host fixture closure.
@@ -105,6 +183,32 @@ attic-cache rehearsal plan:
   6. Restore the fixture from Attic inside ${client_container} using nix copy.
   7. Remove containers unless MCL_ATTIC_INCUS_KEEP=1 is set.
 EOF
+}
+
+dry_run_topology() {
+  check_env
+  local client
+  client="$(runtime_cmd || echo incus)"
+  echo "deployment-incus-rehearsal: scenario=${scenario}"
+  echo "deployment-incus-rehearsal: topology=${topology_file}"
+  echo "deployment-incus-rehearsal: image-attr=${topology_image_attr}"
+  echo "deployment-incus-rehearsal: runtime client=${client}"
+  jq -r --arg scenario "$scenario" --arg prefix "$topology_prefix" '
+    "full-topology rehearsal plan:",
+    "  1. Build the generic deployment rehearsal LXC image.",
+    "  2. Create segmented Incus networks:",
+    (.networks[] | "     - \($prefix)-\(.name): role=\(.role) cidr=\(.cidr)"),
+    "  3. Launch containers and attach declared networks:",
+    (.roles[] | "     - \($prefix)-\(.name): role=\(.role) group=\(.targetGroup // "none") avahi=\(.avahi // false) networks=\((.networks // []) | join(","))"),
+    "  4. Generate rehearsal-only manifest and deploy SSH credentials:",
+    "     - forcedCommandPrincipal=\(.credentials.forcedCommand.principal)",
+    "     - manifestPrincipal=\(.credentials.manifestSigning.principal)",
+    "  5. Apply target-group rollout policy:",
+    (.targetGroups[] | "     - \(.name): policy=\(.rolloutPolicy)"),
+    "  6. Run scenario controls:",
+    (.scenarios[] | select(.name == $scenario) | (.controls[] | "     - " + .)),
+    "  7. Capture event JSONL, target journals, Attic logs, metrics snapshot, and final desired-state status."
+  ' "$topology_file"
 }
 
 container_exec() {
@@ -132,7 +236,7 @@ import_closure() {
   container_exec "$container" "nix-store --import < /tmp/mcl-attic-tools.nar >/dev/null"
 }
 
-cleanup() {
+cleanup_attic_cache() {
   if [[ "${MCL_ATTIC_INCUS_KEEP:-}" == "1" ]]; then
     echo "deployment-incus-rehearsal: keeping containers $cache_container and $client_container"
     return
@@ -195,12 +299,12 @@ run_attic_cache() {
   check_runtime
   prepare_tools
 
-  trap cleanup EXIT
-  cleanup
+  trap cleanup_attic_cache EXIT
+  cleanup_attic_cache
 
   echo "deployment-incus-rehearsal: launching containers: $cache_container $client_container"
-  "$cli" launch "$image" "$cache_container"
-  "$cli" launch "$image" "$client_container"
+  "$cli" launch "$attic_image" "$cache_container"
+  "$cli" launch "$attic_image" "$client_container"
 
   "$cli" config device add "$cache_container" attic-http proxy \
     "listen=tcp:127.0.0.1:${host_port}" "connect=tcp:127.0.0.1:8080"
@@ -251,10 +355,18 @@ run_attic_cache() {
   echo "deployment-incus-rehearsal: runtime rehearsal passed"
 }
 
-if [[ "$scenario" != "attic-cache" ]]; then
-  usage
-  exit 64
-fi
+run_topology() {
+  check_env
+  check_runtime
+  runtime_unavailable "$scenario topology launch is intentionally gated until the local daemon runbook captures complete container logs; use --dry-run plus the M7 NixOS VM checks as current evidence"
+}
+
+case "$scenario" in
+  --help | -h | "")
+    usage
+    [[ "$scenario" == "" ]] && exit 64 || exit 0
+    ;;
+esac
 
 case "$mode" in
   --check-env)
@@ -264,10 +376,24 @@ case "$mode" in
     check_runtime
     ;;
   --dry-run)
-    dry_run
+    if [[ "$scenario" == "attic-cache" ]]; then
+      dry_run_attic_cache
+    elif is_topology_scenario; then
+      dry_run_topology
+    else
+      usage
+      exit 64
+    fi
     ;;
   run)
-    run_attic_cache
+    if [[ "$scenario" == "attic-cache" ]]; then
+      run_attic_cache
+    elif is_topology_scenario; then
+      run_topology
+    else
+      usage
+      exit 64
+    fi
     ;;
   *)
     usage

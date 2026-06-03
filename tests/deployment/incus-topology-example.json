@@ -1,0 +1,191 @@
+{
+  "schemaVersion": 1,
+  "description": "Generic synthetic deployment migration topology for local Incus/LXC rehearsal dry-runs.",
+  "networks": [
+    {
+      "name": "control",
+      "role": "orchestrator-to-target-control",
+      "cidr": "10.70.0.0/24"
+    },
+    {
+      "name": "cache",
+      "role": "attic-cache-substitution",
+      "cidr": "10.70.1.0/24"
+    },
+    {
+      "name": "home-lab",
+      "role": "home-lab-mdns-segment",
+      "cidr": "10.70.2.0/24"
+    },
+    {
+      "name": "hetzner",
+      "role": "remote-server-segment",
+      "cidr": "10.70.3.0/24"
+    },
+    {
+      "name": "workstation",
+      "role": "optional-workstation-segment",
+      "cidr": "10.70.4.0/24"
+    }
+  ],
+  "credentials": {
+    "forcedCommand": {
+      "principal": "mcl-deploy-rehearsal",
+      "scope": "synthetic forced-command SSH keypair"
+    },
+    "manifestSigning": {
+      "principal": "mcl-deployment-rehearsal",
+      "scope": "synthetic manifest signing keypair"
+    },
+    "atticToken": {
+      "scope": "synthetic local Attic token"
+    }
+  },
+  "targetGroups": [
+    {
+      "name": "home-lab-gpu",
+      "rolloutPolicy": "gpu-servers-first"
+    },
+    {
+      "name": "solunska",
+      "rolloutPolicy": "home-lab-control-services"
+    },
+    {
+      "name": "hetzner",
+      "rolloutPolicy": "remote-servers-after-home-lab"
+    },
+    {
+      "name": "workstation",
+      "rolloutPolicy": "optional-opt-in"
+    }
+  ],
+  "roles": [
+    {
+      "name": "runner",
+      "role": "orchestrator",
+      "networks": [
+        "control",
+        "cache"
+      ],
+      "avahi": false
+    },
+    {
+      "name": "attic",
+      "role": "attic-cache",
+      "networks": [
+        "control",
+        "cache"
+      ],
+      "avahi": false
+    },
+    {
+      "name": "monitoring",
+      "role": "monitoring",
+      "networks": [
+        "control",
+        "cache"
+      ],
+      "avahi": false
+    },
+    {
+      "name": "gpu-target",
+      "role": "target",
+      "targetGroup": "home-lab-gpu",
+      "networks": [
+        "control",
+        "cache",
+        "home-lab"
+      ],
+      "transport": "forced-command-ssh",
+      "avahi": true
+    },
+    {
+      "name": "solunska-target",
+      "role": "target",
+      "targetGroup": "solunska",
+      "networks": [
+        "control",
+        "cache",
+        "home-lab"
+      ],
+      "transport": "forced-command-ssh",
+      "avahi": true
+    },
+    {
+      "name": "hetzner-target",
+      "role": "target",
+      "targetGroup": "hetzner",
+      "networks": [
+        "control",
+        "cache",
+        "hetzner"
+      ],
+      "transport": "forced-command-ssh",
+      "avahi": false
+    },
+    {
+      "name": "workstation-target",
+      "role": "target",
+      "targetGroup": "workstation",
+      "networks": [
+        "control",
+        "cache",
+        "workstation"
+      ],
+      "transport": "pull-agent",
+      "optional": true,
+      "avahi": false
+    }
+  ],
+  "scenarios": [
+    {
+      "name": "full-topology",
+      "controls": [
+        "build generic NixOS LXC rehearsal image",
+        "start runner, Attic cache, monitoring, home-lab targets, Hetzner targets, and optional workstation target",
+        "push closure to Attic",
+        "deploy desired state without Cachix Deploy",
+        "verify final desired-state success for every selected target"
+      ]
+    },
+    {
+      "name": "full-topology-failures",
+      "controls": [
+        "inject offline target partition",
+        "inject missing cache object",
+        "inject invalid manifest signature",
+        "inject switch failure",
+        "inject health-check failure and rollback",
+        "exercise stale desired state and lock contention"
+      ]
+    },
+    {
+      "name": "offline-latest-only",
+      "controls": [
+        "partition target before deployment 41",
+        "publish deployment 42 while target is offline",
+        "restore target reachability",
+        "verify only deployment 42 applies"
+      ]
+    },
+    {
+      "name": "forced-command",
+      "controls": [
+        "attempt arbitrary shell over deploy SSH credential",
+        "verify shell command is rejected",
+        "submit signed manifest through forced-command SSH",
+        "verify target binding and manifest signature"
+      ]
+    },
+    {
+      "name": "pull-agent",
+      "controls": [
+        "publish signed manifests to local desired-state source",
+        "partition pull-agent target",
+        "publish newer desired state while offline",
+        "restore target reachability",
+        "verify pull-agent applies latest manifest only"
+      ]
+    }
+  ]
+}
