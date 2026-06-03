@@ -10,9 +10,9 @@ description: Use when running deployment migration rehearsals in NixOS VM tests 
 - Run deterministic NixOS VM checks before any Incus/LXC runtime rehearsal.
 - For Incus/LXC, confirm a local daemon, unprivileged container support, bridge
   networking, writable test storage, and no production target credentials.
-- Treat a `pending-runtime` result as an honest blocker when no local daemon or
-  complete runtime evidence is available; do not mark production enablement
-  complete from check-env or dry-run alone.
+- Treat a `pending-runtime` result as an honest blocker only when the local
+  daemon or required Incus/LXC storage prerequisites are unavailable; do not
+  mark production enablement complete from check-env or dry-run alone.
 
 ## Commands
 
@@ -58,8 +58,11 @@ bash scripts/deployment-incus-rehearsal.sh pull-agent
    failure injections, and evidence paths without starting containers.
 5. Run the runtime scenario only when the previous steps pass and no production
    credentials are mounted. If the script reports `pending-runtime`, keep M7
-   partial and record the daemon or runtime-evidence blocker.
-6. Save artifacts before destroying containers.
+   partial and record the missing daemon or storage prerequisite.
+6. Save artifacts before destroying containers. The script prints the artifact
+   directory; set `MCL_DEPLOYMENT_INCUS_ARTIFACT_DIR` to choose it explicitly.
+7. Set `MCL_DEPLOYMENT_INCUS_KEEP=1` only when a failed run needs prefixed
+   containers and networks preserved for debugging.
 
 ## Topology Model
 
@@ -77,11 +80,14 @@ forced-command SSH misuse, health-check failure, rollback, and lock contention.
 ## Evidence
 
 - NixOS VM check result paths.
-- Incus/LXC check-env, check-runtime, dry-run, and runtime logs.
+- Incus/LXC check-env, check-runtime, dry-run, runtime logs, and the printed
+  runtime artifact directory.
 - Topology inventory, target roles, network graph, generated credentials, and
   failure injection list.
 - Deployment event JSONL, target journals, cache logs, metrics snapshot, and
   final desired-state status for every target.
+- Per-container assertion JSON proving role metadata, target group, network
+  attachment count, and Avahi policy.
 - Explicit comparison between rehearsal roles and production rollout groups
   before production enablement.
 

@@ -64,6 +64,15 @@ top@{ config, ... }:
 
               bash -n ${scriptPath}
 
+              run_topology_body="$(sed -n '/^run_topology()/,/^}/p' ${scriptPath})"
+              if echo "$run_topology_body" | grep -q "intentionally gated"; then
+                echo "run_topology still contains the old unconditional pending-runtime gate" >&2
+                exit 1
+              fi
+              grep -q "topology_build_import_image" ${scriptPath}
+              grep -q "topology_capture_artifacts" ${scriptPath}
+              grep -q "topology_exercise_forced_command" ${scriptPath}
+
               for scenario in ${lib.concatStringsSep " " scenarios}; do
                 bash ${scriptPath} "$scenario" --check-env
                 bash ${scriptPath} "$scenario" --dry-run > "$scenario.dry-run"
@@ -81,6 +90,44 @@ top@{ config, ... }:
                 test "$status" -eq 69
                 grep -q "pending-runtime" "$scenario.run.err"
               done
+
+              fake_runtime="$(mktemp -d)"
+              printf '%s\n' \
+                '#!${pkgs.bash}/bin/bash' \
+                'set -euo pipefail' \
+                'case "''${1:-}" in' \
+                '  info)' \
+                '    exit 0' \
+                '    ;;' \
+                '  stop | delete)' \
+                '    exit 0' \
+                '    ;;' \
+                '  image)' \
+                '    if [[ "''${2:-}" == "delete" ]]; then' \
+                '      exit 0' \
+                '    fi' \
+                '    echo "fake incus should not be reached for image command before invalid image attr fails" >&2' \
+                '    exit 99' \
+                '    ;;' \
+                '  *)' \
+                '    echo "fake incus unexpected command: $*" >&2' \
+                '    exit 99' \
+                '    ;;' \
+                'esac' \
+                > "$fake_runtime/incus"
+              chmod +x "$fake_runtime/incus"
+              set +e
+              PATH="$fake_runtime:$PATH" \
+                MCL_DEPLOYMENT_INCUS_IMAGE_ATTR=".#deployment-incus-rehearsal-missing-image-attr" \
+                bash ${scriptPath} full-topology > fake-runtime.out 2> fake-runtime.err
+              fake_status=$?
+              set -e
+              if [[ "$fake_status" -eq 69 ]] || grep -q "pending-runtime" fake-runtime.err; then
+                echo "run_topology returned pending-runtime even though incus info succeeded" >&2
+                cat fake-runtime.err >&2
+                exit 1
+              fi
+              grep -q "failed to build deployment rehearsal image" fake-runtime.err
 
               set +e
               bash ${scriptPath} full-topology --check-runtime > check-runtime.out 2> check-runtime.err

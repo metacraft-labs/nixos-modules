@@ -166,7 +166,7 @@ keys, or activating a manifest that requires unavailable cache coverage.
 Runtime rehearsal is the M7 production gate. Check-env and dry-run results are
 useful evidence, but they are not production enablement. A `pending-runtime`
 result is acceptable only as an explicit blocker when no local daemon or
-complete runtime evidence is available.
+required runtime storage prerequisite is available.
 
 ```sh
 just test-deployment-incus-rehearsal
@@ -197,13 +197,19 @@ and optional workstation reachability. Failure injections must include target
 partition, older and newer desired states, cache missing object or corruption,
 forced-command misuse, health-check failure, rollback, and lock contention.
 
+Runtime launches create only resources prefixed by `MCL_DEPLOYMENT_INCUS_PREFIX`
+and clean those resources by default. Set `MCL_DEPLOYMENT_INCUS_ARTIFACT_DIR` to
+choose the evidence directory. Set `MCL_DEPLOYMENT_INCUS_KEEP=1` only when a
+failed run needs its prefixed containers, networks, and imported image alias
+preserved for inspection.
+
 Evidence required before production enablement: topology inventory, network
-graph, generated credentials, failure injection log, event JSONL, target
-journals, cache logs, metrics snapshot, final state for every target, and a
-mapping from rehearsal roles to rollout groups. Removal of Cachix Deploy is
-blocked until the deterministic M7 VM checks pass, full-topology Incus/LXC
-runtime evidence is captured, and two successful live canary cycles are
-recorded.
+graph, generated credentials, failure injection log, event JSONL, final state
+for every target group, per-container assertion JSON, target journal snippets,
+cache logs, runtime command log showing no Cachix Deploy command, and a mapping
+from rehearsal roles to rollout groups. Removal of Cachix Deploy is blocked
+until the deterministic M7 VM checks pass, full-topology Incus/LXC runtime
+evidence is captured, and two successful live canary cycles are recorded.
 
 Game-day checklist:
 

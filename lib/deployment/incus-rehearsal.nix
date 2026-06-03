@@ -26,6 +26,10 @@ rec {
             {
               networking.hostName = name;
               networking.useDHCP = true;
+              networking.firewall.allowedTCPPorts = [
+                18080
+                2222
+              ];
               system.stateVersion = lib.trivial.release;
 
               image.baseName = "mcl-deployment-rehearsal-${name}-${pkgs.stdenv.hostPlatform.system}";
@@ -34,8 +38,10 @@ rec {
                 pkgs.bash
                 pkgs.coreutils
                 pkgs.curl
+                pkgs.iproute2
                 pkgs.jq
                 pkgs.openssh
+                pkgs.python3
               ]
               ++ packages;
 
@@ -49,6 +55,10 @@ rec {
               };
 
               services.openssh.enable = true;
+              services.openssh.settings = {
+                PasswordAuthentication = false;
+                PermitRootLogin = "prohibit-password";
+              };
               services.avahi = {
                 enable = avahi;
                 nssmdns4 = avahi;
