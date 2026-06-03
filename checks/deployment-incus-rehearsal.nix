@@ -34,6 +34,7 @@ top@{ config, ... }:
         "full-topology-failures"
         "offline-latest-only"
         "forced-command"
+        "break-glass"
         "pull-agent"
       ];
       runtimePath = lib.makeBinPath [
@@ -72,6 +73,7 @@ top@{ config, ... }:
               grep -q "topology_build_import_image" ${scriptPath}
               grep -q "topology_capture_artifacts" ${scriptPath}
               grep -q "topology_exercise_forced_command" ${scriptPath}
+              grep -q "topology_exercise_break_glass" ${scriptPath}
 
               for scenario in ${lib.concatStringsSep " " scenarios}; do
                 bash ${scriptPath} "$scenario" --check-env
@@ -152,6 +154,7 @@ top@{ config, ... }:
                   "full-topology-failures",
                   "offline-latest-only",
                   "forced-command",
+                  "break-glass",
                   "pull-agent",
               } <= scenarios, scenarios
 
@@ -212,6 +215,15 @@ top@{ config, ... }:
                       "rejected",
                       "signed manifest",
                       "signature",
+                  ],
+                  "break-glass": [
+                      "failed deploy",
+                      "human runbook",
+                      "arbitrary shell",
+                      "rejected",
+                      "signed manifest",
+                      "rollback",
+                      "final generation",
                   ],
                   "pull-agent": [
                       "signed manifests",

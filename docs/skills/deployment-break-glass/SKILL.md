@@ -25,6 +25,10 @@ mcl deploy-plan --target "$TARGET" --desired-system-path "$SYSTEM_PATH" \
 mcl deploy-ssh "$TARGET" --manifest "$MANIFEST" --ssh-host "$SSH_HOST" \
   --ssh-user deploy --identity-file "$MCL_DEPLOY_SSH_IDENTITY" \
   --ssh-option BatchMode=yes --ssh-option StrictHostKeyChecking=yes
+bash scripts/deployment-incus-rehearsal.sh break-glass --check-env
+bash scripts/deployment-incus-rehearsal.sh break-glass --check-runtime
+bash scripts/deployment-incus-rehearsal.sh break-glass --dry-run
+bash scripts/deployment-incus-rehearsal.sh break-glass
 just rollback-machine-direct-ssh "$TARGET" "$SSH_HOST" deploy
 ssh "$SSH_HOST" 'sudo journalctl -u sshd.service -u ssh.service -b --no-pager -n 120'
 ```
@@ -62,6 +66,9 @@ match are verified before restore, switch, health check, or rollback.
 - Signed manifest path, sequence, target, desired system path, and git revision.
 - Event JSONL and target journal lines.
 - Rollback command and final generation when rollback was used.
+- Local break-glass rehearsal artifacts when practicing the runbook:
+  `break-glass-evidence.json`, `break-glass-events.jsonl`, and
+  `break-glass-generation-state.json`.
 
 ## Stop And Ask
 

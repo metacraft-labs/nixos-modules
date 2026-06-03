@@ -185,6 +185,10 @@ bash scripts/deployment-incus-rehearsal.sh offline-latest-only
 bash scripts/deployment-incus-rehearsal.sh forced-command --check-env
 bash scripts/deployment-incus-rehearsal.sh forced-command --dry-run
 bash scripts/deployment-incus-rehearsal.sh forced-command
+bash scripts/deployment-incus-rehearsal.sh break-glass --check-env
+bash scripts/deployment-incus-rehearsal.sh break-glass --check-runtime
+bash scripts/deployment-incus-rehearsal.sh break-glass --dry-run
+bash scripts/deployment-incus-rehearsal.sh break-glass
 bash scripts/deployment-incus-rehearsal.sh pull-agent --check-env
 bash scripts/deployment-incus-rehearsal.sh pull-agent --dry-run
 bash scripts/deployment-incus-rehearsal.sh pull-agent
@@ -196,6 +200,10 @@ targets. Networks must model control, cache, home-lab-like, remote-server-like,
 and optional workstation reachability. Failure injections must include target
 partition, older and newer desired states, cache missing object or corruption,
 forced-command misuse, health-check failure, rollback, and lock contention.
+The break-glass scenario must also prove a failed canary recovery path:
+arbitrary deploy-key shell access is rejected, a signed break-glass manifest is
+accepted through the forced-command boundary, rollback evidence is captured, and
+the final generation is preserved in target-side artifacts.
 
 Runtime launches create only resources prefixed by `MCL_DEPLOYMENT_INCUS_PREFIX`
 and clean those resources by default. Set `MCL_DEPLOYMENT_INCUS_ARTIFACT_DIR` to

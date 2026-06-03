@@ -178,6 +178,17 @@
       ]
     },
     {
+      "name": "break-glass",
+      "controls": [
+        "represent a failed deploy on a canary target",
+        "follow the human runbook recovery path",
+        "attempt arbitrary shell over deploy SSH credential",
+        "verify shell command is rejected",
+        "submit signed manifest for break-glass through forced-command SSH",
+        "verify rollback evidence and final generation preservation"
+      ]
+    },
+    {
       "name": "pull-agent",
       "controls": [
         "publish signed manifests to local desired-state source",

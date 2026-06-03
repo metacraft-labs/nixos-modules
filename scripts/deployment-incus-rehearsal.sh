@@ -44,6 +44,7 @@ Scenarios:
   full-topology-failures   Model the full failure matrix.
   offline-latest-only      Model older/newer desired state while a target is offline.
   forced-command           Model forced-command SSH credential boundaries.
+  break-glass              Model human break-glass recovery after a failed deploy.
   pull-agent               Model optional target-side pull-agent reconciliation.
 
 Modes:
@@ -88,7 +89,7 @@ runtime_cmd() {
 
 is_topology_scenario() {
   case "$scenario" in
-    full-topology | full-topology-failures | offline-latest-only | forced-command | pull-agent)
+    full-topology | full-topology-failures | offline-latest-only | forced-command | break-glass | pull-agent)
       return 0
       ;;
     *)
@@ -131,8 +132,9 @@ validate_topology() {
     and (controlsText("full-topology-failures") | contains("partition") and contains("missing cache") and contains("invalid") and contains("signature") and contains("switch failure") and contains("health-check failure") and contains("rollback") and contains("lock contention"))
     and (controlsText("offline-latest-only") | contains("deployment 41") and contains("deployment 42") and contains("offline") and contains("only deployment 42 applies"))
     and (controlsText("forced-command") | contains("arbitrary shell") and contains("rejected") and contains("signed manifest") and contains("signature"))
+    and (controlsText("break-glass") | contains("failed deploy") and contains("human runbook") and contains("arbitrary shell") and contains("rejected") and contains("signed manifest") and contains("rollback") and contains("final generation"))
     and (controlsText("pull-agent") | contains("signed manifests") and contains("partition") and contains("newer desired state") and contains("latest"))
-  ' "$topology_file" >/dev/null || die "topology inventory is missing required M7 roles, groups, networks, scenario controls, or Avahi policy"
+  ' "$topology_file" >/dev/null || die "topology inventory is missing required roles, groups, networks, scenario controls, or Avahi policy"
 }
 
 check_env() {
@@ -841,6 +843,44 @@ elif scenario == "forced-command":
         "status": "succeeded",
         "forcedCommand": evidence,
     }
+elif scenario == "break-glass":
+    evidence_path = out_dir / "break-glass-evidence.json"
+    if not evidence_path.exists():
+        raise SystemExit("break-glass evidence missing")
+    evidence = json.loads(evidence_path.read_text())
+    if not evidence.get("failedDeployDetected"):
+        raise SystemExit(f"break-glass failed deployment was not represented: {evidence}")
+    if not evidence.get("arbitraryShellRejected"):
+        raise SystemExit(f"break-glass arbitrary shell was not rejected: {evidence}")
+    if not evidence.get("arbitraryShellTargetResult", {}).get("rejected"):
+        raise SystemExit(f"break-glass arbitrary shell target artifact missing: {evidence}")
+    if not evidence.get("signedManifestAccepted"):
+        raise SystemExit(f"break-glass signed manifest was not accepted: {evidence}")
+    if not evidence.get("recoveryManifestTargetResult", {}).get("accepted"):
+        raise SystemExit(f"break-glass target-side signed manifest artifact missing: {evidence}")
+    if evidence.get("recoveryManifestTargetResult", {}).get("target") != evidence.get("target"):
+        raise SystemExit(f"break-glass manifest target binding was not preserved: {evidence}")
+    rollback = evidence.get("rollback", {})
+    if not rollback.get("started") or not rollback.get("completed"):
+        raise SystemExit(f"break-glass rollback evidence incomplete: {evidence}")
+    if evidence.get("finalGeneration") != evidence.get("rollbackToGeneration"):
+        raise SystemExit(f"break-glass final generation was not preserved/restored: {evidence}")
+    if rollback.get("finalGeneration") != evidence.get("finalGeneration"):
+        raise SystemExit(f"break-glass rollback final generation does not match evidence: {evidence}")
+    target_state = evidence.get("targetGenerationState", {})
+    if target_state.get("target") != evidence.get("target"):
+        raise SystemExit(f"break-glass target state was for the wrong target: {evidence}")
+    if target_state.get("finalGeneration") != evidence.get("finalGeneration"):
+        raise SystemExit(f"break-glass target generation artifact does not match final state: {evidence}")
+    event("failed-deploy-detected", target=evidence["target"], deploymentId=evidence["failedDeploymentId"], generation=evidence["failedGeneration"])
+    event("arbitrary-shell-rejected", target=evidence["target"], exitCode=evidence["arbitraryShellExitCode"])
+    event("break-glass-manifest-accepted", target=evidence["target"], deploymentId=evidence["recoveryDeploymentId"])
+    event("rollback-complete", target=evidence["target"], restoredGeneration=evidence["finalGeneration"])
+    event("final-generation-preserved", target=evidence["target"], generation=evidence["finalGeneration"])
+    final = {
+        "status": "succeeded",
+        "breakGlass": evidence,
+    }
 elif scenario == "pull-agent":
     status_path = out_dir / "pull-agent-status.json"
     if not status_path.exists():
@@ -882,6 +922,7 @@ required = {
     ],
     "offline-latest-only": ["stale-desired-state-rejected", "deployment-applied"],
     "forced-command": ["arbitrary-shell-rejected", "signed-manifest-accepted"],
+    "break-glass": ["failed-deploy-detected", "arbitrary-shell-rejected", "break-glass-manifest-accepted", "rollback-complete", "final-generation-preserved"],
     "pull-agent": ["pull-agent-applied"],
 }[scenario]
 event_types = {record["event"] for record in events}
@@ -965,6 +1006,95 @@ status = {
 status_path.write_text(json.dumps(status, indent=2, sort_keys=True) + "\n")
 print(json.dumps(status, sort_keys=True))
 PY
+
+  cat > "$topology_tmp_dir/break-glass-guard.sh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+
+mkdir -p /tmp/mcl-rehearsal
+original_command="${SSH_ORIGINAL_COMMAND:-}"
+state_file=/tmp/mcl-rehearsal/break-glass-generation-state.json
+events_file=/tmp/mcl-rehearsal/break-glass-events.jsonl
+policy_file=/tmp/mcl-rehearsal/break-glass-policy.json
+
+case "$original_command" in
+  "break-glass-apply "*)
+    manifest="${original_command#break-glass-apply }"
+    if ! jq -e --slurpfile policy "$policy_file" '
+      .signature == "synthetic-valid"
+      and .breakGlass == true
+      and .action == "rollback"
+      and .deploymentId == 45
+      and .failedDeploymentId == 44
+      and .rollbackToGeneration == 100
+      and .target == $policy[0].target
+      and .targetGroup == $policy[0].targetGroup
+    ' "$manifest" >/dev/null; then
+      echo "rejected invalid break-glass manifest" >&2
+      exit 125
+    fi
+    if ! jq -e '.failedDeploymentId == 44 and .healthStatus == "failed" and .previousGoodGeneration == 100' "$state_file" >/dev/null; then
+      echo "target is not in the expected failed deployment state" >&2
+      exit 124
+    fi
+
+    target="$(jq -r '.target' "$manifest")"
+    target_group="$(jq -r '.targetGroup' "$manifest")"
+    jq -c -n \
+      --arg target "$target" \
+      --arg targetGroup "$target_group" \
+      --argjson failedDeploymentId 44 \
+      --argjson recoveryDeploymentId 45 \
+      --argjson previousGoodGeneration 100 \
+      --argjson failedGeneration 101 \
+      --argjson finalGeneration 100 \
+      '{
+        target: $target,
+        targetGroup: $targetGroup,
+        failedDeploymentId: $failedDeploymentId,
+        recoveryDeploymentId: $recoveryDeploymentId,
+        previousGoodGeneration: $previousGoodGeneration,
+        failedGeneration: $failedGeneration,
+        finalGeneration: $finalGeneration,
+        healthStatus: "healthy",
+        rollbackCompleted: true
+      }' > "$state_file"
+    jq -c -n \
+      --arg target "$target" \
+      --argjson deploymentId 45 \
+      --argjson finalGeneration 100 \
+      '{event: "break-glass-manifest-accepted", target: $target, deploymentId: $deploymentId}' >> "$events_file"
+    jq -c -n \
+      --arg target "$target" \
+      --argjson finalGeneration 100 \
+      '{event: "rollback-complete", target: $target, finalGeneration: $finalGeneration}' >> "$events_file"
+    jq -n \
+      --arg manifest "$manifest" \
+      --arg target "$target" \
+      --arg targetGroup "$target_group" \
+      '{
+        accepted: true,
+        manifest: $manifest,
+        target: $target,
+        targetGroup: $targetGroup,
+        rollback: {
+          started: true,
+          completed: true,
+          finalGeneration: 100
+        }
+      }' > /tmp/mcl-rehearsal/break-glass-target-result.json
+    echo "accepted break-glass signed manifest"
+    exit 0
+    ;;
+  *)
+    jq -n \
+      --arg originalCommand "$original_command" \
+      '{rejected: true, originalCommand: $originalCommand}' > /tmp/mcl-rehearsal/break-glass-target-result.json
+    echo "rejected arbitrary command" >&2
+    exit 126
+    ;;
+esac
+SH
 }
 
 topology_inject_role_metadata() {
@@ -1257,6 +1387,108 @@ echo \$! > /tmp/mcl-rehearsal/sshd/sshd.pid"
   "$cli" file push --create-dirs "$topology_tmp_dir/forced-command-evidence.json" "${runner_container}/tmp/mcl-rehearsal/forced-command-evidence.json"
 }
 
+topology_exercise_break_glass() {
+  require_command ssh-keygen
+
+  local runner_role runner_container target_role target_container target_ip
+  runner_role="$(topology_role_by_kind orchestrator)"
+  runner_container="$(topology_role_container "$runner_role")"
+  target_role="$(topology_first_role_by_transport forced-command-ssh)"
+  [[ -n "$target_role" ]] || die "no forced-command target role in topology"
+  target_container="$(topology_role_container "$target_role")"
+  target_ip="$(topology_wait_container_ipv4 "$target_container" eth0)"
+
+  local key_path pub_key manifest_path target_group
+  key_path="$topology_tmp_dir/break-glass-key"
+  ssh-keygen -q -t ed25519 -N "" -f "$key_path"
+  pub_key="$(cat "${key_path}.pub")"
+  target_group="$(jq -r --arg name "$target_role" '.roles[] | select(.name == $name) | .targetGroup' "$topology_file")"
+  manifest_path="$topology_tmp_dir/break-glass-manifest.json"
+  jq -n \
+    --arg target "$target_role" \
+    --arg targetGroup "$target_group" \
+    '{
+      deploymentId: 45,
+      failedDeploymentId: 44,
+      target: $target,
+      targetGroup: $targetGroup,
+      signature: "synthetic-valid",
+      breakGlass: true,
+      action: "rollback",
+      rollbackToGeneration: 100,
+      reason: "synthetic failed deploy recovery rehearsal"
+    }' > "$manifest_path"
+
+  "$cli" file push --create-dirs "$topology_tmp_dir/break-glass-guard.sh" "${target_container}/tmp/mcl-rehearsal/break-glass-guard.sh"
+  "$cli" file push --create-dirs "$manifest_path" "${target_container}/tmp/mcl-rehearsal/break-glass-manifest.json"
+  container_exec "$target_container" "chmod +x /tmp/mcl-rehearsal/break-glass-guard.sh && mkdir -p /root/.ssh /run/sshd /tmp/mcl-rehearsal/sshd && jq -c -n --arg target '$target_role' --arg targetGroup '$target_group' '{target: \$target, targetGroup: \$targetGroup}' > /tmp/mcl-rehearsal/break-glass-policy.json && jq -c -n --arg target '$target_role' --arg targetGroup '$target_group' '{target: \$target, targetGroup: \$targetGroup, failedDeploymentId: 44, previousGoodGeneration: 100, failedGeneration: 101, currentGeneration: 101, healthStatus: \"failed\"}' > /tmp/mcl-rehearsal/break-glass-generation-state.json && jq -c -n --arg target '$target_role' '{event: \"failed-deploy-detected\", target: \$target, deploymentId: 44, failedGeneration: 101}' > /tmp/mcl-rehearsal/break-glass-events.jsonl && printf '%s %s\n' 'command=\"/tmp/mcl-rehearsal/break-glass-guard.sh\",restrict' '$pub_key' > /root/.ssh/authorized_keys && chmod 700 /root/.ssh && chmod 600 /root/.ssh/authorized_keys && ssh-keygen -A && cat > /tmp/mcl-rehearsal/sshd/sshd_config <<'EOF'
+Port 2222
+ListenAddress 0.0.0.0
+HostKey /etc/ssh/ssh_host_ed25519_key
+AuthorizedKeysFile /root/.ssh/authorized_keys
+PermitRootLogin prohibit-password
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+UsePAM no
+PidFile /tmp/mcl-rehearsal/sshd/sshd.pid
+Subsystem sftp internal-sftp
+EOF
+if [[ -s /tmp/mcl-rehearsal/sshd/sshd.pid ]]; then
+  kill \"\$(cat /tmp/mcl-rehearsal/sshd/sshd.pid)\" >/dev/null 2>&1 || true
+fi
+nohup /run/current-system/sw/bin/sshd -D -e -f /tmp/mcl-rehearsal/sshd/sshd_config > /tmp/mcl-rehearsal/sshd/sshd.log 2>&1 &
+echo \$! > /tmp/mcl-rehearsal/sshd/sshd.pid"
+
+  "$cli" file push --create-dirs "$key_path" "${runner_container}/tmp/mcl-rehearsal/break-glass-key"
+  container_exec "$runner_container" "chmod 600 /tmp/mcl-rehearsal/break-glass-key"
+  container_exec "$runner_container" "for attempt in \$(seq 1 30); do timeout 1 bash -c 'cat < /dev/null > /dev/tcp/${target_ip}/2222' >/dev/null 2>&1 && exit 0; sleep 1; done; exit 1"
+
+  local arbitrary_status submit_status
+  set +e
+  container_exec "$runner_container" "ssh -p 2222 -i /tmp/mcl-rehearsal/break-glass-key -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${target_ip} 'sh -c id' >/tmp/mcl-rehearsal/break-glass-arbitrary.out 2>/tmp/mcl-rehearsal/break-glass-arbitrary.err"
+  arbitrary_status=$?
+  set -e
+  [[ "$arbitrary_status" -eq 126 ]] || die "break-glass arbitrary shell was not rejected; exit=$arbitrary_status"
+  "$cli" file pull "${target_container}/tmp/mcl-rehearsal/break-glass-target-result.json" "$topology_tmp_dir/break-glass-arbitrary-target-result.json" >/dev/null
+
+  container_exec "$runner_container" "ssh -p 2222 -i /tmp/mcl-rehearsal/break-glass-key -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@${target_ip} 'break-glass-apply /tmp/mcl-rehearsal/break-glass-manifest.json' >/tmp/mcl-rehearsal/break-glass-submit.out 2>/tmp/mcl-rehearsal/break-glass-submit.err"
+  submit_status=$?
+  [[ "$submit_status" -eq 0 ]] || die "break-glass signed manifest was not accepted; exit=$submit_status"
+  "$cli" file pull "${target_container}/tmp/mcl-rehearsal/break-glass-target-result.json" "$topology_tmp_dir/break-glass-submit-target-result.json" >/dev/null
+  "$cli" file pull "${target_container}/tmp/mcl-rehearsal/break-glass-generation-state.json" "$topology_tmp_dir/break-glass-generation-state.json" >/dev/null
+  "$cli" file pull "${target_container}/tmp/mcl-rehearsal/break-glass-events.jsonl" "$topology_tmp_dir/break-glass-events.jsonl" >/dev/null
+
+  jq -n \
+    --arg target "$target_role" \
+    --argjson arbitraryStatus "$arbitrary_status" \
+    --argjson submitStatus "$submit_status" \
+    --slurpfile arbitraryTarget "$topology_tmp_dir/break-glass-arbitrary-target-result.json" \
+    --slurpfile submitTarget "$topology_tmp_dir/break-glass-submit-target-result.json" \
+    --slurpfile state "$topology_tmp_dir/break-glass-generation-state.json" \
+    '{
+      target: $target,
+      failedDeployDetected: true,
+      failedDeploymentId: 44,
+      failedGeneration: 101,
+      recoveryDeploymentId: 45,
+      rollbackToGeneration: 100,
+      finalGeneration: $state[0].finalGeneration,
+      arbitraryShellRejected: true,
+      arbitraryShellExitCode: $arbitraryStatus,
+      arbitraryShellTargetResult: $arbitraryTarget[0],
+      signedManifestAccepted: true,
+      signedManifestExitCode: $submitStatus,
+      recoveryManifestTargetResult: $submitTarget[0],
+      rollback: $submitTarget[0].rollback,
+      targetGenerationState: $state[0]
+    }' > "$topology_tmp_dir/break-glass-evidence.json"
+
+  local artifact
+  for artifact in break-glass-evidence.json break-glass-generation-state.json break-glass-events.jsonl break-glass-arbitrary-target-result.json break-glass-submit-target-result.json; do
+    "$cli" file push --create-dirs "$topology_tmp_dir/$artifact" "${runner_container}/tmp/mcl-rehearsal/$artifact"
+  done
+}
+
 topology_exercise_pull_agent() {
   local runner_role runner_container target_role target_container
   runner_role="$(topology_role_by_kind orchestrator)"
@@ -1300,7 +1532,7 @@ topology_capture_artifacts() {
   "$cli" file pull "${runner_container}/tmp/mcl-rehearsal/final-state.json" "$topology_artifact_dir/final-state.json" >/dev/null 2>&1 || true
   "$cli" file pull "${runner_container}/tmp/mcl-rehearsal/runtime-commands.log" "$topology_artifact_dir/runtime-commands.log" >/dev/null 2>&1 || true
   local scenario_artifact
-  for scenario_artifact in failure-evidence.json offline-latest-status.json forced-command-evidence.json pull-agent-status.json; do
+  for scenario_artifact in failure-evidence.json offline-latest-status.json forced-command-evidence.json break-glass-evidence.json break-glass-generation-state.json break-glass-events.jsonl break-glass-arbitrary-target-result.json break-glass-submit-target-result.json pull-agent-status.json; do
     "$cli" file pull "${runner_container}/tmp/mcl-rehearsal/${scenario_artifact}" "$topology_artifact_dir/${scenario_artifact}" >/dev/null 2>&1 || true
   done
 
@@ -1408,6 +1640,9 @@ run_topology() {
       ;;
     forced-command)
       topology_exercise_forced_command
+      ;;
+    break-glass)
+      topology_exercise_break_glass
       ;;
     pull-agent)
       topology_exercise_pull_agent

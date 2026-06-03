@@ -46,6 +46,10 @@ bash scripts/deployment-incus-rehearsal.sh offline-latest-only
 bash scripts/deployment-incus-rehearsal.sh forced-command --check-env
 bash scripts/deployment-incus-rehearsal.sh forced-command --dry-run
 bash scripts/deployment-incus-rehearsal.sh forced-command
+bash scripts/deployment-incus-rehearsal.sh break-glass --check-env
+bash scripts/deployment-incus-rehearsal.sh break-glass --check-runtime
+bash scripts/deployment-incus-rehearsal.sh break-glass --dry-run
+bash scripts/deployment-incus-rehearsal.sh break-glass
 bash scripts/deployment-incus-rehearsal.sh pull-agent --check-env
 bash scripts/deployment-incus-rehearsal.sh pull-agent --dry-run
 bash scripts/deployment-incus-rehearsal.sh pull-agent
@@ -79,6 +83,10 @@ remote-server-like, and optional workstation segments. Failure injections must
 cover target network partition, stale desired state, and newer desired state
 while offline. It must also cover cache object missing or corruption,
 forced-command SSH misuse, health-check failure, rollback, and lock contention.
+For break-glass coverage, the topology must also represent a failed canary
+deploy, reject arbitrary deploy-key shell access, accept only a signed
+break-glass manifest through forced-command SSH, and preserve final generation
+evidence in target-side artifacts.
 
 ## Evidence
 

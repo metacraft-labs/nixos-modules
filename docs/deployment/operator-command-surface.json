@@ -81,6 +81,7 @@
     "full-topology-failures",
     "offline-latest-only",
     "forced-command",
+    "break-glass",
     "pull-agent"
   ]
 }

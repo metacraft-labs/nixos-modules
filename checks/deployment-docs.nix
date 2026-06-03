@@ -384,6 +384,7 @@
 
               allowed_mcl_commands = set(surface["mclCommands"])
               allowed_just_targets = set(surface["infraJustTargets"])
+              allowed_rehearsal_scenarios = set(surface["rehearsalScenarios"])
 
               def shell_blocks(text):
                   in_block = False
@@ -431,6 +432,15 @@
                           require(
                               len(tokens) >= 2 and tokens[1] in allowed_just_targets,
                               f"{rel}: documented stale or uninventoried just target: {line!r}",
+                          )
+                      if (
+                          tokens[0] == "bash"
+                          and len(tokens) >= 3
+                          and tokens[1] == "scripts/deployment-incus-rehearsal.sh"
+                      ):
+                          require(
+                              tokens[2] in allowed_rehearsal_scenarios,
+                              f"{rel}: documented stale or uninventoried rehearsal scenario: {line!r}",
                           )
 
               all_text = "\n".join(read(path) for path in all_docs)
