@@ -32,7 +32,23 @@
           --allowed-signers ${escapeShellArg allowedSigners} \
           --state-dir ${escapeShellArg cfg.stateDir} \
           --event-log ${escapeShellArg cfg.eventLog} \
-          --reject-ssh-original-command${lib.optionalString cfg.dryRun " \\\n          --dry-run"}
+          --reject-ssh-original-command${lib.optionalString cfg.dryRun " \\\n          --dry-run"}${
+            lib.optionalString (
+              cfg.restoreCommand != ""
+            ) " \\\n          --restore-command ${escapeShellArg cfg.restoreCommand}"
+          }${
+            lib.optionalString (
+              cfg.switchCommand != ""
+            ) " \\\n          --switch-command ${escapeShellArg cfg.switchCommand}"
+          }${
+            lib.optionalString (
+              cfg.rollbackCommand != ""
+            ) " \\\n          --rollback-command ${escapeShellArg cfg.rollbackCommand}"
+          }${
+            lib.optionalString (
+              cfg.generationCommand != ""
+            ) " \\\n          --generation-command ${escapeShellArg cfg.generationCommand}"
+          }
       '';
 
       forcedCommand = pkgs.writeShellScript "mcl-deployment-forced-command" ''
@@ -110,6 +126,30 @@
           type = types.bool;
           default = false;
           description = "Verify manifests and write state/events without restore or switch.";
+        };
+
+        restoreCommand = mkOption {
+          type = types.str;
+          default = "";
+          description = "Optional root command override for closure restore tests. Empty uses the production Nix restore path.";
+        };
+
+        switchCommand = mkOption {
+          type = types.str;
+          default = "";
+          description = "Optional root command override for switch tests. Empty uses the desired system switch-to-configuration.";
+        };
+
+        rollbackCommand = mkOption {
+          type = types.str;
+          default = "";
+          description = "Optional root command override for rollback tests. Empty uses the previous generation switch-to-configuration.";
+        };
+
+        generationCommand = mkOption {
+          type = types.str;
+          default = "";
+          description = "Optional root command override that prints the current generation. Empty uses /run/current-system.";
         };
       };
 

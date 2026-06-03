@@ -66,6 +66,12 @@ struct DeployApplyArgs
         .Description("Reject non-empty SSH_ORIGINAL_COMMAND for forced-command keys"))
     bool rejectSshOriginalCommand;
 
+    @(NamedArgument(["restore-command"])
+        .Placeholder("COMMAND")
+        .Description("Override closure restore command for deterministic tests")
+        .EnvFallback("MCL_DEPLOY_RESTORE_COMMAND"))
+    string restoreCommand;
+
     @(NamedArgument(["switch-command"])
         .Placeholder("COMMAND")
         .Description("Override switch command for deterministic tests")
@@ -224,15 +230,26 @@ int deployApplyImpl(DeployApplyArgs args, DeployApplyDependencies deps)
         return 0;
     }
 
-    auto restoreCommand = manifestSubstituters(manifest).length
-        ? ["nix", "copy", "--from", manifestSubstituters(manifest)[0], manifestDesiredSystemPath(manifest)]
-        : ["nix", "path-info", manifestDesiredSystemPath(manifest)];
-    auto keys = manifestTrustedPublicKeys(manifest);
-    if (keys.length)
-        restoreCommand ~= ["--option", "trusted-public-keys", keys.join(" ")];
+    ProcessResult restore;
+    string[] restoreArgv;
+    if (args.restoreCommand != "")
+    {
+        restoreArgv = ["sh", "-c", args.restoreCommand];
+        restore = shell(runner, args.restoreCommand);
+    }
+    else
+    {
+        auto restoreCommand = manifestSubstituters(manifest).length
+            ? ["nix", "copy", "--from", manifestSubstituters(manifest)[0], manifestDesiredSystemPath(manifest)]
+            : ["nix", "path-info", manifestDesiredSystemPath(manifest)];
+        auto keys = manifestTrustedPublicKeys(manifest);
+        if (keys.length)
+            restoreCommand ~= ["--option", "trusted-public-keys", keys.join(" ")];
 
-    auto restore = runner(restoreCommand);
-    emit("agent-restore", "nix restore deployment closure", restoreCommand,
+        restoreArgv = restoreCommand;
+        restore = runner(restoreCommand);
+    }
+    emit("agent-restore", "nix restore deployment closure", restoreArgv,
         restore.succeeded ? "succeeded" : "failed",
         restore.exitCode,
         restore.succeeded ? "" : "Failed to restore deployment closure",

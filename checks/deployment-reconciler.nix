@@ -29,7 +29,56 @@ top@{ config, ... }:
         -----END OPENSSH PRIVATE KEY-----
       '';
       manifestPublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOG+pZMFoVf9csQhyja7HjubzInPvGX69OyIHYsaTuHt mcl-manifest-test";
-      fakeSystemPath = "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-nixos-system-target-25.11";
+      successSystemPath = "/nix/store/11111111111111111111111111111111-nixos-system-target-success";
+      rollbackSystemPath = "/nix/store/22222222222222222222222222222222-nixos-system-target-rollback";
+      oldSystemPath = "/nix/store/33333333333333333333333333333333-nixos-system-target-old";
+      newSystemPath = "/nix/store/44444444444444444444444444444444-nixos-system-target-new";
+      initialGeneration = "/nix/store/00000000000000000000000000000000-nixos-system-target-initial";
+      successGeneration = "/nix/store/55555555555555555555555555555555-nixos-system-target-success-generation";
+      rollbackFailedGeneration = "/nix/store/66666666666666666666666666666666-nixos-system-target-failed-generation";
+      supersededGeneration = "/nix/store/77777777777777777777777777777777-nixos-system-target-superseded-generation";
+      restoreScript = pkgs.writeShellScript "mcl-test-restore" ''
+        set -euo pipefail
+        mkdir -p /var/lib/mcl-test
+        printf 'restore\n' >> /var/lib/mcl-test/restore-runs
+      '';
+      generationScript = pkgs.writeShellScript "mcl-test-generation" ''
+        set -euo pipefail
+        if [ -f /var/lib/mcl-test/current-generation ]; then
+          cat /var/lib/mcl-test/current-generation
+        else
+          printf '%s\n' ${lib.escapeShellArg initialGeneration}
+        fi
+      '';
+      mkSwitchScript =
+        label: generation:
+        pkgs.writeShellScript "mcl-test-switch-${label}" ''
+          set -euo pipefail
+          mkdir -p /var/lib/mcl-test
+          printf '%s\n' ${lib.escapeShellArg generation} > /var/lib/mcl-test/current-generation
+          printf '%s\n' ${lib.escapeShellArg label} >> /var/lib/mcl-test/switch-runs
+        '';
+      rollbackScript = pkgs.writeShellScript "mcl-test-rollback" ''
+        set -euo pipefail
+        mkdir -p /var/lib/mcl-test
+        printf '%s\n' ${lib.escapeShellArg initialGeneration} > /var/lib/mcl-test/current-generation
+        printf 'rollback\n' >> /var/lib/mcl-test/rollback-runs
+      '';
+      mkHealthScript =
+        label: generation:
+        pkgs.writeShellScript "mcl-test-health-${label}" ''
+          set -euo pipefail
+          test "$(cat /var/lib/mcl-test/current-generation)" = ${lib.escapeShellArg generation}
+        '';
+      successSwitchScript = mkSwitchScript "success" successGeneration;
+      rollbackSwitchScript = mkSwitchScript "failing-health" rollbackFailedGeneration;
+      supersededSwitchScript = mkSwitchScript "superseded-newest-only" supersededGeneration;
+      successHealthScript = mkHealthScript "success" successGeneration;
+      supersededHealthScript = mkHealthScript "superseded" supersededGeneration;
+      fakeClosureEnv = "MCL_DEPLOY_FAKE_CLOSURE_COUNT=1 MCL_DEPLOY_FAKE_CLOSURE_TOTAL_BYTES=4096";
+      successHealthCommand = "generation|5|${successHealthScript}";
+      rollbackHealthCommand = "health-fails|5|false";
+      supersededHealthCommand = "generation|5|${supersededHealthScript}";
 
       timerSystem = lib.nixosSystem {
         system = pkgs.stdenv.hostPlatform.system;
@@ -117,7 +166,9 @@ top@{ config, ... }:
                   manifestPrincipal = "mcl-deployment";
                   manifestPublicKeys = [ manifestPublicKey ];
                   authorizedKeys = [ deployPublicKey ];
-                  dryRun = true;
+                  restoreCommand = "${restoreScript}";
+                  switchCommand = "${successSwitchScript}";
+                  generationCommand = "${generationScript}";
                 };
               };
           };
@@ -130,11 +181,12 @@ top@{ config, ... }:
                 controller.succeed("install -m 0600 ${deployPrivateKey} /tmp/deploy-key")
                 controller.succeed("install -m 0600 ${manifestPrivateKey} /tmp/manifest-key")
                 controller.succeed(
-                    "mcl deploy-plan "
+                    "${fakeClosureEnv} mcl deploy-plan "
                     "--target target "
-                    "--desired-system-path ${fakeSystemPath} "
+                    "--desired-system-path ${successSystemPath} "
                     "--git-revision 0123456789abcdef0123456789abcdef01234567 "
                     "--sequence 1 "
+                    "--health-command ${lib.escapeShellArg successHealthCommand} "
                     "--signing-key /tmp/manifest-key "
                     "--signing-key-id mcl-deployment "
                     "--output /tmp/manifest.json "
@@ -157,7 +209,14 @@ top@{ config, ... }:
                     "deploy@target < /tmp/manifest.json"
                 )
 
-            with subtest("target recorded dry-run convergence event"):
+            with subtest("target ran non-dry-run restore, switch, and health check"):
+                target.succeed("test -s /var/lib/mcl-test/restore-runs")
+                target.succeed("test -s /var/lib/mcl-test/switch-runs")
+                target.succeed("grep -qx restore /var/lib/mcl-test/restore-runs")
+                target.succeed("grep -qx success /var/lib/mcl-test/switch-runs")
+                target.succeed("test \"$(cat /var/lib/mcl-test/current-generation)\" = '${successGeneration}'")
+
+            with subtest("target recorded non-dry-run convergence events and state"):
                 target.succeed("test -s /var/log/mcl/deployments/target.jsonl")
                 target.succeed(
                     "python3 - <<'PY'\n"
@@ -165,11 +224,388 @@ top@{ config, ... }:
                     "events = [json.loads(line) for line in open('/var/log/mcl/deployments/target.jsonl') if line.strip()]\n"
                     "phases = [(event['phase'], event['command']['status']) for event in events]\n"
                     "assert ('activate-requested', 'succeeded') in phases, phases\n"
+                    "assert ('agent-restore', 'succeeded') in phases, phases\n"
+                    "assert ('switch', 'succeeded') in phases, phases\n"
+                    "assert ('healthcheck', 'succeeded') in phases, phases\n"
                     "assert ('complete', 'succeeded') in phases, phases\n"
                     "assert all(event['deploymentId'] == 'gh-local-unknown-target' for event in events), events\n"
+                    "activate = next(event for event in events if event['phase'] == 'activate-requested')\n"
+                    "assert activate['metadata']['dryRun'] is False, activate\n"
+                    "restore = next(event for event in events if event['phase'] == 'agent-restore')\n"
+                    "assert restore['command']['argv'][0:2] == ['sh', '-c'], restore\n"
+                    "switch = next(event for event in events if event['phase'] == 'switch')\n"
+                    "assert switch['metadata']['previousGeneration'] == '${initialGeneration}', switch\n"
+                    "assert switch['metadata']['newGeneration'] == '${successGeneration}', switch\n"
+                    "complete = next(event for event in events if event['phase'] == 'complete')\n"
+                    "assert complete['metadata']['previousGeneration'] == '${initialGeneration}', complete\n"
+                    "assert complete['metadata']['newGeneration'] == '${successGeneration}', complete\n"
                     "PY"
                 )
-                target.succeed("test -f /var/lib/mcl/deployments/converged/gh-local-unknown-target.json")
+                target.succeed(
+                    "python3 - <<'PY'\n"
+                    "import json\n"
+                    "state = json.load(open('/var/lib/mcl/deployments/converged/gh-local-unknown-target.json'))\n"
+                    "assert state['currentState'] == 'succeeded', state\n"
+                    "assert state['desiredSystemPath'] == '${successSystemPath}', state\n"
+                    "PY"
+                )
+          '';
+        };
+
+        deployment-direct-ssh-rollback-vm = pkgs.testers.nixosTest {
+          name = "deployment-direct-ssh-rollback-vm";
+
+          nodes = {
+            controller = {
+              environment.systemPackages = [
+                self'.packages.mcl
+                pkgs.openssh
+                pkgs.python3
+              ];
+            };
+
+            target =
+              { ... }:
+              {
+                imports = [ flake.modules.nixos.deployment-forced-command-apply ];
+
+                networking.hostName = "target";
+                environment.systemPackages = [ pkgs.python3 ];
+                services.openssh = {
+                  enable = true;
+                  settings.PasswordAuthentication = false;
+                };
+                services.mcl-deployment-ssh-apply = {
+                  enable = true;
+                  package = self'.packages.mcl;
+                  targetName = "target";
+                  manifestPrincipal = "mcl-deployment";
+                  manifestPublicKeys = [ manifestPublicKey ];
+                  authorizedKeys = [ deployPublicKey ];
+                  restoreCommand = "${restoreScript}";
+                  switchCommand = "${rollbackSwitchScript}";
+                  rollbackCommand = "${rollbackScript}";
+                  generationCommand = "${generationScript}";
+                };
+              };
+          };
+
+          testScript = ''
+            start_all()
+            target.wait_for_unit("sshd.service")
+
+            with subtest("create signed rollback manifest"):
+                controller.succeed("install -m 0600 ${deployPrivateKey} /tmp/deploy-key")
+                controller.succeed("install -m 0600 ${manifestPrivateKey} /tmp/manifest-key")
+                controller.succeed(
+                    "${fakeClosureEnv} mcl deploy-plan "
+                    "--target target "
+                    "--desired-system-path ${rollbackSystemPath} "
+                    "--git-revision 2222222222222222222222222222222222222222 "
+                    "--sequence 1 "
+                    "--health-command ${lib.escapeShellArg rollbackHealthCommand} "
+                    "--rollback-mode automatic "
+                    "--rollback-max-attempts 1 "
+                    "--on-health-check-failure rollback "
+                    "--signing-key /tmp/manifest-key "
+                    "--signing-key-id mcl-deployment "
+                    "--output /tmp/manifest.json"
+                )
+
+            with subtest("forced command exits failed after successful automatic rollback"):
+                controller.fail(
+                    "ssh -i /tmp/deploy-key "
+                    "-o StrictHostKeyChecking=no "
+                    "-o UserKnownHostsFile=/dev/null "
+                    "deploy@target < /tmp/manifest.json"
+                )
+
+            with subtest("target ran restore, switch, and rollback commands"):
+                target.succeed("grep -qx restore /var/lib/mcl-test/restore-runs")
+                target.succeed("grep -qx failing-health /var/lib/mcl-test/switch-runs")
+                target.succeed("grep -qx rollback /var/lib/mcl-test/rollback-runs")
+                target.succeed("test \"$(cat /var/lib/mcl-test/current-generation)\" = '${initialGeneration}'")
+
+            with subtest("target recorded health failure, rollback, and failed completion"):
+                target.succeed(
+                    "python3 - <<'PY'\n"
+                    "import json\n"
+                    "events = [json.loads(line) for line in open('/var/log/mcl/deployments/target.jsonl') if line.strip()]\n"
+                    "phases = [(event['phase'], event['command']['status']) for event in events]\n"
+                    "assert ('activate-requested', 'succeeded') in phases, phases\n"
+                    "assert ('agent-restore', 'succeeded') in phases, phases\n"
+                    "assert ('switch', 'succeeded') in phases, phases\n"
+                    "assert ('healthcheck', 'failed') in phases, phases\n"
+                    "assert ('rollback', 'succeeded') in phases, phases\n"
+                    "assert ('complete', 'failed') in phases, phases\n"
+                    "switch = next(event for event in events if event['phase'] == 'switch')\n"
+                    "assert switch['metadata']['previousGeneration'] == '${initialGeneration}', switch\n"
+                    "assert switch['metadata']['newGeneration'] == '${rollbackFailedGeneration}', switch\n"
+                    "rollback = next(event for event in events if event['phase'] == 'rollback')\n"
+                    "assert rollback['metadata']['previousGeneration'] == '${initialGeneration}', rollback\n"
+                    "assert rollback['metadata']['failedGeneration'] == '${rollbackFailedGeneration}', rollback\n"
+                    "complete = next(event for event in events if event['phase'] == 'complete')\n"
+                    "assert complete['command']['status'] == 'failed', complete\n"
+                    "PY"
+                )
+                target.succeed(
+                    "python3 - <<'PY'\n"
+                    "import json\n"
+                    "state = json.load(open('/var/lib/mcl/deployments/current/gh-local-unknown-target.json'))\n"
+                    "assert state['currentState'] == 'rolled-back', state\n"
+                    "assert state['desiredSystemPath'] == '${rollbackSystemPath}', state\n"
+                    "PY"
+                )
+          '';
+        };
+
+        deployment-reconciler-supersession-vm = pkgs.testers.nixosTest {
+          name = "deployment-reconciler-supersession-vm";
+
+          nodes = {
+            controller = {
+              environment.systemPackages = [
+                self'.packages.mcl
+                pkgs.openssh
+                pkgs.python3
+              ];
+            };
+
+            target =
+              { ... }:
+              {
+                imports = [ flake.modules.nixos.deployment-forced-command-apply ];
+
+                networking.hostName = "target";
+                environment.systemPackages = [ pkgs.python3 ];
+                services.openssh = {
+                  enable = true;
+                  settings.PasswordAuthentication = false;
+                };
+                services.mcl-deployment-ssh-apply = {
+                  enable = true;
+                  package = self'.packages.mcl;
+                  targetName = "target";
+                  manifestPrincipal = "mcl-deployment";
+                  manifestPublicKeys = [ manifestPublicKey ];
+                  authorizedKeys = [ deployPublicKey ];
+                  restoreCommand = "${restoreScript}";
+                  switchCommand = "${supersededSwitchScript}";
+                  generationCommand = "${generationScript}";
+                };
+              };
+          };
+
+          testScript = ''
+            start_all()
+            target.wait_for_unit("sshd.service")
+
+            with subtest("create old and new signed manifests"):
+                controller.succeed("install -m 0600 ${deployPrivateKey} /tmp/deploy-key")
+                controller.succeed("install -m 0600 ${manifestPrivateKey} /tmp/manifest-key")
+                controller.succeed(
+                    "${fakeClosureEnv} GITHUB_RUN_ID=41 GITHUB_SHA=0123456789abcdef0123456789abcdef01234567 "
+                    "mcl deploy-plan "
+                    "--target target "
+                    "--desired-system-path ${oldSystemPath} "
+                    "--git-revision 0123456789abcdef0123456789abcdef01234567 "
+                    "--sequence 1 "
+                    "--health-command ${lib.escapeShellArg supersededHealthCommand} "
+                    "--signing-key /tmp/manifest-key "
+                    "--signing-key-id mcl-deployment "
+                    "--output /tmp/old.json"
+                )
+                controller.succeed(
+                    "${fakeClosureEnv} GITHUB_RUN_ID=42 GITHUB_SHA=1123456789abcdef0123456789abcdef01234567 "
+                    "mcl deploy-plan "
+                    "--target target "
+                    "--desired-system-path ${newSystemPath} "
+                    "--git-revision 1123456789abcdef0123456789abcdef01234567 "
+                    "--sequence 2 "
+                    "--health-command ${lib.escapeShellArg supersededHealthCommand} "
+                    "--signing-key /tmp/manifest-key "
+                    "--signing-key-id mcl-deployment "
+                    "--output /tmp/new.json"
+                )
+
+            with subtest("reconciler sends only the newest manifest over forced-command ssh"):
+                controller.succeed(
+                    "mcl deploy-reconcile "
+                    "--state-dir /tmp/reconciler-state "
+                    "--manifest /tmp/old.json "
+                    "--manifest /tmp/new.json "
+                    "--target target "
+                    "--target-host target=target "
+                    "--identity-file /tmp/deploy-key "
+                    "--ssh-option StrictHostKeyChecking=no "
+                    "--ssh-option UserKnownHostsFile=/dev/null"
+                )
+
+            with subtest("controller recorded old manifest as superseded and new as succeeded"):
+                controller.succeed("test -f /tmp/reconciler-state/superseded/gh-41-0123456-target.json")
+                controller.succeed(
+                    "python3 - <<'PY'\n"
+                    "import json\n"
+                    "state = json.load(open('/tmp/reconciler-state/converged/gh-42-1123456-target.json'))\n"
+                    "assert state['currentState'] == 'succeeded', state\n"
+                    "assert state['desiredSystemPath'] == '${newSystemPath}', state\n"
+                    "PY"
+                )
+
+            with subtest("target applied only the newest manifest"):
+                target.succeed("test \"$(wc -l < /var/lib/mcl-test/restore-runs)\" = 1")
+                target.succeed("test \"$(wc -l < /var/lib/mcl-test/switch-runs)\" = 1")
+                target.succeed("grep -qx superseded-newest-only /var/lib/mcl-test/switch-runs")
+                target.succeed(
+                    "python3 - <<'PY'\n"
+                    "import json\n"
+                    "events = [json.loads(line) for line in open('/var/log/mcl/deployments/target.jsonl') if line.strip()]\n"
+                    "ids = {event['deploymentId'] for event in events}\n"
+                    "assert ids == {'gh-42-1123456-target'}, ids\n"
+                    "paths = {event['storePaths']['system'] for event in events}\n"
+                    "assert paths == {'${newSystemPath}'}, paths\n"
+                    "phases = [(event['phase'], event['command']['status']) for event in events]\n"
+                    "assert ('agent-restore', 'succeeded') in phases, phases\n"
+                    "assert ('switch', 'succeeded') in phases, phases\n"
+                    "assert ('healthcheck', 'succeeded') in phases, phases\n"
+                    "assert ('complete', 'succeeded') in phases, phases\n"
+                    "PY"
+                )
+                target.succeed("test ! -e /var/lib/mcl/deployments/desired/gh-41-0123456-target.json")
+                target.succeed(
+                    "python3 - <<'PY'\n"
+                    "import json\n"
+                    "state = json.load(open('/var/lib/mcl/deployments/converged/gh-42-1123456-target.json'))\n"
+                    "assert state['currentState'] == 'succeeded', state\n"
+                    "assert state['desiredSystemPath'] == '${newSystemPath}', state\n"
+                    "PY"
+                )
+          '';
+        };
+
+        deployment-reconciler-timer-retry-vm = pkgs.testers.nixosTest {
+          name = "deployment-reconciler-timer-retry-vm";
+
+          nodes = {
+            controller =
+              { ... }:
+              {
+                imports = [ flake.modules.nixos.deployment-reconciler-timer ];
+
+                environment.systemPackages = [
+                  self'.packages.mcl
+                  pkgs.openssh
+                  pkgs.python3
+                ];
+                services.mcl-deployment-reconciler = {
+                  enable = true;
+                  package = self'.packages.mcl;
+                  stateDir = "/var/lib/mcl/deployments";
+                  eventLog = "/var/log/mcl/deployments/reconciler.jsonl";
+                  interval = "1min";
+                  jitter = "0";
+                  lockFile = "/run/lock/mcl-test-reconciler.lock";
+                  targets = [ "target" ];
+                  targetHosts.target = "target";
+                  identityFile = "/run/mcl-test/deploy-key";
+                  sshOptions = [
+                    "StrictHostKeyChecking=no"
+                    "UserKnownHostsFile=/dev/null"
+                    "ConnectTimeout=2"
+                  ];
+                };
+              };
+
+            target =
+              { ... }:
+              {
+                imports = [ flake.modules.nixos.deployment-forced-command-apply ];
+
+                networking.hostName = "target";
+                environment.systemPackages = [ pkgs.python3 ];
+                services.openssh = {
+                  enable = true;
+                  settings.PasswordAuthentication = false;
+                };
+                services.mcl-deployment-ssh-apply = {
+                  enable = true;
+                  package = self'.packages.mcl;
+                  targetName = "target";
+                  manifestPrincipal = "mcl-deployment";
+                  manifestPublicKeys = [ manifestPublicKey ];
+                  authorizedKeys = [ deployPublicKey ];
+                  restoreCommand = "${restoreScript}";
+                  switchCommand = "${successSwitchScript}";
+                  generationCommand = "${generationScript}";
+                };
+              };
+          };
+
+          testScript = ''
+            start_all()
+            controller.wait_for_unit("multi-user.target")
+            target.wait_for_unit("sshd.service")
+
+            with subtest("record pending manifest for timer reconciliation"):
+                controller.succeed("install -d -m 0700 /run/mcl-test")
+                controller.succeed("install -m 0600 ${deployPrivateKey} /run/mcl-test/deploy-key")
+                controller.succeed("install -m 0600 ${manifestPrivateKey} /tmp/manifest-key")
+                controller.succeed(
+                    "${fakeClosureEnv} mcl deploy-plan "
+                    "--target target "
+                    "--desired-system-path ${successSystemPath} "
+                    "--git-revision 0123456789abcdef0123456789abcdef01234567 "
+                    "--sequence 1 "
+                    "--health-command ${lib.escapeShellArg successHealthCommand} "
+                    "--signing-key /tmp/manifest-key "
+                    "--signing-key-id mcl-deployment "
+                    "--output /tmp/manifest.json "
+                    "--state-dir /var/lib/mcl/deployments"
+                )
+
+            with subtest("first retry fails while target ssh is unreachable"):
+                target.succeed("systemctl stop sshd.service")
+                controller.fail("systemctl start mcl-deployment-reconciler.service")
+                target.succeed("test ! -e /var/lib/mcl-test/restore-runs")
+                controller.succeed(
+                    "python3 - <<'PY'\n"
+                    "import json\n"
+                    "events = [json.loads(line) for line in open('/var/log/mcl/deployments/reconciler.jsonl') if line.strip()]\n"
+                    "assert any(event['phase'] == 'activate-requested' and event['command']['status'] == 'failed' for event in events), events\n"
+                    "failed = next(event for event in events if event['command']['status'] == 'failed')\n"
+                    "assert failed['error']['code'] == 'ssh_reconcile_failed', failed\n"
+                    "PY"
+                )
+
+            with subtest("second retry applies the same pending manifest after ssh recovers"):
+                target.succeed("systemctl start sshd.service")
+                target.wait_for_unit("sshd.service")
+                controller.succeed("systemctl reset-failed mcl-deployment-reconciler.service")
+                controller.succeed("systemctl start mcl-deployment-reconciler.service")
+                target.succeed("grep -qx restore /var/lib/mcl-test/restore-runs")
+                target.succeed("grep -qx success /var/lib/mcl-test/switch-runs")
+                controller.succeed(
+                    "python3 - <<'PY'\n"
+                    "import json\n"
+                    "events = [json.loads(line) for line in open('/var/log/mcl/deployments/reconciler.jsonl') if line.strip()]\n"
+                    "statuses = [event['command']['status'] for event in events if event['phase'] == 'activate-requested']\n"
+                    "assert statuses.count('failed') == 1, statuses\n"
+                    "assert statuses.count('succeeded') == 1, statuses\n"
+                    "state = json.load(open('/var/lib/mcl/deployments/converged/gh-local-unknown-target.json'))\n"
+                    "assert state['currentState'] == 'succeeded', state\n"
+                    "PY"
+                )
+                target.succeed(
+                    "python3 - <<'PY'\n"
+                    "import json\n"
+                    "events = [json.loads(line) for line in open('/var/log/mcl/deployments/target.jsonl') if line.strip()]\n"
+                    "phases = [(event['phase'], event['command']['status']) for event in events]\n"
+                    "assert ('agent-restore', 'succeeded') in phases, phases\n"
+                    "assert ('switch', 'succeeded') in phases, phases\n"
+                    "assert ('healthcheck', 'succeeded') in phases, phases\n"
+                    "assert ('complete', 'succeeded') in phases, phases\n"
+                    "PY"
+                )
           '';
         };
 
