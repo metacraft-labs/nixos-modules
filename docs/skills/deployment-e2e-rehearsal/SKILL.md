@@ -28,6 +28,9 @@ nix build .#checks.x86_64-linux.deployment-pull-agent-latest-vm
 nix build .#checks.x86_64-linux.deployment-pull-agent-rejects-invalid-vm
 nix build .#checks.x86_64-linux.deployment-pull-agent-lock-contention-vm
 nix build .#checks.x86_64-linux.deployment-scheduled-canary-local-vm
+nix build .#checks.x86_64-linux.deployment-production-cutover-simulation-vm
+nix build .#checks.x86_64-linux.deployment-cachix-fallback-simulation
+nix build .#checks.x86_64-linux.deployment-no-default-cachix-deploy-call
 nix build .#checks.x86_64-linux.deployment-incus-rehearsal-image
 nix build .#checks.x86_64-linux.deployment-incus-rehearsal-script-static
 bash scripts/deployment-incus-rehearsal.sh full-topology --check-env
@@ -90,13 +93,16 @@ forced-command SSH misuse, health-check failure, rollback, and lock contention.
   attachment count, and Avahi policy.
 - Explicit comparison between rehearsal roles and production rollout groups
   before production enablement.
+- M8 cutover gate evidence proving Cachix Deploy is legacy fallback and the
+  Attic/direct path has local shadow and supervised simulation artifacts.
 
 ## Stop And Ask
 
 Stop before using production SSH keys, cache tokens, manifest signing keys, or
 hostnames in rehearsal containers; before weakening a failed check; before
 marking a runtime-pending result as passed; or before enabling production
-targets without the full evidence set.
+targets without the full evidence set. Stop before removing Cachix Deploy
+fallback without two successful live canary cycles.
 
 ## Rollback
 

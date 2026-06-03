@@ -14,6 +14,8 @@ description: Use when performing normal deployment operations, confirming deploy
   process that needs them.
 - Confirm `ATTIC_SUBSTITUTER` is paired with `ATTIC_TRUSTED_PUBLIC_KEY` when
   Attic restore is required before activation.
+- Confirm Cachix Deploy is used only as legacy fallback during the M8 migration
+  window, unless the approved procedure still names the old production path.
 
 ## Commands
 
@@ -34,6 +36,9 @@ mcl deploy-status summarize "$EVENTS_JSONL"
 
 Prefer the repository wrapper when it exists, because it keeps build, cache
 push, manifest signing, deploy, and state directory choices together.
+During M8, the Attic/direct path is the cutover candidate and Cachix Deploy is
+legacy fallback. Do not treat a fallback activation as evidence that the new
+path is ready.
 
 ## Workflow
 

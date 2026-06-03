@@ -226,6 +226,31 @@ Game-day checklist:
 6. Compare rehearsal roles with the production rollout groups before selecting
    any live canary target.
 
+## Production Cutover Gate
+
+M8 cutover starts with local evidence only:
+
+```sh
+nix build .#checks.x86_64-linux.deployment-production-cutover-simulation-vm
+nix build .#checks.x86_64-linux.deployment-cachix-fallback-simulation
+nix build .#checks.x86_64-linux.deployment-no-default-cachix-deploy-call
+```
+
+The first target policy is recorded in
+`docs/deployment/production-cutover-gates.json`. It requires green M7
+full-topology runtime evidence before selecting a production canary. The first
+pass target is local simulation only. A live target requires human approval and
+an evidence record.
+
+The shadow deploy path builds or selects the desired system path, pushes to
+Attic, verifies substitute coverage, signs a manifest, and runs the reconciler
+in dry-run mode. It must leave the target generation unchanged.
+
+Cachix Deploy is legacy fallback during the rollback window. It remains
+callable explicitly, but default Cachix Deploy removal is blocked until M7 is
+green, a live canary target is approved, two successful live canary cycles are
+recorded, every batch has migrated, and rollback closeout is documented.
+
 ## Updating Deployment Code
 
 Deployment code changes must not strand the control plane.

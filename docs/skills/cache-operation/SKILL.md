@@ -13,6 +13,8 @@ description: Use when inspecting Attic or Cachix deployment cache health, provin
   into logs, issues, summaries, or skill output.
 - Keep cache repair separate from target activation unless the deploy plan
   explicitly requires substitute coverage before activation.
+- During M8, treat Cachix as legacy fallback. Prove Attic substitute coverage
+  before approving the new cutover path.
 
 ## Commands
 
@@ -62,3 +64,5 @@ Cache repair rollback is usually a deploy rollback, not deletion from the
 cache. If a cache key or token was rotated incorrectly, restore the previous
 secret material through the repository secret workflow and redeploy trust
 configuration before retrying activation.
+Keep the Cachix fallback callable until the cutover gate records two successful
+live canary cycles and the rollback window is closed.

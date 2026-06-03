@@ -18,6 +18,8 @@ the production deployment path.
   incident queries, and current target-side observability limits.
 - [pull-agent.md](pull-agent.md): M5 optional target-side pull agent shape,
   state model, locking, retries, and current verification status.
+- [production-cutover.md](production-cutover.md): M8 cutover gate, local
+  simulations, Cachix fallback policy, and evidence required before production.
 - [runbook.md](runbook.md): M6 human operator runbook for investigation,
   normal deploy, cache operation, break-glass direct SSH, rollback,
   reconciliation, and Incus/LXC rehearsal gates.

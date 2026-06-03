@@ -67,6 +67,9 @@
     "deployment-pull-agent-rejects-invalid-vm",
     "deployment-pull-agent-lock-contention-vm",
     "deployment-scheduled-canary-local-vm",
+    "deployment-production-cutover-simulation-vm",
+    "deployment-cachix-fallback-simulation",
+    "deployment-no-default-cachix-deploy-call",
     "deployment-incus-rehearsal-image",
     "deployment-incus-rehearsal-script-static"
   ],
