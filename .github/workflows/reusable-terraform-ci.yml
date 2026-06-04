@@ -441,6 +441,94 @@ jobs:
                   print(f"{key}={value}", file=output)
           PY
 
+      - name: Post plan comment
+        if: steps.plan.outputs.text_plan_path != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLAN_CHANGED: ${{ steps.plan.outputs.changes }}
+          PLAN_TEXT_PATH: ${{ steps.plan.outputs.text_plan_path }}
+          TO_ADD: ${{ steps.plan.outputs.to_add }}
+          TO_CHANGE: ${{ steps.plan.outputs.to_change }}
+          TO_DESTROY: ${{ steps.plan.outputs.to_destroy }}
+          TO_MOVE: ${{ steps.plan.outputs.to_move }}
+          TO_IMPORT: ${{ steps.plan.outputs.to_import }}
+          WORKING_DIRECTORY: ${{ inputs.working_directory }}
+        run: |
+          set -euo pipefail
+
+          marker="<!-- mcl-terraform-plan:${WORKING_DIRECTORY} -->"
+          comments_api="repos/${GITHUB_REPOSITORY}/issues/${{ github.event.pull_request.number }}/comments"
+
+          if [[ "$PLAN_TEXT_PATH" = /* ]]; then
+            plan_text="$PLAN_TEXT_PATH"
+          else
+            plan_text="$GITHUB_WORKSPACE/$PLAN_TEXT_PATH"
+          fi
+
+          if [ ! -f "$plan_text" ]; then
+            echo "::error::Plan text output does not exist: $plan_text"
+            exit 1
+          fi
+
+          comment_body="$(mktemp)"
+          display_plan="$(mktemp)"
+          max_plan_bytes=52000
+
+          if [ "$(wc -c < "$plan_text")" -gt "$max_plan_bytes" ]; then
+            head -c "$max_plan_bytes" "$plan_text" > "$display_plan"
+            {
+              echo
+              echo
+              echo "... plan output truncated in PR comment; see the workflow artifact/log for the full output."
+            } >> "$display_plan"
+          else
+            cp "$plan_text" "$display_plan"
+          fi
+
+          if [ "$PLAN_CHANGED" = "true" ]; then
+            result="Changes detected"
+          else
+            result="No changes"
+          fi
+
+          {
+            echo "$marker"
+            echo "### Terraform Plan: \`${WORKING_DIRECTORY}\`"
+            echo
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Result | ${result} |"
+            echo "| Add | ${TO_ADD:-0} |"
+            echo "| Change | ${TO_CHANGE:-0} |"
+            echo "| Destroy | ${TO_DESTROY:-0} |"
+            echo "| Move | ${TO_MOVE:-0} |"
+            echo "| Import/read | ${TO_IMPORT:-0} |"
+            echo "| Commit | \`${GITHUB_SHA}\` |"
+            echo "| Run | [${GITHUB_RUN_ID}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}) |"
+            echo
+            echo "<details><summary>Plan output</summary>"
+            echo
+            echo '```text'
+            cat "$display_plan"
+            echo '```'
+            echo
+            echo "</details>"
+          } > "$comment_body"
+
+          existing_comment_id="$(
+            gh api "$comments_api" --paginate \
+              --jq ".[] | select(.body | contains(\"$marker\")) | .id" \
+              | tail -n 1
+          )"
+
+          body="$(cat "$comment_body")"
+          if [ -n "$existing_comment_id" ]; then
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${existing_comment_id}" \
+              -f body="$body" >/dev/null
+          else
+            gh api -X POST "$comments_api" -f body="$body" >/dev/null
+          fi
+
       - name: Plan safety gate — destroy
         if: steps.plan.outputs.to_destroy > 0
         env:
