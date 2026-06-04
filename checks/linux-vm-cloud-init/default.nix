@@ -47,13 +47,21 @@
       vmImages = import ../../vm-images { inherit pkgs lib; };
 
       # Ubuntu 24.04 LTS (noble) cloud image, x86_64.
-      # The sha256 below pins the exact upstream artifact that the rest of
-      # nixos-modules' docs/examples reference; bump in lockstep with the
-      # docs/examples if Ubuntu re-spins the image.
+      #
+      # Pinned to the upstream Ubuntu artifact at the noble *release* URL
+      # (https://cloud-images.ubuntu.com/releases/noble/release/), which
+      # Ubuntu re-publishes in place on every point release / security
+      # respin. The sha256 below is the build that was current as of
+      # 2026-06-04; if Ubuntu re-spins the image again, CI will fail
+      # with a fixed-output hash mismatch and the operator must
+      # `nix-prefetch-url` the URL and update the hex hash here.
+      #
+      # Same hash is duplicated in agent-harbor/nix/vm-recipes/default.nix
+      # (ubuntu-cloud-image-2404). Bump in lockstep.
       ubuntu2404CloudImage = vmImages.fetchUbuntuCloudImage {
         version = "24.04";
         codename = "noble";
-        sha256 = "2b5f90ffe8180def601c021c874e55d8303e8bcbfc66fee2b94414f43ac5eb1f";
+        sha256 = "53fdde898feed8b027d94baa9cfe8229867f330a1d9c49dc7d84465ee7f229f7";
       };
 
       # The VM under test. Cloud-init seed gets:
