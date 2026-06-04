@@ -20,7 +20,14 @@
 # loopback networking, and on Linux ideally /dev/kvm — none of which are
 # available inside the Nix build sandbox. The boot test is therefore a
 # runnable package (`pkgs.writeShellApplication`), invoked outside the
-# sandbox on any host with QEMU (Mac TCG works; Linux KVM is faster).
+# sandbox.
+#
+# Platform scope: both the image and the runner are Linux-only because
+# `makeLinuxVM` declares `meta.platforms = [ "x86_64-linux" "aarch64-linux" ]`.
+# Running an x86_64 Ubuntu guest under TCG on aarch64-darwin is technically
+# possible but requires relaxing `meta.platforms` in
+# `vm-images/ubuntu/default.nix`; that change is outside the M16 scope and
+# is left as a follow-up if Mac-host smoke tests become desirable.
 #
 # References:
 # - Cloud-init NoCloud datasource: https://cloudinit.readthedocs.io/en/latest/reference/datasources/nocloud.html
@@ -209,10 +216,13 @@
         linux-vm-cloud-init-image = linuxVM;
       };
 
-      # The boot-test runner is always exposed as a package so it can be
-      # invoked on any host with QEMU available — including aarch64-darwin
-      # under TCG, which is the M16-acceptable Mac-host path.
-      packages = lib.optionalAttrs (isLinux || isDarwin) {
+      # The boot-test runner depends on the built VM image, which is
+      # marked `meta.platforms = [ "x86_64-linux" "aarch64-linux" ]` by
+      # `makeLinuxVM`. The runner is therefore Linux-only at build time.
+      # Cross-arch boot on aarch64-darwin via TCG is technically possible
+      # but requires `allowUnsupportedSystem`/`meta.platforms` relaxation
+      # in `vm-images/ubuntu/default.nix`; that scope is left to a follow-up.
+      packages = lib.optionalAttrs isLinux {
         test-linux-vm-cloud-init = bootTestScript;
       };
     };
