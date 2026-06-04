@@ -404,7 +404,8 @@ jobs:
           fi
           echo "text_plan_path=$(realpath --relative-to="$GITHUB_WORKSPACE" "$plan_text")" >> "$GITHUB_OUTPUT"
 
-          python3 - "$plan_json" "$GITHUB_OUTPUT" <<'PY'
+          nix shell --accept-flake-config --inputs-from "$GITHUB_WORKSPACE" nixpkgs#python3 --command \
+            python3 - "$plan_json" "$GITHUB_OUTPUT" <<'PY'
           import json
           import os
           import sys
@@ -461,7 +462,7 @@ jobs:
             exit 0
           fi
           # Detect resources with replace actions (create + delete)
-          REPLACES=$(python3 -c "
+          REPLACES=$(nix shell --accept-flake-config --inputs-from "$GITHUB_WORKSPACE" nixpkgs#python3 --command python3 -c "
           import json, sys
           plan = json.load(open(sys.argv[1]))
           replaces = [
@@ -507,7 +508,8 @@ jobs:
           fi
 
           # Run policy check
-          python3 /tmp/tofu-plan-policy.py "$PLAN_JSON" "${POLICY_ARGS[@]}"
+          nix shell --accept-flake-config --inputs-from "$GITHUB_WORKSPACE" nixpkgs#python3 --command \
+            python3 /tmp/tofu-plan-policy.py "$PLAN_JSON" "${POLICY_ARGS[@]}"
 
       - name: Sensitive-change gate
         if: inputs.sensitive_change_label != '' && steps.plan.outputs.changes == 'true'
