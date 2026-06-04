@@ -328,14 +328,112 @@ jobs:
           nix develop --accept-flake-config --command bash -c "terranix --pkgs '$NIXPKGS' > config.tf.json"
 
       - name: Plan
-        uses: dflook/tofu-plan@3f5dc358343fb58cd60f83b019e810315aa8258f # v2.2.3
         id: plan
         env:
-          GITHUB_TOKEN: ${{ github.token }}
-        with:
-          path: ${{ inputs.working_directory }}
-          label: ${{ inputs.working_directory }}
-          backend_config_file: ${{ inputs.backend_config_file }}
+          BACKEND_CONFIG_FILE: ${{ inputs.backend_config_file }}
+          WORKING_DIRECTORY: ${{ inputs.working_directory }}
+        run: |
+          set -euo pipefail
+
+          backend_config_files="${BACKEND_CONFIG_FILE:-}"
+          plan_id="$(printf '%s' "$WORKING_DIRECTORY" | tr '/[:space:]' '--')"
+          plan_dir="$GITHUB_WORKSPACE/.result/terraform-plan/$plan_id"
+          mkdir -p "$plan_dir"
+
+          cd "$WORKING_DIRECTORY"
+
+          backend_args=()
+          while IFS= read -r backend_config_file; do
+            [ -n "$backend_config_file" ] || continue
+            if [[ "$backend_config_file" = /* ]]; then
+              backend_path="$backend_config_file"
+            else
+              backend_path="$GITHUB_WORKSPACE/$backend_config_file"
+            fi
+            if [ ! -f "$backend_path" ]; then
+              echo "::error::Backend config file does not exist: $backend_path"
+              exit 1
+            fi
+            backend_args+=("-backend-config=$(realpath --relative-to="$PWD" "$backend_path")")
+          done < <(printf '%s\n' "$backend_config_files" | tr ',' '\n')
+
+          nix develop --accept-flake-config --command tofu init -input=false "${backend_args[@]}"
+
+          plan_bin="$plan_dir/plan.tfplan"
+          plan_text="$plan_dir/plan.txt"
+          plan_stderr="$plan_dir/plan.stderr"
+          plan_json="$plan_dir/plan.json"
+
+          set +e
+          nix develop --accept-flake-config --command tofu plan \
+            -input=false \
+            -no-color \
+            -lock=false \
+            -detailed-exitcode \
+            -out="$plan_bin" \
+            >"$plan_text" 2>"$plan_stderr"
+          plan_exit=$?
+          set -e
+
+          cat "$plan_text"
+          cat "$plan_stderr" >&2
+
+          if [ "$plan_exit" -eq 1 ]; then
+            exit 1
+          fi
+
+          if [ "$plan_exit" -eq 0 ]; then
+            echo "changes=false" >> "$GITHUB_OUTPUT"
+          elif [ "$plan_exit" -eq 2 ]; then
+            echo "changes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Unexpected tofu plan exit code: $plan_exit"
+            exit "$plan_exit"
+          fi
+
+          if [ -f "$plan_bin" ]; then
+            nix develop --accept-flake-config --command tofu show -json "$plan_bin" > "$plan_json"
+            echo "plan_path=$(realpath --relative-to="$GITHUB_WORKSPACE" "$plan_bin")" >> "$GITHUB_OUTPUT"
+            echo "json_plan_path=$(realpath --relative-to="$GITHUB_WORKSPACE" "$plan_json")" >> "$GITHUB_OUTPUT"
+          fi
+          echo "text_plan_path=$(realpath --relative-to="$GITHUB_WORKSPACE" "$plan_text")" >> "$GITHUB_OUTPUT"
+
+          python3 - "$plan_json" "$GITHUB_OUTPUT" <<'PY'
+          import json
+          import os
+          import sys
+
+          plan_path, output_path = sys.argv[1], sys.argv[2]
+          counts = {
+              "to_add": 0,
+              "to_change": 0,
+              "to_destroy": 0,
+              "to_move": 0,
+              "to_import": 0,
+          }
+
+          if os.path.exists(plan_path):
+              with open(plan_path, encoding="utf-8") as handle:
+                  plan = json.load(handle)
+              for change in plan.get("resource_changes", []):
+                  actions = change.get("change", {}).get("actions", [])
+                  if actions == ["no-op"]:
+                      continue
+                  if "create" in actions:
+                      counts["to_add"] += 1
+                  if "update" in actions:
+                      counts["to_change"] += 1
+                  if "delete" in actions:
+                      counts["to_destroy"] += 1
+                  if actions == ["read"]:
+                      counts["to_import"] += 1
+                  if change.get("previous_address"):
+                      counts["to_move"] += 1
+
+          with open(output_path, "a", encoding="utf-8") as output:
+              for key, value in counts.items():
+                  print(f"{key}={value}", file=output)
+          PY
 
       - name: Plan safety gate — destroy
         if: steps.plan.outputs.to_destroy > 0
@@ -480,14 +578,83 @@ jobs:
           nix develop --accept-flake-config --command bash -c "terranix --pkgs '$NIXPKGS' > config.tf.json"
 
       - name: Apply
-        uses: dflook/tofu-apply@c254eb5b2e48978c05587373100d26b604c2182d # v2.2.3
         id: apply
         env:
-          GITHUB_TOKEN: ${{ github.token }}
-        with:
-          path: ${{ inputs.working_directory }}
-          label: ${{ inputs.working_directory }}
-          backend_config_file: ${{ inputs.backend_config_file }}
+          BACKEND_CONFIG_FILE: ${{ inputs.backend_config_file }}
+          WORKING_DIRECTORY: ${{ inputs.working_directory }}
+        run: |
+          set -euo pipefail
+
+          backend_config_files="${BACKEND_CONFIG_FILE:-}"
+          apply_id="$(printf '%s' "$WORKING_DIRECTORY" | tr '/[:space:]' '--')"
+          apply_dir="$GITHUB_WORKSPACE/.result/terraform-apply/$apply_id"
+          mkdir -p "$apply_dir"
+
+          cd "$WORKING_DIRECTORY"
+
+          backend_args=()
+          while IFS= read -r backend_config_file; do
+            [ -n "$backend_config_file" ] || continue
+            if [[ "$backend_config_file" = /* ]]; then
+              backend_path="$backend_config_file"
+            else
+              backend_path="$GITHUB_WORKSPACE/$backend_config_file"
+            fi
+            if [ ! -f "$backend_path" ]; then
+              echo "::error::Backend config file does not exist: $backend_path"
+              exit 1
+            fi
+            backend_args+=("-backend-config=$(realpath --relative-to="$PWD" "$backend_path")")
+          done < <(printf '%s\n' "$backend_config_files" | tr ',' '\n')
+
+          nix develop --accept-flake-config --command tofu init -input=false "${backend_args[@]}"
+
+          plan_bin="$apply_dir/plan.tfplan"
+          plan_text="$apply_dir/plan.txt"
+          plan_stderr="$apply_dir/plan.stderr"
+          apply_text="$apply_dir/apply.txt"
+          apply_stderr="$apply_dir/apply.stderr"
+
+          set +e
+          nix develop --accept-flake-config --command tofu plan \
+            -input=false \
+            -no-color \
+            -lock-timeout=300s \
+            -detailed-exitcode \
+            -out="$plan_bin" \
+            >"$plan_text" 2>"$plan_stderr"
+          plan_exit=$?
+          set -e
+
+          cat "$plan_text"
+          cat "$plan_stderr" >&2
+
+          if [ "$plan_exit" -eq 0 ]; then
+            echo "No changes to apply."
+            exit 0
+          fi
+          if [ "$plan_exit" -ne 2 ]; then
+            exit "$plan_exit"
+          fi
+
+          set +e
+          nix develop --accept-flake-config --command tofu apply \
+            -input=false \
+            -no-color \
+            -auto-approve \
+            -lock-timeout=300s \
+            "$plan_bin" \
+            >"$apply_text" 2>"$apply_stderr"
+          apply_exit=$?
+          set -e
+
+          cat "$apply_text"
+          cat "$apply_stderr" >&2
+
+          if [ "$apply_exit" -ne 0 ]; then
+            echo "failure-reason=apply-failed" >> "$GITHUB_OUTPUT"
+            exit "$apply_exit"
+          fi
 
       - name: Post-apply smoke tests
         if: inputs.smoke_test_command != ''
