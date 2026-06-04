@@ -357,7 +357,13 @@ jobs:
             backend_args+=("-backend-config=$(realpath --relative-to="$PWD" "$backend_path")")
           done < <(printf '%s\n' "$backend_config_files" | tr ',' '\n')
 
-          nix develop --accept-flake-config --command tofu init -input=false "${backend_args[@]}"
+          run_tofu() {
+            nix develop --accept-flake-config --command bash -euo pipefail -c \
+              'unset AWS_PROFILE AWS_DEFAULT_PROFILE; exec tofu "$@"' \
+              -- "$@"
+          }
+
+          run_tofu init -input=false "${backend_args[@]}"
 
           plan_bin="$plan_dir/plan.tfplan"
           plan_text="$plan_dir/plan.txt"
@@ -365,7 +371,7 @@ jobs:
           plan_json="$plan_dir/plan.json"
 
           set +e
-          nix develop --accept-flake-config --command tofu plan \
+          run_tofu plan \
             -input=false \
             -no-color \
             -lock=false \
@@ -607,7 +613,13 @@ jobs:
             backend_args+=("-backend-config=$(realpath --relative-to="$PWD" "$backend_path")")
           done < <(printf '%s\n' "$backend_config_files" | tr ',' '\n')
 
-          nix develop --accept-flake-config --command tofu init -input=false "${backend_args[@]}"
+          run_tofu() {
+            nix develop --accept-flake-config --command bash -euo pipefail -c \
+              'unset AWS_PROFILE AWS_DEFAULT_PROFILE; exec tofu "$@"' \
+              -- "$@"
+          }
+
+          run_tofu init -input=false "${backend_args[@]}"
 
           plan_bin="$apply_dir/plan.tfplan"
           plan_text="$apply_dir/plan.txt"
@@ -616,7 +628,7 @@ jobs:
           apply_stderr="$apply_dir/apply.stderr"
 
           set +e
-          nix develop --accept-flake-config --command tofu plan \
+          run_tofu plan \
             -input=false \
             -no-color \
             -lock-timeout=300s \
@@ -638,7 +650,7 @@ jobs:
           fi
 
           set +e
-          nix develop --accept-flake-config --command tofu apply \
+          run_tofu apply \
             -input=false \
             -no-color \
             -auto-approve \
@@ -710,14 +722,18 @@ jobs:
       - name: Init
         run: |
           cd ${{ inputs.working_directory }}
-          nix develop --accept-flake-config --command tofu init \
+          nix develop --accept-flake-config --command bash -euo pipefail -c \
+            'unset AWS_PROFILE AWS_DEFAULT_PROFILE; exec tofu "$@"' \
+            -- init \
             ${{ inputs.backend_config_file != '' && format('-backend-config=../{0}', inputs.backend_config_file) || '' }}
 
       - name: Detect drift
         id: drift
         run: |
           cd ${{ inputs.working_directory }}
-          nix develop --accept-flake-config --command tofu plan -detailed-exitcode 2>&1 | tee /tmp/drift-plan.txt || {
+          nix develop --accept-flake-config --command bash -euo pipefail -c \
+            'unset AWS_PROFILE AWS_DEFAULT_PROFILE; exec tofu "$@"' \
+            -- plan -detailed-exitcode 2>&1 | tee /tmp/drift-plan.txt || {
             exit_code=$?
             if [ "$exit_code" -eq 2 ]; then
               echo "drift_detected=true" >> "$GITHUB_OUTPUT"
