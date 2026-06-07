@@ -141,16 +141,64 @@ runs:
         primary-key: ${{ inputs.nix-cache-key }}
         restore-prefixes-first-match: ${{ inputs.nix-cache-restore-prefixes }}
 
-    - name: Build & activate the Nix Dev Shell
+    # Resolve which flake devShell to build/activate, validating the inputs.
+    # In `devshell` mode the ref is given directly; in `use-direnv` mode we read
+    # it from the repo's .envrc when it loads a flake (`use flake [ref]`,
+    # defaulting to the '.' default devShell). The output `flake-ref` stays
+    # empty for non-flake .envrc files, which we cannot pre-build generically.
+    - name: Determine the devShell to build
+      id: determine-devshell
       if: ${{ fromJSON(inputs.use-direnv || 'false') || inputs.devshell != '' }}
       shell: bash
       run: |
-        direnv() { nix run --inputs-from . nixpkgs#direnv -- "$@"; }
-
         if [ "${{ inputs.devshell }}" != "" ] && [ "${{ inputs.use-direnv }}" == "true" ]; then
           echo "Error: 'devshell' and 'use-direnv' are mutually exclusive."
           exit 1
         fi
+
+        flake_ref=""
+        if [ "${{ inputs.devshell }}" != "" ]; then
+          flake_ref=".#${{ inputs.devshell }}"
+        elif [ "${{ inputs.use-direnv }}" == "true" ]; then
+          if [ ! -f .envrc ]; then
+            echo "Error: 'use-direnv' is enabled but .envrc does not exist."
+            exit 1
+          fi
+          if grep -qE '^[[:space:]]*use[[:space:]]+flake' .envrc; then
+            flake_ref="$(sed -n 's/^[[:space:]]*use[[:space:]][[:space:]]*flake[[:space:]]*//p' .envrc | head -n1)"
+            flake_ref="${flake_ref:-.}"
+          fi
+        fi
+
+        echo "flake-ref=$flake_ref" >> "$GITHUB_OUTPUT"
+        echo "Resolved devShell flake ref: '${flake_ref:-<none>}'"
+
+    # Build the devShell explicitly so a build/eval failure aborts the job here
+    # with a clear error. This is necessary because direnv's `use flake`
+    # swallows such failures: it runs `eval "$(nix print-dev-env ...)"`, so when
+    # the devShell fails to build the substitution is empty, `eval ""` succeeds,
+    # and the later `direnv export` still exits 0 while leaving $GITHUB_ENV
+    # without the devShell's PATH. The action would then report success and the
+    # real failure would only surface in a later step as an obscure
+    # "<tool>: command not found" (exit 127). `nix print-dev-env` propagates the
+    # build/eval exit code, so we use it to fail fast.
+    - name: Build the Nix DevShell
+      if: ${{ steps.determine-devshell.outputs.flake-ref != '' }}
+      shell: bash
+      run: |
+        echo "::group::Building Nix DevShell"
+        nix --extra-experimental-features "nix-command flakes" \
+          print-dev-env "${{ steps.determine-devshell.outputs.flake-ref }}" >/dev/null
+        echo "::endgroup::"
+
+    # Generate the .envrc (in `devshell` mode) or use the repo's existing one
+    # (in `use-direnv` mode), then export the devShell environment to
+    # $GITHUB_ENV via direnv so subsequent steps run inside it.
+    - name: Activate the Nix DevShell
+      if: ${{ fromJSON(inputs.use-direnv || 'false') || inputs.devshell != '' }}
+      shell: bash
+      run: |
+        direnv() { nix run --inputs-from . nixpkgs#direnv -- "$@"; }
 
         if [ "${{ inputs.devshell }}" != "" ]; then
           # Function to restore .envrc
@@ -165,14 +213,9 @@ runs:
           trap restore_envrc EXIT
 
           echo "use flake .#${{ inputs.devshell }}" > .envrc
-        elif [ "${{ inputs.use-direnv }}" == "true" ]; then
-          if [ ! -f .envrc ]; then
-            echo "Error: 'use-direnv' is enabled but .envrc does not exist."
-            exit 1
-          fi
         fi
 
         direnv allow .
-        echo "::group::Building Nix DevShell"
+        echo "::group::Exporting Nix DevShell to GITHUB_ENV"
         direnv export gha >> "$GITHUB_ENV"
         echo "::endgroup::"
