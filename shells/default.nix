@@ -44,9 +44,9 @@
               pkg-config
               repl
               rage
-              dub
               dub-to-nix
-              ldc
+              inputs'.dlang-nix.packages.dub
+              inputs'.dlang-nix.packages.ldc
               inputs'.nixpkgs-unstable.legacyPackages.act
               podman-as-docker
 
@@ -57,7 +57,7 @@
               tflint
             ]
             ++ pkgs.lib.optionals (pkgs.stdenv.system == "x86_64-linux") [
-              dmd
+              inputs'.dlang-nix.packages.dmd
             ]
             ++ config.pre-commit.settings.enabledPackages
             ++ [ config.pre-commit.settings.package ];
