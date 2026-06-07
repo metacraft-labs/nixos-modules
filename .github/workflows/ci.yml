@@ -53,6 +53,62 @@ jobs:
       - name: Build and test the `mcl` command
         run: dub test --root packages/mcl -- -e 'fetchJson|(coda\.)|nix.run|nix.build'
 
+  # Regression test for the setup-nix action: a devShell that fails to build
+  # must make the action fail (not silently report success and surface later as
+  # an obscure "command not found"), while a working devShell must still be
+  # exported to $GITHUB_ENV. Uses the fixture flake under
+  # `.github/setup-nix/tests/devshell-fixture/`.
+  test-setup-nix-devshell:
+    name: Validate setup-nix devShell build-failure detection
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout first to use locally defined actions
+        uses: actions/checkout@v6.0.2
+
+      - name: Stage the devShell test fixture as the workspace flake
+        run: |
+          cp .github/setup-nix/tests/devshell-fixture/flake.nix ./flake.nix
+          rm -f flake.lock
+
+      - name: Setup Nix with a failing devShell (expected to fail)
+        id: setup-failing
+        continue-on-error: true
+        uses: ./.github/setup-nix
+        with:
+          push-to-cache: false
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+          devshell: failing
+
+      - name: Assert the failing devShell was detected
+        run: |
+          if [ "${{ steps.setup-failing.outcome }}" != "failure" ]; then
+            echo "::error::Setup Nix reported '${{ steps.setup-failing.outcome }}' for a devShell that fails to build; expected 'failure'."
+            exit 1
+          fi
+          echo "OK: Setup Nix correctly failed when the devShell could not be built."
+
+      - name: Setup Nix with a working devShell (expected to succeed)
+        id: setup-working
+        uses: ./.github/setup-nix
+        with:
+          push-to-cache: false
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+          devshell: default
+
+      - name: Assert the working devShell was exported to PATH
+        run: |
+          if ! command -v hello >/dev/null; then
+            echo "::error::'hello' from the devShell is not on PATH; the environment was not exported to GITHUB_ENV."
+            exit 1
+          fi
+          echo "OK: devShell environment exported; hello resolved to $(command -v hello)."
+
   test-mcl-secret-integration:
     runs-on: [self-hosted, nixos, x86-64-v2, bare-metal]
     steps:
