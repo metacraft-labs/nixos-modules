@@ -13,6 +13,11 @@ on:
         default: 'legacyPackages.x86_64-linux.bareMetalMachines'
         required: false
         type: string
+      base-input-overrides:
+        description: 'Whitespace-separated flake input names to pin in the synthetic base branch to the PR lock before diffing'
+        default: ''
+        required: false
+        type: string
     secrets:
       CACHIX_AUTH_TOKEN:
         description: 'Cachix auth token'
@@ -67,6 +72,74 @@ jobs:
           echo "attributes<<EOF" >> "$GITHUB_OUTPUT"
           echo "$attrs" >> "$GITHUB_OUTPUT"
           echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare synthetic base flake inputs
+        if: inputs.base-input-overrides != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          base_ref='${{ github.event.pull_request.base.ref }}'
+          override_inputs='${{ inputs.base-input-overrides }}'
+          workspace="$(pwd)"
+          tmp_root="${RUNNER_TEMP:-/tmp}/nix-diff-base-${GITHUB_RUN_ID}"
+          base_worktree="$tmp_root/base"
+          synthetic_origin="$tmp_root/origin.git"
+
+          current_locked_ref() {
+            local input="$1"
+
+            nix flake metadata --json "$workspace" \
+              | jq -r --arg input "$input" '
+                .locks.nodes[.locks.nodes.root.inputs[$input]].locked as $locked
+                | if $locked.type == "github" then
+                    "github:\($locked.owner)/\($locked.repo)/\($locked.rev)"
+                  elif $locked.type == "git" and ($locked.url // "") != "" then
+                    "\($locked.url)?rev=\($locked.rev)"
+                  elif $locked.type == "path" and ($locked.path // "") != "" then
+                    "path:\($locked.path)"
+                  else
+                    empty
+                  end
+              '
+          }
+
+          rm -rf "$tmp_root"
+          mkdir -p "$tmp_root"
+
+          git fetch origin "+${base_ref}:refs/remotes/origin/${base_ref}"
+          git worktree add --detach "$base_worktree" "origin/${base_ref}"
+
+          lock_args=()
+          for input in $override_inputs; do
+            locked_ref="$(current_locked_ref "$input")"
+            if [ -z "$locked_ref" ]; then
+              echo "Could not resolve current locked ref for flake input: $input" >&2
+              exit 1
+            fi
+
+            echo "Pinning base flake input '$input' to $locked_ref"
+            lock_args+=(--override-input "$input" "$locked_ref")
+          done
+
+          (
+            cd "$base_worktree"
+            nix flake lock --accept-flake-config "${lock_args[@]}"
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add flake.lock
+
+            if git diff --cached --quiet; then
+              echo "Base flake.lock already matches requested input overrides"
+            else
+              git commit -m "ci: synthesize base flake input overrides"
+            fi
+          )
+
+          git init --bare "$synthetic_origin"
+          git -C "$base_worktree" push "$synthetic_origin" "HEAD:refs/heads/${base_ref}"
+          git remote set-url origin "$synthetic_origin"
+          echo "Prepared synthetic origin/${base_ref} for nix-diff input overrides: $override_inputs"
 
       - name: Diff NixOS system closures
         uses: natsukium/nix-diff-action@v1.1.0
