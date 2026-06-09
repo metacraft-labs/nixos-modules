@@ -235,6 +235,7 @@ JSONValue cachePushMetadata(
     CachePushRequest request,
     CachePushPlan plan,
     CacheProbeResult[] probes,
+    string[] unavailableSubstituters,
 )
 {
     JSONValue[] probeJson;
@@ -264,6 +265,10 @@ JSONValue cachePushMetadata(
         "probeTimeoutSeconds": JSONValue(cast(long) request.probeTimeoutSeconds),
         "probes": JSONValue(probeJson),
     ];
+
+    if (unavailableSubstituters.length)
+        metadata["unavailableSubstituters"] = JSONValue(
+            unavailableSubstituters.map!(substituter => JSONValue(substituter)).array);
 
     if (request.trustedPublicKeys.length)
         metadata["trustedPublicKeys"] = JSONValue(
@@ -298,6 +303,8 @@ int pushClosure(CachePushRequest request, ProcessRunner runProcess, ProcessRunne
         pushResult = runProcess(plan.argv);
 
     CacheProbeResult[] probes;
+    bool[string] unavailableSubstituters;
+    string[] unavailableSubstituterList;
     const missingRequiredSubstituter = pushResult.succeeded
         && request.requireSubstitute
         && plan.substituters.length == 0;
@@ -316,10 +323,18 @@ int pushClosure(CachePushRequest request, ProcessRunner runProcess, ProcessRunne
                 CacheProbeResult last;
                 foreach (substituter; plan.substituters)
                 {
+                    if (substituter in unavailableSubstituters)
+                        continue;
+
                     last = probeCacheSubstitute(path, substituter,
                         request.trustedPublicKeys, queryRunner,
                         request.probeTimeoutSeconds);
                     probes ~= last;
+                    if (last.outcome == "probe-timeout")
+                    {
+                        unavailableSubstituters[substituter] = true;
+                        unavailableSubstituterList ~= substituter;
+                    }
                     if (last.successful)
                         break;
                 }
@@ -358,7 +373,7 @@ int pushClosure(CachePushRequest request, ProcessRunner runProcess, ProcessRunne
             errorMessage,
             errorCode,
             errorDetails,
-            cachePushMetadata(request, plan, probes).object,
+            cachePushMetadata(request, plan, probes, unavailableSubstituterList).object,
         ));
 
     enforce(status != "failed", errorMessage == "" ? "Cache push failed" : errorMessage);
@@ -581,6 +596,139 @@ unittest
     assert(events[0]["metadata"]["coverage"]["probeAttemptCount"].integer == 2);
     assert(events[0]["metadata"]["probes"][0]["outcome"].str == "probe-timeout");
     assert(events[0]["metadata"]["probes"][1]["outcome"].str == "successful-substitute");
+}
+
+@("test_cache_probe_timeout_skips_substituter_for_later_paths")
+unittest
+{
+    import std.file : deleteme, readText, remove;
+    import std.json : parseJSON;
+    import std.string : splitLines;
+    import std.algorithm : filter;
+
+    auto eventLog = deleteme ~ ".cache-push-timeout-skip.events.jsonl";
+    scope(exit)
+        if (eventLog.exists) eventLog.remove;
+
+    auto root = "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-root";
+    auto dep = "/nix/store/11111111111111111111111111111111-dep";
+    string[][] commands;
+    ProcessResult fakeRunner(string[] command)
+    {
+        commands ~= command;
+        if (command.length >= 2 && command[0] == "nix" && command[1] == "path-info"
+            && command.canFind("--json"))
+            return ProcessResult(0,
+                `{"/nix/store/0123456789abcdfghijklmnpqrsvwxyz-root":{"narSize":7}}`, "");
+        if (command.length >= 2 && command[0] == "nix" && command[1] == "path-info"
+            && command.canFind("--recursive"))
+            return ProcessResult(0, root ~ "\n" ~ dep ~ "\n", "");
+        if (command.canFind("--store") && command.canFind("https://slow.example"))
+            return ProcessResult(124, "", "");
+        if (command.canFind("--store") && command.canFind("https://good.example"))
+            return ProcessResult(0, command[$ - 1] ~ "\n", "");
+        return ProcessResult(0, "", "");
+    }
+
+    assert(pushClosure(CachePushRequest(
+        backend: CacheBackend.cachix,
+        cache: "example-cache",
+        storePaths: [root],
+        substituters: ["https://slow.example", "https://good.example"],
+        eventLogPath: eventLog,
+        probeTimeoutSeconds: 3,
+    ), &fakeRunner, &fakeRunner) == 0);
+
+    ulong probeCommandCount(string substituter)
+    {
+        ulong count;
+        foreach (command; commands)
+            if (command.canFind("--store") && command.canFind(substituter))
+                ++count;
+        return count;
+    }
+
+    assert(probeCommandCount("https://slow.example") == 1);
+    assert(probeCommandCount("https://good.example") == 2);
+
+    auto events = eventLog.readText.splitLines
+        .filter!(line => line.strip != "")
+        .map!(line => line.parseJSON)
+        .array;
+    assert(events.length == 1);
+    assert(events[0]["command"]["status"].str == "succeeded");
+    assert(events[0]["metadata"]["coverage"]["complete"].boolean);
+    assert(events[0]["metadata"]["coverage"]["probeAttemptCount"].integer == 3);
+    assert(events[0]["metadata"]["unavailableSubstituters"].array.length == 1);
+    assert(events[0]["metadata"]["unavailableSubstituters"][0].str == "https://slow.example");
+}
+
+@("test_cache_probe_non_timeout_failure_does_not_skip_later_paths")
+unittest
+{
+    import std.file : deleteme, readText, remove;
+    import std.json : parseJSON;
+    import std.string : splitLines;
+    import std.algorithm : filter;
+
+    auto eventLog = deleteme ~ ".cache-push-non-timeout-retry.events.jsonl";
+    scope(exit)
+        if (eventLog.exists) eventLog.remove;
+
+    auto root = "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-root";
+    auto dep = "/nix/store/11111111111111111111111111111111-dep";
+    string[][] commands;
+    ProcessResult fakeRunner(string[] command)
+    {
+        commands ~= command;
+        if (command.length >= 2 && command[0] == "nix" && command[1] == "path-info"
+            && command.canFind("--json"))
+            return ProcessResult(0,
+                `{"/nix/store/0123456789abcdfghijklmnpqrsvwxyz-root":{"narSize":7}}`, "");
+        if (command.length >= 2 && command[0] == "nix" && command[1] == "path-info"
+            && command.canFind("--recursive"))
+            return ProcessResult(0, root ~ "\n" ~ dep ~ "\n", "");
+        if (command.canFind("--store") && command.canFind("https://slow.example")
+            && command.canFind(root))
+            return ProcessResult(1, "", "404 Not Found");
+        if (command.canFind("--store") && command.canFind("https://slow.example")
+            && command.canFind(dep))
+            return ProcessResult(0, dep ~ "\n", "");
+        if (command.canFind("--store") && command.canFind("https://good.example"))
+            return ProcessResult(0, command[$ - 1] ~ "\n", "");
+        return ProcessResult(0, "", "");
+    }
+
+    assert(pushClosure(CachePushRequest(
+        backend: CacheBackend.cachix,
+        cache: "example-cache",
+        storePaths: [root],
+        substituters: ["https://slow.example", "https://good.example"],
+        eventLogPath: eventLog,
+        probeTimeoutSeconds: 3,
+    ), &fakeRunner, &fakeRunner) == 0);
+
+    ulong probeCommandCount(string substituter)
+    {
+        ulong count;
+        foreach (command; commands)
+            if (command.canFind("--store") && command.canFind(substituter))
+                ++count;
+        return count;
+    }
+
+    assert(probeCommandCount("https://slow.example") == 2);
+    assert(probeCommandCount("https://good.example") == 1);
+
+    auto events = eventLog.readText.splitLines
+        .filter!(line => line.strip != "")
+        .map!(line => line.parseJSON)
+        .array;
+    assert(events.length == 1);
+    assert(events[0]["command"]["status"].str == "succeeded");
+    assert(events[0]["metadata"]["coverage"]["complete"].boolean);
+    assert(events[0]["metadata"]["coverage"]["probeAttemptCount"].integer == 3);
+    assert("unavailableSubstituters" !in events[0]["metadata"].object);
 }
 
 @("test_cache_probe_timeout_failure_metadata")
