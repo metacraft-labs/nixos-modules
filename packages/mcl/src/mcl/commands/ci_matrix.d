@@ -132,6 +132,8 @@ struct Package
     NixSystem system;
     string derivation;
     string output;
+    bool deploymentTarget = false;
+    string deploymentKind = "";
 
     string getNarInfoUrl(string binaryCacheHttpEndpoint) const
     {
@@ -438,23 +440,69 @@ Package packageFromNixEvalJobsJson(
     JSONValue json,
     string flakeAttrPath,
     NixSystemToGHRunner nixSystemToRunnerLabels,
+    const(string)[] deploymentTargetNames = [],
 )
 {
     auto sys = json["system"].fromJSON!NixSystem;
+    const attr = json["attr"].str;
 
     // WARN: The `isCached` property coming from `nix-eval-jobs` is
     //       insufficient as it just says if the package is cached
     //       "somewhere" (including in the local store)
     return Package(
-        name: json["attr"].str,
+        name: attr,
         allowedToFail: false,
-        attrPath: flakeAttrPath ~ "." ~ json["attr"].str,
+        attrPath: flakeAttrPath ~ "." ~ attr,
         cachedAt: [],
         system: sys,
         ghRunner: nixSystemToRunnerLabels[sys],
         derivation: json["drvPath"].str,
         output: json["outputs"]["out"].str,
+        deploymentTarget: isDeployableServerMachineAttr(flakeAttrPath, attr, deploymentTargetNames),
+        deploymentKind: deploymentKindFor(flakeAttrPath, attr, deploymentTargetNames),
     );
+}
+
+enum deployableServerMachinesAttrPath = "legacyPackages.x86_64-linux.serverMachines";
+
+bool isShardMatrixAttrPath(string flakeAttrPath)
+{
+    return flakeAttrPath.startsWith("mcl.shard-matrix.result.shards");
+}
+
+string shardMatrixMachineName(string attr)
+{
+    import std.string : split;
+
+    auto parts = attr.split("/");
+    return parts.length >= 3 && parts[0] == "machine"
+        ? parts[1]
+        : "";
+}
+
+bool isDeployableServerMachineAttr(
+    string flakeAttrPath,
+    string attr,
+    const(string)[] deploymentTargetNames = [],
+)
+{
+    if (flakeAttrPath == deployableServerMachinesAttrPath
+        || flakeAttrPath.startsWith(deployableServerMachinesAttrPath ~ "."))
+        return true;
+
+    if (!flakeAttrPath.isShardMatrixAttrPath)
+        return false;
+
+    if (attr == "serverMachines" || attr.startsWith("serverMachines/"))
+        return true;
+
+    return attr.shardMatrixMachineName != ""
+        && deploymentTargetNames.canFind(attr.shardMatrixMachineName);
+}
+
+string deploymentKindFor(string flakeAttrPath, string attr, const(string)[] deploymentTargetNames = [])
+{
+    return isDeployableServerMachineAttr(flakeAttrPath, attr, deploymentTargetNames) ? "server" : "";
 }
 
 @("packageFromNixEvalJobsJson")
@@ -504,6 +552,137 @@ unittest
         );
     }
 }
+
+@("deployment target metadata is limited to serverMachines")
+unittest
+{
+    const deploymentTargetNames = [
+        "Hetzner-FSN1-DC11-i7-4770-16-512-001",
+        "gpu-server-001",
+        "gpu-server-002",
+        "gpu-server-003",
+        "hetzner-002",
+        "hetzner-003",
+        "solunska-server",
+    ];
+
+    assert(isDeployableServerMachineAttr(
+        "legacyPackages.x86_64-linux.serverMachines",
+        "app-server-01"
+    ));
+    assert(isDeployableServerMachineAttr(
+        "mcl.shard-matrix.result.shards.shard-42",
+        "serverMachines/app-server-01/x86_64-linux",
+        deploymentTargetNames,
+    ));
+    assert(isDeployableServerMachineAttr(
+        "mcl.shard-matrix.result.shards.shard-42",
+        "machine/gpu-server-001/x86_64-linux",
+        deploymentTargetNames,
+    ));
+    assert(isDeployableServerMachineAttr(
+        "mcl.shard-matrix.result.shards.shard-42",
+        "machine/solunska-server/x86_64-linux",
+        deploymentTargetNames,
+    ));
+    assert(isDeployableServerMachineAttr(
+        "mcl.shard-matrix.result.shards.shard-42",
+        "machine/hetzner-002/x86_64-linux",
+        deploymentTargetNames,
+    ));
+    assert(isDeployableServerMachineAttr(
+        "mcl.shard-matrix.result.shards.shard-42",
+        "machine/Hetzner-FSN1-DC11-i7-4770-16-512-001/x86_64-linux",
+        deploymentTargetNames,
+    ));
+    assert(!isDeployableServerMachineAttr(
+        "mcl.shard-matrix.result.shards.shard-42",
+        "machine/elitsa-dimitrova-001/x86_64-linux",
+        deploymentTargetNames,
+    ));
+    assert(!isDeployableServerMachineAttr(
+        "mcl.shard-matrix.result.shards.shard-42",
+        "machine/usb-drive/x86_64-linux",
+        deploymentTargetNames,
+    ));
+    assert(!isDeployableServerMachineAttr(
+        "legacyPackages.x86_64-linux.checks",
+        "machine/gpu-server-001/x86_64-linux",
+        deploymentTargetNames,
+    ));
+
+    auto server = `{
+        "attr": "machine/gpu-server-001/x86_64-linux",
+        "drvPath": "/nix/store/server.drv",
+        "outputs": { "out": "/nix/store/11111111111111111111111111111111-server" },
+        "system": "x86_64-linux"
+    }`.parseJSON.packageFromNixEvalJobsJson(
+        "mcl.shard-matrix.result.shards.shard-42",
+        NixSystemToGHRunner(`{ "x86_64-linux": ["self-hosted"] }`),
+        deploymentTargetNames,
+    );
+    assert(server.deploymentTarget);
+    assert(server.deploymentKind == "server");
+
+    auto workstation = `{
+        "attr": "machine/elitsa-dimitrova-001/x86_64-linux",
+        "drvPath": "/nix/store/workstation.drv",
+        "outputs": { "out": "/nix/store/22222222222222222222222222222222-workstation" },
+        "system": "x86_64-linux"
+    }`.parseJSON.packageFromNixEvalJobsJson(
+        "mcl.shard-matrix.result.shards.shard-42",
+        NixSystemToGHRunner(`{ "x86_64-linux": ["self-hosted"] }`),
+        deploymentTargetNames,
+    );
+    assert(!workstation.deploymentTarget);
+    assert(workstation.deploymentKind == "");
+
+    auto installMedia = `{
+        "attr": "machine/usb-drive/x86_64-linux",
+        "drvPath": "/nix/store/install-media.drv",
+        "outputs": { "out": "/nix/store/33333333333333333333333333333333-install-media" },
+        "system": "x86_64-linux"
+    }`.parseJSON.packageFromNixEvalJobsJson(
+        "mcl.shard-matrix.result.shards.shard-42",
+        NixSystemToGHRunner(`{ "x86_64-linux": ["self-hosted"] }`),
+        deploymentTargetNames,
+    );
+    assert(!installMedia.deploymentTarget);
+    assert(installMedia.deploymentKind == "");
+
+    Package[] matrixPackages = [server, workstation, installMedia];
+    auto matrix = JSONValue([
+        "include": JSONValue(matrixPackages.map!toJSON.array),
+    ]);
+    assert(matrix["include"][0]["deploymentTarget"].boolean);
+    assert(matrix["include"][0]["deploymentKind"].str == "server");
+    assert(!matrix["include"][1]["deploymentTarget"].boolean);
+    assert(matrix["include"][1]["deploymentKind"].str == "");
+    assert(!matrix["include"][2]["deploymentTarget"].boolean);
+    assert(matrix["include"][2]["deploymentKind"].str == "");
+}
+
+@("workflow deployment cache push is gated by deployment target metadata")
+unittest
+{
+    const workflow = rootDir
+        .buildPath(".github/workflows/reusable-flake-checks-ci-matrix.yml")
+        .readText;
+
+    assert(workflow.canFind(
+        "if: ${{ inputs.run-cachix-deploy && !matrix.noop && matrix.deploymentTarget }}"
+    ));
+    assert(workflow.canFind(
+        "if: ${{ always() && inputs.run-cachix-deploy && !matrix.noop && matrix.deploymentTarget }}"
+    ));
+    assert(workflow.canFind(
+        "DEPLOY_KIND: ${{ matrix.deploymentKind }}"
+    ));
+    assert(workflow.canFind(
+        `--kind "$DEPLOY_KIND"`
+    ));
+}
+
 Package[] nixEvalJobs(T)(string flakeAttrPath, auto ref T args)
     if (is(T == CiMatrixArgs) || is(T == PrintTableArgs) || is(T == CiArgs) || is(T == DeploySpecArgs))
 {
@@ -520,6 +699,9 @@ Package[] nixEvalJobs(T)(string flakeAttrPath, auto ref T args)
         maxWorkers.to!string, "--max-memory-size", maxMemoryMB.to!string,
         "--flake", rootDir ~ "#" ~ flakeAttrPath
     ];
+    const deploymentTargetNames = flakeAttrPath.isShardMatrixAttrPath
+        ? getDeployableServerMachineNames()
+        : [];
 
     const commandString = nixArgs.join(" ");
 
@@ -546,7 +728,11 @@ Package[] nixEvalJobs(T)(string flakeAttrPath, auto ref T args)
             return true;
         }
 
-        Package pkg = json.packageFromNixEvalJobsJson(flakeAttrPath, NixSystemToGHRunner(args.nixSystemToGHRunner));
+        Package pkg = json.packageFromNixEvalJobsJson(
+            flakeAttrPath,
+            NixSystemToGHRunner(args.nixSystemToGHRunner),
+            deploymentTargetNames,
+        );
 
         pkg = checkCacheStatus([pkg], args)[0];
 
@@ -567,6 +753,16 @@ Package[] nixEvalJobs(T)(string flakeAttrPath, auto ref T args)
     enforce(status == 0 && !errorsReported, "Command `%s` failed with status %s".fmt(commandString, status));
 
     return result;
+}
+
+string[] getDeployableServerMachineNames(string flakeRef = rootDir)
+{
+    return nix.eval!JSONValue(flakeRef ~ "#" ~ deployableServerMachinesAttrPath, [
+            "--apply",
+            "builtins.attrNames",
+        ])
+        .ifThrown(parseJSON("[]"))
+        .fromJSON!(string[]);
 }
 
 NixSystem[] getSupportedSystems(string flakeRef = ".")
