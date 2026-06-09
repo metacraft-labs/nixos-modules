@@ -224,6 +224,347 @@
           touch "$out"
         '';
 
+        deployment-cache-backend-policy = pkgs.runCommand "deployment-cache-backend-policy" { } ''
+          ${pkgs.python3}/bin/python3 <<'PY'
+          import os
+          import re
+          import subprocess
+          import tempfile
+          from pathlib import Path
+
+          workflow = Path("${workflow}")
+          text = workflow.read_text()
+
+          def require(condition, message):
+              if not condition:
+                  raise SystemExit(message)
+
+          require(
+              re.search(
+                  r"deployment-cache-required-backends:\s*\n"
+                  r"\s+description:.*\n"
+                  r"\s+default:\s*'cachix'\s*\n"
+                  r"\s+required:\s*false\s*\n"
+                  r"\s+type:\s*string",
+                  text,
+              ),
+              "reusable workflow must expose deployment-cache-required-backends defaulting to cachix",
+          )
+          require(
+              re.search(
+                  r"deployment-cache-optional-timeout-seconds:\s*\n"
+                  r"\s+description:.*\n"
+                  r"\s+default:\s*'300'\s*\n"
+                  r"\s+required:\s*false\s*\n"
+                  r"\s+type:\s*string",
+                  text,
+              ),
+              "reusable workflow must expose configurable optional backend timeout defaulting to 300 seconds",
+          )
+          require(
+              "DEPLOYMENT_CACHE_REQUIRED_BACKENDS: ''${{ inputs.deployment-cache-required-backends }}" in text,
+              "cache push step must receive the required backend policy input",
+          )
+          require(
+              "DEPLOYMENT_CACHE_OPTIONAL_TIMEOUT_SECONDS: ''${{ inputs.deployment-cache-optional-timeout-seconds }}" in text,
+              "cache push step must receive the optional backend timeout input",
+          )
+          require(
+              "backend_is_required()" in text and 'required=true' in text,
+              "cache push script must classify attempted backends as required or optional",
+          )
+          require(
+              'echo "::warning title=Optional deployment cache backend::backend=$backend $message"' in text,
+              "optional backend failures must emit GitHub warning annotations",
+          )
+          require(
+              'warn_optional_backend "$backend" "$message; continuing without this mirror backend"' in text,
+              "optional missing variables must warn and continue",
+          )
+          require(
+              re.search(
+                  r'if \[\[ "\$required" == true \]\]; then\s*\n'
+                  r'\s+echo "\$message" >&2\s*\n'
+                  r'\s+exit 1',
+                  text,
+              ),
+              "required missing variables must exit hard",
+          )
+          require(
+              'require_backend_vars "$backend" "$required" ATTIC_TOKEN ATTIC_CACHE ATTIC_SUBSTITUTER ATTIC_TRUSTED_PUBLIC_KEY' in text,
+              "Attic variables must be checked manually through the backend policy",
+          )
+          for forbidden in [
+              ': "''${ATTIC_TOKEN:?',
+              ': "''${ATTIC_CACHE:?',
+              ': "''${ATTIC_SUBSTITUTER:?',
+              ': "''${ATTIC_TRUSTED_PUBLIC_KEY:?',
+          ]:
+              require(forbidden not in text, f"Attic variable guard bypasses optional policy: {forbidden}")
+          require(
+              'timeout --kill-after=30s "''${DEPLOYMENT_CACHE_OPTIONAL_TIMEOUT_SECONDS}s" "$@"' in text,
+              "optional backend commands must be wrapped in the configurable timeout",
+          )
+          require(
+              'if [[ "$required" == true ]]; then\n              "$@"' in text,
+              "required backend commands must run directly without the optional timeout wrapper",
+          )
+          require(
+              'Required deployment cache backend $backend failed during $label' in text,
+              "required backend command failures must exit hard",
+          )
+          require(
+              'if ! run_backend_command "$backend" "$required" "attic login"' in text,
+              "Attic login must honor required versus optional policy",
+          )
+          require(
+              'if ! run_backend_command "$backend" "$required" "cache push and substitute probe"' in text,
+              "cache push and substitute probe must honor required versus optional policy",
+          )
+          require(
+              "if: ''${{ always() && inputs.run-cachix-deploy && !matrix.noop && matrix.deploymentTarget }}" in text,
+              "cache push event artifact upload must remain available after optional backend failures",
+          )
+
+          def extract_cache_push_script():
+              lines = text.splitlines()
+              step_index = None
+              for index, line in enumerate(lines):
+                  if re.match(r"\s+- name: Push deployment closure caches", line):
+                      step_index = index
+                      break
+              require(step_index is not None, "cache push step not found")
+
+              run_index = None
+              for index in range(step_index + 1, len(lines)):
+                  if re.match(r"\s+run:\s*\|\s*$", lines[index]):
+                      run_index = index
+                      break
+                  if re.match(r"\s+- name:", lines[index]):
+                      break
+              require(run_index is not None, "cache push run block not found")
+
+              run_indent = len(lines[run_index]) - len(lines[run_index].lstrip())
+              block_indent = run_indent + 2
+              block = []
+              for line in lines[run_index + 1:]:
+                  if not line.strip():
+                      block.append("")
+                      continue
+                  indent = len(line) - len(line.lstrip())
+                  if indent <= run_indent:
+                      break
+                  require(indent >= block_indent, f"unexpected run block indentation: {line!r}")
+                  block.append(line[block_indent:])
+              return "\n".join(block) + "\n"
+
+          script = extract_cache_push_script()
+          require(
+              "''${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }}" in script,
+              "cache push script must still use the computed mcl flake command expression",
+          )
+          script = script.replace("''${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }}", "mcl")
+
+          with tempfile.TemporaryDirectory() as temp:
+              temp_path = Path(temp)
+              script_path = temp_path / "cache-policy.sh"
+              script_path.write_text(script)
+              subprocess.run(
+                  ["${pkgs.bash}/bin/bash", "-n", str(script_path)],
+                  check=True,
+              )
+
+              fake_bin = temp_path / "bin"
+              fake_bin.mkdir()
+              log_path = temp_path / "commands.log"
+              (fake_bin / "nix").write_text(
+                  """#!${pkgs.bash}/bin/bash
+          printf 'nix %s\\n' "$*" >> "$FAKE_LOG"
+          if [[ "''${NIX_FAIL_LOGIN:-}" == 1 ]]; then
+            exit 19
+          fi
+          exit 0
+          """
+              )
+              (fake_bin / "mcl").write_text(
+                  """#!${pkgs.bash}/bin/bash
+          backend=""
+          previous=""
+          for arg in "$@"; do
+            if [[ "$previous" == "--backend" ]]; then
+              backend="$arg"
+            fi
+            previous="$arg"
+          done
+          printf 'mcl backend=%s args=%s\\n' "$backend" "$*" >> "$FAKE_LOG"
+          mkdir -p .result
+          printf '{"phase":"cache-push","backend":"%s"}\\n' "$backend" >> .result/deployment-cache-push-events.jsonl
+          if [[ "''${MCL_SLEEP_BACKEND:-}" == "$backend" ]]; then
+            sleep 2
+          fi
+          if [[ "''${MCL_FAIL_BACKEND:-}" == "$backend" ]]; then
+            exit 23
+          fi
+          exit 0
+          """
+              )
+              os.chmod(fake_bin / "nix", 0o755)
+              os.chmod(fake_bin / "mcl", 0o755)
+
+              base_env = {
+                  "PATH": str(fake_bin) + ":${pkgs.coreutils}/bin",
+                  "FAKE_LOG": str(log_path),
+                  "DEPLOY_TARGET": "test-target",
+                  "DEPLOY_SYSTEM": "x86_64-linux",
+                  "DEPLOY_KIND": "server",
+                  "DEPLOY_STORE_PATH": "${pkgs.hello}",
+                  "DEPLOYMENT_CACHE_PUSH_BACKENDS": "cachix,attic",
+                  "DEPLOYMENT_CACHE_REQUIRED_BACKENDS": "cachix",
+                  "DEPLOYMENT_CACHE_OPTIONAL_TIMEOUT_SECONDS": "1",
+                  "CACHIX_CACHE": "required-cache",
+                  "CACHIX_AUTH_TOKEN": "required-token",
+                  "ATTIC_CACHE": "mirror-cache",
+                  "ATTIC_SUBSTITUTER": "https://attic.example/mirror-cache",
+                  "ATTIC_ENDPOINT": "",
+                  "ATTIC_TRUSTED_PUBLIC_KEY": "attic-public-key",
+                  "ATTIC_TOKEN": "attic-token",
+                  "DEPLOYMENT_TRUSTED_PUBLIC_KEYS": "",
+                  "DEPLOYMENT_TRUSTED_SUBSTITUTERS": "",
+              }
+
+              def run_case(
+                  name,
+                  env_updates,
+                  expected_returncode,
+                  stdout_contains=(),
+                  stderr_contains=(),
+                  log_contains=(),
+                  log_absent=(),
+                  expect_artifact=None,
+              ):
+                  log_path.write_text("")
+                  case_dir = temp_path / name
+                  case_dir.mkdir()
+                  home = case_dir / "home"
+                  home.mkdir()
+                  env = os.environ.copy()
+                  env.update(base_env)
+                  env["HOME"] = str(home)
+                  env.update(env_updates)
+
+                  result = subprocess.run(
+                      ["${pkgs.bash}/bin/bash", str(script_path)],
+                      cwd=case_dir,
+                      env=env,
+                      text=True,
+                      stdout=subprocess.PIPE,
+                      stderr=subprocess.PIPE,
+                  )
+                  require(
+                      result.returncode == expected_returncode,
+                      f"{name}: expected exit {expected_returncode}, got {result.returncode}\n"
+                      f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}",
+                  )
+                  for needle in stdout_contains:
+                      require(needle in result.stdout, f"{name}: stdout missing {needle!r}: {result.stdout}")
+                  for needle in stderr_contains:
+                      require(needle in result.stderr, f"{name}: stderr missing {needle!r}: {result.stderr}")
+                  log = log_path.read_text()
+                  for needle in log_contains:
+                      require(needle in log, f"{name}: command log missing {needle!r}: {log}")
+                  for needle in log_absent:
+                      require(needle not in log, f"{name}: command log unexpectedly contained {needle!r}: {log}")
+                  if expect_artifact is not None:
+                      artifact = case_dir / ".result" / "deployment-cache-push-events.jsonl"
+                      has_artifact = artifact.exists() and artifact.read_text().strip()
+                      require(bool(has_artifact) == expect_artifact, f"{name}: artifact expectation failed")
+
+              run_case(
+                  "optional_attic_missing_vars",
+                  {"ATTIC_TOKEN": ""},
+                  0,
+                  stdout_contains=("::warning title=Optional deployment cache backend::backend=attic",),
+                  log_contains=("mcl backend=cachix",),
+                  log_absent=("nix shell", "mcl backend=attic"),
+                  expect_artifact=True,
+              )
+              run_case(
+                  "required_attic_missing_vars",
+                  {
+                      "DEPLOYMENT_CACHE_PUSH_BACKENDS": "attic",
+                      "DEPLOYMENT_CACHE_REQUIRED_BACKENDS": "attic",
+                      "ATTIC_TOKEN": "",
+                  },
+                  1,
+                  stderr_contains=("ATTIC_TOKEN required when deployment-cache-push-backends includes attic",),
+                  log_absent=("nix shell", "mcl backend="),
+                  expect_artifact=False,
+              )
+              run_case(
+                  "optional_attic_login_failure",
+                  {
+                      "DEPLOYMENT_CACHE_PUSH_BACKENDS": "attic",
+                      "DEPLOYMENT_CACHE_REQUIRED_BACKENDS": "cachix",
+                      "NIX_FAIL_LOGIN": "1",
+                  },
+                  0,
+                  stdout_contains=("attic login failed with exit 19; continuing",),
+                  log_contains=("nix shell nixpkgs#attic-client -c attic login",),
+                  log_absent=("mcl backend=attic",),
+                  expect_artifact=False,
+              )
+              run_case(
+                  "required_attic_login_failure",
+                  {
+                      "DEPLOYMENT_CACHE_PUSH_BACKENDS": "attic",
+                      "DEPLOYMENT_CACHE_REQUIRED_BACKENDS": "attic",
+                      "NIX_FAIL_LOGIN": "1",
+                  },
+                  19,
+                  stderr_contains=("Required deployment cache backend attic failed during attic login",),
+                  log_contains=("nix shell nixpkgs#attic-client -c attic login",),
+                  expect_artifact=False,
+              )
+              run_case(
+                  "optional_attic_push_failure_preserves_artifact",
+                  {
+                      "DEPLOYMENT_CACHE_PUSH_BACKENDS": "attic",
+                      "DEPLOYMENT_CACHE_REQUIRED_BACKENDS": "cachix",
+                      "MCL_FAIL_BACKEND": "attic",
+                  },
+                  0,
+                  stdout_contains=("cache push and substitute probe failed with exit 23; continuing",),
+                  log_contains=("nix shell nixpkgs#attic-client -c attic login", "mcl backend=attic"),
+                  expect_artifact=True,
+              )
+              run_case(
+                  "required_cachix_push_failure",
+                  {
+                      "DEPLOYMENT_CACHE_PUSH_BACKENDS": "cachix",
+                      "DEPLOYMENT_CACHE_REQUIRED_BACKENDS": "cachix",
+                      "MCL_FAIL_BACKEND": "cachix",
+                  },
+                  23,
+                  stderr_contains=("Required deployment cache backend cachix failed during cache push and substitute probe",),
+                  log_contains=("mcl backend=cachix",),
+                  expect_artifact=True,
+              )
+              run_case(
+                  "optional_attic_timeout",
+                  {
+                      "DEPLOYMENT_CACHE_PUSH_BACKENDS": "attic",
+                      "DEPLOYMENT_CACHE_REQUIRED_BACKENDS": "cachix",
+                      "MCL_SLEEP_BACKEND": "attic",
+                  },
+                  0,
+                  stdout_contains=("cache push and substitute probe timed out after 1s; continuing",),
+                  log_contains=("mcl backend=attic",),
+                  expect_artifact=True,
+              )
+          PY
+          touch "$out"
+        '';
+
         deployment-general-private-split = pkgs.runCommand "deployment-general-private-split" { } ''
           forbidden='solunska|gpu-server|cache\.metacraft-labs\.com|metacraft-private-infrastructure'
           generic_files=$(find ${docs} ${skills} -type f \
