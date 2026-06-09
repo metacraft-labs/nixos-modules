@@ -8,7 +8,7 @@ import argparse : Command, Default, Description, EnvFallback, NamedArgument,
     Placeholder, PositionalArgument, SubCommand, matchCmd;
 
 import mcl.utils.cache_backends : CacheBackend, CachePushRequest,
-    parseCacheBackend, pushClosure;
+    defaultCacheProbeTimeoutSeconds, parseCacheBackend, pushClosure;
 import mcl.utils.deployment_events : deploymentEventLogPathFromEnv;
 import mcl.utils.process : ProcessRunner, runProcessCapture, runProcessInlineCapture;
 
@@ -86,6 +86,12 @@ struct PushClosureArgs
         .Description("Fail when uploaded closure paths cannot be substituted from the cache"))
     bool requireSubstitute = false;
 
+    @(NamedArgument(["probe-timeout-seconds"])
+        .Placeholder("SECONDS")
+        .Description("Maximum seconds to wait for each substitute probe")
+        .EnvFallback("MCL_CACHE_PROBE_TIMEOUT_SECONDS"))
+    ulong probeTimeoutSeconds = defaultCacheProbeTimeoutSeconds;
+
     @(PositionalArgument(0)
         .Placeholder("STORE_PATH")
         .Description("Root store path to push; repeat for multiple roots"))
@@ -128,6 +134,8 @@ int cachePushClosureImpl(PushClosureArgs args, ProcessRunner runProcess, Process
     enforce(args.storePaths.length > 0, "At least one store path is required.");
     enforce(backend == CacheBackend.none || cacheName != "",
         "A cache name is required for cachix and attic backends.");
+    enforce(args.probeTimeoutSeconds > 0,
+        "--probe-timeout-seconds must be greater than zero.");
 
     auto eventLogPath = args.eventLog != ""
         ? args.eventLog
@@ -146,5 +154,6 @@ int cachePushClosureImpl(PushClosureArgs args, ProcessRunner runProcess, Process
         eventLogPath: eventLogPath,
         correlationId: args.correlationId,
         requireSubstitute: args.requireSubstitute,
+        probeTimeoutSeconds: args.probeTimeoutSeconds,
     ), runProcess, queryProcess);
 }
