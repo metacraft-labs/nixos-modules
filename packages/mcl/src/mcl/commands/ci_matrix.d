@@ -662,27 +662,6 @@ unittest
     assert(matrix["include"][2]["deploymentKind"].str == "");
 }
 
-@("workflow deployment cache push is gated by deployment target metadata")
-unittest
-{
-    const workflow = rootDir
-        .buildPath(".github/workflows/reusable-flake-checks-ci-matrix.yml")
-        .readText;
-
-    assert(workflow.canFind(
-        "if: ${{ inputs.run-cachix-deploy && !matrix.noop && matrix.deploymentTarget }}"
-    ));
-    assert(workflow.canFind(
-        "if: ${{ always() && inputs.run-cachix-deploy && !matrix.noop && matrix.deploymentTarget }}"
-    ));
-    assert(workflow.canFind(
-        "DEPLOY_KIND: ${{ matrix.deploymentKind }}"
-    ));
-    assert(workflow.canFind(
-        `--kind "$DEPLOY_KIND"`
-    ));
-}
-
 Package[] nixEvalJobs(T)(string flakeAttrPath, auto ref T args)
     if (is(T == CiMatrixArgs) || is(T == PrintTableArgs) || is(T == CiArgs) || is(T == DeploySpecArgs))
 {

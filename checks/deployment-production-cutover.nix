@@ -480,6 +480,10 @@ top@{ config, ... }:
               assert "run-cachix-deploy:" in workflow, "workflow no longer exposes the legacy deploy gate"
               assert re.search(r"run-cachix-deploy:.*?default:\s*false", workflow, re.S), "legacy deploy gate must default false in the reusable workflow"
               assert "if: inputs.run-cachix-deploy" in workflow, "legacy deploy step must remain explicitly gated"
+              assert "if: ''${{ inputs.run-cachix-deploy && !matrix.noop && matrix.deploymentTarget }}" in workflow, "deployment cache push must be limited to deployment targets"
+              assert "if: ''${{ always() && inputs.run-cachix-deploy && !matrix.noop && matrix.deploymentTarget }}" in workflow, "deployment cache artifact upload must be limited to deployment targets"
+              assert "DEPLOY_KIND: ''${{ matrix.deploymentKind }}" in workflow, "deployment cache push must receive the matrix deployment kind"
+              assert '--kind "$DEPLOY_KIND"' in workflow, "deployment cache push must pass the deployment kind to mcl"
               assert "mcl_flake_cmd }} deploy-spec" in workflow, "legacy fallback deploy-spec call disappeared"
               assert "cachix deploy activate" in deploy_spec, "fallback deploy-spec no longer exposes Cachix Deploy activation"
 
