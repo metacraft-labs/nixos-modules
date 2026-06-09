@@ -166,27 +166,47 @@ CacheProbeResult probeCacheSubstitute(
     ulong timeoutSeconds = defaultCacheProbeTimeoutSeconds,
 )
 {
+    auto results = probeCacheSubstitutes([path], substituter, trustedPublicKeys,
+        runner, timeoutSeconds);
+    return results.length
+        ? results[0]
+        : CacheProbeResult(path, substituter, "narinfo-missing", 1,
+            "no probe result returned");
+}
+
+CacheProbeResult[] probeCacheSubstitutes(
+    string[] paths,
+    string substituter,
+    string[] trustedPublicKeys,
+    ProcessRunner runner,
+    ulong timeoutSeconds = defaultCacheProbeTimeoutSeconds,
+)
+{
     if (runner is null)
-        return CacheProbeResult(path, substituter, "narinfo-missing", 1,
-            "no process runner configured");
+    {
+        CacheProbeResult[] results;
+        foreach (path; paths)
+            results ~= CacheProbeResult(path, substituter, "narinfo-missing", 1,
+                "no process runner configured");
+        return results;
+    }
 
     auto pathInfoCommand = [
-        "nix", "path-info", "--store", substituter, path,
-    ];
+        "nix", "path-info", "--store", substituter,
+    ] ~ paths;
     if (trustedPublicKeys.length)
         pathInfoCommand ~= ["--option", "trusted-public-keys", trustedPublicKeys.join(" ")];
 
     auto pathInfo = runner(cacheProbeTimeoutCommand(pathInfoCommand, timeoutSeconds));
-    if (!pathInfo.succeeded)
-    {
-        auto outcome = isTimeoutExitCode(pathInfo.exitCode)
+    auto successfulPaths = successfulProbeOutputPaths(paths, pathInfo.stdout);
+    auto failureOutcome = pathInfo.succeeded
+        ? "narinfo-missing"
+        : (isTimeoutExitCode(pathInfo.exitCode)
             ? "probe-timeout"
-            : classifyProbeFailure(pathInfo.stderr);
-        auto message = pathInfo.stderr.stderrSummary;
-        if (outcome == "probe-timeout" && message == "")
-            message = "substitute probe exceeded " ~ timeoutSeconds.to!string ~ "s timeout";
-        return CacheProbeResult(path, substituter, outcome, pathInfo.exitCode, message);
-    }
+            : classifyProbeFailure(pathInfo.stderr));
+    auto failureMessage = pathInfo.stderr.stderrSummary;
+    if (failureOutcome == "probe-timeout" && failureMessage == "")
+        failureMessage = "substitute probe exceeded " ~ timeoutSeconds.to!string ~ "s timeout";
 
     // `nix path-info` performs a `HEAD /<hash>.narinfo` against the
     // substituter — this is sufficient evidence that the path is
@@ -201,7 +221,32 @@ CacheProbeResult probeCacheSubstitute(
     // re-verified at install time on the target host. The probe's job
     // is just to answer "is this path available from a trusted cache?"
     // and the narinfo HEAD does that without any download.
-    return CacheProbeResult(path, substituter, "successful-substitute", 0, "");
+    CacheProbeResult[] results;
+    foreach (path; paths)
+    {
+        if (path in successfulPaths)
+            results ~= CacheProbeResult(path, substituter, "successful-substitute", 0, "");
+        else
+            results ~= CacheProbeResult(path, substituter, failureOutcome,
+                pathInfo.exitCode, failureMessage);
+    }
+    return results;
+}
+
+private bool[string] successfulProbeOutputPaths(string[] requestedPaths, string stdout)
+{
+    bool[string] requested;
+    foreach (path; requestedPaths)
+        requested[path] = true;
+
+    bool[string] successful;
+    foreach (line; stdout.splitLines)
+    {
+        auto path = line.strip;
+        if (path != "" && path in requested)
+            successful[path] = true;
+    }
+    return successful;
 }
 
 string[] cacheProbeTimeoutCommand(string[] command, ulong timeoutSeconds)
@@ -314,31 +359,48 @@ int pushClosure(CachePushRequest request, ProcessRunner runProcess, ProcessRunne
         // A path is considered substitutable if ANY trusted substituter
         // resolves it. Target hosts are configured with multiple substituters
         // (deployment cache + auxiliary caches), so "the closure is resolvable
-        // for deploys" — not "every path lives on the primary cache" — is what
-        // matters. Record each attempted substituter until the first success so
-        // failure events can explain timeouts and later misses.
+        // for deploys" -- not "every path lives on the primary cache" -- is what
+        // matters. Batch each substituter over the still-uncovered closure paths
+        // and record one metadata row per requested path so failure events can
+        // explain timeouts and later misses.
         foreach (root; request.storePaths)
-            foreach (path; queryClosurePaths(root, queryRunner))
+        {
+            auto remaining = uniquePaths(queryClosurePaths(root, queryRunner));
+            bool[string] attempted;
+            foreach (substituter; plan.substituters)
             {
-                CacheProbeResult last;
-                foreach (substituter; plan.substituters)
-                {
-                    if (substituter in unavailableSubstituters)
-                        continue;
+                if (remaining.length == 0)
+                    break;
+                if (substituter in unavailableSubstituters)
+                    continue;
 
-                    last = probeCacheSubstitute(path, substituter,
-                        request.trustedPublicKeys, queryRunner,
-                        request.probeTimeoutSeconds);
-                    probes ~= last;
-                    if (last.outcome == "probe-timeout")
-                    {
-                        unavailableSubstituters[substituter] = true;
-                        unavailableSubstituterList ~= substituter;
-                    }
-                    if (last.successful)
-                        break;
+                auto batch = probeCacheSubstitutes(remaining, substituter,
+                    request.trustedPublicKeys, queryRunner,
+                    request.probeTimeoutSeconds);
+                probes ~= batch;
+
+                bool timedOut;
+                bool[string] covered;
+                foreach (probe; batch)
+                {
+                    attempted[probe.path] = true;
+                    if (probe.outcome == "probe-timeout")
+                        timedOut = true;
+                    if (probe.successful)
+                        covered[probe.path] = true;
+                }
+                remaining = pathsNotIn(remaining, covered);
+                if (timedOut)
+                {
+                    unavailableSubstituters[substituter] = true;
+                    unavailableSubstituterList ~= substituter;
                 }
             }
+            foreach (path; remaining)
+                if (path !in attempted)
+                    probes ~= CacheProbeResult(path, "", "substituter-unavailable", 1,
+                        "no available substituter covered path");
+        }
     }
 
     const probeFailed = probes.length > 0 && !probeCoverage(probes).complete;
@@ -428,6 +490,29 @@ private ProbeCoverage probeCoverage(CacheProbeResult[] probes)
     );
 }
 
+private string[] uniquePaths(string[] paths)
+{
+    bool[string] seen;
+    string[] result;
+    foreach (path; paths)
+    {
+        if (path in seen)
+            continue;
+        seen[path] = true;
+        result ~= path;
+    }
+    return result;
+}
+
+private string[] pathsNotIn(string[] paths, bool[string] excluded)
+{
+    string[] result;
+    foreach (path; paths)
+        if (path !in excluded)
+            result ~= path;
+    return result;
+}
+
 private bool[string] successfulProbePaths(CacheProbeResult[] probes)
 {
     bool[string] paths;
@@ -439,8 +524,19 @@ private bool[string] successfulProbePaths(CacheProbeResult[] probes)
 
 private string probeAttemptSummary(CacheProbeResult probe)
 {
-    return probe.substituter ~ ": " ~ probe.outcome ~
+    auto substituter = probe.substituter == "" ? "<none>" : probe.substituter;
+    return substituter ~ ": " ~ probe.outcome ~
         (probe.message == "" ? "" : ": " ~ probe.message);
+}
+
+version (unittest)
+private string probeCommandStorePathStdout(string[] command)
+{
+    string[] paths;
+    foreach (arg; command)
+        if (arg.canFind("/nix/store/"))
+            paths ~= arg;
+    return paths.join("\n") ~ (paths.length ? "\n" : "");
 }
 
 @("test_cache_push_closure_invokes_backend")
@@ -466,8 +562,7 @@ unittest
         if (command.length >= 2 && command[0] == "nix" && command[1] == "path-info"
             && command.canFind("--recursive"))
             return ProcessResult(0, "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-root\n", "");
-        if (command.length >= 2 && command[0] == "nix" && command[1] == "path-info"
-            && command.canFind("--store"))
+        if (command.canFind("--store"))
             return ProcessResult(0, "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-root\n", "");
         if (command.length >= 2 && command[0] == "nix" && command[1] == "copy")
             return ProcessResult(0, "", "");
@@ -512,14 +607,14 @@ unittest
 @("test_cache_probe_wraps_path_info_with_timeout")
 unittest
 {
+    auto root = "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-root";
     string[][] commands;
     ProcessResult fakeRunner(string[] command)
     {
         commands ~= command;
-        return ProcessResult(0, "", "");
+        return ProcessResult(0, root ~ "\n", "");
     }
 
-    auto root = "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-root";
     auto result = probeCacheSubstitute(root, "https://cache.example",
         ["cache.example-1:abc"], &fakeRunner, 7);
 
@@ -542,6 +637,61 @@ unittest
 
     assert(result.exitCode == 0);
     assert(result.stdout == "probe-ok");
+}
+
+@("test_cache_push_closure_batches_probe_commands")
+unittest
+{
+    import std.file : deleteme, readText, remove;
+    import std.json : parseJSON;
+    import std.string : splitLines;
+    import std.algorithm : filter;
+
+    auto eventLog = deleteme ~ ".cache-push-batch-probes.events.jsonl";
+    scope(exit)
+        if (eventLog.exists) eventLog.remove;
+
+    auto root = "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-root";
+    auto depA = "/nix/store/11111111111111111111111111111111-dep-a";
+    auto depB = "/nix/store/22222222222222222222222222222222-dep-b";
+    string[][] commands;
+    ProcessResult fakeRunner(string[] command)
+    {
+        commands ~= command;
+        if (command.length >= 2 && command[0] == "nix" && command[1] == "path-info"
+            && command.canFind("--json"))
+            return ProcessResult(0,
+                `{"/nix/store/0123456789abcdfghijklmnpqrsvwxyz-root":{"narSize":7}}`, "");
+        if (command.length >= 2 && command[0] == "nix" && command[1] == "path-info"
+            && command.canFind("--recursive"))
+            return ProcessResult(0, root ~ "\n" ~ depA ~ "\n" ~ depB ~ "\n", "");
+        if (command.canFind("--store") && command.canFind("https://cache.example"))
+            return ProcessResult(0, probeCommandStorePathStdout(command), "");
+        return ProcessResult(0, "", "");
+    }
+
+    assert(pushClosure(CachePushRequest(
+        backend: CacheBackend.cachix,
+        cache: "example-cache",
+        storePaths: [root],
+        substituters: ["https://cache.example"],
+        eventLogPath: eventLog,
+    ), &fakeRunner, &fakeRunner) == 0);
+
+    ulong probeCommandCount;
+    foreach (command; commands)
+        if (command.canFind("--store") && command.canFind("https://cache.example"))
+            ++probeCommandCount;
+
+    assert(probeCommandCount == 1);
+
+    auto events = eventLog.readText.splitLines
+        .filter!(line => line.strip != "")
+        .map!(line => line.parseJSON)
+        .array;
+    assert(events.length == 1);
+    assert(events[0]["metadata"]["coverage"]["probeAttemptCount"].integer == 3);
+    assert(events[0]["metadata"]["coverage"]["successfulSubstituteCount"].integer == 3);
 }
 
 @("test_cache_probe_timeout_continues_to_later_substituter")
@@ -612,6 +762,8 @@ unittest
 
     auto root = "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-root";
     auto dep = "/nix/store/11111111111111111111111111111111-dep";
+    auto secondRoot = "/nix/store/22222222222222222222222222222222-second-root";
+    auto secondDep = "/nix/store/33333333333333333333333333333333-second-dep";
     string[][] commands;
     ProcessResult fakeRunner(string[] command)
     {
@@ -621,19 +773,22 @@ unittest
             return ProcessResult(0,
                 `{"/nix/store/0123456789abcdfghijklmnpqrsvwxyz-root":{"narSize":7}}`, "");
         if (command.length >= 2 && command[0] == "nix" && command[1] == "path-info"
+            && command.canFind("--recursive") && command.canFind(secondRoot))
+            return ProcessResult(0, secondRoot ~ "\n" ~ secondDep ~ "\n", "");
+        if (command.length >= 2 && command[0] == "nix" && command[1] == "path-info"
             && command.canFind("--recursive"))
             return ProcessResult(0, root ~ "\n" ~ dep ~ "\n", "");
         if (command.canFind("--store") && command.canFind("https://slow.example"))
             return ProcessResult(124, "", "");
         if (command.canFind("--store") && command.canFind("https://good.example"))
-            return ProcessResult(0, command[$ - 1] ~ "\n", "");
+            return ProcessResult(0, probeCommandStorePathStdout(command), "");
         return ProcessResult(0, "", "");
     }
 
     assert(pushClosure(CachePushRequest(
         backend: CacheBackend.cachix,
         cache: "example-cache",
-        storePaths: [root],
+        storePaths: [root, secondRoot],
         substituters: ["https://slow.example", "https://good.example"],
         eventLogPath: eventLog,
         probeTimeoutSeconds: 3,
@@ -655,15 +810,15 @@ unittest
         .filter!(line => line.strip != "")
         .map!(line => line.parseJSON)
         .array;
-    assert(events.length == 1);
+    assert(events.length == 2);
     assert(events[0]["command"]["status"].str == "succeeded");
     assert(events[0]["metadata"]["coverage"]["complete"].boolean);
-    assert(events[0]["metadata"]["coverage"]["probeAttemptCount"].integer == 3);
+    assert(events[0]["metadata"]["coverage"]["probeAttemptCount"].integer == 6);
     assert(events[0]["metadata"]["unavailableSubstituters"].array.length == 1);
     assert(events[0]["metadata"]["unavailableSubstituters"][0].str == "https://slow.example");
 }
 
-@("test_cache_probe_non_timeout_failure_does_not_skip_later_paths")
+@("test_cache_probe_non_timeout_failure_does_not_skip_later_batches")
 unittest
 {
     import std.file : deleteme, readText, remove;
@@ -677,6 +832,7 @@ unittest
 
     auto root = "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-root";
     auto dep = "/nix/store/11111111111111111111111111111111-dep";
+    auto secondRoot = "/nix/store/22222222222222222222222222222222-second-root";
     string[][] commands;
     ProcessResult fakeRunner(string[] command)
     {
@@ -686,23 +842,25 @@ unittest
             return ProcessResult(0,
                 `{"/nix/store/0123456789abcdfghijklmnpqrsvwxyz-root":{"narSize":7}}`, "");
         if (command.length >= 2 && command[0] == "nix" && command[1] == "path-info"
+            && command.canFind("--recursive") && command.canFind(secondRoot))
+            return ProcessResult(0, secondRoot ~ "\n", "");
+        if (command.length >= 2 && command[0] == "nix" && command[1] == "path-info"
             && command.canFind("--recursive"))
             return ProcessResult(0, root ~ "\n" ~ dep ~ "\n", "");
         if (command.canFind("--store") && command.canFind("https://slow.example")
-            && command.canFind(root))
-            return ProcessResult(1, "", "404 Not Found");
-        if (command.canFind("--store") && command.canFind("https://slow.example")
-            && command.canFind(dep))
-            return ProcessResult(0, dep ~ "\n", "");
+            && command.canFind(secondRoot))
+            return ProcessResult(0, secondRoot ~ "\n", "");
+        if (command.canFind("--store") && command.canFind("https://slow.example"))
+            return ProcessResult(1, dep ~ "\n", "404 Not Found");
         if (command.canFind("--store") && command.canFind("https://good.example"))
-            return ProcessResult(0, command[$ - 1] ~ "\n", "");
+            return ProcessResult(0, probeCommandStorePathStdout(command), "");
         return ProcessResult(0, "", "");
     }
 
     assert(pushClosure(CachePushRequest(
         backend: CacheBackend.cachix,
         cache: "example-cache",
-        storePaths: [root],
+        storePaths: [root, secondRoot],
         substituters: ["https://slow.example", "https://good.example"],
         eventLogPath: eventLog,
         probeTimeoutSeconds: 3,
@@ -724,10 +882,17 @@ unittest
         .filter!(line => line.strip != "")
         .map!(line => line.parseJSON)
         .array;
-    assert(events.length == 1);
+    assert(events.length == 2);
     assert(events[0]["command"]["status"].str == "succeeded");
     assert(events[0]["metadata"]["coverage"]["complete"].boolean);
-    assert(events[0]["metadata"]["coverage"]["probeAttemptCount"].integer == 3);
+    assert(events[0]["metadata"]["coverage"]["probeAttemptCount"].integer == 4);
+    assert(events[0]["metadata"]["probes"][0]["path"].str == root);
+    assert(events[0]["metadata"]["probes"][0]["outcome"].str == "narinfo-missing");
+    assert(events[0]["metadata"]["probes"][1]["path"].str == dep);
+    assert(events[0]["metadata"]["probes"][1]["outcome"].str == "successful-substitute");
+    assert(events[0]["metadata"]["probes"][2]["path"].str == root);
+    assert(events[0]["metadata"]["probes"][2]["substituter"].str == "https://good.example");
+    assert(events[0]["metadata"]["probes"][2]["outcome"].str == "successful-substitute");
     assert("unavailableSubstituters" !in events[0]["metadata"].object);
 }
 
@@ -794,6 +959,63 @@ unittest
     assert(events[0]["metadata"]["probes"][0]["outcome"].str == "probe-timeout");
     assert(events[0]["metadata"]["probes"][0]["message"].str.canFind("3s timeout"));
     assert(events[0]["metadata"]["probes"][1]["outcome"].str == "narinfo-missing");
+}
+
+@("test_cache_probe_requires_every_closure_path_covered")
+unittest
+{
+    import std.file : deleteme, readText, remove;
+    import std.json : parseJSON;
+    import std.string : splitLines;
+    import std.algorithm : filter;
+
+    auto eventLog = deleteme ~ ".cache-push-requires-full-closure.events.jsonl";
+    scope(exit)
+        if (eventLog.exists) eventLog.remove;
+
+    auto root = "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-root";
+    auto dep = "/nix/store/11111111111111111111111111111111-dep";
+    ProcessResult fakeRunner(string[] command)
+    {
+        if (command.length >= 2 && command[0] == "nix" && command[1] == "path-info"
+            && command.canFind("--json"))
+            return ProcessResult(0,
+                `{"/nix/store/0123456789abcdfghijklmnpqrsvwxyz-root":{"narSize":7}}`, "");
+        if (command.length >= 2 && command[0] == "nix" && command[1] == "path-info"
+            && command.canFind("--recursive"))
+            return ProcessResult(0, root ~ "\n" ~ dep ~ "\n", "");
+        if (command.canFind("--store"))
+            return ProcessResult(1, root ~ "\n", "404 Not Found");
+        return ProcessResult(0, "", "");
+    }
+
+    bool threw;
+    try
+    {
+        pushClosure(CachePushRequest(
+            backend: CacheBackend.cachix,
+            cache: "example-cache",
+            storePaths: [root],
+            substituters: ["https://partial.example"],
+            eventLogPath: eventLog,
+        ), &fakeRunner, &fakeRunner);
+    }
+    catch (Exception e)
+    {
+        threw = true;
+        assert(e.msg == "Cache substitute integrity probe failed");
+    }
+    assert(threw);
+
+    auto events = eventLog.readText.splitLines
+        .filter!(line => line.strip != "")
+        .map!(line => line.parseJSON)
+        .array;
+    assert(events.length == 1);
+    assert(events[0]["command"]["status"].str == "failed");
+    assert(events[0]["metadata"]["coverage"]["complete"].boolean == false);
+    assert(events[0]["metadata"]["coverage"]["successfulSubstituteCount"].integer == 1);
+    assert(events[0]["error"]["details"]["stderrSummary"].str.canFind(dep));
 }
 
 @("test_cache_probe_classifies_failures")
