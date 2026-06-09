@@ -127,6 +127,7 @@ jobs:
             nix flake lock --accept-flake-config "${lock_args[@]}"
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git config commit.gpgsign false
             git add flake.lock
 
             if git diff --cached --quiet; then
