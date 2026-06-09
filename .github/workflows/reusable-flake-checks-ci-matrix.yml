@@ -37,6 +37,16 @@ on:
         default: 'cachix'
         required: false
         type: string
+      deployment-cache-required-backends:
+        description: 'Comma-separated attempted cache push backends that must succeed'
+        default: 'cachix'
+        required: false
+        type: string
+      deployment-cache-optional-timeout-seconds:
+        description: 'Maximum seconds for each optional cache backend command'
+        default: '300'
+        required: false
+        type: string
     secrets:
       CACHIX_AUTH_TOKEN:
         description: 'Cachix auth token'
@@ -277,7 +287,10 @@ jobs:
           DEPLOY_KIND: ${{ matrix.deploymentKind }}
           DEPLOY_STORE_PATH: ${{ matrix.output }}
           DEPLOYMENT_CACHE_PUSH_BACKENDS: ${{ inputs.deployment-cache-push-backends }}
+          DEPLOYMENT_CACHE_REQUIRED_BACKENDS: ${{ inputs.deployment-cache-required-backends }}
+          DEPLOYMENT_CACHE_OPTIONAL_TIMEOUT_SECONDS: ${{ inputs.deployment-cache-optional-timeout-seconds }}
           CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
           ATTIC_CACHE: ${{ vars.ATTIC_CACHE }}
           ATTIC_SUBSTITUTER: ${{ vars.ATTIC_SUBSTITUTER }}
           ATTIC_ENDPOINT: ${{ vars.ATTIC_ENDPOINT }}
@@ -286,14 +299,108 @@ jobs:
           DEPLOYMENT_TRUSTED_PUBLIC_KEYS: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           DEPLOYMENT_TRUSTED_SUBSTITUTERS: ${{ vars.SUBSTITUTERS }}
         run: |
+          set -u -o pipefail
+
           mkdir -p .result
-          if [[ -n "$ATTIC_TOKEN" && -n "$ATTIC_SUBSTITUTER" ]]; then
+
+          trim_csv_value() {
+            local value="$1"
+            shopt -s extglob
+            value="${value##+([[:space:]])}"
+            value="${value%%+([[:space:]])}"
+            shopt -u extglob
+            printf '%s' "$value"
+          }
+
+          backend_is_required() {
+            local wanted="$1"
+            local required
+            IFS=',' read -ra required_backends <<< "$DEPLOYMENT_CACHE_REQUIRED_BACKENDS"
+            for required in "${required_backends[@]}"; do
+              required="$(trim_csv_value "$required")"
+              [[ -n "$required" ]] || continue
+              if [[ "$required" == "$wanted" ]]; then
+                return 0
+              fi
+            done
+            return 1
+          }
+
+          warn_optional_backend() {
+            local backend="$1"
+            local message="$2"
+            echo "::warning title=Optional deployment cache backend::backend=$backend $message"
+          }
+
+          require_backend_vars() {
+            local backend="$1"
+            local required="$2"
+            shift 2
+            local missing=()
+            local name
+            for name in "$@"; do
+              if [[ -z "${!name:-}" ]]; then
+                missing+=("$name")
+              fi
+            done
+
+            if [[ "${#missing[@]}" -eq 0 ]]; then
+              return 0
+            fi
+
+            local message
+            message="${missing[*]} required when deployment-cache-push-backends includes $backend"
+            if [[ "$required" == true ]]; then
+              echo "$message" >&2
+              exit 1
+            fi
+
+            warn_optional_backend "$backend" "$message; continuing without this mirror backend"
+            return 1
+          }
+
+          run_backend_command() {
+            local backend="$1"
+            local required="$2"
+            local label="$3"
+            shift 3
+            local exit_code
+
+            if [[ "$required" == true ]]; then
+              "$@"
+              exit_code=$?
+              if [[ "$exit_code" -ne 0 ]]; then
+                echo "Required deployment cache backend $backend failed during $label (exit $exit_code)" >&2
+                exit "$exit_code"
+              fi
+              return 0
+            fi
+
+            timeout --kill-after=30s "${DEPLOYMENT_CACHE_OPTIONAL_TIMEOUT_SECONDS}s" "$@"
+            exit_code=$?
+            if [[ "$exit_code" -eq 0 ]]; then
+              return 0
+            fi
+
+            if [[ "$exit_code" -eq 124 || "$exit_code" -eq 137 || "$exit_code" -eq 143 ]]; then
+              warn_optional_backend "$backend" "$label timed out after ${DEPLOYMENT_CACHE_OPTIONAL_TIMEOUT_SECONDS}s; continuing"
+            else
+              warn_optional_backend "$backend" "$label failed with exit $exit_code; continuing"
+            fi
+            return "$exit_code"
+          }
+
+          if [[ ! "$DEPLOYMENT_CACHE_OPTIONAL_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+            echo "deployment-cache-optional-timeout-seconds must be a positive integer" >&2
+            exit 1
+          fi
+
+          configure_attic_netrc() {
             attic_host="${ATTIC_SUBSTITUTER#http://}"
             attic_host="${attic_host#https://}"
             attic_host="${attic_host%%/*}"
             if [[ -z "$attic_host" ]]; then
-              echo "Could not derive Attic host from ATTIC_SUBSTITUTER" >&2
-              exit 1
+              return 1
             fi
 
             nix_netrc="$HOME/.config/nix/netrc"
@@ -312,41 +419,54 @@ jobs:
             if [[ "$has_attic_netrc_entry" == false ]]; then
               printf 'machine %s password %s\n' "$attic_host" "$ATTIC_TOKEN" >> "$nix_netrc"
             fi
-          fi
+          }
 
           IFS=',' read -ra backends <<< "$DEPLOYMENT_CACHE_PUSH_BACKENDS"
           for backend in "${backends[@]}"; do
-            # Trim leading/trailing whitespace without external commands.
-            # `xargs` is not on PATH for aarch64-darwin runners (their PATH
-            # contains only Nix-store paths and findutils isn't pulled in by
-            # the github-runner darwin module), so a bash builtin is the
-            # portable choice.
-            shopt -s extglob
-            backend="${backend##+([[:space:]])}"
-            backend="${backend%%+([[:space:]])}"
-            shopt -u extglob
+            backend="$(trim_csv_value "$backend")"
             [[ -n "$backend" ]] || continue
+
+            required=false
+            if backend_is_required "$backend"; then
+              required=true
+            fi
 
             case "$backend" in
               cachix)
+                if ! require_backend_vars "$backend" "$required" CACHIX_CACHE CACHIX_AUTH_TOKEN; then
+                  continue
+                fi
                 cache="$CACHIX_CACHE"
                 substituter="https://${CACHIX_CACHE}.cachix.org"
                 ;;
               attic)
-                cache="$ATTIC_CACHE"
-                substituter="$ATTIC_SUBSTITUTER"
-                : "${ATTIC_TOKEN:?ATTIC_TOKEN is required when deployment-cache-push-backends includes attic}"
-                : "${ATTIC_CACHE:?ATTIC_CACHE is required when deployment-cache-push-backends includes attic}"
-                : "${ATTIC_SUBSTITUTER:?ATTIC_SUBSTITUTER is required when deployment-cache-push-backends includes attic}"
-                : "${ATTIC_TRUSTED_PUBLIC_KEY:?ATTIC_TRUSTED_PUBLIC_KEY is required when deployment-cache-push-backends includes attic}"
+                if ! require_backend_vars "$backend" "$required" ATTIC_TOKEN ATTIC_CACHE ATTIC_SUBSTITUTER ATTIC_TRUSTED_PUBLIC_KEY; then
+                  continue
+                fi
+
+                if ! configure_attic_netrc; then
+                  if [[ "$required" == true ]]; then
+                    echo "Could not derive Attic host from ATTIC_SUBSTITUTER" >&2
+                    exit 1
+                  fi
+                  warn_optional_backend "$backend" "could not derive Attic host from ATTIC_SUBSTITUTER; continuing"
+                  continue
+                fi
 
                 attic_endpoint="$ATTIC_ENDPOINT"
                 if [[ -z "$attic_endpoint" ]]; then
                   attic_endpoint="${ATTIC_SUBSTITUTER%/$ATTIC_CACHE}"
                 fi
                 attic_endpoint="${attic_endpoint%/}/"
-                nix shell nixpkgs#attic-client -c \
-                  attic login --set-default deployment "$attic_endpoint" "$ATTIC_TOKEN"
+                if ! run_backend_command "$backend" "$required" "attic login" \
+                  nix shell nixpkgs#attic-client -c \
+                    attic login --set-default deployment "$attic_endpoint" "$ATTIC_TOKEN"
+                then
+                  continue
+                fi
+
+                cache="$ATTIC_CACHE"
+                substituter="$ATTIC_SUBSTITUTER"
                 ;;
               none)
                 cache="none"
@@ -388,7 +508,8 @@ jobs:
             trusted_args+=(--trusted-public-key
               "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=")
 
-            ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} -- cache push-closure \
+            if ! run_backend_command "$backend" "$required" "cache push and substitute probe" \
+              ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} -- cache push-closure \
               --backend "$backend" \
               --cache "$cache" \
               --target "$DEPLOY_TARGET" \
@@ -399,6 +520,9 @@ jobs:
               "${substituter_args[@]}" \
               "${trusted_args[@]}" \
               "$DEPLOY_STORE_PATH"
+            then
+              continue
+            fi
           done
 
       - uses: actions/upload-artifact@v7
