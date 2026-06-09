@@ -269,11 +269,12 @@ jobs:
       # The artifact upload below is already gated on run-cachix-deploy;
       # the push step itself needs the same gate.
       - name: Push deployment closure caches ${{ matrix.name }}
-        if: ${{ inputs.run-cachix-deploy && !matrix.noop }}
+        if: ${{ inputs.run-cachix-deploy && !matrix.noop && matrix.deploymentTarget }}
         shell: bash
         env:
           DEPLOY_TARGET: ${{ matrix.name }}
           DEPLOY_SYSTEM: ${{ matrix.system }}
+          DEPLOY_KIND: ${{ matrix.deploymentKind }}
           DEPLOY_STORE_PATH: ${{ matrix.output }}
           DEPLOYMENT_CACHE_PUSH_BACKENDS: ${{ inputs.deployment-cache-push-backends }}
           CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
@@ -392,7 +393,7 @@ jobs:
               --cache "$cache" \
               --target "$DEPLOY_TARGET" \
               --system "$DEPLOY_SYSTEM" \
-              --kind unknown \
+              --kind "$DEPLOY_KIND" \
               --transport cachix-agent \
               --event-log .result/deployment-cache-push-events.jsonl \
               "${substituter_args[@]}" \
@@ -401,7 +402,7 @@ jobs:
           done
 
       - uses: actions/upload-artifact@v7
-        if: ${{ always() && inputs.run-cachix-deploy && !matrix.noop }}
+        if: ${{ always() && inputs.run-cachix-deploy && !matrix.noop && matrix.deploymentTarget }}
         with:
           name: deployment-cache-push-${{ github.run_id }}-${{ strategy.job-index }}
           path: .result/deployment-cache-push-events.jsonl
