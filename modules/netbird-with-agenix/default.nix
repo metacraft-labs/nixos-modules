@@ -142,6 +142,10 @@
             pkgs.coreutils
             pkgs.gnugrep
           ];
+          serviceConfig = {
+            Restart = "on-failure";
+            RestartSec = "10s";
+          };
           script = lib.mkForce ''
             set -euo pipefail
 
@@ -152,11 +156,19 @@
               '${lib.getExe client.wrapper}' status &>"$status_file" || :
             }
 
-            until refresh_status && grep --quiet 'Connected\|NeedsLogin' "$status_file"; do
+            needs_login() {
+              grep --quiet '^Daemon status:[[:space:]]*NeedsLogin[[:space:]]*$' "$status_file"
+            }
+
+            is_connected() {
+              grep --quiet '^Management:[[:space:]]*Connected' "$status_file"
+            }
+
+            until refresh_status && (needs_login || is_connected); do
               sleep 1
             done
 
-            if grep --quiet 'NeedsLogin' "$status_file"; then
+            if needs_login; then
               args=(
                 up
                 --setup-key-file "$NB_SETUP_KEY_FILE"
@@ -167,6 +179,18 @@
 
               '${lib.getExe client.wrapper}' "''${args[@]}"
             fi
+
+            for attempt in $(seq 1 30); do
+              refresh_status
+              if is_connected; then
+                exit 0
+              fi
+              sleep 1
+            done
+
+            echo "NetBird login did not reach a connected state:" >&2
+            cat "$status_file" >&2
+            exit 1
           '';
         };
       };

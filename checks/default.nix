@@ -10,6 +10,7 @@
     ./deployment-pull-agent.nix
     ./deployment-reconciler.nix
     ./linux-vm-cloud-init
+    ./netbird-with-agenix.nix
     ./packages-ci-matrix.nix
     ./pre-commit.nix
     ./secret-integration
