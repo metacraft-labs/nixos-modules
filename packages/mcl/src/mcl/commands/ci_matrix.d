@@ -1313,7 +1313,8 @@ unittest
     ));
 }
 
-Package[] getPrecalcMatrix(PrintTableArgs args)
+Package[] getPrecalcMatrix(T)(auto ref T args)
+    if (is(T == PrintTableArgs) || is(T == DeploySpecArgs))
 {
     auto precalcMatrixStr = args.precalcMatrix == "" ? `{"include": []}` : args.precalcMatrix;
     return parseJSON(precalcMatrixStr)["include"].array.map!(fromJSON!Package).array;

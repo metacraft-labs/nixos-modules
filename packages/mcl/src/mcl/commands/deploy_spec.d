@@ -6,6 +6,7 @@ import std.logger : infof, warningf;
 import std.file : exists;
 import std.path : buildPath;
 import std.range : empty;
+import std.string : split;
 import std.typecons : Nullable;
 
 import argparse : Command, Description, EnvFallback, NamedArgument, Placeholder;
@@ -20,7 +21,8 @@ import mcl.utils.deployment_events : ClosureSummary, DeploymentEventContext,
     appendDeploymentEvent, deploymentEventJson, deploymentEventLogPathFromEnv,
     queryClosureSummary, stderrSummary;
 
-import mcl.commands.ci_matrix : nixEvalJobs, CiMatrixBaseArgs;
+import mcl.commands.ci_matrix : CiMatrixBaseArgs, Package,
+    deployableServerMachinesAttrPath, getPrecalcMatrix, nixEvalJobs;
 
 enum deploySpecClosureSummaryEnv = "MCL_DEPLOY_SPEC_CLOSURE_SUMMARIES";
 
@@ -56,6 +58,7 @@ struct DeploySpecDependencies
 {
     ProcessRunner runProcess;
     ProcessRunner queryProcess;
+    Package[] delegate(DeploySpecArgs args) evaluateServerMachines;
 }
 
 export int deploy_spec(DeploySpecArgs args)
@@ -64,6 +67,33 @@ export int deploy_spec(DeploySpecArgs args)
         runProcess: (string[] command) => runProcessInlineCapture(command),
         queryProcess: (string[] command) => runProcessCapture(command),
     ));
+}
+
+Package[] evaluateServerMachinesWithNixEvalJobs(DeploySpecArgs args)
+{
+    return deployableServerMachinesAttrPath.nixEvalJobs(args);
+}
+
+string deploymentAgentName(Package pkg)
+{
+    auto parts = pkg.name.split("/");
+    return parts.length >= 3 && (parts[0] == "machine" || parts[0] == "serverMachines")
+        ? parts[1]
+        : pkg.name;
+}
+
+Package deploymentAgentPackage(Package pkg)
+{
+    pkg.name = pkg.deploymentAgentName;
+    return pkg;
+}
+
+Package[] precomputedDeploymentPackages(DeploySpecArgs args)
+{
+    return args.getPrecalcMatrix
+        .filter!(pkg => pkg.deploymentTarget && pkg.deploymentKind == "server")
+        .map!deploymentAgentPackage
+        .array;
 }
 
 int deploySpecImpl(DeploySpecArgs args, DeploySpecDependencies deps, string deploySpecFile = resultDir.buildPath("cachix-deploy-spec.json"))
@@ -88,22 +118,33 @@ int deploySpecImpl(DeploySpecArgs args, DeploySpecDependencies deps, string depl
     // MCL_DEPLOY_SPEC_CLOSURE_SUMMARIES=1 locally when debugging event payloads
     // and willing to pay for recursive closure queries.
     const includeClosureSummaries = eventLoggingEnabled && args.closureSummaries;
+    Package[] delegate(DeploySpecArgs args) evaluateServerMachines = deps.evaluateServerMachines;
+    if (evaluateServerMachines is null)
+        evaluateServerMachines = (DeploySpecArgs args) => evaluateServerMachinesWithNixEvalJobs(args);
 
     if (!exists(deploySpecFile))
     {
-        auto nixosConfigs = "legacyPackages.x86_64-linux.serverMachines"
-            .nixEvalJobs(args);
+        const usePrecomputedMatrix = args.precalcMatrix != "";
+        auto nixosConfigs = usePrecomputedMatrix
+            ? args.precomputedDeploymentPackages
+            : evaluateServerMachines(args);
 
         auto pkgsNotFoundInCache = nixosConfigs.filter!(c => c.cachedAt.empty);
 
-        foreach (pkg; pkgsNotFoundInCache.save())
-        {
-            warningf(
-                "Nixos configuration '%s' is not in cachix.\nExpected Cachix URL: %s\n",
-                pkg.name.bold,
-                pkg.getNarInfoUrl(args.binaryCacheUrls[0]).bold
+        if (usePrecomputedMatrix)
+            infof(
+                "Using %s deployment targets from precomputed CI matrix.",
+                nixosConfigs.length
             );
-        }
+        else
+            foreach (pkg; pkgsNotFoundInCache.save())
+            {
+                warningf(
+                    "Nixos configuration '%s' is not in cachix.\nExpected Cachix URL: %s\n",
+                    pkg.name.bold,
+                    pkg.getNarInfoUrl(args.binaryCacheUrls[0]).bold
+                );
+            }
 
         foreach (pkg; nixosConfigs)
         {
@@ -113,8 +154,10 @@ int deploySpecImpl(DeploySpecArgs args, DeploySpecDependencies deps, string depl
                 "evaluate",
                 pkg.name,
                 pkg.output,
-                "nix-eval-jobs",
-                ["nix-eval-jobs", "--flake", "legacyPackages.x86_64-linux.serverMachines"],
+                usePrecomputedMatrix ? "precomputed CI matrix" : "nix-eval-jobs",
+                usePrecomputedMatrix
+                    ? ["mcl", "deploy-spec", "--precalc-matrix"]
+                    : ["nix-eval-jobs", "--flake", deployableServerMachinesAttrPath],
                 "succeeded",
                 0,
                 closure,
@@ -143,23 +186,24 @@ int deploySpecImpl(DeploySpecArgs args, DeploySpecDependencies deps, string depl
                     "reason": JSONValue("build phase is performed by the reusable workflow before deploy-spec"),
                 ],
             ));
-            appendDeploymentEvent(eventLogPath, deploymentEventJson(
-                context,
-                "closure-prefill",
-                pkg.name,
-                pkg.output,
-                "cache availability check",
-                ["mcl", "deploy-spec"],
-                pkg.cachedAt.empty ? "failed" : "succeeded",
-                pkg.cachedAt.empty ? 1 : 0,
-                closure,
-                pkg.cachedAt.empty ? "System closure is not available in the configured caches" : "",
-                "closure_not_cached",
-                pkg.cachedAt.empty ? pkg.getNarInfoUrl(args.binaryCacheUrls[0]) : "",
-                [
-                    "cachedAt": JSONValue(pkg.cachedAt.map!(url => JSONValue(url)).array),
-                ],
-            ));
+            if (!usePrecomputedMatrix)
+                appendDeploymentEvent(eventLogPath, deploymentEventJson(
+                    context,
+                    "closure-prefill",
+                    pkg.name,
+                    pkg.output,
+                    "cache availability check",
+                    ["mcl", "deploy-spec"],
+                    pkg.cachedAt.empty ? "failed" : "succeeded",
+                    pkg.cachedAt.empty ? 1 : 0,
+                    closure,
+                    pkg.cachedAt.empty ? "System closure is not available in the configured caches" : "",
+                    "closure_not_cached",
+                    pkg.cachedAt.empty ? pkg.getNarInfoUrl(args.binaryCacheUrls[0]) : "",
+                    [
+                        "cachedAt": JSONValue(pkg.cachedAt.map!(url => JSONValue(url)).array),
+                    ],
+                ));
             appendDeploymentEvent(eventLogPath, deploymentEventJson(
                 context,
                 "cache-push",
@@ -179,7 +223,7 @@ int deploySpecImpl(DeploySpecArgs args, DeploySpecDependencies deps, string depl
             ));
         }
 
-        if (!pkgsNotFoundInCache.empty)
+        if (!usePrecomputedMatrix && !pkgsNotFoundInCache.empty)
             throw new Exception("Some Nixos configurations are not in cachix. Please cache them first.");
 
         spec = nixosConfigs.createMachineDeploySpec();
@@ -422,6 +466,89 @@ unittest
     assert(events[1]["storePaths"]["closure"]["totalBytes"].integer == 18);
     assert(events[2]["storePaths"]["closure"]["count"].integer == 2);
     assert(events[2]["storePaths"]["closure"]["totalBytes"].integer == 18);
+}
+
+@("test_deploy_spec_uses_precomputed_matrix_without_nix_eval_jobs")
+unittest
+{
+    import std.file : deleteme, readText, remove;
+    import std.json : parseJSON;
+    import std.algorithm : filter;
+    import std.string : splitLines;
+
+    auto tempBase = deleteme;
+    auto eventLog = tempBase ~ ".precalc.events.jsonl";
+    auto specFile = tempBase ~ ".precalc.spec.json";
+    scope(exit)
+    {
+        if (tempBase.exists) tempBase.remove;
+        if (eventLog.exists) eventLog.remove;
+        if (specFile.exists) specFile.remove;
+    }
+
+    enum serverOutput = "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-nixos-system-app-server-01";
+    DeploySpecArgs args;
+    args.eventLog = eventLog;
+    args.extraCacheUrls = ["http://127.0.0.1:9"];
+    args.precalcMatrix = `{"include":[`
+        ~ `{"name":"machine/app-server-01/x86_64-linux",`
+        ~ `"allowedToFail":false,`
+        ~ `"attrPath":"mcl.shard-matrix.result.shards.shard-0.machine/app-server-01/x86_64-linux",`
+        ~ `"cachedAt":[],`
+        ~ `"ghRunner":["self-hosted"],`
+        ~ `"system":"x86_64-linux",`
+        ~ `"derivation":"/nix/store/11111111111111111111111111111111-app-server-01.drv",`
+        ~ `"output":"` ~ serverOutput ~ `",`
+        ~ `"deploymentTarget":true,`
+        ~ `"deploymentKind":"server"},`
+        ~ `{"name":"machine/workstation-01/x86_64-linux",`
+        ~ `"allowedToFail":false,`
+        ~ `"attrPath":"mcl.shard-matrix.result.shards.shard-0.machine/workstation-01/x86_64-linux",`
+        ~ `"cachedAt":[],`
+        ~ `"ghRunner":["self-hosted"],`
+        ~ `"system":"x86_64-linux",`
+        ~ `"derivation":"/nix/store/22222222222222222222222222222222-workstation-01.drv",`
+        ~ `"output":"/nix/store/22222222222222222222222222222222-nixos-system-workstation-01",`
+        ~ `"deploymentTarget":false,`
+        ~ `"deploymentKind":""}`
+        ~ `]}`;
+
+    uint evalCalls;
+    Package[] failIfEvaluated(DeploySpecArgs args)
+    {
+        evalCalls++;
+        assert(0, "precomputed deploy-spec path must not invoke nix-eval-jobs");
+    }
+
+    uint pathInfoCalls;
+    ProcessResult fakeRunner(string[] command)
+    {
+        if (command.length >= 2 && command[0] == "nix" && command[1] == "path-info")
+            pathInfoCalls++;
+        return ProcessResult(0, "", "");
+    }
+
+    assert(deploySpecImpl(
+        args,
+        DeploySpecDependencies(
+            runProcess: &fakeRunner,
+            queryProcess: &fakeRunner,
+            evaluateServerMachines: &failIfEvaluated,
+        ),
+        specFile,
+    ) == 0);
+    assert(evalCalls == 0);
+    assert(pathInfoCalls == 0);
+
+    auto spec = specFile.tryDeserializeFromJsonFile!DeploySpec();
+    assert(spec.agents.length == 1);
+    assert(spec.agents["app-server-01"] == serverOutput);
+    assert("machine/app-server-01/x86_64-linux" !in spec.agents);
+
+    auto events = eventLog.readText.splitLines.filter!(line => line != "").map!(line => line.parseJSON).array;
+    assert(events[$ - 1]["phase"].str == "activate-requested");
+    assert(events[$ - 1]["target"]["name"].str == "app-server-01");
+    assert(events[$ - 1]["storePaths"]["system"].str == serverOutput);
 }
 
 @("test_deploy_event_log_failure_shape")
