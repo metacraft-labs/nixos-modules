@@ -13,6 +13,7 @@ import mcl.utils.deployment_events : ClosureSummary, DeploymentEventContext,
 import mcl.utils.process : ProcessResult, ProcessRunner;
 
 enum ulong defaultCacheProbeTimeoutSeconds = 30;
+enum ulong atticPushMaxAttempts = 3;
 
 enum CacheBackend
 {
@@ -120,7 +121,8 @@ CachePushPlan cachePushPlan(CachePushRequest request)
         case CacheBackend.attic:
             return CachePushPlan(
                 commandName: "attic push",
-                argv: ["attic", "push", "--ignore-upstream-cache-filter", request.cache]
+                argv: ["attic", "push", "--jobs", "1",
+                    "--ignore-upstream-cache-filter", request.cache]
                     ~ request.storePaths,
                 controller: "attic",
                 substituters: substituters,
@@ -315,6 +317,60 @@ bool isTimeoutExitCode(int exitCode)
         || exitCode == -9 || exitCode == -15;
 }
 
+private ProcessResult runCachePushCommand(
+    CachePushPlan plan,
+    CacheBackend backend,
+    ProcessRunner runProcess,
+)
+{
+    auto result = runProcess(plan.argv);
+    if (backend != CacheBackend.attic)
+        return result;
+
+    ulong attempt = 1;
+    while (!result.succeeded
+        && attempt < atticPushMaxAttempts
+        && isTransientAtticPushFailure(result))
+    {
+        sleepBeforeAtticPushRetry(attempt);
+        result = runProcess(plan.argv);
+        ++attempt;
+    }
+    return result;
+}
+
+private bool isTransientAtticPushFailure(ProcessResult result)
+{
+    if (result.succeeded)
+        return false;
+    if (isTimeoutExitCode(result.exitCode))
+        return true;
+
+    auto output = (result.stdout ~ "\n" ~ result.stderr).toLower;
+    return output.canFind("http 504")
+        || output.canFind("504 gateway timeout")
+        || output.canFind("gateway timeout")
+        || output.canFind("upstream timed out")
+        || output.canFind("deadline exceeded")
+        || output.canFind("connection timed out")
+        || output.canFind("connection pool timed out")
+        || output.canFind("internalservererror");
+}
+
+private void sleepBeforeAtticPushRetry(ulong failedAttempt)
+{
+    version (unittest)
+    {
+    }
+    else
+    {
+        import core.thread : Thread;
+        import core.time : seconds;
+
+        Thread.sleep(failedAttempt == 1 ? 2.seconds : 10.seconds);
+    }
+}
+
 string classifyProbeFailure(string stderr)
 {
     auto text = stderr.toLower;
@@ -401,7 +457,7 @@ int pushClosure(CachePushRequest request, ProcessRunner runProcess, ProcessRunne
 
     ProcessResult pushResult = ProcessResult(0, "", "");
     if (plan.externalCommand)
-        pushResult = runProcess(plan.argv);
+        pushResult = runCachePushCommand(plan, request.backend, runProcess);
 
     CacheProbeResult[] probes;
     bool[string] timedOutSubstituters;
@@ -684,7 +740,8 @@ unittest
     ), &fakeRunner, &fakeRunner) == 0);
 
     assert(commands.any!(cmd => cmd == [
-        "attic", "push", "--ignore-upstream-cache-filter", "example-deploy-cache", root,
+        "attic", "push", "--jobs", "1",
+        "--ignore-upstream-cache-filter", "example-deploy-cache", root,
     ]));
 
     auto events = eventLog.readText.splitLines
@@ -696,6 +753,272 @@ unittest
     assert(events[1]["backend"]["controller"].str == "attic");
     assert(events[1]["metadata"]["coverage"]["complete"].boolean);
     assert(events[1]["metadata"]["probes"][0]["outcome"].str == "successful-substitute");
+}
+
+@("test_attic_push_retries_transient_gateway_timeout_and_succeeds")
+unittest
+{
+    import std.file : deleteme, readText, remove;
+    import std.json : parseJSON;
+    import std.string : splitLines;
+    import std.algorithm : filter;
+
+    auto eventLog = deleteme ~ ".attic-push-retry-success.events.jsonl";
+    scope(exit)
+        if (eventLog.exists) eventLog.remove;
+
+    auto root = "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-root";
+    string[][] commands;
+    ulong atticPushes;
+    ProcessResult fakeRunner(string[] command)
+    {
+        commands ~= command;
+        if (command.length >= 2 && command[0] == "attic" && command[1] == "push")
+        {
+            ++atticPushes;
+            return atticPushes == 1
+                ? ProcessResult(1, "", "HTTP 504 Gateway Timeout\n<html>nginx</html>")
+                : ProcessResult(0, "", "");
+        }
+        if (command.length >= 2 && command[0] == "nix" && command[1] == "path-info"
+            && command.canFind("--json"))
+            return ProcessResult(0,
+                `{"/nix/store/0123456789abcdfghijklmnpqrsvwxyz-root":{"narSize":7}}`, "");
+        if (command.length >= 2 && command[0] == "nix" && command[1] == "path-info"
+            && command.canFind("--recursive"))
+            return ProcessResult(0, root ~ "\n", "");
+        if (command.canFind("--store"))
+            return ProcessResult(0, root ~ "\n", "");
+        return ProcessResult(0, "", "");
+    }
+
+    assert(pushClosure(CachePushRequest(
+        backend: CacheBackend.attic,
+        cache: "example-deploy-cache",
+        storePaths: [root],
+        substituters: ["https://cache.example/example-deploy-cache"],
+        eventLogPath: eventLog,
+    ), &fakeRunner, &fakeRunner) == 0);
+
+    assert(atticPushes == 2);
+    assert(commands[1] == [
+        "attic", "push", "--jobs", "1",
+        "--ignore-upstream-cache-filter", "example-deploy-cache", root,
+    ]);
+
+    auto events = eventLog.readText.splitLines
+        .filter!(line => line.strip != "")
+        .map!(line => line.parseJSON)
+        .array;
+    assert(events.length == 1);
+    assert(events[0]["command"]["status"].str == "succeeded");
+    assert(events[0]["metadata"]["coverage"]["complete"].boolean);
+}
+
+@("test_attic_push_transient_gateway_timeout_stops_after_bounded_retries")
+unittest
+{
+    import std.file : deleteme, readText, remove;
+    import std.json : parseJSON;
+    import std.string : splitLines;
+    import std.algorithm : filter;
+
+    auto eventLog = deleteme ~ ".attic-push-retry-failure.events.jsonl";
+    scope(exit)
+        if (eventLog.exists) eventLog.remove;
+
+    auto root = "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-root";
+    ulong atticPushes;
+    ProcessResult fakeRunner(string[] command)
+    {
+        if (command.length >= 2 && command[0] == "attic" && command[1] == "push")
+        {
+            ++atticPushes;
+            return ProcessResult(1, "", "HTTP 504 Gateway Timeout\n<html>nginx</html>");
+        }
+        if (command.length >= 2 && command[0] == "nix" && command[1] == "path-info"
+            && command.canFind("--json"))
+            return ProcessResult(0,
+                `{"/nix/store/0123456789abcdfghijklmnpqrsvwxyz-root":{"narSize":7}}`, "");
+        return ProcessResult(0, "", "");
+    }
+
+    bool threw;
+    try
+    {
+        pushClosure(CachePushRequest(
+            backend: CacheBackend.attic,
+            cache: "example-deploy-cache",
+            storePaths: [root],
+            substituters: ["https://cache.example/example-deploy-cache"],
+            eventLogPath: eventLog,
+        ), &fakeRunner, &fakeRunner);
+    }
+    catch (Exception e)
+    {
+        threw = true;
+        assert(e.msg == "Cache push failed");
+    }
+    assert(threw);
+    assert(atticPushes == atticPushMaxAttempts);
+
+    auto events = eventLog.readText.splitLines
+        .filter!(line => line.strip != "")
+        .map!(line => line.parseJSON)
+        .array;
+    assert(events.length == 1);
+    assert(events[0]["command"]["status"].str == "failed");
+    assert(events[0]["error"]["details"]["stderrSummary"].str.canFind("HTTP 504 Gateway Timeout"));
+}
+
+@("test_attic_push_non_transient_failure_does_not_retry")
+unittest
+{
+    auto root = "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-root";
+    ulong atticPushes;
+    ProcessResult fakeRunner(string[] command)
+    {
+        if (command.length >= 2 && command[0] == "attic" && command[1] == "push")
+        {
+            ++atticPushes;
+            return ProcessResult(1, "", "error: cache does not exist");
+        }
+        if (command.length >= 2 && command[0] == "nix" && command[1] == "path-info"
+            && command.canFind("--json"))
+            return ProcessResult(0,
+                `{"/nix/store/0123456789abcdfghijklmnpqrsvwxyz-root":{"narSize":7}}`, "");
+        return ProcessResult(0, "", "");
+    }
+
+    bool threw;
+    try
+    {
+        pushClosure(CachePushRequest(
+            backend: CacheBackend.attic,
+            cache: "missing-cache",
+            storePaths: [root],
+            substituters: ["https://cache.example/missing-cache"],
+        ), &fakeRunner, &fakeRunner);
+    }
+    catch (Exception e)
+    {
+        threw = true;
+        assert(e.msg == "Cache push failed");
+    }
+    assert(threw);
+    assert(atticPushes == 1);
+}
+
+@("test_attic_push_retries_database_pool_timeout")
+unittest
+{
+    auto root = "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-root";
+    ulong atticPushes;
+    ProcessResult fakeRunner(string[] command)
+    {
+        if (command.length >= 2 && command[0] == "attic" && command[1] == "push")
+        {
+            ++atticPushes;
+            return atticPushes == 1
+                ? ProcessResult(1, "",
+                    "InternalServerError: Database error: Failed to acquire connection from pool: Connection pool timed out")
+                : ProcessResult(0, "", "");
+        }
+        if (command.length >= 2 && command[0] == "nix" && command[1] == "path-info"
+            && command.canFind("--json"))
+            return ProcessResult(0,
+                `{"/nix/store/0123456789abcdfghijklmnpqrsvwxyz-root":{"narSize":7}}`, "");
+        if (command.length >= 2 && command[0] == "nix" && command[1] == "path-info"
+            && command.canFind("--recursive"))
+            return ProcessResult(0, root ~ "\n", "");
+        if (command.canFind("--store"))
+            return ProcessResult(0, root ~ "\n", "");
+        return ProcessResult(0, "", "");
+    }
+
+    assert(pushClosure(CachePushRequest(
+        backend: CacheBackend.attic,
+        cache: "example-deploy-cache",
+        storePaths: [root],
+        substituters: ["https://cache.example/example-deploy-cache"],
+    ), &fakeRunner, &fakeRunner) == 0);
+
+    assert(atticPushes == 2);
+}
+
+@("test_attic_push_retries_visible_internal_server_error")
+unittest
+{
+    auto root = "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-root";
+    ulong atticPushes;
+    ProcessResult fakeRunner(string[] command)
+    {
+        if (command.length >= 2 && command[0] == "attic" && command[1] == "push")
+        {
+            ++atticPushes;
+            return atticPushes == 1
+                ? ProcessResult(1, "",
+                    "InternalServerError: The server encountered an internal error or misconfiguration.")
+                : ProcessResult(0, "", "");
+        }
+        if (command.length >= 2 && command[0] == "nix" && command[1] == "path-info"
+            && command.canFind("--json"))
+            return ProcessResult(0,
+                `{"/nix/store/0123456789abcdfghijklmnpqrsvwxyz-root":{"narSize":7}}`, "");
+        if (command.length >= 2 && command[0] == "nix" && command[1] == "path-info"
+            && command.canFind("--recursive"))
+            return ProcessResult(0, root ~ "\n", "");
+        if (command.canFind("--store"))
+            return ProcessResult(0, root ~ "\n", "");
+        return ProcessResult(0, "", "");
+    }
+
+    assert(pushClosure(CachePushRequest(
+        backend: CacheBackend.attic,
+        cache: "example-deploy-cache",
+        storePaths: [root],
+        substituters: ["https://cache.example/example-deploy-cache"],
+    ), &fakeRunner, &fakeRunner) == 0);
+
+    assert(atticPushes == 2);
+}
+
+@("test_cachix_push_failure_does_not_retry")
+unittest
+{
+    auto root = "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-root";
+    ulong cachixPushes;
+    ProcessResult fakeRunner(string[] command)
+    {
+        if (command.length >= 2 && command[0] == "cachix" && command[1] == "push")
+        {
+            ++cachixPushes;
+            return ProcessResult(1, "", "HTTP 504 Gateway Timeout");
+        }
+        if (command.length >= 2 && command[0] == "nix" && command[1] == "path-info"
+            && command.canFind("--json"))
+            return ProcessResult(0,
+                `{"/nix/store/0123456789abcdfghijklmnpqrsvwxyz-root":{"narSize":7}}`, "");
+        return ProcessResult(0, "", "");
+    }
+
+    bool threw;
+    try
+    {
+        pushClosure(CachePushRequest(
+            backend: CacheBackend.cachix,
+            cache: "example-cache",
+            storePaths: [root],
+            substituters: ["https://example-cache.cachix.org"],
+        ), &fakeRunner, &fakeRunner);
+    }
+    catch (Exception e)
+    {
+        threw = true;
+        assert(e.msg == "Cache push failed");
+    }
+    assert(threw);
+    assert(cachixPushes == 1);
 }
 
 @("test_cache_probe_wraps_path_info_with_timeout")
