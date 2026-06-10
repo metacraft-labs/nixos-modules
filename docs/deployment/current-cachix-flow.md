@@ -18,7 +18,9 @@ Deployment is optional and is gated by the workflow input
 '.#${{ matrix.attrPath }}'` for each matrix item.
 6. `build` then runs `cachix push ${{ vars.CACHIX_CACHE }}
 ${{ matrix.output }}` for each built output.
-7. `results` prints the final matrix and updates the pull request comment.
+7. `results` runs on the JSON-encoded `results-runner` input, which defaults
+   to the off-target GitHub-hosted runner `"ubuntu-latest"`. It prints the
+   final matrix and updates the pull request comment.
 8. When `inputs.run-cachix-deploy` is true, `results` checks out the repository
    and runs `mcl deploy-spec`.
 
@@ -58,6 +60,7 @@ journald logs, activation generation, health-check output, or rollback status.
 | Cache name           | GitHub variable `CACHIX_CACHE`                                                                        | Used by setup, push, and `mcl` cache-status checks.                      |
 | Substituters         | GitHub variable `SUBSTITUTERS` plus default cache URLs supplied to `mcl`                              | Used for Nix setup and cache-status checks.                              |
 | Trusted public keys  | GitHub variable `TRUSTED_PUBLIC_KEYS`                                                                 | Required for substituter trust on runners.                               |
+| Results runner       | Workflow input `results-runner`, JSON default `"ubuntu-latest"`                                       | Keeps deploy orchestration off the fleet self-hosted runner by default.  |
 | Deploy token         | Secret `CACHIX_ACTIVATE_TOKEN`                                                                        | Passed only to the deploy step environment.                              |
 | Cache push token     | Secret `CACHIX_AUTH_TOKEN`                                                                            | Used by setup, cache push, and cache-status checks.                      |
 | Source access tokens | `NIX_GITHUB_TOKEN`, `NIX_GITLAB_TOKEN`, `NIX_GITLAB_DOMAIN`                                           | Used by Nix access-token setup.                                          |
