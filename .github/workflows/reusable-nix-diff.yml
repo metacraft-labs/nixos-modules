@@ -35,6 +35,7 @@ jobs:
     runs-on: ${{ fromJSON(inputs.runner) }}
     permissions:
       contents: read
+      issues: write
       pull-requests: write
 
     steps:
