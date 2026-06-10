@@ -193,7 +193,7 @@ CacheProbeResult[] probeCacheSubstitutes(
 
     auto pathInfoCommand = [
         "nix", "path-info", "--store", substituter,
-    ] ~ paths;
+    ] ~ paths ~ ["--option", "substituters", ""];
     if (trustedPublicKeys.length)
         pathInfoCommand ~= ["--option", "trusted-public-keys", trustedPublicKeys.join(" ")];
 
@@ -207,6 +207,15 @@ CacheProbeResult[] probeCacheSubstitutes(
     auto failureMessage = pathInfo.stderr.stderrSummary;
     if (failureOutcome == "probe-timeout" && failureMessage == "")
         failureMessage = "substitute probe exceeded " ~ timeoutSeconds.to!string ~ "s timeout";
+    if (!pathInfo.succeeded && failureOutcome == "narinfo-missing"
+        && !hasDisqualifyingMixedProbeFailure(pathInfo.stderr))
+    {
+        auto missingPaths = missingProbeFailurePaths(paths, pathInfo.stderr);
+        if (missingPaths.length)
+            foreach (path; paths)
+                if (path !in missingPaths)
+                    successfulPaths[path] = true;
+    }
 
     // `nix path-info` performs a `HEAD /<hash>.narinfo` against the
     // substituter — this is sufficient evidence that the path is
@@ -249,6 +258,51 @@ private bool[string] successfulProbeOutputPaths(string[] requestedPaths, string 
     return successful;
 }
 
+private bool[string] missingProbeFailurePaths(string[] requestedPaths, string stderr)
+{
+    bool[string] missing;
+    foreach (line; stderr.splitLines)
+    {
+        if (!isMissingProbeFailureLine(line))
+            continue;
+        foreach (path; requestedPaths)
+            if (line.canFind(path))
+                missing[path] = true;
+    }
+    return missing;
+}
+
+private bool isMissingProbeFailureLine(string line)
+{
+    auto text = line.toLower;
+    return text.canFind("404")
+        || text.canFind("not found")
+        || text.canFind("does not exist")
+        || text.canFind("no such file")
+        || text.canFind("not valid")
+        || text.canFind("not a valid")
+        || text.canFind("invalid path")
+        || text.canFind("is invalid");
+}
+
+private bool hasDisqualifyingMixedProbeFailure(string stderr)
+{
+    auto text = stderr.toLower;
+    return text.canFind("timed out")
+        || text.canFind("timeout")
+        || text.canFind("lacks a signature")
+        || text.canFind("not signed")
+        || text.canFind("not trusted")
+        || text.canFind("bad signature")
+        || text.canFind("signature")
+        || text.canFind("nar object")
+        || text.canFind("object")
+        || text.canFind("unexpected eof")
+        || text.canFind("unexpected end")
+        || text.canFind("hash mismatch")
+        || text.canFind("corrupt");
+}
+
 string[] cacheProbeTimeoutCommand(string[] command, ulong timeoutSeconds)
 {
     return ["timeout", "--kill-after=5s", timeoutSeconds.to!string ~ "s"] ~ command;
@@ -256,7 +310,8 @@ string[] cacheProbeTimeoutCommand(string[] command, ulong timeoutSeconds)
 
 bool isTimeoutExitCode(int exitCode)
 {
-    return exitCode == 124 || exitCode == 137 || exitCode == 143;
+    return exitCode == 124 || exitCode == 137 || exitCode == 143
+        || exitCode == -9 || exitCode == -15;
 }
 
 string classifyProbeFailure(string stderr)
@@ -266,9 +321,9 @@ string classifyProbeFailure(string stderr)
         || text.canFind("not trusted") || text.canFind("bad signature")
         || text.canFind("signature"))
         return "signature-not-trusted";
-    if (text.canFind("nar") || text.canFind("object") || text.canFind("unexpected eof")
-        || text.canFind("unexpected end") || text.canFind("hash mismatch")
-        || text.canFind("corrupt"))
+    if (text.canFind("nar object") || text.canFind("object")
+        || text.canFind("unexpected eof") || text.canFind("unexpected end")
+        || text.canFind("hash mismatch") || text.canFind("corrupt"))
         return "narinfo-present-object-unavailable";
     if (text.canFind("404") || text.canFind("not found") || text.canFind("does not exist")
         || text.canFind("no such file") || text.canFind("narinfo"))
@@ -623,8 +678,130 @@ unittest
     assert(commands[0] == [
         "timeout", "--kill-after=5s", "7s",
         "nix", "path-info", "--store", "https://cache.example", root,
+        "--option", "substituters", "",
         "--option", "trusted-public-keys", "cache.example-1:abc",
     ]);
+}
+
+@("test_cache_probe_mixed_missing_batch_counts_unmentioned_paths")
+unittest
+{
+    auto presentA = "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-present-a";
+    auto presentB = "/nix/store/11111111111111111111111111111111-present-b";
+    auto missing = "/nix/store/22222222222222222222222222222222-missing";
+    ProcessResult fakeRunner(string[] command)
+    {
+        return ProcessResult(1, "",
+            "error: path '" ~ missing ~ "' does not exist in binary cache 'https://cache.example'\n");
+    }
+
+    auto results = probeCacheSubstitutes([presentA, missing, presentB],
+        "https://cache.example", [], &fakeRunner, 7);
+
+    assert(results.length == 3);
+    assert(results[0].path == presentA);
+    assert(results[0].outcome == "successful-substitute");
+    assert(results[1].path == missing);
+    assert(results[1].outcome == "narinfo-missing");
+    assert(results[2].path == presentB);
+    assert(results[2].outcome == "successful-substitute");
+}
+
+@("test_cache_probe_mixed_missing_batch_requires_named_missing_path")
+unittest
+{
+    auto present = "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-present";
+    auto maybeMissing = "/nix/store/11111111111111111111111111111111-maybe-missing";
+    ProcessResult fakeRunner(string[] command)
+    {
+        return ProcessResult(1, "", "404 Not Found\n");
+    }
+
+    auto results = probeCacheSubstitutes([present, maybeMissing],
+        "https://cache.example", [], &fakeRunner, 7);
+
+    assert(results.length == 2);
+    assert(results[0].outcome == "narinfo-missing");
+    assert(results[1].outcome == "narinfo-missing");
+}
+
+@("test_cache_probe_mixed_missing_batch_does_not_mask_integrity_failures")
+unittest
+{
+    auto present = "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-present";
+    auto missing = "/nix/store/11111111111111111111111111111111-missing";
+    ProcessResult fakeRunner(string[] command)
+    {
+        return ProcessResult(1, "",
+            "error: path '" ~ missing ~ "' does not exist in binary cache 'https://cache.example'\n"
+            ~ "error: cannot download NAR object from binary cache\n");
+    }
+
+    auto results = probeCacheSubstitutes([present, missing],
+        "https://cache.example", [], &fakeRunner, 7);
+
+    assert(results.length == 2);
+    assert(results[0].outcome == "narinfo-present-object-unavailable");
+    assert(results[1].outcome == "narinfo-present-object-unavailable");
+}
+
+@("test_cache_probe_mixed_missing_batch_does_not_mask_signature_failures")
+unittest
+{
+    auto present = "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-present";
+    auto missing = "/nix/store/11111111111111111111111111111111-missing";
+    ProcessResult fakeRunner(string[] command)
+    {
+        return ProcessResult(1, "",
+            "error: path '" ~ missing ~ "' does not exist in binary cache 'https://cache.example'\n"
+            ~ "error: path is not signed by a trusted key\n");
+    }
+
+    auto results = probeCacheSubstitutes([present, missing],
+        "https://cache.example", [], &fakeRunner, 7);
+
+    assert(results.length == 2);
+    assert(results[0].outcome == "signature-not-trusted");
+    assert(results[1].outcome == "signature-not-trusted");
+}
+
+@("test_cache_probe_mixed_missing_batch_does_not_mask_timeouts")
+unittest
+{
+    auto present = "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-present";
+    auto missing = "/nix/store/11111111111111111111111111111111-missing";
+    ProcessResult fakeRunner(string[] command)
+    {
+        return ProcessResult(-9, "",
+            "error: path '" ~ missing ~ "' does not exist in binary cache 'https://cache.example'\n");
+    }
+
+    auto results = probeCacheSubstitutes([present, missing],
+        "https://cache.example", [], &fakeRunner, 7);
+
+    assert(results.length == 2);
+    assert(results[0].outcome == "probe-timeout");
+    assert(results[1].outcome == "probe-timeout");
+}
+
+@("test_cache_probe_mixed_missing_batch_does_not_mask_timeout_stderr")
+unittest
+{
+    auto present = "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-present";
+    auto missing = "/nix/store/11111111111111111111111111111111-missing";
+    ProcessResult fakeRunner(string[] command)
+    {
+        return ProcessResult(1, "",
+            "error: path '" ~ missing ~ "' does not exist in binary cache 'https://cache.example'\n"
+            ~ "error: request timed out while probing cache\n");
+    }
+
+    auto results = probeCacheSubstitutes([present, missing],
+        "https://cache.example", [], &fakeRunner, 7);
+
+    assert(results.length == 2);
+    assert(results[0].outcome == "narinfo-missing");
+    assert(results[1].outcome == "narinfo-missing");
 }
 
 @("test_cache_probe_timeout_command_executes_inner_command")
@@ -1021,6 +1198,11 @@ unittest
 @("test_cache_probe_classifies_failures")
 unittest
 {
+    assert(isTimeoutExitCode(124));
+    assert(isTimeoutExitCode(137));
+    assert(isTimeoutExitCode(143));
+    assert(isTimeoutExitCode(-9));
+    assert(isTimeoutExitCode(-15));
     assert(classifyProbeFailure("404 Not Found") == "narinfo-missing");
     assert(classifyProbeFailure("cannot download NAR object") == "narinfo-present-object-unavailable");
     assert(classifyProbeFailure("path is not signed by a trusted key") == "signature-not-trusted");
