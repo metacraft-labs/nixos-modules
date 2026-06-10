@@ -158,6 +158,195 @@ struct Matrix
     Package[] include;
 }
 
+version (unittest)
+{
+    JSONValue githubOutputValue(string output, string key)
+    {
+        const prefix = key ~ "=";
+        foreach (line; output.splitLines)
+            if (line.startsWith(prefix))
+                return line[prefix.length .. $].parseJSON;
+
+        assert(0, "Missing GitHub output key: " ~ key);
+    }
+
+    string[] matrixPackageNames(JSONValue matrix)
+    {
+        return matrix["include"].array.map!(pkg => pkg["name"].str).array;
+    }
+}
+
+bool shouldIncludeInBuildMatrix(in Package pkg)
+{
+    return pkg.cachedAt.empty || pkg.deploymentTarget;
+}
+
+bool isCachedPackageJson(JSONValue pkg)
+{
+    if (pkg.type != JSONType.object)
+        return false;
+
+    if (auto cachedAt = "cachedAt" in pkg)
+        return cachedAt.type == JSONType.array && cachedAt.array.length > 0;
+
+    return false;
+}
+
+bool isDeploymentTargetPackageJson(JSONValue pkg)
+{
+    if (pkg.type != JSONType.object)
+        return false;
+
+    if (auto deploymentTarget = "deploymentTarget" in pkg)
+        return deploymentTarget.type == JSONType.true_;
+
+    return false;
+}
+
+bool shouldIncludeInBuildMatrix(JSONValue pkg)
+{
+    return !isCachedPackageJson(pkg) || isDeploymentTargetPackageJson(pkg);
+}
+
+@("build matrix includes cached deployment targets")
+unittest
+{
+    auto cachedPackage = Package(
+        name: "cached-package",
+        cachedAt: ["https://cache.example/cached-package.narinfo"],
+    );
+    auto cachedDeploymentTarget = Package(
+        name: "cached-deployment-target",
+        cachedAt: ["https://cache.example/cached-deployment-target.narinfo"],
+        deploymentTarget: true,
+    );
+    auto uncachedPackage = Package(
+        name: "uncached-package",
+    );
+
+    assert(!cachedPackage.shouldIncludeInBuildMatrix);
+    assert(cachedDeploymentTarget.shouldIncludeInBuildMatrix);
+    assert(uncachedPackage.shouldIncludeInBuildMatrix);
+}
+
+@("ci matrix GitHub build output includes cached deployment targets")
+unittest
+{
+    import std.file : deleteme, exists, readText, remove;
+
+    auto outputPath = deleteme ~ ".ci-matrix-output.env";
+    scope(exit)
+        if (outputPath.exists)
+            outputPath.remove;
+
+    auto packages = [
+        Package(
+            name: "cached-package",
+            cachedAt: ["https://cache.example/cached-package.narinfo"],
+        ),
+        Package(
+            name: "cached-deployment-target",
+            cachedAt: ["https://cache.example/cached-deployment-target.narinfo"],
+            deploymentTarget: true,
+        ),
+        Package(
+            name: "uncached-package",
+        ),
+    ];
+    auto args = CiMatrixArgs(
+        githubOutput: outputPath,
+        precalcMatrix: `{"include":[]}`,
+    );
+
+    appendGHCIBuildOutput(packages, args.githubOutput);
+
+    const output = outputPath.readText;
+    assert(output.githubOutputValue("build_matrix").matrixPackageNames == [
+        "cached-deployment-target",
+        "uncached-package",
+    ]);
+    assert(output.githubOutputValue("full_matrix").matrixPackageNames == [
+        "cached-package",
+        "cached-deployment-target",
+        "uncached-package",
+    ]);
+}
+
+@("merged build matrix includes cached deployment target JSON")
+unittest
+{
+    auto cachedPackage = JSONValue([
+        "cachedAt": JSONValue([JSONValue("https://cache.example/cached-package.narinfo")]),
+        "deploymentTarget": JSONValue(false),
+    ]);
+    auto cachedDeploymentTarget = JSONValue([
+        "cachedAt": JSONValue([JSONValue("https://cache.example/cached-deployment-target.narinfo")]),
+        "deploymentTarget": JSONValue(true),
+    ]);
+    auto uncachedPackage = JSONValue([
+        "cachedAt": JSONValue(cast(JSONValue[]) []),
+        "deploymentTarget": JSONValue(false),
+    ]);
+
+    assert(!cachedPackage.shouldIncludeInBuildMatrix);
+    assert(cachedDeploymentTarget.shouldIncludeInBuildMatrix);
+    assert(uncachedPackage.shouldIncludeInBuildMatrix);
+}
+
+@("merge ci matrices GitHub build output includes cached deployment targets")
+unittest
+{
+    import std.file : deleteme, exists, mkdirRecurse, readText, rmdirRecurse, write;
+
+    auto testDir = deleteme ~ ".merge-ci-matrices";
+    if (testDir.exists)
+        testDir.rmdirRecurse;
+    scope(exit)
+        if (testDir.exists)
+            testDir.rmdirRecurse;
+
+    testDir.buildPath("shard-a").mkdirRecurse;
+    testDir.buildPath("shard-b").mkdirRecurse;
+
+    testDir.buildPath("shard-a", "matrix-pre.json").write(JSONValue([
+        "include": JSONValue([
+            JSONValue([
+                "name": JSONValue("cached-package"),
+                "cachedAt": JSONValue([JSONValue("https://cache.example/cached-package.narinfo")]),
+                "deploymentTarget": JSONValue(false),
+            ]),
+            JSONValue([
+                "name": JSONValue("cached-deployment-target"),
+                "cachedAt": JSONValue([JSONValue("https://cache.example/cached-deployment-target.narinfo")]),
+                "deploymentTarget": JSONValue(true),
+            ]),
+        ]),
+    ]).toString(JSONOptions.doNotEscapeSlashes));
+    testDir.buildPath("shard-b", "matrix-pre.json").write(JSONValue([
+        "include": JSONValue([
+            JSONValue([
+                "name": JSONValue("uncached-package"),
+                "cachedAt": JSONValue(cast(JSONValue[]) []),
+                "deploymentTarget": JSONValue(false),
+            ]),
+        ]),
+    ]).toString(JSONOptions.doNotEscapeSlashes));
+
+    auto outputPath = testDir.buildPath("gh-output.env");
+    assert(mergeCiMatrices(MergeMatricesArgs(githubOutput: outputPath), testDir) == 0);
+
+    const output = outputPath.readText;
+    assert(output.githubOutputValue("build_matrix").matrixPackageNames == [
+        "cached-deployment-target",
+        "uncached-package",
+    ]);
+    assert(output.githubOutputValue("full_matrix").matrixPackageNames == [
+        "cached-package",
+        "cached-deployment-target",
+        "uncached-package",
+    ]);
+}
+
 struct SummaryTableEntry_x86_64
 {
     string linux;
@@ -1054,17 +1243,22 @@ void printTableForCacheStatus(T)(Package[] packages, auto ref T args)
     saveCachixDeploySpec(packages);
     saveGHCIComment(convertNixEvalToTableSummary(packages, args.isInitial));
 
+    const outputPath = args.githubOutput
+        ? args.githubOutput
+        : resultDir.buildPath("gh-output.env");
+
+    appendGHCIBuildOutput(packages, outputPath);
+}
+
+void appendGHCIBuildOutput(Package[] packages, string outputPath)
+{
     const buildMatrixLine = "build_matrix=" ~ JSONValue([
-        "include": JSONValue(packages.filter!(pkg => pkg.cachedAt.empty).map!toJSON.array)
+        "include": JSONValue(packages.filter!shouldIncludeInBuildMatrix.map!toJSON.array)
     ]).toString(JSONOptions.doNotEscapeSlashes) ~ "\n";
 
     const fullMatrixLine = "full_matrix=" ~ JSONValue([
         "include": JSONValue(packages.map!toJSON.array)
     ]).toString(JSONOptions.doNotEscapeSlashes) ~ "\n";
-
-    const outputPath = args.githubOutput
-        ? args.githubOutput
-        : resultDir.buildPath("gh-output.env");
 
     outputPath.append(buildMatrixLine);
     outputPath.append(fullMatrixLine);
@@ -1139,10 +1333,15 @@ struct MergeMatricesArgs
 
 export int merge_ci_matrices(MergeMatricesArgs args)
 {
+    return mergeCiMatrices(args);
+}
+
+int mergeCiMatrices(MergeMatricesArgs args, string searchRoot = ".")
+{
     import std.algorithm : sort;
     import std.file : isFile;
 
-    auto matrixFiles = dirEntries(".", "matrix-pre.json", SpanMode.depth)
+    auto matrixFiles = dirEntries(searchRoot, "matrix-pre.json", SpanMode.depth)
         .filter!(entry => entry.isFile)
         .array
         .sort!((a, b) => a.name < b.name);
@@ -1170,17 +1369,8 @@ export int merge_ci_matrices(MergeMatricesArgs args)
         foreach (pkg; json["include"].array)
         {
             fullInclude ~= pkg;
-            if (pkg.type == JSONType.object)
-            {
-                bool isCached = false;
-                if (auto cachedAtPtr = "cachedAt" in pkg)
-                {
-                    if (cachedAtPtr.type == JSONType.array && cachedAtPtr.array.length > 0)
-                        isCached = true;
-                }
-                if (!isCached)
-                    filteredInclude ~= pkg;
-            }
+            if (pkg.type == JSONType.object && pkg.shouldIncludeInBuildMatrix)
+                filteredInclude ~= pkg;
         }
     }
 
