@@ -102,6 +102,10 @@ jobs:
   post-initial-comment:
     if: github.event_name == 'pull_request'
     runs-on: ${{ inputs.non-nix-runner }}
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
     steps:
       - name: 'Post initial package status comment'
         uses: metacraft-labs/nixos-modules/.github/sticky-comment@main
@@ -114,6 +118,10 @@ jobs:
   shard-matrix:
     needs: compute-mcl-ref
     runs-on: ${{ fromJSON(inputs.runners).x86_64-linux }}
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
     steps:
       - name: Setup Nix
         uses: metacraft-labs/nixos-modules/.github/setup-nix@main
@@ -186,6 +194,10 @@ jobs:
     runs-on: ${{ fromJSON(inputs.runners).x86_64-linux }}
     needs: [compute-mcl-ref, shard-matrix, eval-matrix]
     name: Merge matrices
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
     outputs:
       build_matrix: ${{ steps.merge.outputs.build_matrix }}
       full_matrix: ${{ steps.merge.outputs.full_matrix }}
@@ -543,6 +555,10 @@ jobs:
     name: Final Results
     needs: [compute-mcl-ref, build, shard-matrix, merge-matrices]
     if: always()
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
     steps:
       - name: Setup Nix
         uses: metacraft-labs/nixos-modules/.github/setup-nix@main
