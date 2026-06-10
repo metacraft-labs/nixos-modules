@@ -120,7 +120,8 @@ CachePushPlan cachePushPlan(CachePushRequest request)
         case CacheBackend.attic:
             return CachePushPlan(
                 commandName: "attic push",
-                argv: ["attic", "push", request.cache] ~ request.storePaths,
+                argv: ["attic", "push", "--ignore-upstream-cache-filter", request.cache]
+                    ~ request.storePaths,
                 controller: "attic",
                 substituters: substituters,
                 externalCommand: true,
@@ -682,7 +683,9 @@ unittest
         eventLogPath: eventLog,
     ), &fakeRunner, &fakeRunner) == 0);
 
-    assert(commands.any!(cmd => cmd == ["attic", "push", "example-deploy-cache", root]));
+    assert(commands.any!(cmd => cmd == [
+        "attic", "push", "--ignore-upstream-cache-filter", "example-deploy-cache", root,
+    ]));
 
     auto events = eventLog.readText.splitLines
         .filter!(line => line.strip != "")
