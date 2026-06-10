@@ -27,6 +27,11 @@ on:
         default: 'ubuntu-latest'
         required: false
         type: string
+      results-runner:
+        description: 'JSON-encoded runner labels for Final Results and deploy orchestration'
+        default: '"ubuntu-latest"'
+        required: false
+        type: string
       run-cachix-deploy:
         description: 'Deploy to cachix'
         default: false
@@ -534,7 +539,7 @@ jobs:
           if-no-files-found: warn
 
   results:
-    runs-on: ${{ fromJSON(inputs.runners).x86_64-linux }}
+    runs-on: ${{ fromJSON(inputs.results-runner) }}
     name: Final Results
     needs: [compute-mcl-ref, build, shard-matrix, merge-matrices]
     if: always()

@@ -479,6 +479,22 @@ top@{ config, ... }:
               assert re.search(r"run-cachix-deploy:\s*false", repo_workflow), "generic repo CI must keep Cachix Deploy off by default"
               assert "run-cachix-deploy:" in workflow, "workflow no longer exposes the legacy deploy gate"
               assert re.search(r"run-cachix-deploy:.*?default:\s*false", workflow, re.S), "legacy deploy gate must default false in the reusable workflow"
+              assert re.search(
+                  r"results-runner:\s*\n"
+                  r"\s+description:.*\n"
+                  r"\s+default:\s*'\"ubuntu-latest\"'\s*\n"
+                  r"\s+required:\s*false\s*\n"
+                  r"\s+type:\s*string",
+                  workflow,
+              ), "workflow must expose results-runner defaulting to off-target ubuntu-latest"
+              results_job_match = re.search(
+                  r"(?ms)^  results:\n(?P<body>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
+                  workflow,
+              )
+              assert results_job_match is not None, "workflow results job disappeared"
+              results_job = results_job_match.group("body")
+              assert "runs-on: ''${{ fromJSON(inputs.results-runner) }}" in results_job, "Final Results must run on the results-runner input"
+              assert "runs-on: ''${{ fromJSON(inputs.runners).x86_64-linux }}" not in results_job, "Final Results must not run on the x86_64-linux fleet runner map"
               assert "if: inputs.run-cachix-deploy" in workflow, "legacy deploy step must remain explicitly gated"
               assert "if: ''${{ inputs.run-cachix-deploy && !matrix.noop && matrix.deploymentTarget }}" in workflow, "deployment cache push must be limited to deployment targets"
               assert "if: ''${{ always() && inputs.run-cachix-deploy && !matrix.noop && matrix.deploymentTarget }}" in workflow, "deployment cache artifact upload must be limited to deployment targets"
