@@ -550,6 +550,48 @@
                   expect_artifact=True,
               )
               run_case(
+                  "attic_probe_uses_only_attic_substituter",
+                  {
+                      "DEPLOYMENT_CACHE_PUSH_BACKENDS": "attic",
+                      "DEPLOYMENT_CACHE_REQUIRED_BACKENDS": "attic",
+                      "DEPLOYMENT_TRUSTED_SUBSTITUTERS": "https://aux.example https://mirror.example",
+                      "DEPLOYMENT_TRUSTED_PUBLIC_KEYS": "aux-public-key",
+                  },
+                  0,
+                  log_contains=(
+                      "mcl backend=attic",
+                      "--substituter https://attic.example/mirror-cache --require-substitute",
+                      "--trusted-public-key aux-public-key",
+                      "--trusted-public-key attic-public-key",
+                  ),
+                  log_absent=(
+                      "--substituter https://aux.example",
+                      "--substituter https://mirror.example",
+                      "--substituter https://cache.nixos.org",
+                      "cache.nixos.org-1:",
+                  ),
+                  expect_artifact=True,
+              )
+              run_case(
+                  "cachix_probe_keeps_fallback_substituters",
+                  {
+                      "DEPLOYMENT_CACHE_PUSH_BACKENDS": "cachix",
+                      "DEPLOYMENT_CACHE_REQUIRED_BACKENDS": "cachix",
+                      "DEPLOYMENT_TRUSTED_SUBSTITUTERS": "https://aux.example",
+                      "DEPLOYMENT_TRUSTED_PUBLIC_KEYS": "aux-public-key",
+                  },
+                  0,
+                  log_contains=(
+                      "mcl backend=cachix",
+                      "--substituter https://required-cache.cachix.org --require-substitute",
+                      "--substituter https://aux.example",
+                      "--substituter https://cache.nixos.org",
+                      "--trusted-public-key aux-public-key",
+                      "cache.nixos.org-1:",
+                  ),
+                  expect_artifact=True,
+              )
+              run_case(
                   "optional_attic_timeout",
                   {
                       "DEPLOYMENT_CACHE_PUSH_BACKENDS": "attic",
