@@ -22,6 +22,18 @@ import mcl.utils.deployment_events : ClosureSummary, DeploymentEventContext,
 
 import mcl.commands.ci_matrix : nixEvalJobs, CiMatrixBaseArgs;
 
+enum deploySpecClosureSummaryEnv = "MCL_DEPLOY_SPEC_CLOSURE_SUMMARIES";
+
+Nullable!ClosureSummary deploySpecClosureSummary(
+    bool enabled,
+    string systemPath,
+    ProcessRunner queryRunner,
+)
+{
+    return enabled
+        ? queryClosureSummary(systemPath, queryRunner)
+        : Nullable!ClosureSummary.init;
+}
 
 @(Command("deploy-spec", "deploy_spec")
     .Description("Evaluate the Nixos machine configurations in bareMetalMachines and deploy them to cachix."))
@@ -33,6 +45,11 @@ struct DeploySpecArgs {
         .Description("Write backend-neutral deployment events as JSONL")
         .EnvFallback("MCL_DEPLOY_EVENT_LOG"))
     string eventLog;
+
+    @(NamedArgument(["closure-summaries"])
+        .Description("Include recursive closure summaries in deployment events; expensive on shared CI final runners")
+        .EnvFallback(deploySpecClosureSummaryEnv))
+    bool closureSummaries;
 }
 
 struct DeploySpecDependencies
@@ -63,6 +80,14 @@ int deploySpecImpl(DeploySpecArgs args, DeploySpecDependencies deps, string depl
     );
     auto queryRunner = deps.queryProcess is null ? deps.runProcess : deps.queryProcess;
     const eventLoggingEnabled = eventLogPath != "";
+    // Recursive `nix path-info --json --recursive` is intentionally disabled
+    // by default for deploy-spec event logging. In the shared CI final
+    // aggregator job, machine closures were built on per-machine runners, so
+    // querying closure summaries here can spend minutes substituting closure
+    // metadata before activation is even requested. Set
+    // MCL_DEPLOY_SPEC_CLOSURE_SUMMARIES=1 locally when debugging event payloads
+    // and willing to pay for recursive closure queries.
+    const includeClosureSummaries = eventLoggingEnabled && args.closureSummaries;
 
     if (!exists(deploySpecFile))
     {
@@ -82,9 +107,7 @@ int deploySpecImpl(DeploySpecArgs args, DeploySpecDependencies deps, string depl
 
         foreach (pkg; nixosConfigs)
         {
-            auto closure = eventLoggingEnabled
-                ? queryClosureSummary(pkg.output, queryRunner)
-                : Nullable!ClosureSummary.init;
+            auto closure = deploySpecClosureSummary(includeClosureSummaries, pkg.output, queryRunner);
             appendDeploymentEvent(eventLogPath, deploymentEventJson(
                 context,
                 "evaluate",
@@ -235,7 +258,7 @@ int deploySpecImpl(DeploySpecArgs args, DeploySpecDependencies deps, string depl
                 ["skipped-by-deploy-spec"],
                 "skipped",
                 0,
-                queryClosureSummary(systemPath, queryRunner),
+                deploySpecClosureSummary(includeClosureSummaries, systemPath, queryRunner),
                 "",
                 "command_failed",
                 "",
@@ -269,7 +292,7 @@ int deploySpecImpl(DeploySpecArgs args, DeploySpecDependencies deps, string depl
             activateCommand,
             result.succeeded ? "succeeded" : "failed",
             result.exitCode,
-            queryClosureSummary(systemPath, queryRunner),
+            deploySpecClosureSummary(includeClosureSummaries, systemPath, queryRunner),
             result.succeeded ? "" : "Activation request failed",
             "activation_request_failed",
             result.succeeded ? "" : result.stderr.stderrSummary,
@@ -306,14 +329,18 @@ unittest
     args.cachixAuthToken = "token";
     args.eventLog = eventLog;
 
+    uint pathInfoCalls;
     ProcessResult fakeRunner(string[] command)
     {
         if (command.length >= 2 && command[0] == "nix" && command[1] == "path-info")
+        {
+            pathInfoCalls++;
             return ProcessResult(
                 0,
                 `{"/nix/store/0123456789abcdfghijklmnpqrsvwxyz-root":{"narSize":7},"/nix/store/1123456789abcdfghijklmnpqrsvwxyz-dep":{"narSize":11}}`,
                 "",
             );
+        }
         return ProcessResult(0, "", "");
     }
 
@@ -322,6 +349,7 @@ unittest
     ]), specFile);
 
     assert(deploySpecImpl(args, DeploySpecDependencies(&fakeRunner), specFile) == 0);
+    assert(pathInfoCalls == 0);
 
     auto events = eventLog.readText.splitLines.filter!(line => line != "").map!(line => line.parseJSON).array;
     assert(events.length == 3);
@@ -334,6 +362,64 @@ unittest
     assert(events[1]["command"]["status"].str == "skipped");
     assert(events[2]["phase"].str == "activate-requested");
     assert(events[2]["command"]["status"].str == "succeeded");
+    assert("closure" !in events[1]["storePaths"].object);
+    assert("closure" !in events[2]["storePaths"].object);
+}
+
+@("test_deploy_event_log_closure_summary_opt_in")
+unittest
+{
+    import std.file : deleteme, readText, remove;
+    import std.json : parseJSON;
+    import std.algorithm : filter;
+    import std.string : splitLines;
+
+    auto tempBase = deleteme;
+    auto eventLog = tempBase ~ ".closure-summary.events.jsonl";
+    auto specFile = tempBase ~ ".closure-summary.spec.json";
+    scope(exit)
+    {
+        if (tempBase.exists) tempBase.remove;
+        if (eventLog.exists) eventLog.remove;
+        if (specFile.exists) specFile.remove;
+    }
+
+    DeploySpecArgs args;
+    args.cachixCache = "example-cache";
+    args.cachixAuthToken = "token";
+    args.eventLog = eventLog;
+    args.closureSummaries = true;
+
+    uint pathInfoCalls;
+    ProcessResult fakeRunner(string[] command)
+    {
+        if (command.length >= 5
+            && command[0] == "nix"
+            && command[1] == "path-info"
+            && command[2] == "--json"
+            && command[3] == "--recursive")
+        {
+            pathInfoCalls++;
+            return ProcessResult(
+                0,
+                `{"/nix/store/0123456789abcdfghijklmnpqrsvwxyz-root":{"narSize":7},"/nix/store/1123456789abcdfghijklmnpqrsvwxyz-dep":{"narSize":11}}`,
+                "",
+            );
+        }
+        return ProcessResult(0, "", "");
+    }
+
+    writeJsonFile(DeploySpec(agents: [
+        "app-server-01": "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-nixos-system-app-server-01",
+    ]), specFile);
+
+    assert(deploySpecImpl(args, DeploySpecDependencies(&fakeRunner), specFile) == 0);
+    assert(pathInfoCalls == 2);
+
+    auto events = eventLog.readText.splitLines.filter!(line => line != "").map!(line => line.parseJSON).array;
+    assert(events.length == 3);
+    assert(events[1]["storePaths"]["closure"]["count"].integer == 2);
+    assert(events[1]["storePaths"]["closure"]["totalBytes"].integer == 18);
     assert(events[2]["storePaths"]["closure"]["count"].integer == 2);
     assert(events[2]["storePaths"]["closure"]["totalBytes"].integer == 18);
 }
