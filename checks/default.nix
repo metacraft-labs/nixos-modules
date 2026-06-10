@@ -1,6 +1,7 @@
 { ... }:
 {
   imports = [
+    ./ci-workflows.nix
     ./desktop-vms
     ./deployment-docs.nix
     ./deployment-cache.nix
