@@ -589,6 +589,11 @@ jobs:
           CACHIX_ACTIVATE_TOKEN: '${{ secrets.CACHIX_ACTIVATE_TOKEN }}'
           SYSTEM_TO_GITHUB_RUNNER_LABELS: ${{ inputs.runners }}
           MCL_DEPLOY_EVENT_LOG: .result/deployment-events.jsonl
+          PRECALC_MATRIX: ${{
+            needs.merge-matrices.result == 'success' &&
+            needs.merge-matrices.outputs.full_matrix ||
+            needs.shard-matrix.outputs.full_matrix
+            }}
         run: |
           mkdir -p .result
           ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} deploy-spec
