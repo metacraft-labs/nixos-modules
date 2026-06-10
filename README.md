@@ -40,6 +40,9 @@ jobs:
           "x86_64-linux": ["self-hosted", "nixos", "x86-64-v3", "bare-metal"],
           "aarch64-darwin": ["self-hosted", "macOS", "aarch64-darwin"]
         }
+      # JSON-encoded runner for Final Results and deploy orchestration.
+      # Defaults to the off-target GitHub-hosted runner "ubuntu-latest".
+      results-runner: '"ubuntu-latest"'
 ```
 
 #### [`reusable-lint.yml`](.github/workflows/reusable-lint.yml)
