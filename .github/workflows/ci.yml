@@ -129,6 +129,10 @@ jobs:
 
   ci:
     uses: ./.github/workflows/reusable-flake-checks-ci-matrix.yml
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
     secrets: inherit
     with:
       runners: |
