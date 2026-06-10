@@ -79,25 +79,44 @@ jobs:
     steps:
       - name: Compute reusable workflow SHA and set mcl nix run command
         id: compute
-        env:
-          GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
-          set -x
-          if [[ "${{ github.repository }}" == "metacraft-labs/nixos-modules" ]]; then
-            # Testing in the reusable workflow's own repo
-            WORKFLOW_SHA="${{ github.sha }}"
-          else
-            # Try to get from referenced_workflows
-            WORKFLOW_SHA=$(gh api /repos/${{ github.repository }}/actions/runs/${{ github.run_id }} \
-              --jq '[.referenced_workflows[] | select(.path | contains("reusable-flake-checks-ci-matrix")) | .sha] | first' 2>/dev/null || true)
+          set -euo pipefail
 
-            if [[ -z "$WORKFLOW_SHA" ]]; then
-              # Fallback to main
-              WORKFLOW_SHA="main"
-            fi
+          is_commit_sha() {
+            [[ "$1" =~ ^[0-9a-fA-F]{40}$ ]]
+          }
+
+          workflow_repo=""
+          case "${GITHUB_WORKFLOW_REF:-}" in
+            metacraft-labs/nixos-modules/.github/workflows/reusable-flake-checks-ci-matrix.yml@*)
+              workflow_repo="metacraft-labs/nixos-modules"
+              ;;
+          esac
+
+          mcl_ref=""
+
+          if [[ "${GITHUB_REPOSITORY:-}" == "metacraft-labs/nixos-modules" ]] &&
+            is_commit_sha "${GITHUB_SHA:-}"; then
+            # Local calls from nixos-modules PRs should test the PR commit.
+            mcl_ref="$GITHUB_SHA"
+          elif [[ "$workflow_repo" == "metacraft-labs/nixos-modules" ]] &&
+            is_commit_sha "${GITHUB_WORKFLOW_SHA:-}"; then
+            mcl_ref="$GITHUB_WORKFLOW_SHA"
+          else
+            echo "::warning title=MCL workflow ref fallback::Could not read a valid nixos-modules workflow SHA from GitHub Actions context; using main"
+            mcl_ref="main"
           fi
-          echo "workflow_sha=$WORKFLOW_SHA" >> "$GITHUB_OUTPUT"
-          echo "mcl_flake_cmd=nix run --accept-flake-config github:metacraft-labs/nixos-modules/${WORKFLOW_SHA}#mcl" >> $GITHUB_OUTPUT
+
+          if ! is_commit_sha "$mcl_ref" && [[ "$mcl_ref" != "main" ]]; then
+            echo "::warning title=Invalid MCL workflow ref::Ignoring invalid workflow ref '$mcl_ref'; using main"
+            mcl_ref="main"
+          fi
+
+          {
+            printf 'workflow_sha=%s\n' "$mcl_ref"
+            printf 'mcl_flake_cmd=nix run --accept-flake-config github:metacraft-labs/nixos-modules/%s#mcl\n' "$mcl_ref"
+          } >> "$GITHUB_OUTPUT"
 
   post-initial-comment:
     if: github.event_name == 'pull_request'
