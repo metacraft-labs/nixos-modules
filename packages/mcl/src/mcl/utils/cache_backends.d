@@ -13,6 +13,7 @@ import mcl.utils.deployment_events : ClosureSummary, DeploymentEventContext,
 import mcl.utils.process : ProcessResult, ProcessRunner;
 
 enum ulong defaultCacheProbeTimeoutSeconds = 30;
+enum ulong cacheProbeMaxAttempts = 3;
 enum ulong atticPushMaxAttempts = 3;
 
 enum CacheBackend
@@ -194,6 +195,57 @@ CacheProbeResult[] probeCacheSubstitutes(
         return results;
     }
 
+    if (paths.length == 0)
+        return [];
+
+    if (paths.length == 1)
+        return probeCacheSubstituteWithRetries(paths[0], substituter,
+            trustedPublicKeys, runner, timeoutSeconds);
+
+    auto batch = probeCacheSubstitutesOnce(paths, substituter, trustedPublicKeys,
+        runner, timeoutSeconds);
+    if (!shouldDegradeBatchProbe(paths, batch))
+        return batch;
+
+    CacheProbeResult[] results;
+    foreach (path; paths)
+        results ~= probeCacheSubstituteWithRetries(path, substituter,
+            trustedPublicKeys, runner, timeoutSeconds);
+    return results;
+}
+
+private CacheProbeResult[] probeCacheSubstituteWithRetries(
+    string path,
+    string substituter,
+    string[] trustedPublicKeys,
+    ProcessRunner runner,
+    ulong timeoutSeconds,
+)
+{
+    CacheProbeResult[] result;
+    foreach (attempt; 1 .. cacheProbeMaxAttempts + 1)
+    {
+        result = probeCacheSubstitutesOnce([path], substituter, trustedPublicKeys,
+            runner, timeoutSeconds);
+        if (result.length == 0)
+            result ~= CacheProbeResult(path, substituter, "narinfo-missing", 1,
+                "no probe result returned");
+        if (!isRetryableProbeOutcome(result[0].outcome)
+            || attempt == cacheProbeMaxAttempts)
+            return result;
+        sleepBeforeCacheProbeRetry(attempt);
+    }
+    return result;
+}
+
+private CacheProbeResult[] probeCacheSubstitutesOnce(
+    string[] paths,
+    string substituter,
+    string[] trustedPublicKeys,
+    ProcessRunner runner,
+    ulong timeoutSeconds,
+)
+{
     auto pathInfoCommand = [
         "nix", "path-info", "--store", substituter,
     ] ~ paths ~ ["--option", "substituters", ""];
@@ -243,6 +295,46 @@ CacheProbeResult[] probeCacheSubstitutes(
                 pathInfo.exitCode, failureMessage);
     }
     return results;
+}
+
+private bool shouldDegradeBatchProbe(string[] paths, CacheProbeResult[] results)
+{
+    if (paths.length <= 1)
+        return false;
+
+    bool hasFailure;
+    bool hasSuccess;
+    bool onlyMissingFailures = true;
+    foreach (result; results)
+    {
+        if (result.successful)
+        {
+            hasSuccess = true;
+            continue;
+        }
+        if (result.outcome == "probe-timeout")
+            return false;
+        hasFailure = true;
+        if (result.outcome != "narinfo-missing")
+            onlyMissingFailures = false;
+    }
+
+    if (!hasFailure)
+        return false;
+
+    // A mixed result with concrete stdout successes and only missing narinfos
+    // already preserves safe coverage. Other aggregate failures can hide
+    // successful paths behind one unavailable object or signature problem, so
+    // split them into single-path probes. Timeout batches stay batched so
+    // pushClosure can try later substituters before retrying only the paths
+    // still uncovered by the timed-out cache.
+    return !(hasSuccess && onlyMissingFailures);
+}
+
+private bool isRetryableProbeOutcome(string outcome)
+{
+    return outcome == "probe-timeout"
+        || outcome == "narinfo-present-object-unavailable";
 }
 
 private bool[string] successfulProbeOutputPaths(string[] requestedPaths, string stdout)
@@ -368,6 +460,20 @@ private void sleepBeforeAtticPushRetry(ulong failedAttempt)
         import core.time : seconds;
 
         Thread.sleep(failedAttempt == 1 ? 2.seconds : 10.seconds);
+    }
+}
+
+private void sleepBeforeCacheProbeRetry(ulong failedAttempt)
+{
+    version (unittest)
+    {
+    }
+    else
+    {
+        import core.thread : Thread;
+        import core.time : msecs;
+
+        Thread.sleep(failedAttempt == 1 ? 200.msecs : 1000.msecs);
     }
 }
 
@@ -1043,6 +1149,192 @@ unittest
         "--option", "substituters", "",
         "--option", "trusted-public-keys", "cache.example-1:abc",
     ]);
+}
+
+@("test_cache_probe_ambiguous_batch_degrades_to_per_path_success")
+unittest
+{
+    auto pathA = "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-present-a";
+    auto pathB = "/nix/store/11111111111111111111111111111111-present-b";
+    string[][] commands;
+    ProcessResult fakeRunner(string[] command)
+    {
+        commands ~= command;
+        if (command.canFind(pathA) && command.canFind(pathB))
+            return ProcessResult(1, "",
+                "error: don't know how to build these paths:\n"
+                ~ "  " ~ pathA ~ "\n"
+                ~ "  " ~ pathB ~ "\n");
+        if (command.canFind(pathA))
+            return ProcessResult(0, pathA ~ "\n", "");
+        if (command.canFind(pathB))
+            return ProcessResult(0, pathB ~ "\n", "");
+        return ProcessResult(0, "", "");
+    }
+
+    auto results = probeCacheSubstitutes([pathA, pathB],
+        "https://cache.example", [], &fakeRunner, 7);
+
+    assert(results.length == 2);
+    assert(results[0].path == pathA);
+    assert(results[0].outcome == "successful-substitute");
+    assert(results[1].path == pathB);
+    assert(results[1].outcome == "successful-substitute");
+    assert(commands.length == 3);
+}
+
+@("test_cache_probe_batch_timeout_stays_batched_for_deferred_retry")
+unittest
+{
+    auto pathA = "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-present-a";
+    auto pathB = "/nix/store/11111111111111111111111111111111-present-b";
+    string[][] commands;
+    ProcessResult fakeRunner(string[] command)
+    {
+        commands ~= command;
+        return ProcessResult(124, "", "");
+    }
+
+    auto results = probeCacheSubstitutes([pathA, pathB],
+        "https://cache.example", [], &fakeRunner, 7);
+
+    assert(results.length == 2);
+    assert(results[0].path == pathA);
+    assert(results[0].outcome == "probe-timeout");
+    assert(results[1].path == pathB);
+    assert(results[1].outcome == "probe-timeout");
+    assert(commands.length == 1);
+}
+
+@("test_cache_probe_transient_object_unavailable_retries_to_success")
+unittest
+{
+    auto path = "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-eventual";
+    ulong attempts;
+    ProcessResult fakeRunner(string[] command)
+    {
+        if (command.canFind("--store") && command.canFind("https://cache.example"))
+        {
+            ++attempts;
+            return attempts < cacheProbeMaxAttempts
+                ? ProcessResult(1, "", "error: cannot download NAR object from binary cache\n")
+                : ProcessResult(0, path ~ "\n", "");
+        }
+        return ProcessResult(0, "", "");
+    }
+
+    auto result = probeCacheSubstitute(path, "https://cache.example",
+        [], &fakeRunner, 7);
+
+    assert(result.outcome == "successful-substitute");
+    assert(attempts == cacheProbeMaxAttempts);
+}
+
+@("test_cache_probe_permanent_object_unavailable_stops_after_bounded_retries")
+unittest
+{
+    auto path = "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-unavailable";
+    ulong attempts;
+    ProcessResult fakeRunner(string[] command)
+    {
+        if (command.canFind("--store") && command.canFind("https://cache.example"))
+        {
+            ++attempts;
+            return ProcessResult(1, "", "error: cannot download NAR object from binary cache\n");
+        }
+        return ProcessResult(0, "", "");
+    }
+
+    auto result = probeCacheSubstitute(path, "https://cache.example",
+        [], &fakeRunner, 7);
+
+    assert(result.outcome == "narinfo-present-object-unavailable");
+    assert(attempts == cacheProbeMaxAttempts);
+}
+
+@("test_cache_probe_transient_timeout_retries_to_success")
+unittest
+{
+    auto path = "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-eventual-timeout";
+    ulong attempts;
+    ProcessResult fakeRunner(string[] command)
+    {
+        if (command.canFind("--store") && command.canFind("https://cache.example"))
+        {
+            ++attempts;
+            return attempts < cacheProbeMaxAttempts
+                ? ProcessResult(124, "", "")
+                : ProcessResult(0, path ~ "\n", "");
+        }
+        return ProcessResult(0, "", "");
+    }
+
+    auto result = probeCacheSubstitute(path, "https://cache.example",
+        [], &fakeRunner, 7);
+
+    assert(result.outcome == "successful-substitute");
+    assert(attempts == cacheProbeMaxAttempts);
+}
+
+@("test_cache_probe_permanent_timeout_stops_after_bounded_retries")
+unittest
+{
+    auto path = "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-timeout";
+    ulong attempts;
+    ProcessResult fakeRunner(string[] command)
+    {
+        if (command.canFind("--store") && command.canFind("https://cache.example"))
+        {
+            ++attempts;
+            return ProcessResult(124, "", "");
+        }
+        return ProcessResult(0, "", "");
+    }
+
+    auto result = probeCacheSubstitute(path, "https://cache.example",
+        [], &fakeRunner, 7);
+
+    assert(result.outcome == "probe-timeout");
+    assert(attempts == cacheProbeMaxAttempts);
+}
+
+@("test_cache_probe_permanent_missing_and_signature_failures_not_masked")
+unittest
+{
+    auto present = "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-present";
+    auto missing = "/nix/store/11111111111111111111111111111111-missing";
+    auto unsigned = "/nix/store/22222222222222222222222222222222-unsigned";
+    ulong attempts;
+    ProcessResult fakeRunner(string[] command)
+    {
+        if (command.canFind("--store") && command.canFind("https://cache.example"))
+            ++attempts;
+        if (command.canFind(present) && command.canFind(missing)
+            && command.canFind(unsigned))
+            return ProcessResult(1, "",
+                "error: don't know how to build these paths:\n"
+                ~ "  " ~ present ~ "\n"
+                ~ "  " ~ missing ~ "\n"
+                ~ "  " ~ unsigned ~ "\n");
+        if (command.canFind(present))
+            return ProcessResult(0, present ~ "\n", "");
+        if (command.canFind(missing))
+            return ProcessResult(1, "",
+                "error: path '" ~ missing
+                ~ "' does not exist in binary cache 'https://cache.example'\n");
+        if (command.canFind(unsigned))
+            return ProcessResult(1, "", "error: path is not signed by a trusted key\n");
+        return ProcessResult(0, "", "");
+    }
+
+    auto results = probeCacheSubstitutes([present, missing, unsigned],
+        "https://cache.example", [], &fakeRunner, 7);
+
+    assert(results.length == 3);
+    assert(results[0].outcome == "successful-substitute");
+    assert(results[1].outcome == "narinfo-missing");
+    assert(results[2].outcome == "signature-not-trusted");
+    assert(attempts == 4);
 }
 
 @("test_cache_probe_mixed_missing_batch_counts_unmentioned_paths")
