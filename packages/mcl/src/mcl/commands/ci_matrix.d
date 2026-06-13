@@ -1269,8 +1269,24 @@ bool isCached(in Package pkg, string binaryCacheHttpEndpoint, in string[string] 
     import std.algorithm : canFind;
     import std.string : lineSplitter;
     import std.net.curl : HTTP, httpGet = get, HTTPStatusException;
+    import core.time : dur;
 
     auto http = HTTP();
+    // Without these timeouts a single slow / unresponsive cache server
+    // blocks the entire `ci-matrix` cache-status sweep indefinitely.
+    // ``checkCacheStatus`` iterates packages in parallel and calls
+    // ``isCached`` per (package, cache URL), so one stuck narinfo GET
+    // can hang the whole shard-matrix step until GitHub Actions kills
+    // the job at its 6 h hard ceiling (observed on PRs against
+    // ``nix-blockchain-development`` and on the same repo's main
+    // branch CI -- ``Generate Shard Matrix`` consistently times out
+    // at 6 h with orphan ``nix-eval-jobs`` and ``.mcl-wrapped``
+    // processes still running).  Cap each request at 10 s to connect
+    // and 30 s of total transfer time so a single misbehaving
+    // narinfo lookup degrades gracefully instead of taking down the
+    // whole pipeline.
+    http.connectTimeout = dur!"seconds"(10);
+    http.dataTimeout = dur!"seconds"(30);
     foreach (name, value; httpHeaders)
         http.addRequestHeader(name, value);
 
