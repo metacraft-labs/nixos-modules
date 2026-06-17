@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import sys
+from pathlib import Path
+
+
+def default_inventory_path() -> Path:
+    return Path(__file__).resolve().parents[1] / "checks" / "consumer-flake-cachix-inventory.json"
+
+
+def parse_root_overrides(values: list[str]) -> dict[str, Path]:
+    overrides: dict[str, Path] = {}
+    for value in values:
+        if "=" not in value:
+            raise SystemExit(f"--root must be NAME=PATH, got {value!r}")
+        name, path = value.split("=", 1)
+        overrides[name] = Path(path).expanduser()
+    return overrides
+
+
+def child_roots(root: Path, root_paths: dict[str, Path], root_name: str) -> list[Path]:
+    children: list[Path] = []
+    resolved_root = root.resolve()
+    for name, path in root_paths.items():
+        if name == root_name or not path.exists():
+            continue
+        resolved_path = path.resolve()
+        if resolved_path == resolved_root:
+            continue
+        try:
+            resolved_path.relative_to(resolved_root)
+        except ValueError:
+            continue
+        children.append(resolved_path)
+    return children
+
+
+def nix_files(root: Path, pruned_roots: list[Path]) -> list[Path]:
+    if not root.exists():
+        return []
+    ignored = {".git", ".direnv", "result", "node_modules"}
+    files: list[Path] = []
+    resolved_pruned_roots = [path.resolve() for path in pruned_roots]
+
+    def walk(directory: Path) -> None:
+        for path in directory.iterdir():
+            if path.name in ignored:
+                continue
+            resolved_path = path.resolve()
+            if any(resolved_path == pruned for pruned in resolved_pruned_roots):
+                continue
+            if path.is_dir():
+                walk(path)
+            elif path.suffix == ".nix":
+                files.append(path)
+
+    walk(root)
+    return files
+
+
+def has_cachix_reference(path: Path) -> bool:
+    try:
+        return "cachix." in path.read_text(errors="ignore")
+    except OSError:
+        return False
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Verify the M9 consumer flake Cachix inventory.")
+    parser.add_argument("--inventory", default=str(default_inventory_path()))
+    parser.add_argument("--root", action="append", default=[], help="Override an inventory root path as NAME=PATH")
+    args = parser.parse_args()
+
+    inventory_path = Path(args.inventory)
+    inventory = json.loads(inventory_path.read_text())
+    overrides = parse_root_overrides(args.root)
+    root_paths = {
+        root["name"]: overrides.get(root["name"], Path(root["path"]).expanduser())
+        for root in inventory["roots"]
+    }
+
+    errors: list[str] = []
+    for root in inventory["roots"]:
+        root_name = root["name"]
+        root_path = root_paths[root_name]
+        repos = root["repositories"]
+        expected = {repo["name"] for repo in repos}
+        observed: set[str] = set()
+        unexpected: set[str] = set()
+
+        if not root_path.exists():
+            errors.append(f"{root_name}: root does not exist: {root_path}")
+            continue
+
+        repo_paths = [(repo["name"], root_path / repo["name"]) for repo in repos]
+        for file_path in nix_files(root_path, child_roots(root_path, root_paths, root_name)):
+            if not has_cachix_reference(file_path):
+                continue
+            matched = [name for name, path in repo_paths if file_path == path or path in file_path.parents]
+            if matched:
+                observed.add(max(matched, key=len))
+            else:
+                unexpected.add(str(file_path.relative_to(root_path)))
+
+        missing = expected - observed
+        if missing:
+            errors.append(f"{root_name}: expected Cachix references missing from: {', '.join(sorted(missing))}")
+        if unexpected:
+            errors.append(f"{root_name}: unexpected Cachix references found in: {', '.join(sorted(unexpected))}")
+
+    if errors:
+        print("consumer-flake-cachix-inventory: inventory mismatch", file=sys.stderr)
+        for error in errors:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+
+    print("consumer-flake-cachix-inventory: inventory matches")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

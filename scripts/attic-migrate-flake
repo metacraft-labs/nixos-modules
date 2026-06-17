@@ -1,0 +1,261 @@
+#!/usr/bin/env python3
+import argparse
+import difflib
+import re
+import sys
+from pathlib import Path
+
+
+ATTIC_BASE_URL = "https://cache.metacraft-labs.com"
+ATTIC_PUBLIC_KEY = "metacraft-private-infrastructure:TWjFAlGXK9Mky5VG3PBln2MqYz4XPw3MTHHVPYZiAhE="
+
+DEFAULT_BUCKETS = {
+    "blocksense.cachix.org": "blocksense-public",
+    "metacraft-labs-codetracer.cachix.org": "metacraft-codetracer",
+    "mcl-blockchain-packages.cachix.org": "metacraft-public",
+    "mcl-public-cache.cachix.org": "metacraft-public",
+}
+
+URL_RE = re.compile(r"https?://([A-Za-z0-9][A-Za-z0-9-]*\.cachix\.org)")
+KEY_RE = re.compile(r"([A-Za-z0-9][A-Za-z0-9-]*\.cachix\.org-1:[A-Za-z0-9+/=]+)")
+IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_'-]*")
+
+
+def resolve_flake_path(path_arg: str) -> Path:
+    path = Path(path_arg).expanduser()
+    return path / "flake.nix" if path.is_dir() else path
+
+
+def attic_url(base_url: str, bucket: str) -> str:
+    return f"{base_url.rstrip('/')}/{bucket}"
+
+
+def unknown_cachix_hosts(text: str) -> set[str]:
+    hosts = set(URL_RE.findall(text))
+    hosts.update(key.split("-1:", 1)[0] for key in KEY_RE.findall(text))
+    return hosts - set(DEFAULT_BUCKETS)
+
+
+def skip_ws(text: str, index: int) -> int:
+    while index < len(text) and text[index].isspace():
+        index += 1
+    return index
+
+
+def find_matching_brace(text: str, open_index: int) -> int:
+    depth = 0
+    index = open_index
+    state = "normal"
+    while index < len(text):
+        char = text[index]
+        nxt = text[index + 1] if index + 1 < len(text) else ""
+
+        if state == "line-comment":
+            if char == "\n":
+                state = "normal"
+        elif state == "block-comment":
+            if char == "*" and nxt == "/":
+                state = "normal"
+                index += 1
+        elif state == "string":
+            if char == "\\":
+                index += 1
+            elif char == '"':
+                state = "normal"
+        else:
+            if char == "#":
+                state = "line-comment"
+            elif char == "/" and nxt == "*":
+                state = "block-comment"
+                index += 1
+            elif char == '"':
+                state = "string"
+            elif char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    return index
+
+        index += 1
+
+    return -1
+
+
+def top_level_nix_config_block(text: str) -> tuple[int, int] | None:
+    depth = 0
+    index = 0
+    state = "normal"
+    while index < len(text):
+        char = text[index]
+        nxt = text[index + 1] if index + 1 < len(text) else ""
+
+        if state == "line-comment":
+            if char == "\n":
+                state = "normal"
+        elif state == "block-comment":
+            if char == "*" and nxt == "/":
+                state = "normal"
+                index += 1
+        elif state == "string":
+            if char == "\\":
+                index += 1
+            elif char == '"':
+                state = "normal"
+        else:
+            if char == "#":
+                state = "line-comment"
+            elif char == "/" and nxt == "*":
+                state = "block-comment"
+                index += 1
+            elif char == '"':
+                state = "string"
+            elif char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+            elif depth == 1 and text.startswith("nixConfig", index):
+                before = text[index - 1] if index > 0 else ""
+                after = text[index + len("nixConfig")] if index + len("nixConfig") < len(text) else ""
+                if (before and IDENT_RE.fullmatch(before)) or (after and IDENT_RE.fullmatch(after)):
+                    index += 1
+                    continue
+
+                cursor = skip_ws(text, index + len("nixConfig"))
+                if cursor >= len(text) or text[cursor] != "=":
+                    index += 1
+                    continue
+                cursor = skip_ws(text, cursor + 1)
+                if cursor >= len(text) or text[cursor] != "{":
+                    index += 1
+                    continue
+                close = find_matching_brace(text, cursor)
+                if close < 0:
+                    raise ValueError("unclosed top-level nixConfig block")
+                return cursor, close + 1
+
+        index += 1
+
+    return None
+
+
+def replace_known_entries(text: str, base_url: str, public_key: str, bucket_override: str | None) -> str:
+    def replace_url(match: re.Match[str]) -> str:
+        host = match.group(1)
+        bucket = bucket_override or DEFAULT_BUCKETS[host]
+        return attic_url(base_url, bucket)
+
+    def replace_key(match: re.Match[str]) -> str:
+        return public_key
+
+    migrated = URL_RE.sub(replace_url, text)
+    migrated = KEY_RE.sub(replace_key, migrated)
+
+    dedupe_values = {
+        public_key,
+        *(attic_url(base_url, bucket_override or bucket) for bucket in DEFAULT_BUCKETS.values()),
+    }
+    return dedupe_quoted_list_lines(migrated, dedupe_values)
+
+
+def dedupe_quoted_list_lines(text: str, values: set[str]) -> str:
+    result = text
+    for value in sorted(values, key=len, reverse=True):
+        seen = False
+        pattern = re.compile(rf'^(?P<indent>\s*)"{re.escape(value)}";?\s*\n', re.MULTILINE)
+
+        def keep_first(match: re.Match[str]) -> str:
+            nonlocal seen
+            if seen:
+                return ""
+            seen = True
+            return match.group(0)
+
+        result = pattern.sub(keep_first, result)
+    return result
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Rewrite known Cachix nixConfig entries in a flake.nix to Metacraft Attic entries."
+    )
+    parser.add_argument("path", help="Path to a consumer repo or its flake.nix")
+    parser.add_argument("--check", action="store_true", help="Do not write; exit 1 if changes are needed")
+    parser.add_argument("--dry-run", action="store_true", help="Do not write; print a unified diff when changes are needed")
+    parser.add_argument("--bucket", help="Override the Attic bucket for all known Cachix entries in this flake")
+    parser.add_argument("--attic-base-url", default=ATTIC_BASE_URL, help=f"Attic base URL (default: {ATTIC_BASE_URL})")
+    parser.add_argument(
+        "--attic-public-key",
+        default=ATTIC_PUBLIC_KEY,
+        help="Trusted public key to use for replacement extra-trusted-public-keys entries",
+    )
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    flake_path = resolve_flake_path(args.path)
+    if flake_path.name != "flake.nix":
+        print(f"attic-migrate-flake: expected a repo directory or flake.nix, got {flake_path}", file=sys.stderr)
+        return 64
+    if not flake_path.exists():
+        print(f"attic-migrate-flake: file not found: {flake_path}", file=sys.stderr)
+        return 66
+
+    original = flake_path.read_text()
+    try:
+        block_span = top_level_nix_config_block(original)
+    except ValueError as error:
+        print(f"attic-migrate-flake: {error}", file=sys.stderr)
+        return 65
+
+    if block_span is None:
+        print(f"attic-migrate-flake: no top-level nixConfig block found in {flake_path}")
+        return 0
+
+    block_start, block_end = block_span
+    original_block = original[block_start:block_end]
+    unknown = unknown_cachix_hosts(original_block)
+    if unknown:
+        print(
+            "attic-migrate-flake: refusing to edit unknown Cachix entr"
+            + ("y" if len(unknown) == 1 else "ies")
+            + ": "
+            + ", ".join(sorted(unknown)),
+            file=sys.stderr,
+        )
+        print("attic-migrate-flake: pass --bucket only after adding this cache to DEFAULT_BUCKETS", file=sys.stderr)
+        return 65
+
+    migrated_block = replace_known_entries(
+        original_block,
+        base_url=args.attic_base_url,
+        public_key=args.attic_public_key,
+        bucket_override=args.bucket,
+    )
+    migrated = original[:block_start] + migrated_block + original[block_end:]
+
+    if migrated == original:
+        print(f"attic-migrate-flake: no changes needed for {flake_path}")
+        return 0
+
+    if args.dry_run or args.check:
+        if args.dry_run:
+            diff = difflib.unified_diff(
+                original.splitlines(keepends=True),
+                migrated.splitlines(keepends=True),
+                fromfile=str(flake_path),
+                tofile=str(flake_path),
+            )
+            sys.stdout.writelines(diff)
+        else:
+            print(f"attic-migrate-flake: {flake_path} needs Attic nixConfig migration", file=sys.stderr)
+        return 1 if args.check else 0
+
+    flake_path.write_text(migrated)
+    print(f"attic-migrate-flake: migrated {flake_path}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
