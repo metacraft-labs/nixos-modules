@@ -7,9 +7,15 @@ from pathlib import Path
 
 
 ATTIC_BASE_URL = "https://cache.metacraft-labs.com"
-ATTIC_PUBLIC_KEY = "metacraft-private-infrastructure:TWjFAlGXK9Mky5VG3PBln2MqYz4XPw3MTHHVPYZiAhE="
+ATTIC_BUCKET_PUBLIC_KEYS = {
+    "agent-harbor": "agent-harbor:MjT3Kx9Dimt/yD8cTA4UwZbZV+b4esSFcnzIplbkJ1o=",
+    "blocksense-public": "blocksense-public:OOgTc0ye1FONCiVHMrbpScc/HP+lX3uoU0EfwzX6ypE=",
+    "metacraft-codetracer": "metacraft-codetracer:9OV9wCDX560bt5/MrD4dlqnPpCitAEjpoqhNfQpWY3U=",
+    "metacraft-public": "metacraft-public:UtS6PK+p0uZaJK3i/jD2DQOjTpddhQUQmNQDQih5N4Q=",
+}
 
 DEFAULT_BUCKETS = {
+    "agent-harbor.cachix.org": "agent-harbor",
     "blocksense.cachix.org": "blocksense-public",
     "metacraft-labs-codetracer.cachix.org": "metacraft-codetracer",
     "mcl-blockchain-packages.cachix.org": "metacraft-public",
@@ -28,6 +34,17 @@ def resolve_flake_path(path_arg: str) -> Path:
 
 def attic_url(base_url: str, bucket: str) -> str:
     return f"{base_url.rstrip('/')}/{bucket}"
+
+
+def attic_public_key(bucket: str, public_key_override: str | None = None) -> str:
+    if public_key_override is not None:
+        return public_key_override
+    try:
+        return ATTIC_BUCKET_PUBLIC_KEYS[bucket]
+    except KeyError as error:
+        raise ValueError(
+            f"no Attic public key is known for bucket {bucket!r}; pass --attic-public-key for a custom bucket"
+        ) from error
 
 
 def unknown_cachix_hosts(text: str) -> set[str]:
@@ -139,21 +156,28 @@ def top_level_nix_config_block(text: str) -> tuple[int, int] | None:
     return None
 
 
-def replace_known_entries(text: str, base_url: str, public_key: str, bucket_override: str | None) -> str:
+def replace_known_entries(text: str, base_url: str, public_key: str | None, bucket_override: str | None) -> str:
+    url_buckets: set[str] = set()
+    key_buckets: set[str] = set()
+
     def replace_url(match: re.Match[str]) -> str:
         host = match.group(1)
         bucket = bucket_override or DEFAULT_BUCKETS[host]
+        url_buckets.add(bucket)
         return attic_url(base_url, bucket)
 
     def replace_key(match: re.Match[str]) -> str:
-        return public_key
+        host = match.group(1).split("-1:", 1)[0]
+        bucket = bucket_override or DEFAULT_BUCKETS[host]
+        key_buckets.add(bucket)
+        return attic_public_key(bucket, public_key)
 
     migrated = URL_RE.sub(replace_url, text)
     migrated = KEY_RE.sub(replace_key, migrated)
 
     dedupe_values = {
-        public_key,
-        *(attic_url(base_url, bucket_override or bucket) for bucket in DEFAULT_BUCKETS.values()),
+        *(attic_public_key(bucket, public_key) for bucket in key_buckets),
+        *(attic_url(base_url, bucket) for bucket in url_buckets),
     }
     return dedupe_quoted_list_lines(migrated, dedupe_values)
 
@@ -186,8 +210,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--attic-base-url", default=ATTIC_BASE_URL, help=f"Attic base URL (default: {ATTIC_BASE_URL})")
     parser.add_argument(
         "--attic-public-key",
-        default=ATTIC_PUBLIC_KEY,
-        help="Trusted public key to use for replacement extra-trusted-public-keys entries",
+        help="Trusted public key override for replacement extra-trusted-public-keys entries",
     )
     return parser.parse_args()
 
@@ -227,12 +250,16 @@ def main() -> int:
         print("attic-migrate-flake: pass --bucket only after adding this cache to DEFAULT_BUCKETS", file=sys.stderr)
         return 65
 
-    migrated_block = replace_known_entries(
-        original_block,
-        base_url=args.attic_base_url,
-        public_key=args.attic_public_key,
-        bucket_override=args.bucket,
-    )
+    try:
+        migrated_block = replace_known_entries(
+            original_block,
+            base_url=args.attic_base_url,
+            public_key=args.attic_public_key,
+            bucket_override=args.bucket,
+        )
+    except ValueError as error:
+        print(f"attic-migrate-flake: {error}", file=sys.stderr)
+        return 65
     migrated = original[:block_start] + migrated_block + original[block_end:]
 
     if migrated == original:
