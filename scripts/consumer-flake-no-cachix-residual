@@ -1,0 +1,131 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import sys
+from pathlib import Path
+
+
+SCAN_SUFFIXES = {".nix", ".yml", ".yaml", ".md", ".sh"}
+SCAN_NAMES = {".gitlab-ci.yml", "Justfile"}
+
+
+def default_allowlist_path() -> Path:
+    return Path(__file__).resolve().parents[1] / "checks" / "cachix-removal-allowlist.json"
+
+
+def parse_root_overrides(values: list[str]) -> dict[str, Path]:
+    overrides: dict[str, Path] = {}
+    for value in values:
+        if "=" not in value:
+            raise SystemExit(f"--root must be NAME=PATH, got {value!r}")
+        name, path = value.split("=", 1)
+        overrides[name] = Path(path).expanduser()
+    return overrides
+
+
+def should_scan(path: Path) -> bool:
+    return path.name in SCAN_NAMES or path.suffix in SCAN_SUFFIXES
+
+
+def child_roots(root: Path, root_paths: dict[str, Path], root_name: str) -> list[Path]:
+    children: list[Path] = []
+    resolved_root = root.resolve()
+    for name, path in root_paths.items():
+        if name == root_name or not path.exists():
+            continue
+        resolved_path = path.resolve()
+        if resolved_path == resolved_root:
+            continue
+        try:
+            resolved_path.relative_to(resolved_root)
+        except ValueError:
+            continue
+        children.append(resolved_path)
+    return children
+
+
+def scan(root: Path, pruned_roots: list[Path]) -> list[Path]:
+    ignored = {".git", ".direnv", "result", "node_modules"}
+    matches: list[Path] = []
+    resolved_pruned_roots = [path.resolve() for path in pruned_roots]
+
+    def walk(directory: Path) -> None:
+        for path in directory.iterdir():
+            if path.name in ignored:
+                continue
+            resolved_path = path.resolve()
+            if any(resolved_path == pruned for pruned in resolved_pruned_roots):
+                continue
+            if path.is_dir():
+                walk(path)
+                continue
+            if not should_scan(path):
+                continue
+            try:
+                if "cachix.org" in path.read_text(errors="ignore"):
+                    matches.append(path)
+            except OSError:
+                continue
+
+    walk(root)
+    return matches
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Check for residual cachix.org references under consumer roots.")
+    parser.add_argument("--allowlist", default=str(default_allowlist_path()))
+    parser.add_argument("--root", action="append", default=[], help="Override an allowlist root path as NAME=PATH")
+    parser.add_argument("--enforce", action="store_true", help="Fail on non-allowlisted matches")
+    args = parser.parse_args()
+
+    allowlist = json.loads(Path(args.allowlist).read_text())
+    overrides = parse_root_overrides(args.root)
+    enforce = args.enforce or bool(allowlist.get("enforce", False))
+    allowed = {
+        (entry["root"], entry["repository"])
+        for entry in allowlist.get("allowedRepositories", [])
+    }
+    root_paths = {
+        root["name"]: overrides.get(root["name"], Path(root["path"]).expanduser())
+        for root in allowlist["roots"]
+    }
+
+    residual: list[tuple[str, str, str]] = []
+    tolerated: list[tuple[str, str, str]] = []
+
+    for root in allowlist["roots"]:
+        root_name = root["name"]
+        root_path = root_paths[root_name]
+        if not root_path.exists():
+            if enforce:
+                residual.append((root_name, "<root>", f"missing root {root_path}"))
+            continue
+        repositories = root["repositories"]
+        repo_paths = [(repo["name"], root_path / repo["name"]) for repo in repositories]
+        for path in scan(root_path, child_roots(root_path, root_paths, root_name)):
+            matched = [name for name, repo_path in repo_paths if path == repo_path or repo_path in path.parents]
+            repo = max(matched, key=len) if matched else "<untracked>"
+            record = (root_name, repo, str(path.relative_to(root_path)))
+            if (root_name, repo) in allowed:
+                tolerated.append(record)
+            else:
+                residual.append(record)
+
+    for root_name, repo, path in tolerated:
+        print(f"consumer-flake-no-cachix-residual: tolerated {root_name}/{repo}: {path}")
+
+    if residual and enforce:
+        print("consumer-flake-no-cachix-residual: residual cachix.org references found", file=sys.stderr)
+        for root_name, repo, path in residual:
+            print(f"- {root_name}/{repo}: {path}", file=sys.stderr)
+        return 1
+
+    if residual:
+        print(f"consumer-flake-no-cachix-residual: gate disabled; observed {len(residual)} residual reference(s)")
+    else:
+        print("consumer-flake-no-cachix-residual: no residual cachix.org references")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

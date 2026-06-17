@@ -74,3 +74,6 @@ repomix-terraform-shared *args:
         --header-text "Shared Terraform Infrastructure - Reusable CI Workflow, Dev Shell, and Policy Scripts" \
         --include "{{REPOMIX_TERRAFORM_SHARED_PATTERNS}}" \
         {{args}}
+
+attic-migrate-flake path *args:
+  nix run --accept-flake-config .#attic-migrate-flake -- {{path}} {{args}}

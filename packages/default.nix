@@ -60,7 +60,28 @@
       };
 
       packages = {
+        attic-migrate-flake = pkgs.writeShellApplication {
+          name = "attic-migrate-flake";
+          runtimeInputs = [ pkgs.python3 ];
+          text = ''
+            exec python3 ${../scripts/attic-migrate-flake} "$@"
+          '';
+        };
         cachix-deploy-metrics = pkgs.callPackage ./cachix-deploy-metrics { };
+        consumer-flake-cachix-inventory-tool = pkgs.writeShellApplication {
+          name = "consumer-flake-cachix-inventory";
+          runtimeInputs = [ pkgs.python3 ];
+          text = ''
+            exec python3 ${../scripts/consumer-flake-cachix-inventory} "$@"
+          '';
+        };
+        consumer-flake-no-cachix-residual-tool = pkgs.writeShellApplication {
+          name = "consumer-flake-no-cachix-residual";
+          runtimeInputs = [ pkgs.python3 ];
+          text = ''
+            exec python3 ${../scripts/consumer-flake-no-cachix-residual} "$@"
+          '';
+        };
         lido-withdrawals-automation = pkgs.callPackage ./lido-withdrawals-automation { };
         pyroscope = pkgs.callPackage ./pyroscope { };
         random-alerts = pkgs.callPackage ./random-alerts { };
