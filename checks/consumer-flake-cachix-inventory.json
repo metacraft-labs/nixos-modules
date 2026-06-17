@@ -1,5 +1,35 @@
 {
   "capturedAt": "2026-06-05",
+  "atticMigration": {
+    "baseUrl": "https://cache.metacraft-labs.com",
+    "cachixCaches": [
+      {
+        "host": "agent-harbor.cachix.org",
+        "bucket": "agent-harbor",
+        "publicKey": "agent-harbor:MjT3Kx9Dimt/yD8cTA4UwZbZV+b4esSFcnzIplbkJ1o="
+      },
+      {
+        "host": "blocksense.cachix.org",
+        "bucket": "blocksense-public",
+        "publicKey": "blocksense-public:OOgTc0ye1FONCiVHMrbpScc/HP+lX3uoU0EfwzX6ypE="
+      },
+      {
+        "host": "metacraft-labs-codetracer.cachix.org",
+        "bucket": "metacraft-codetracer",
+        "publicKey": "metacraft-codetracer:9OV9wCDX560bt5/MrD4dlqnPpCitAEjpoqhNfQpWY3U="
+      },
+      {
+        "host": "mcl-blockchain-packages.cachix.org",
+        "bucket": "metacraft-public",
+        "publicKey": "metacraft-public:UtS6PK+p0uZaJK3i/jD2DQOjTpddhQUQmNQDQih5N4Q="
+      },
+      {
+        "host": "mcl-public-cache.cachix.org",
+        "bucket": "metacraft-public",
+        "publicKey": "metacraft-public:UtS6PK+p0uZaJK3i/jD2DQOjTpddhQUQmNQDQih5N4Q="
+      }
+    ]
+  },
   "roots": [
     {
       "name": "metacraft",

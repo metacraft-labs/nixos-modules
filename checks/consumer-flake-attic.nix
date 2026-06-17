@@ -20,6 +20,7 @@
                 self'.packages.attic-migrate-flake
                 pkgs.diffutils
                 pkgs.gnugrep
+                pkgs.python3
               ];
             }
             ''
@@ -61,7 +62,9 @@
 
               grep -q 'https://cache.metacraft-labs.com/metacraft-public' fixture/flake.nix
               grep -q 'https://cache.metacraft-labs.com/metacraft-codetracer' fixture/flake.nix
-              test "$(grep -c 'metacraft-private-infrastructure:' fixture/flake.nix)" -eq 1
+              grep -q 'metacraft-public:UtS6PK+p0uZaJK3i/jD2DQOjTpddhQUQmNQDQih5N4Q=' fixture/flake.nix
+              grep -q 'metacraft-codetracer:9OV9wCDX560bt5/MrD4dlqnPpCitAEjpoqhNfQpWY3U=' fixture/flake.nix
+              ! grep -q 'metacraft-private-infrastructure:' fixture/flake.nix
               grep -q 'knownCachixOutsideNixConfig = "https://mcl-public-cache.cachix.org"' fixture/flake.nix
               grep -q 'unknownCachixOutsideNixConfig = "https://surprise.cachix.org"' fixture/flake.nix
               ! grep -q 'mcl-public-cache.cachix.org-1:' fixture/flake.nix
@@ -81,6 +84,69 @@
               fi
               grep -q 'surprise.cachix.org' unknown/flake.nix
               grep -q 'refusing to edit unknown Cachix' unknown.err
+
+              python3 - <<'PY'
+              import json
+              import subprocess
+              import tempfile
+              import textwrap
+              from pathlib import Path
+
+              inventory = json.loads(Path("${inventory}").read_text())
+              migration = inventory["atticMigration"]
+              base_url = migration["baseUrl"].rstrip("/")
+              caches = migration["cachixCaches"]
+              assert caches, "no Attic migration Cachix caches declared"
+
+              repo_buckets = {
+                  repo["bucket"]
+                  for root in inventory["roots"]
+                  for repo in root["repositories"]
+              }
+              mapped_buckets = {cache["bucket"] for cache in caches}
+              missing_buckets = repo_buckets - mapped_buckets
+              assert not missing_buckets, f"repository bucket(s) lack migration mapping: {sorted(missing_buckets)}"
+
+              public_keys_by_bucket = {}
+              for cache in caches:
+                  for field in ("host", "bucket", "publicKey"):
+                      assert cache.get(field), f"migration cache lacks {field}: {cache}"
+                  expected_prefix = f"{cache['bucket']}:"
+                  assert cache["publicKey"].startswith(expected_prefix), cache
+                  previous = public_keys_by_bucket.setdefault(cache["bucket"], cache["publicKey"])
+                  assert previous == cache["publicKey"], cache
+
+              public_keys = set(public_keys_by_bucket.values())
+              assert len(public_keys) == len(public_keys_by_bucket), public_keys_by_bucket
+              assert not any(key.startswith("metacraft-private-infrastructure:") for key in public_keys)
+
+              with tempfile.TemporaryDirectory() as temp:
+                  temp_path = Path(temp)
+                  for cache in caches:
+                      case = temp_path / cache["host"]
+                      case.mkdir()
+                      fake_key = f"{cache['host']}-1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+                      (case / "flake.nix").write_text(textwrap.dedent(f"""
+                      {{
+                        nixConfig = {{
+                          extra-substituters = [ "https://{cache['host']}" ];
+                          extra-trusted-public-keys = [ "{fake_key}" ];
+                        }};
+                        outputs = {{ self }}: {{}};
+                      }}
+                      """))
+
+                      subprocess.run(["attic-migrate-flake", str(case)], check=True)
+                      migrated = (case / "flake.nix").read_text()
+                      expected_url = f"{base_url}/{cache['bucket']}"
+                      assert expected_url in migrated, (cache, migrated)
+                      assert cache["publicKey"] in migrated, (cache, migrated)
+                      assert f"https://{cache['host']}" not in migrated, (cache, migrated)
+                      assert f"{cache['host']}-1:" not in migrated, (cache, migrated)
+                      assert "metacraft-private-infrastructure:" not in migrated, (cache, migrated)
+                      for other_key in public_keys - {cache["publicKey"]}:
+                          assert other_key not in migrated, (cache, other_key, migrated)
+              PY
 
               touch "$out"
             '';
@@ -262,18 +328,23 @@
               agent_harbor="$blocksense/agent-harbor"
               mkdir -p "$metacraft" "$blocksense" "$agent_harbor"
 
-              jq -r '.roots[] as $root | $root.repositories[] | [$root.name, .name] | @tsv' ${inventory} |
-                while IFS="$(printf '\t')" read -r root_name repo_name; do
+              jq -r '.roots[] as $root | $root.repositories[] | [$root.name, .name, .bucket] | @tsv' ${inventory} |
+                while IFS="$(printf '\t')" read -r root_name repo_name bucket; do
                   case "$root_name" in
-                    metacraft) root="$metacraft"; cache="mcl-public-cache" ;;
-                    blocksense) root="$blocksense"; cache="blocksense" ;;
-                    agent-harbor) root="$agent_harbor"; cache="mcl-public-cache" ;;
+                    metacraft) root="$metacraft" ;;
+                    blocksense) root="$blocksense" ;;
+                    agent-harbor) root="$agent_harbor" ;;
                     *) echo "unknown root $root_name" >&2; exit 1 ;;
                   esac
+                  cache_host="$(jq -r --arg bucket "$bucket" '.atticMigration.cachixCaches[] | select(.bucket == $bucket) | .host' ${inventory} | head -n1)"
+                  if [ -z "$cache_host" ]; then
+                    echo "missing Cachix migration host for bucket $bucket" >&2
+                    exit 1
+                  fi
                   mkdir -p "$root/$repo_name"
                   cat > "$root/$repo_name/flake.nix" <<EOF
               {
-                nixConfig.extra-substituters = [ "https://$cache.cachix.org" ];
+                nixConfig.extra-substituters = [ "https://$cache_host" ];
                 outputs = { self }: {};
               }
               EOF
@@ -318,7 +389,7 @@
               mkdir -p "$metacraft/nixos-modules" "$blocksense/blocksense" "$agent_harbor/main"
               echo 'https://mcl-public-cache.cachix.org' > "$metacraft/nixos-modules/flake.nix"
               echo 'https://blocksense.cachix.org' > "$blocksense/blocksense/flake.nix"
-              echo 'https://mcl-public-cache.cachix.org' > "$agent_harbor/main/flake.nix"
+              echo 'https://agent-harbor.cachix.org' > "$agent_harbor/main/flake.nix"
 
               consumer-flake-no-cachix-residual \
                 --allowlist ${allowlist} \
