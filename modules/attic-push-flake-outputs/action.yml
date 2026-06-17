@@ -1,0 +1,124 @@
+name: Attic Push Flake Outputs
+description: Build selected flake attributes and push their realized output paths to an Attic cache.
+
+inputs:
+  endpoint:
+    description: Attic API endpoint, for example https://cache.metacraft-labs.com.
+    required: true
+  cache:
+    description: Attic cache/bucket name to push to.
+    required: true
+  token:
+    description: Attic push token. Defaults to the ATTIC_TOKEN environment variable.
+    required: false
+    default: ''
+  flake:
+    description: Flake reference or path containing the attributes.
+    required: false
+    default: '.'
+  attributes:
+    description: Newline, comma, or space separated flake attribute list to build and push.
+    required: true
+  extra-nix-args:
+    description: Extra arguments appended to nix build.
+    required: false
+    default: ''
+  extra-attic-push-args:
+    description: Extra arguments appended to attic push.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Validate Attic push inputs
+      shell: bash
+      env:
+        INPUT_ENDPOINT: ${{ inputs.endpoint }}
+        INPUT_CACHE: ${{ inputs.cache }}
+        INPUT_TOKEN: ${{ inputs.token }}
+        INPUT_ATTRIBUTES: ${{ inputs.attributes }}
+      run: |
+        set -euo pipefail
+
+        token="${INPUT_TOKEN:-${ATTIC_TOKEN:-}}"
+        missing=()
+        [ -n "$INPUT_ENDPOINT" ] || missing+=("endpoint")
+        [ -n "$INPUT_CACHE" ] || missing+=("cache")
+        [ -n "$token" ] || missing+=("token or ATTIC_TOKEN")
+        [ -n "$INPUT_ATTRIBUTES" ] || missing+=("attributes")
+
+        if [ "${#missing[@]}" -gt 0 ]; then
+          printf 'attic-push-flake-outputs: missing required input(s): %s\n' "$(IFS=', '; echo "${missing[*]}")" >&2
+          exit 64
+        fi
+
+        command -v nix >/dev/null || {
+          echo "attic-push-flake-outputs: nix is required on PATH" >&2
+          exit 127
+        }
+        command -v attic >/dev/null || {
+          echo "attic-push-flake-outputs: attic is required on PATH" >&2
+          exit 127
+        }
+
+    - name: Push flake outputs to Attic
+      shell: bash
+      env:
+        INPUT_ENDPOINT: ${{ inputs.endpoint }}
+        INPUT_CACHE: ${{ inputs.cache }}
+        INPUT_TOKEN: ${{ inputs.token }}
+        INPUT_FLAKE: ${{ inputs.flake }}
+        INPUT_ATTRIBUTES: ${{ inputs.attributes }}
+        INPUT_EXTRA_NIX_ARGS: ${{ inputs.extra-nix-args }}
+        INPUT_EXTRA_ATTIC_PUSH_ARGS: ${{ inputs.extra-attic-push-args }}
+      run: |
+        set -euo pipefail
+
+        token="${INPUT_TOKEN:-${ATTIC_TOKEN:-}}"
+        workdir="$(mktemp -d)"
+        trap 'rm -rf "$workdir"' EXIT
+
+        printf '%s\n' "$INPUT_ATTRIBUTES" \
+          | sed 's/[[:space:],]\+/\n/g' \
+          | sed '/^$/d' \
+          | sort -u > "$workdir/attributes"
+
+        if [ ! -s "$workdir/attributes" ]; then
+          echo "attic-push-flake-outputs: attributes did not contain any flake attributes" >&2
+          exit 64
+        fi
+
+        attic login --set-default attic-push-flake-outputs "$INPUT_ENDPOINT" "$token"
+
+        while IFS= read -r attr; do
+          case "$attr" in
+            *'#'*)
+              flake_attr="$attr"
+              ;;
+            *)
+              flake_attr="${INPUT_FLAKE}#${attr}"
+              ;;
+          esac
+
+          echo "::group::Build ${flake_attr}"
+          nix build \
+            --extra-experimental-features "nix-command flakes" \
+            --no-link \
+            --print-out-paths \
+            ${INPUT_EXTRA_NIX_ARGS} \
+            "$flake_attr" > "$workdir/outputs"
+          echo "::endgroup::"
+
+          if [ ! -s "$workdir/outputs" ]; then
+            echo "attic-push-flake-outputs: nix build produced no output paths for ${flake_attr}" >&2
+            exit 65
+          fi
+
+          echo "::group::Push ${flake_attr} outputs to ${INPUT_CACHE}"
+          while IFS= read -r output_path; do
+            [ -n "$output_path" ] || continue
+            attic push ${INPUT_EXTRA_ATTIC_PUSH_ARGS} "$INPUT_CACHE" "$output_path"
+          done < "$workdir/outputs"
+          echo "::endgroup::"
+        done < "$workdir/attributes"

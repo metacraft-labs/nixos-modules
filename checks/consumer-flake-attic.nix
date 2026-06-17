@@ -1,0 +1,352 @@
+{ ... }:
+{
+  perSystem =
+    {
+      pkgs,
+      self',
+      ...
+    }:
+    let
+      inventory = ./consumer-flake-cachix-inventory.json;
+      allowlist = ./cachix-removal-allowlist.json;
+      action = ../modules/attic-push-flake-outputs/action.yml;
+    in
+    {
+      checks = {
+        attic-migrate-flake-idempotent =
+          pkgs.runCommand "attic-migrate-flake-idempotent"
+            {
+              nativeBuildInputs = [
+                self'.packages.attic-migrate-flake
+                pkgs.diffutils
+                pkgs.gnugrep
+              ];
+            }
+            ''
+              mkdir -p fixture
+              cat > fixture/flake.nix <<'EOF'
+              {
+                description = "fixture";
+                passthru = {
+                  knownCachixOutsideNixConfig = "https://mcl-public-cache.cachix.org";
+                  unknownCachixOutsideNixConfig = "https://surprise.cachix.org";
+                };
+                nixConfig = {
+                  extra-substituters = [
+                    "https://mcl-public-cache.cachix.org"
+                    "https://metacraft-labs-codetracer.cachix.org"
+                  ];
+                  extra-trusted-public-keys = [
+                    "mcl-public-cache.cachix.org-1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+                    "metacraft-labs-codetracer.cachix.org-1:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB="
+                  ];
+                };
+                outputs = { self }: {};
+              }
+              EOF
+
+              attic-migrate-flake --dry-run fixture | grep -q 'cache.metacraft-labs.com'
+              grep -q 'mcl-public-cache.cachix.org' fixture/flake.nix
+
+              if attic-migrate-flake --check fixture; then
+                echo "check mode should fail before migration" >&2
+                exit 1
+              fi
+
+              attic-migrate-flake fixture
+              cp fixture/flake.nix migrated.once
+              attic-migrate-flake fixture
+              diff -u migrated.once fixture/flake.nix
+              attic-migrate-flake --check fixture
+
+              grep -q 'https://cache.metacraft-labs.com/metacraft-public' fixture/flake.nix
+              grep -q 'https://cache.metacraft-labs.com/metacraft-codetracer' fixture/flake.nix
+              test "$(grep -c 'metacraft-private-infrastructure:' fixture/flake.nix)" -eq 1
+              grep -q 'knownCachixOutsideNixConfig = "https://mcl-public-cache.cachix.org"' fixture/flake.nix
+              grep -q 'unknownCachixOutsideNixConfig = "https://surprise.cachix.org"' fixture/flake.nix
+              ! grep -q 'mcl-public-cache.cachix.org-1:' fixture/flake.nix
+
+              mkdir -p unknown
+              cat > unknown/flake.nix <<'EOF'
+              {
+                nixConfig = {
+                  extra-substituters = [ "https://surprise.cachix.org" ];
+                };
+                outputs = { self }: {};
+              }
+              EOF
+              if attic-migrate-flake unknown 2>unknown.err; then
+                echo "unknown cachix cache should fail" >&2
+                exit 1
+              fi
+              grep -q 'surprise.cachix.org' unknown/flake.nix
+              grep -q 'refusing to edit unknown Cachix' unknown.err
+
+              touch "$out"
+            '';
+
+        attic-push-flake-outputs-action =
+          pkgs.runCommand "attic-push-flake-outputs-action"
+            {
+              nativeBuildInputs = [
+                pkgs.bash
+                pkgs.python3
+              ];
+            }
+            ''
+              python3 - <<'PY'
+              import os
+              import subprocess
+              import tempfile
+              from pathlib import Path
+
+              action = Path("${action}").read_text()
+              required = [
+                  "endpoint:",
+                  "cache:",
+                  "token:",
+                  "attributes:",
+                  "ATTIC_TOKEN",
+                  "attic login --set-default",
+                  "nix build",
+                  "--print-out-paths",
+                  "attic push",
+                  "missing required input",
+              ]
+              for needle in required:
+                  assert needle in action, needle
+
+              lines = action.splitlines()
+              blocks = []
+              for index, line in enumerate(lines):
+                  if line.strip() != "run: |":
+                      continue
+                  indent = len(line) - len(line.lstrip()) + 2
+                  block = []
+                  for child in lines[index + 1:]:
+                      if child.strip() and len(child) - len(child.lstrip()) < indent:
+                          break
+                      block.append(child[indent:] if len(child) >= indent else "")
+                  blocks.append("\n".join(block) + "\n")
+              assert blocks, "no composite action run blocks found"
+
+              with tempfile.TemporaryDirectory() as temp:
+                  temp_path = Path(temp)
+                  for index, block in enumerate(blocks):
+                      path = temp_path / f"block-{index}.bash"
+                      path.write_text(block)
+                      subprocess.run(["${pkgs.bash}/bin/bash", "-n", str(path)], check=True)
+
+                  fake_bin = temp_path / "bin"
+                  fake_bin.mkdir()
+                  fake_attic_log = temp_path / "attic.log"
+                  fake_nix_log = temp_path / "nix.log"
+
+                  (fake_bin / "attic").write_text("""#!${pkgs.bash}/bin/bash
+              set -euo pipefail
+              printf '%s\\n' "$*" >> "$FAKE_ATTIC_LOG"
+              if [ "''${FAKE_ATTIC_FAIL_PATH:-}" != "" ] && [ "$1" = "push" ]; then
+                last="''${!#}"
+                if [ "$last" = "$FAKE_ATTIC_FAIL_PATH" ]; then
+                  echo "fake attic push failed for $last" >&2
+                  exit 23
+                fi
+              fi
+              """)
+                  (fake_bin / "nix").write_text("""#!${pkgs.bash}/bin/bash
+              set -euo pipefail
+              printf '%s\\n' "$*" >> "$FAKE_NIX_LOG"
+              attr="''${!#}"
+              case "$attr" in
+                ".#checks.x86_64-linux.bar")
+                  printf '%s\\n' /nix/store/bar
+                  ;;
+                ".#packages.x86_64-linux.foo")
+                  printf '%s\\n' /nix/store/foo-one /nix/store/foo-two
+                  ;;
+                "github:metacraft/example#prebuilt")
+                  printf '%s\\n' /nix/store/prebuilt
+                  ;;
+                *)
+                  echo "unexpected attr $attr" >&2
+                  exit 44
+                  ;;
+              esac
+              """)
+                  for tool in fake_bin.iterdir():
+                      tool.chmod(0o755)
+
+                  script_paths = []
+                  for index, block in enumerate(blocks):
+                      path = temp_path / f"run-{index}.bash"
+                      path.write_text(block)
+                      script_paths.append(path)
+
+                  base_env = os.environ.copy()
+                  base_env.update({
+                      "PATH": f"{fake_bin}:{base_env['PATH']}",
+                      "FAKE_ATTIC_LOG": str(fake_attic_log),
+                      "FAKE_NIX_LOG": str(fake_nix_log),
+                      "INPUT_ENDPOINT": "https://cache.metacraft-labs.test",
+                      "INPUT_CACHE": "metacraft-public",
+                      "INPUT_TOKEN": "",
+                      "INPUT_FLAKE": ".",
+                      "INPUT_ATTRIBUTES": "packages.x86_64-linux.foo, checks.x86_64-linux.bar\ngithub:metacraft/example#prebuilt packages.x86_64-linux.foo",
+                      "INPUT_EXTRA_NIX_ARGS": "",
+                      "INPUT_EXTRA_ATTIC_PUSH_ARGS": "--jobs 2",
+                      "ATTIC_TOKEN": "test-token",
+                  })
+
+                  missing_env = base_env.copy()
+                  missing_env["INPUT_TOKEN"] = ""
+                  missing_env.pop("ATTIC_TOKEN", None)
+                  result = subprocess.run(
+                      ["${pkgs.bash}/bin/bash", str(script_paths[0])],
+                      env=missing_env,
+                      text=True,
+                      capture_output=True,
+                  )
+                  assert result.returncode == 64, result
+                  assert "missing required input(s): token or ATTIC_TOKEN" in result.stderr, result.stderr
+
+                  subprocess.run(["${pkgs.bash}/bin/bash", str(script_paths[0])], env=base_env, check=True)
+                  subprocess.run(["${pkgs.bash}/bin/bash", str(script_paths[1])], env=base_env, check=True)
+
+                  attic_log = fake_attic_log.read_text().splitlines()
+                  assert attic_log[0] == "login --set-default attic-push-flake-outputs https://cache.metacraft-labs.test test-token", attic_log
+                  assert attic_log[1:] == [
+                      "push --jobs 2 metacraft-public /nix/store/bar",
+                      "push --jobs 2 metacraft-public /nix/store/prebuilt",
+                      "push --jobs 2 metacraft-public /nix/store/foo-one",
+                      "push --jobs 2 metacraft-public /nix/store/foo-two",
+                  ], attic_log
+
+                  nix_log = fake_nix_log.read_text()
+                  for attr in [
+                      ".#checks.x86_64-linux.bar",
+                      "github:metacraft/example#prebuilt",
+                      ".#packages.x86_64-linux.foo",
+                  ]:
+                      assert f"--print-out-paths {attr}" in nix_log.replace("\n", " "), nix_log
+
+                  fake_attic_log.write_text("")
+                  fake_nix_log.write_text("")
+                  fail_env = base_env.copy()
+                  fail_env["INPUT_ATTRIBUTES"] = "packages.x86_64-linux.foo"
+                  fail_env["FAKE_ATTIC_FAIL_PATH"] = "/nix/store/foo-two"
+                  result = subprocess.run(
+                      ["${pkgs.bash}/bin/bash", str(script_paths[1])],
+                      env=fail_env,
+                      text=True,
+                      capture_output=True,
+                  )
+                  assert result.returncode == 23, result
+                  assert "fake attic push failed for /nix/store/foo-two" in result.stderr, result.stderr
+              PY
+
+              touch "$out"
+            '';
+
+        consumer-flake-cachix-inventory =
+          pkgs.runCommand "consumer-flake-cachix-inventory"
+            {
+              nativeBuildInputs = [
+                self'.packages.consumer-flake-cachix-inventory-tool
+                pkgs.jq
+              ];
+            }
+            ''
+              roots="$PWD/roots"
+              metacraft="$roots/metacraft"
+              blocksense="$roots/blocksense"
+              agent_harbor="$blocksense/agent-harbor"
+              mkdir -p "$metacraft" "$blocksense" "$agent_harbor"
+
+              jq -r '.roots[] as $root | $root.repositories[] | [$root.name, .name] | @tsv' ${inventory} |
+                while IFS="$(printf '\t')" read -r root_name repo_name; do
+                  case "$root_name" in
+                    metacraft) root="$metacraft"; cache="mcl-public-cache" ;;
+                    blocksense) root="$blocksense"; cache="blocksense" ;;
+                    agent-harbor) root="$agent_harbor"; cache="mcl-public-cache" ;;
+                    *) echo "unknown root $root_name" >&2; exit 1 ;;
+                  esac
+                  mkdir -p "$root/$repo_name"
+                  cat > "$root/$repo_name/flake.nix" <<EOF
+              {
+                nixConfig.extra-substituters = [ "https://$cache.cachix.org" ];
+                outputs = { self }: {};
+              }
+              EOF
+                done
+
+              consumer-flake-cachix-inventory \
+                --inventory ${inventory} \
+                --root metacraft="$metacraft" \
+                --root blocksense="$blocksense" \
+                --root agent-harbor="$agent_harbor"
+
+              mkdir -p "$metacraft/new-cache-user"
+              cat > "$metacraft/new-cache-user/flake.nix" <<'EOF'
+              { nixConfig.extra-substituters = [ "https://mcl-public-cache.cachix.org" ]; outputs = { self }: {}; }
+              EOF
+              if consumer-flake-cachix-inventory \
+                --inventory ${inventory} \
+                --root metacraft="$metacraft" \
+                --root blocksense="$blocksense" \
+                --root agent-harbor="$agent_harbor" 2>err; then
+                echo "inventory should fail on unexpected cachix user" >&2
+                exit 1
+              fi
+              grep -q 'new-cache-user' err
+
+              touch "$out"
+            '';
+
+        consumer-flake-no-cachix-residual =
+          pkgs.runCommand "consumer-flake-no-cachix-residual"
+            {
+              nativeBuildInputs = [
+                self'.packages.consumer-flake-no-cachix-residual-tool
+                pkgs.jq
+              ];
+            }
+            ''
+              roots="$PWD/roots"
+              metacraft="$roots/metacraft"
+              blocksense="$roots/blocksense"
+              agent_harbor="$blocksense/agent-harbor"
+              mkdir -p "$metacraft/nixos-modules" "$blocksense/blocksense" "$agent_harbor/main"
+              echo 'https://mcl-public-cache.cachix.org' > "$metacraft/nixos-modules/flake.nix"
+              echo 'https://blocksense.cachix.org' > "$blocksense/blocksense/flake.nix"
+              echo 'https://mcl-public-cache.cachix.org' > "$agent_harbor/main/flake.nix"
+
+              consumer-flake-no-cachix-residual \
+                --allowlist ${allowlist} \
+                --root metacraft="$metacraft" \
+                --root blocksense="$blocksense" \
+                --root agent-harbor="$agent_harbor"
+
+              consumer-flake-no-cachix-residual \
+                --allowlist ${allowlist} \
+                --root metacraft="$metacraft" \
+                --root blocksense="$blocksense" \
+                --root agent-harbor="$agent_harbor" \
+                --enforce
+
+              empty_allowlist="$PWD/empty-allowlist.json"
+              jq '.allowedRepositories = [] | .enforce = true' ${allowlist} > "$empty_allowlist"
+              if consumer-flake-no-cachix-residual \
+                --allowlist "$empty_allowlist" \
+                --root metacraft="$metacraft" \
+                --root blocksense="$blocksense" \
+                --root agent-harbor="$agent_harbor" 2>err; then
+                echo "no-residual check should fail when enforced without allowlist" >&2
+                exit 1
+              fi
+              grep -q 'residual cachix.org references found' err
+
+              touch "$out"
+            '';
+      };
+    };
+}

@@ -1,0 +1,91 @@
+{
+  "enforce": false,
+  "roots": [
+    {
+      "name": "metacraft",
+      "path": "~/metacraft",
+      "repositories": [
+        { "name": "infra" },
+        { "name": "nixos-modules" },
+        { "name": "codetracer" },
+        { "name": "codetracer-native-backend" },
+        { "name": "codetracer-native-recorder" },
+        { "name": "codetracer-browser-extension" },
+        { "name": "codetracer-ci" },
+        { "name": "codetracer-trace-format" },
+        { "name": "codetracer-visual-replay" },
+        { "name": "codetracer-cairo-recorder" },
+        { "name": "codetracer-cardano-recorder" },
+        { "name": "codetracer-circom-recorder" },
+        { "name": "codetracer-flow-recorder" },
+        { "name": "codetracer-fuel-recorder" },
+        { "name": "codetracer-leo-recorder" },
+        { "name": "codetracer-miden-recorder" },
+        { "name": "codetracer-move-recorder" },
+        { "name": "codetracer-polkavm-recorder" },
+        { "name": "codetracer-solana-recorder" },
+        { "name": "codetracer-ton-recorder" },
+        { "name": "nix-blockchain-development" },
+        { "name": "nix-codetracer-toolchains" },
+        { "name": "ctfs-poc" },
+        { "name": "tracing-formats-benchmarks" },
+        { "name": "DendrETH" }
+      ]
+    },
+    {
+      "name": "blocksense",
+      "path": "~/blocksense",
+      "repositories": [
+        { "name": "blocksense" },
+        { "name": "blocksense-specs" },
+        { "name": "infra" },
+        { "name": "zkVMs-benchmarks" },
+        { "name": "zk-wars-website" }
+      ]
+    },
+    {
+      "name": "agent-harbor",
+      "path": "~/blocksense/agent-harbor",
+      "repositories": [
+        { "name": "main" },
+        { "name": "infra" },
+        { "name": "rebase-staging" }
+      ]
+    }
+  ],
+  "allowedRepositories": [
+    { "root": "metacraft", "repository": "infra", "reason": "M9 parallel migration window" },
+    { "root": "metacraft", "repository": "nixos-modules", "reason": "M9 parallel migration window" },
+    { "root": "metacraft", "repository": "codetracer", "reason": "M9 parallel migration window" },
+    { "root": "metacraft", "repository": "codetracer-native-backend", "reason": "M9 parallel migration window" },
+    { "root": "metacraft", "repository": "codetracer-native-recorder", "reason": "M9 parallel migration window" },
+    { "root": "metacraft", "repository": "codetracer-browser-extension", "reason": "M9 parallel migration window" },
+    { "root": "metacraft", "repository": "codetracer-ci", "reason": "M9 parallel migration window" },
+    { "root": "metacraft", "repository": "codetracer-trace-format", "reason": "M9 parallel migration window" },
+    { "root": "metacraft", "repository": "codetracer-visual-replay", "reason": "M9 parallel migration window" },
+    { "root": "metacraft", "repository": "codetracer-cairo-recorder", "reason": "M9 parallel migration window" },
+    { "root": "metacraft", "repository": "codetracer-cardano-recorder", "reason": "M9 parallel migration window" },
+    { "root": "metacraft", "repository": "codetracer-circom-recorder", "reason": "M9 parallel migration window" },
+    { "root": "metacraft", "repository": "codetracer-flow-recorder", "reason": "M9 parallel migration window" },
+    { "root": "metacraft", "repository": "codetracer-fuel-recorder", "reason": "M9 parallel migration window" },
+    { "root": "metacraft", "repository": "codetracer-leo-recorder", "reason": "M9 parallel migration window" },
+    { "root": "metacraft", "repository": "codetracer-miden-recorder", "reason": "M9 parallel migration window" },
+    { "root": "metacraft", "repository": "codetracer-move-recorder", "reason": "M9 parallel migration window" },
+    { "root": "metacraft", "repository": "codetracer-polkavm-recorder", "reason": "M9 parallel migration window" },
+    { "root": "metacraft", "repository": "codetracer-solana-recorder", "reason": "M9 parallel migration window" },
+    { "root": "metacraft", "repository": "codetracer-ton-recorder", "reason": "M9 parallel migration window" },
+    { "root": "metacraft", "repository": "nix-blockchain-development", "reason": "M9 parallel migration window" },
+    { "root": "metacraft", "repository": "nix-codetracer-toolchains", "reason": "M9 parallel migration window" },
+    { "root": "metacraft", "repository": "ctfs-poc", "reason": "M9 parallel migration window" },
+    { "root": "metacraft", "repository": "tracing-formats-benchmarks", "reason": "M9 parallel migration window" },
+    { "root": "metacraft", "repository": "DendrETH", "reason": "M9 parallel migration window" },
+    { "root": "blocksense", "repository": "blocksense", "reason": "M9 parallel migration window" },
+    { "root": "blocksense", "repository": "blocksense-specs", "reason": "M9 parallel migration window" },
+    { "root": "blocksense", "repository": "infra", "reason": "M9 parallel migration window" },
+    { "root": "blocksense", "repository": "zkVMs-benchmarks", "reason": "M9 parallel migration window" },
+    { "root": "blocksense", "repository": "zk-wars-website", "reason": "M9 parallel migration window" },
+    { "root": "agent-harbor", "repository": "main", "reason": "M9 parallel migration window" },
+    { "root": "agent-harbor", "repository": "infra", "reason": "M9 parallel migration window" },
+    { "root": "agent-harbor", "repository": "rebase-staging", "reason": "M9 parallel migration window" }
+  ]
+}
