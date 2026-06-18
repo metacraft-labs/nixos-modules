@@ -98,6 +98,23 @@
               caches = migration["cachixCaches"]
               assert caches, "no Attic migration Cachix caches declared"
 
+              required_mappings = {
+                  "nix-blockchain-development.cachix.org": (
+                      "metacraft-public",
+                      "metacraft-public:UtS6PK+p0uZaJK3i/jD2DQOjTpddhQUQmNQDQih5N4Q=",
+                  ),
+                  "blocksense-infra.cachix.org": (
+                      "blocksense-public",
+                      "blocksense-public:OOgTc0ye1FONCiVHMrbpScc/HP+lX3uoU0EfwzX6ypE=",
+                  ),
+              }
+              caches_by_host = {cache["host"]: cache for cache in caches}
+              for host, (bucket, public_key) in required_mappings.items():
+                  assert host in caches_by_host, f"{host} missing from Attic migration inventory"
+                  cache = caches_by_host[host]
+                  assert cache["bucket"] == bucket, cache
+                  assert cache["publicKey"] == public_key, cache
+
               repo_buckets = {
                   repo["bucket"]
                   for root in inventory["roots"]
