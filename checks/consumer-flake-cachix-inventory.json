@@ -14,6 +14,11 @@
         "publicKey": "blocksense-public:OOgTc0ye1FONCiVHMrbpScc/HP+lX3uoU0EfwzX6ypE="
       },
       {
+        "host": "blocksense-infra.cachix.org",
+        "bucket": "blocksense-public",
+        "publicKey": "blocksense-public:OOgTc0ye1FONCiVHMrbpScc/HP+lX3uoU0EfwzX6ypE="
+      },
+      {
         "host": "metacraft-labs-codetracer.cachix.org",
         "bucket": "metacraft-codetracer",
         "publicKey": "metacraft-codetracer:9OV9wCDX560bt5/MrD4dlqnPpCitAEjpoqhNfQpWY3U="
@@ -25,6 +30,11 @@
       },
       {
         "host": "mcl-public-cache.cachix.org",
+        "bucket": "metacraft-public",
+        "publicKey": "metacraft-public:UtS6PK+p0uZaJK3i/jD2DQOjTpddhQUQmNQDQih5N4Q="
+      },
+      {
+        "host": "nix-blockchain-development.cachix.org",
         "bucket": "metacraft-public",
         "publicKey": "metacraft-public:UtS6PK+p0uZaJK3i/jD2DQOjTpddhQUQmNQDQih5N4Q="
       }
