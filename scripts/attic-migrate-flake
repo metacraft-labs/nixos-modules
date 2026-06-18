@@ -17,9 +17,11 @@ ATTIC_BUCKET_PUBLIC_KEYS = {
 DEFAULT_BUCKETS = {
     "agent-harbor.cachix.org": "agent-harbor",
     "blocksense.cachix.org": "blocksense-public",
+    "blocksense-infra.cachix.org": "blocksense-public",
     "metacraft-labs-codetracer.cachix.org": "metacraft-codetracer",
     "mcl-blockchain-packages.cachix.org": "metacraft-public",
     "mcl-public-cache.cachix.org": "metacraft-public",
+    "nix-blockchain-development.cachix.org": "metacraft-public",
 }
 
 URL_RE = re.compile(r"https?://([A-Za-z0-9][A-Za-z0-9-]*\.cachix\.org)")
