@@ -482,13 +482,22 @@ top@{ config, ... }:
               assert "push-deployment-caches:" in workflow, "workflow no longer exposes the deployment cache publish gate"
               assert re.search(r"push-deployment-caches:.*?default:\s*false", workflow, re.S), "deployment cache publish gate must default false in the reusable workflow"
               assert re.search(
-                  r"results-runner:\s*\n"
+                  r"non-nix-runner:\s*\n"
                   r"\s+description:.*\n"
-                  r"\s+default:\s*'\"ubuntu-latest\"'\s*\n"
+                  r"\s+default:\s*'\[\"self-hosted\",\s*\"nixos\",\s*\"x86-64-v2\",\s*\"bare-metal\"\]'\s*\n"
                   r"\s+required:\s*false\s*\n"
                   r"\s+type:\s*string",
                   workflow,
-              ), "workflow must expose results-runner defaulting to off-target ubuntu-latest"
+              ), "workflow must expose non-nix-runner defaulting to self-hosted labels"
+              assert re.search(
+                  r"results-runner:\s*\n"
+                  r"\s+description:.*\n"
+                  r"\s+default:\s*'\[\"self-hosted\",\s*\"nixos\",\s*\"x86-64-v2\",\s*\"bare-metal\"\]'\s*\n"
+                  r"\s+required:\s*false\s*\n"
+                  r"\s+type:\s*string",
+                  workflow,
+              ), "workflow must expose results-runner defaulting to self-hosted labels"
+              assert "runs-on: ''${{ fromJSON(inputs.non-nix-runner) }}" in workflow, "non-nix helper jobs must use JSON runner labels"
               results_job_match = re.search(
                   r"(?ms)^  results:\n(?P<body>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
                   workflow,

@@ -23,8 +23,8 @@ for backward compatibility.
    `build` runs `mcl cache push-closure` for each deployment target and the
    configured `deployment-cache-push-backends`.
 7. `results` runs on the JSON-encoded `results-runner` input, which defaults
-   to the off-target GitHub-hosted runner `"ubuntu-latest"`. It prints the
-   final matrix and updates the pull request comment.
+   to self-hosted Linux fleet runner labels. It prints the final matrix and
+   updates the pull request comment.
 8. When `inputs.run-cachix-deploy` is true, `results` checks out the repository
    and runs `mcl deploy-spec`.
 
@@ -65,7 +65,7 @@ journald logs, activation generation, health-check output, or rollback status.
 | Attic cache          | GitHub variables `ATTIC_CACHE`, `ATTIC_SUBSTITUTER`, `ATTIC_TRUSTED_PUBLIC_KEY`                       | Used when `deployment-cache-push-backends` includes `attic`.              |
 | Substituters         | GitHub variable `SUBSTITUTERS` plus default cache URLs supplied to `mcl`                              | Used for Nix setup and cache-status checks.                               |
 | Trusted public keys  | GitHub variable `TRUSTED_PUBLIC_KEYS`                                                                 | Required for substituter trust on runners.                                |
-| Results runner       | Workflow input `results-runner`, JSON default `"ubuntu-latest"`                                       | Keeps deploy orchestration off the fleet self-hosted runner by default.   |
+| Results runner       | Workflow input `results-runner`, JSON default `["self-hosted", "nixos", "x86-64-v2", "bare-metal"]`   | Keeps deploy orchestration on self-hosted runners by default.             |
 | Deploy token         | Secret `CACHIX_ACTIVATE_TOKEN`                                                                        | Passed only to the deploy step environment.                               |
 | Cache push tokens    | Secrets `CACHIX_AUTH_TOKEN`, `ATTIC_TOKEN`                                                            | Used by setup, optional cache pushes, and cache-status checks.            |
 | Source access tokens | `NIX_GITHUB_TOKEN`, `NIX_GITLAB_TOKEN`, `NIX_GITLAB_DOMAIN`                                           | Used by Nix access-token setup.                                           |
