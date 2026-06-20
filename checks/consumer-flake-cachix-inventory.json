@@ -77,7 +77,6 @@
       "path": "~/blocksense",
       "repositories": [
         { "name": "blocksense", "bucket": "blocksense-public" },
-        { "name": "blocksense-specs", "bucket": "blocksense-public" },
         { "name": "infra", "bucket": "blocksense-public" },
         { "name": "zkVMs-benchmarks", "bucket": "blocksense-public" },
         { "name": "zk-wars-website", "bucket": "blocksense-public" }
