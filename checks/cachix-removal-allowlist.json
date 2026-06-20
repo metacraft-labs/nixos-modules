@@ -37,7 +37,6 @@
       "path": "~/blocksense",
       "repositories": [
         { "name": "blocksense" },
-        { "name": "blocksense-specs" },
         { "name": "infra" },
         { "name": "zkVMs-benchmarks" },
         { "name": "zk-wars-website" }
@@ -80,7 +79,6 @@
     { "root": "metacraft", "repository": "tracing-formats-benchmarks", "reason": "M9 parallel migration window" },
     { "root": "metacraft", "repository": "DendrETH", "reason": "M9 parallel migration window" },
     { "root": "blocksense", "repository": "blocksense", "reason": "M9 parallel migration window" },
-    { "root": "blocksense", "repository": "blocksense-specs", "reason": "M9 parallel migration window" },
     { "root": "blocksense", "repository": "infra", "reason": "M9 parallel migration window" },
     { "root": "blocksense", "repository": "zkVMs-benchmarks", "reason": "M9 parallel migration window" },
     { "root": "blocksense", "repository": "zk-wars-website", "reason": "M9 parallel migration window" },
