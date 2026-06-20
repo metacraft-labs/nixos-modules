@@ -3,12 +3,12 @@ description: Installs Nix, configures binary caches, and optionally builds/activ
 
 inputs:
   push-to-cache:
-    description: Whether to use cachix or not
+    description: Whether to push to the configured Cachix cache
     type: boolean
     required: false
     default: false
   cachix-cache:
-    description: The name of the cachix cache to use
+    description: The Cachix cache name to use. Set to 'disabled', 'none', or 'false' to force-disable Cachix.
     required: false
     default: ''
   cachix-auth-token:
@@ -87,6 +87,20 @@ runs:
           echo "Nix is not installed, will install it"
         fi
 
+    - name: Normalize Cachix inputs
+      id: cachix
+      shell: bash
+      env:
+        INPUT_CACHIX_CACHE: ${{ inputs.cachix-cache }}
+      run: |
+        cachix_cache="$INPUT_CACHIX_CACHE"
+        case "$cachix_cache" in
+          "" | disabled | none | false)
+            cachix_cache=""
+            ;;
+        esac
+        printf 'cache=%s\n' "$cachix_cache" >> "$GITHUB_OUTPUT"
+
     - name: Install Nix
       uses: cachix/install-nix-action@v31
       if: steps.check-nix.outputs.has_nix != 'true'
@@ -122,16 +136,16 @@ runs:
 
         touch "$HOME/.config/nix/netrc"
         chmod 0600 "$HOME/.config/nix/netrc"
-        if [[ -n "${{ inputs.cachix-cache }}" && -n "${{ inputs.cachix-auth-token }}" ]]; then
+        if [[ -n "${{ steps.cachix.outputs.cache }}" && -n "${{ inputs.cachix-auth-token }}" ]]; then
           cat << EOF >> "$HOME/.config/nix/netrc"
-          machine ${{ inputs.cachix-cache }}.cachix.org password ${{ inputs.cachix-auth-token }}
+          machine ${{ steps.cachix.outputs.cache }}.cachix.org password ${{ inputs.cachix-auth-token }}
         EOF
         fi
 
     - uses: cachix/cachix-action@v15
-      if: ${{ fromJSON(inputs.push-to-cache || 'false') && inputs.cachix-cache != '' && inputs.cachix-auth-token != '' }}
+      if: ${{ fromJSON(inputs.push-to-cache || 'false') && steps.cachix.outputs.cache != '' && inputs.cachix-auth-token != '' }}
       with:
-        name: ${{ inputs.cachix-cache }}
+        name: ${{ steps.cachix.outputs.cache }}
         authToken: ${{ inputs.cachix-auth-token }}
 
     - name: Restore/Save Nix Store GHA Cache
