@@ -23,13 +23,13 @@ on:
         required: false
         type: string
       non-nix-runner:
-        description: 'Runner labels for non-nix tasks (initial comment, mcl reference compute)'
-        default: 'ubuntu-latest'
+        description: 'JSON-encoded runner labels for non-nix tasks (initial comment, mcl reference compute)'
+        default: '["self-hosted", "nixos", "x86-64-v2", "bare-metal"]'
         required: false
         type: string
       results-runner:
         description: 'JSON-encoded runner labels for Final Results and deploy orchestration'
-        default: '"ubuntu-latest"'
+        default: '["self-hosted", "nixos", "x86-64-v2", "bare-metal"]'
         required: false
         type: string
       run-cachix-deploy:
@@ -77,7 +77,7 @@ on:
 jobs:
   compute-mcl-ref:
     name: Compute MCL Reference
-    runs-on: ${{ inputs.non-nix-runner }}
+    runs-on: ${{ fromJSON(inputs.non-nix-runner) }}
     outputs:
       workflow_sha: ${{ steps.compute.outputs.workflow_sha }}
       mcl_flake_cmd: ${{ steps.compute.outputs.mcl_flake_cmd }}
@@ -125,7 +125,7 @@ jobs:
 
   post-initial-comment:
     if: github.event_name == 'pull_request'
-    runs-on: ${{ inputs.non-nix-runner }}
+    runs-on: ${{ fromJSON(inputs.non-nix-runner) }}
     permissions:
       contents: read
       issues: write

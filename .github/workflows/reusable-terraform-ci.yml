@@ -130,10 +130,10 @@ jobs:
   # ---------------------------------------------------------------------------
   # Job 1: Offline checks (no credentials required)
   # Runs in ALL modes: pr, apply, drift
-  # Fork PRs run on GitHub-hosted runners; everything else on self-hosted.
+  # All modes run on the configured self-hosted runner labels.
   # ---------------------------------------------------------------------------
   offline-checks:
-    runs-on: ${{ inputs.mode == 'pr' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || fromJSON(inputs.runner) }}
+    runs-on: ${{ fromJSON(inputs.runner) }}
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2

@@ -252,7 +252,7 @@
 
     Safety gates (shared — consuming repos enable via workflow inputs):
     - [X] Fork-PR guard: credentialed plan skipped at job level for fork PRs
-    - [X] Fork PRs run offline checks on GitHub-hosted runners only
+    - [X] Fork PRs run offline checks on configured self-hosted runners only
     - [X] Denylist CI step: blocks dangerous HCL constructs (data "external",
           exec provisioners, null_resource, unpinned remote sources); configurable
           provider allowlist per consuming repo
@@ -311,7 +311,7 @@
       status: pending
 
     - test_name: verify_fork_guard
-      description: Fork PRs skip credentialed plan and run only offline checks on GitHub-hosted runners
+      description: Fork PRs skip credentialed plan and run only offline checks on configured self-hosted runners
       status: pending
 
     - test_name: verify_denylist
