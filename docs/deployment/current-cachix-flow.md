@@ -2,8 +2,11 @@
 
 The current production-capable deploy path is the reusable GitHub Actions
 workflow documented in [current-flow-inventory.json](current-flow-inventory.json).
-Deployment is optional and is gated by the workflow input
-`run-cachix-deploy`.
+Deployment cache publication and legacy Cachix Deploy activation have separate
+workflow gates. `push-deployment-caches` publishes deployment target closures
+to the configured deployment cache backends. `run-cachix-deploy` keeps the
+legacy activation path available and also implies deployment cache publication
+for backward compatibility.
 
 ## CI Flow
 
@@ -16,8 +19,9 @@ Deployment is optional and is gated by the workflow input
    package table.
 5. `build` runs `nix build -L --no-link --keep-going --show-trace
 '.#${{ matrix.attrPath }}'` for each matrix item.
-6. `build` then runs `cachix push ${{ vars.CACHIX_CACHE }}
-${{ matrix.output }}` for each built output.
+6. When `inputs.push-deployment-caches || inputs.run-cachix-deploy` is true,
+   `build` runs `mcl cache push-closure` for each deployment target and the
+   configured `deployment-cache-push-backends`.
 7. `results` runs on the JSON-encoded `results-runner` input, which defaults
    to the off-target GitHub-hosted runner `"ubuntu-latest"`. It prints the
    final matrix and updates the pull request comment.
@@ -51,20 +55,21 @@ journald logs, activation generation, health-check output, or rollback status.
 
 ## Deployment Inputs
 
-| Input                | Current source                                                                                        | Notes                                                                    |
-| -------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| Flake attr           | Build matrix `matrix.attrPath`; deploy command evaluates `legacyPackages.x86_64-linux.serverMachines` | The deploy attr is fixed in `mcl deploy-spec`.                           |
-| Target machine       | Evaluated package name, then Cachix Deploy agent name                                                 | Must match the target-side agent identity.                               |
-| Store path           | Build matrix `matrix.output`; deploy spec agent value                                                 | Expected to be a NixOS system toplevel.                                  |
-| Closure size         | Not recorded by the workflow today                                                                    | M1+ event emission should record closure count and bytes.                |
-| Cache name           | GitHub variable `CACHIX_CACHE`                                                                        | Used by setup, push, and `mcl` cache-status checks.                      |
-| Substituters         | GitHub variable `SUBSTITUTERS` plus default cache URLs supplied to `mcl`                              | Used for Nix setup and cache-status checks.                              |
-| Trusted public keys  | GitHub variable `TRUSTED_PUBLIC_KEYS`                                                                 | Required for substituter trust on runners.                               |
-| Results runner       | Workflow input `results-runner`, JSON default `"ubuntu-latest"`                                       | Keeps deploy orchestration off the fleet self-hosted runner by default.  |
-| Deploy token         | Secret `CACHIX_ACTIVATE_TOKEN`                                                                        | Passed only to the deploy step environment.                              |
-| Cache push token     | Secret `CACHIX_AUTH_TOKEN`                                                                            | Used by setup, cache push, and cache-status checks.                      |
-| Source access tokens | `NIX_GITHUB_TOKEN`, `NIX_GITLAB_TOKEN`, `NIX_GITLAB_DOMAIN`                                           | Used by Nix access-token setup.                                          |
-| Health checks        | Not modeled in the reusable workflow                                                                  | Future events should model check command, timeout, attempts, and result. |
+| Input                | Current source                                                                                        | Notes                                                                     |
+| -------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| Flake attr           | Build matrix `matrix.attrPath`; deploy command evaluates `legacyPackages.x86_64-linux.serverMachines` | The deploy attr is fixed in `mcl deploy-spec`.                            |
+| Target machine       | Evaluated package name, then Cachix Deploy agent name                                                 | Must match the target-side agent identity.                                |
+| Store path           | Build matrix `matrix.output`; deploy spec agent value                                                 | Expected to be a NixOS system toplevel.                                   |
+| Closure size         | Not recorded by the workflow today                                                                    | M1+ event emission should record closure count and bytes.                 |
+| Cachix cache name    | GitHub variable `CACHIX_CACHE`                                                                        | Used by setup, optional Cachix cache push, and `mcl` cache-status checks. |
+| Attic cache          | GitHub variables `ATTIC_CACHE`, `ATTIC_SUBSTITUTER`, `ATTIC_TRUSTED_PUBLIC_KEY`                       | Used when `deployment-cache-push-backends` includes `attic`.              |
+| Substituters         | GitHub variable `SUBSTITUTERS` plus default cache URLs supplied to `mcl`                              | Used for Nix setup and cache-status checks.                               |
+| Trusted public keys  | GitHub variable `TRUSTED_PUBLIC_KEYS`                                                                 | Required for substituter trust on runners.                                |
+| Results runner       | Workflow input `results-runner`, JSON default `"ubuntu-latest"`                                       | Keeps deploy orchestration off the fleet self-hosted runner by default.   |
+| Deploy token         | Secret `CACHIX_ACTIVATE_TOKEN`                                                                        | Passed only to the deploy step environment.                               |
+| Cache push tokens    | Secrets `CACHIX_AUTH_TOKEN`, `ATTIC_TOKEN`                                                            | Used by setup, optional cache pushes, and cache-status checks.            |
+| Source access tokens | `NIX_GITHUB_TOKEN`, `NIX_GITLAB_TOKEN`, `NIX_GITLAB_DOMAIN`                                           | Used by Nix access-token setup.                                           |
+| Health checks        | Not modeled in the reusable workflow                                                                  | Future events should model check command, timeout, attempts, and result.  |
 
 ## Current Cachix Deploy Monitoring Path
 

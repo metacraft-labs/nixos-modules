@@ -16,6 +16,12 @@
     "deployCondition": "inputs.run-cachix-deploy",
     "mclCommand": "deploy-spec"
   },
+  "deploymentCachePublishPath": {
+    "entryJob": "build",
+    "publishStep": "Push deployment closure caches ${{ matrix.name }}",
+    "publishCondition": "inputs.push-deployment-caches || inputs.run-cachix-deploy",
+    "mclCommand": "cache push-closure"
+  },
   "criticalSteps": [
     "Compute reusable workflow SHA and set mcl nix run command",
     "Setup Nix",
@@ -40,7 +46,10 @@
     "ATTIC_TOKEN",
     "ATTIC_CACHE",
     "ATTIC_SUBSTITUTER",
+    "ATTIC_TRUSTED_PUBLIC_KEY",
     "DEPLOYMENT_CACHE_PUSH_BACKENDS",
+    "DEPLOYMENT_CACHE_REQUIRED_BACKENDS",
+    "DEPLOYMENT_CACHE_OPTIONAL_TIMEOUT_SECONDS",
     "SYSTEM_TO_GITHUB_RUNNER_LABELS",
     "SUBSTITUTERS",
     "TRUSTED_PUBLIC_KEYS",

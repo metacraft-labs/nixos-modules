@@ -322,7 +322,7 @@
               "cache push and substitute probe must honor required versus optional policy",
           )
           require(
-              "if: ''${{ always() && inputs.run-cachix-deploy && !matrix.noop && matrix.deploymentTarget }}" in text,
+              "if: ''${{ always() && (inputs.push-deployment-caches || inputs.run-cachix-deploy) && !matrix.noop && matrix.deploymentTarget }}" in text,
               "cache push event artifact upload must remain available after optional backend failures",
           )
 
