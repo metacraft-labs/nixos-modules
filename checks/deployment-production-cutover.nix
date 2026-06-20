@@ -13,6 +13,7 @@ top@{ config, ... }:
       docs = ../docs/deployment;
       repoWorkflow = ../.github/workflows/ci.yml;
       workflow = ../.github/workflows/reusable-flake-checks-ci-matrix.yml;
+      setupNix = ../.github/setup-nix/action.yml;
       deployPrivateKey = pkgs.writeText "mcl-cutover-deploy-test-key" ''
         -----BEGIN OPENSSH PRIVATE KEY-----
         b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
@@ -461,6 +462,7 @@ top@{ config, ... }:
               gate = json.loads(Path("${docs}/production-cutover-gates.json").read_text())
               repo_workflow = Path("${repoWorkflow}").read_text()
               workflow = Path("${workflow}").read_text()
+              setup_nix = Path("${setupNix}").read_text()
               cutover_doc = Path("${docs}/production-cutover.md").read_text()
               deploy_spec = Path("${repoRoot}/packages/mcl/src/mcl/commands/deploy_spec.d").read_text()
 
@@ -512,6 +514,10 @@ top@{ config, ... }:
               assert "if: ''${{ always() && (inputs.push-deployment-caches || inputs.run-cachix-deploy) && !matrix.noop && matrix.deploymentTarget }}" in workflow, "deployment cache artifact upload must be limited to deployment targets"
               assert "DEPLOY_KIND: ''${{ matrix.deploymentKind }}" in workflow, "deployment cache push must receive the matrix deployment kind"
               assert '--kind "$DEPLOY_KIND"' in workflow, "deployment cache push must pass the deployment kind to mcl"
+              assert "Normalize Cachix inputs" in setup_nix, "setup-nix must normalize legacy Cachix cache inputs"
+              assert '"" | disabled | none | false)' in setup_nix, "setup-nix must treat the disabled Cachix sentinel as empty"
+              assert "steps.cachix.outputs.cache !=" in setup_nix, "setup-nix must gate Cachix action on normalized cache output"
+              assert "vars.CACHIX_CACHE != 'disabled' && vars.CACHIX_CACHE" in workflow, "mcl workflow must not pass the disabled Cachix sentinel as a cache name"
               assert "mcl_flake_cmd }} deploy-spec" in workflow, "legacy fallback deploy-spec call disappeared"
               assert "cachix deploy activate" in deploy_spec, "fallback deploy-spec no longer exposes Cachix Deploy activation"
 
