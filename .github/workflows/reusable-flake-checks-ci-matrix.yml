@@ -207,7 +207,9 @@ jobs:
             --flake-attribute-path "${{ matrix.flakeAttrPath }}" \
             --is-initial
 
-      - uses: actions/upload-artifact@v7
+      - name: Upload CI matrix shard
+        uses: actions/upload-artifact@v7
+        continue-on-error: true
         with:
           name: ${{ matrix.filename }}
           path: matrix-pre.json
@@ -233,8 +235,63 @@ jobs:
         uses: metacraft-labs/nixos-modules/.github/setup-nix@main
         with: *setup-nix-no-push
 
-      - uses: actions/download-artifact@v8
+      - name: Download CI matrix shards
+        uses: actions/download-artifact@v8
         if: needs.eval-matrix.result == 'success'
+        continue-on-error: true
+
+      - name: Regenerate CI matrix shards when artifacts are unavailable
+        if: needs.eval-matrix.result == 'success'
+        shell: bash
+        env:
+          EVAL_MATRIX: ${{ needs.shard-matrix.outputs.eval_matrix }}
+          MCL_FLAKE_CMD: ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }}
+          CACHIX_CACHE: ${{ vars.CACHIX_CACHE != 'disabled' && vars.CACHIX_CACHE || '' }}
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          EXTRA_CACHE_URLS: ${{ vars.SUBSTITUTERS }}
+          SYSTEM_TO_GITHUB_RUNNER_LABELS: ${{ inputs.runners }}
+        run: |
+          set -euo pipefail
+
+          run_python() {
+            if command -v python3 >/dev/null 2>&1; then
+              python3 "$@"
+            else
+              nix shell nixpkgs#python3 --command python3 "$@"
+            fi
+          }
+
+          expected="$(
+            printf '%s' "$EVAL_MATRIX" |
+              run_python -c 'import json, sys; print(len(json.load(sys.stdin).get("include", [])))'
+          )"
+          actual="$(find . -mindepth 2 -maxdepth 2 -type f -name matrix-pre.json | wc -l)"
+          actual="${actual//[[:space:]]/}"
+
+          if [[ "$actual" == "$expected" ]]; then
+            echo "Found all $actual CI matrix shard artifact(s)."
+            exit 0
+          fi
+
+          echo "::warning title=Regenerating CI matrix shards::found $actual of $expected shard artifacts; regenerating locally"
+          read -r -a mcl_cmd <<< "$MCL_FLAKE_CMD"
+
+          while IFS=$'\t' read -r filename flake_attr_path; do
+            [[ -n "$filename" && -n "$flake_attr_path" ]] || continue
+
+            artifact_dir="${filename%.json}"
+            rm -rf -- "$artifact_dir" matrix-pre.json
+
+            "${mcl_cmd[@]}" -- ci-matrix \
+              --flake-attribute-path "$flake_attr_path" \
+              --is-initial
+
+            mkdir -p "$artifact_dir"
+            mv matrix-pre.json "$artifact_dir/matrix-pre.json"
+          done < <(
+            printf '%s' "$EVAL_MATRIX" |
+              run_python -c 'import json, sys; [print("{}\t{}".format(shard.get("filename", ""), shard.get("flakeAttrPath", ""))) for shard in json.load(sys.stdin).get("include", [])]'
+          )
 
       - name: Merge matrices
         if: needs.eval-matrix.result == 'success'
