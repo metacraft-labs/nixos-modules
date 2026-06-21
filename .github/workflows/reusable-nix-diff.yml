@@ -144,9 +144,35 @@ jobs:
           echo "Prepared synthetic origin/${base_ref} for nix-diff input overrides: $override_inputs"
 
       - name: Diff NixOS system closures
+        id: nix-diff-full
+        continue-on-error: true
         uses: natsukium/nix-diff-action@v1.1.0
         with:
           mode: full
           comment-strategy: update
           build: false
           attributes: ${{ steps.discover.outputs.attributes }}
+
+      - name: Recompute nix-diff output after non-gating publish failure
+        id: nix-diff-fallback
+        if: steps.nix-diff-full.outcome == 'failure'
+        continue-on-error: true
+        uses: natsukium/nix-diff-action@v1.1.0
+        with:
+          mode: diff-only
+          build: false
+          attributes: ${{ steps.discover.outputs.attributes }}
+
+      - name: Validate nix-diff fallback output
+        if: steps.nix-diff-full.outcome == 'failure'
+        env:
+          FALLBACK_DIFF: ${{ steps.nix-diff-fallback.outputs.diff }}
+        run: |
+          if [[ -z "$FALLBACK_DIFF" ]]; then
+            echo "nix-diff failed before producing diff output; this is not an artifact-only failure." >&2
+            exit 1
+          fi
+
+          jq -e 'type == "array" and length > 0 and all(.[]; has("displayName") and has("diff"))' \
+            <<<"$FALLBACK_DIFF" >/dev/null
+          echo "nix-diff produced fallback output; treating artifact/comment publication failure as non-gating."
