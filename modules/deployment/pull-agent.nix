@@ -190,6 +190,11 @@
           serviceConfig = {
             Type = "oneshot";
             ExecStart = "${pkgs.util-linux}/bin/flock -n ${escapeShellArg cfg.lockFile} ${agentCommand}";
+            CacheDirectory = "mcl-deploy-agent";
+            Environment = [
+              "HOME=/var/cache/mcl-deploy-agent"
+              "XDG_CACHE_HOME=/var/cache/mcl-deploy-agent"
+            ];
             NoNewPrivileges = true;
             ProtectHome = true;
             PrivateTmp = true;
