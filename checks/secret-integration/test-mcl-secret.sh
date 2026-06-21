@@ -154,9 +154,9 @@ assert_eq "$(echo "$list_output" | grep -c '  - password\|  - api-key\|  - token
 # ---------------------------------------------------------------
 echo "=== Test 6: mcl secret list (single machine, JSON) ==="
 list_json=$(mcl secret --machine test-secret-machine list --json)
-assert_eq "$(echo "$list_json" | jq -r 'keys | sort | join(",")')" \
+assert_eq "$(echo "$list_json" | jq -r '.services | keys | sort | join(",")')" \
   "other-svc,test-svc" "JSON has expected service keys"
-assert_eq "$(echo "$list_json" | jq -r '."test-svc" | sort | join(",")')" \
+assert_eq "$(echo "$list_json" | jq -r '.services."test-svc" | sort | join(",")')" \
   "api-key,password" "JSON test-svc has expected secrets"
 
 # ---------------------------------------------------------------
@@ -185,10 +185,10 @@ assert_eq "$(echo "$broken_output" | grep -c '^test-secret-machine:')" "1" \
 assert_eq "$(grep -c 'broken-machine' "$broken_stderr")" "1" \
   "broken machine error logged to stderr"
 
-# JSON output must carry the per-machine error marker too.
+# JSON output must carry the per-machine error too.
 broken_json=$(mcl secret list --json 2>/dev/null)
-assert_eq "$(echo "$broken_json" | jq -r '."broken-machine" | has("__error__")')" \
-  "true" "JSON list marks broken machine with __error__"
+assert_eq "$(echo "$broken_json" | jq -r '."broken-machine".error')" \
+  "evaluation failed" "JSON list marks broken machine with an error"
 
 # ---------------------------------------------------------------
 # Test 9: `mcl secret list` hides VMs (machines ending in `-vm`) by

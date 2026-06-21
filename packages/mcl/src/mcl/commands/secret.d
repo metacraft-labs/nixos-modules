@@ -13,6 +13,7 @@ import std.logger : infof, tracef, warningf, errorf;
 import std.stdio : writeln, writefln, stderr;
 import std.regex : ctRegex, matchFirst;
 import std.string : replace, split, strip, endsWith;
+import std.typecons : Nullable;
 
 import argparse : AllowedValues, Command, Description, NamedArgument, Placeholder,
     Required, SubCommand, Default, matchCmd;
@@ -286,13 +287,13 @@ private int secretList(SecretArgs common, SecretListArgs args)
         auto info = resolveListInfo(common, confAttr);
 
         if (args.json)
-            writeln(info.serviceSecrets.toJSON.toPrettyString);
+            writeln(info.toJSON.toPrettyString);
         else
         {
-            foreach (svc; info.serviceSecrets.keys.dup.sort.array)
+            foreach (svc; info.services.keys.dup.sort.array)
             {
                 writeln(svc ~ ":");
-                foreach (secret; info.serviceSecrets[svc].dup.sort.array)
+                foreach (secret; info.services[svc].dup.sort.array)
                     writeln("  - " ~ secret);
             }
         }
@@ -302,37 +303,22 @@ private int secretList(SecretArgs common, SecretListArgs args)
         auto info = resolveAllMachinesListInfo(common, args, confAttr);
 
         if (args.json)
-        {
-            auto j = JSONValue.emptyObject;
-            foreach (machine, ms; info.machines)
-            {
-                // An errored machine is represented by a single "__ERROR__" key
-                if ("__ERROR__" in ms.serviceSecrets)
-                    j[machine] = ["__error__": "See stderr for details"].toJSON;
-                else
-                    j[machine] = ms.serviceSecrets.toJSON;
-            }
-            writeln(j.toPrettyString);
-        }
+            writeln(info.machines.toJSON.toPrettyString);
         else
         {
             foreach (machine; info.machines.keys.dup.sort.array)
             {
                 writeln(machine ~ ":");
-                foreach (svc; info.machines[machine].serviceSecrets.keys.dup.sort.array)
-                {
-                    // Check if this is an error marker
-                    if (svc == "__ERROR__")
-                    {
-                        writeln("  ERROR (see stderr for details)");
-                    }
-                    else
+                auto ms = info.machines[machine];
+                if (!ms.error.isNull)
+                    writeln("  ERROR (see stderr for details)");
+                else
+                    foreach (svc; ms.services.keys.dup.sort.array)
                     {
                         writeln("  " ~ svc ~ ":");
-                        foreach (secret; info.machines[machine].serviceSecrets[svc].dup.sort.array)
+                        foreach (secret; ms.services[svc].dup.sort.array)
                             writeln("    - " ~ secret);
                     }
-                }
             }
         }
     }
@@ -773,16 +759,18 @@ private struct MachineSecretsConfig
     MachineServiceConfig[string] services;
 }
 
-// Output structures for list operations
-private struct MachineServiceSecrets
+// Output structures for the all-machines list operation.
+// One machine's listing: services (service name -> secret names) plus an
+// optional evaluation error (set when the machine's config failed to evaluate).
+private struct MachineSecretList
 {
-    string[][string] serviceSecrets;
-    bool isVM;  // true if this is a debug VM
+    string[][string] services;
+    Nullable!string error;
 }
 
 private struct AllMachinesListInfo
 {
-    MachineServiceSecrets[string] machines;
+    MachineSecretList[string] machines;
 }
 
 private struct ServiceInfo
@@ -825,8 +813,11 @@ private AllServicesInfo resolveAllServicesInfo(SecretArgs common, string confAtt
     ]).fromJSON!AllServicesInfo;
 }
 
-/// Resolves list info for a single machine by evaluating mcl.secrets and mcl.host-info.
-private MachineServiceSecrets resolveListInfo(SecretArgs common, string confAttr)
+/// Resolves the secret listing for a single machine from mcl.secrets.
+/// A single-machine query has no partial-failure path (a broken config aborts
+/// the eval), so `error` is always null — the field exists to keep the output
+/// shape identical to the all-machines listing.
+private MachineSecretList resolveListInfo(SecretArgs common, string confAttr)
 {
     auto configBase = common.vm
         ? rootDir ~ "#nixosConfigurations." ~ common.machine
@@ -837,12 +828,11 @@ private MachineServiceSecrets resolveListInfo(SecretArgs common, string confAttr
         .eval!JSONValue(configBase, common.extraNixOptions)
         .fromJSON!MachineSecretsConfig;
 
-    string[][string] serviceSecrets;
+    string[][string] services;
     foreach (name, svc; secretsConfig.services)
-        serviceSecrets[name] = svc.secrets.keys.dup.sort.array;
+        services[name] = svc.secrets.keys.dup.sort.array;
 
-    // Determine if this is a VM based on machine name convention (machines ending in "-vm")
-    return MachineServiceSecrets(serviceSecrets: serviceSecrets, isVM: common.machine.endsWith("-vm"));
+    return MachineSecretList(services: services);
 }
 
 /// Resolves list info for all machines using a single --apply bulk eval.
@@ -857,44 +847,33 @@ private AllMachinesListInfo resolveAllMachinesListInfo(
 {
     auto flakeAttr = rootDir ~ "#" ~ confAttr;
 
+    // Each machine yields { services; error } — a shape that maps directly onto
+    // MachineSecretList. builtins.tryEval catches a broken machine's config so
+    // one failure can't abort the whole-fleet eval.
     auto json = nix().eval!JSONValue(flakeAttr, common.extraNixOptions ~ [
         "--apply",
-        `cfgs: builtins.mapAttrs (name: m:`
+        `cfgs: builtins.mapAttrs (_: m:`
             ~ ` let`
-            ~ `   result = builtins.mapAttrs (_: s: builtins.attrNames s.secrets)`
-            ~ `            m.config.mcl.secrets.services;`
-            ~ `   eval = builtins.tryEval (builtins.deepSeq result result);`
+            ~ `   services = builtins.mapAttrs (_: s: builtins.attrNames s.secrets)`
+            ~ `              m.config.mcl.secrets.services;`
+            ~ `   eval = builtins.tryEval (builtins.deepSeq services services);`
             ~ ` in`
-            ~ `   if eval.success then eval.value`
-            ~ `   else { __error__ = "evaluation failed"; }`
+            ~ `   if eval.success`
+            ~ `   then { services = eval.value; error = null; }`
+            ~ `   else { services = {}; error = "evaluation failed"; }`
             ~ ` ) cfgs`
     ]);
 
-    AllMachinesListInfo result;
-    foreach (machine, machineJson; json.object)
-    {
-        // Skip VMs unless --include-vms is specified
-        bool isVM = machine.endsWith("-vm");
-        if (isVM && !listArgs.includeVMs)
-            continue;
+    auto result = AllMachinesListInfo(json.fromJSON!(MachineSecretList[string]));
 
-        // Check if this machine had an evaluation error
-        if ("__error__" in machineJson.object)
-        {
+    // Drop VMs (unless requested) and surface per-machine eval errors on stderr.
+    foreach (machine; result.machines.keys)
+    {
+        if (machine.endsWith("-vm") && !listArgs.includeVMs)
+            result.machines.remove(machine);
+        else if (!result.machines[machine].error.isNull)
             errorf("Failed to evaluate machine '%s': %s",
-                machine, machineJson["__error__"].str);
-            result.machines[machine] = MachineServiceSecrets(
-                serviceSecrets: ["__ERROR__": ["See stderr for details"]],
-                isVM: isVM
-            );
-        }
-        else
-        {
-            result.machines[machine] = MachineServiceSecrets(
-                serviceSecrets: machineJson.fromJSON!(string[][string]),
-                isVM: isVM
-            );
-        }
+                machine, result.machines[machine].error.get);
     }
 
     return result;
