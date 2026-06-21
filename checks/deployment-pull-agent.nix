@@ -119,6 +119,7 @@ top@{ config, ... }:
       staticService = staticSystem.config.systemd.services.mcl-deploy-agent;
       staticTimer = staticSystem.config.systemd.timers.mcl-deploy-agent;
       staticExecStart = staticService.serviceConfig.ExecStart;
+      staticEnvironment = staticService.serviceConfig.Environment or [ ];
       staticFailures = lib.flatten [
         (lib.optional (
           !lib.hasInfix "flock -n /run/lock/mcl-test-pull-agent.lock" staticExecStart
@@ -150,6 +151,15 @@ top@{ config, ... }:
         (lib.optional (
           !lib.hasInfix "--dry-run" staticExecStart
         ) "pull-agent service does not pass dry-run")
+        (lib.optional (
+          staticService.serviceConfig.CacheDirectory != "mcl-deploy-agent"
+        ) "pull-agent service does not provision a writable cache directory")
+        (lib.optional (
+          !(builtins.elem "HOME=/var/cache/mcl-deploy-agent" staticEnvironment)
+        ) "pull-agent service does not set HOME to its writable cache directory")
+        (lib.optional (
+          !(builtins.elem "XDG_CACHE_HOME=/var/cache/mcl-deploy-agent" staticEnvironment)
+        ) "pull-agent service does not set XDG_CACHE_HOME to its writable cache directory")
         (lib.optional (
           staticTimer.timerConfig.OnActiveSec != "7min"
         ) "timer initial activation interval drifted")
