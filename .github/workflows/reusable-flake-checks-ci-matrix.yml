@@ -211,6 +211,7 @@ jobs:
         with:
           name: ${{ matrix.filename }}
           path: matrix-pre.json
+          retention-days: 1
     outputs:
       matrix: ${{ steps.generate-matrix.outputs.matrix }}
 
@@ -567,10 +568,12 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         if: ${{ always() && (inputs.push-deployment-caches || inputs.run-cachix-deploy) && !matrix.noop && matrix.deploymentTarget }}
+        continue-on-error: true
         with:
           name: deployment-cache-push-${{ github.run_id }}-${{ strategy.job-index }}
           path: .result/deployment-cache-push-events.jsonl
           if-no-files-found: warn
+          retention-days: 1
 
   results:
     runs-on: ${{ fromJSON(inputs.results-runner) }}
@@ -660,6 +663,7 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         if: always() && inputs.run-cachix-deploy
+        continue-on-error: true
         with:
           name: deployment-events-${{ github.run_id }}
           path: |
@@ -667,3 +671,4 @@ jobs:
             .result/deployment-summary.md
             .result/deployment-summary.json
           if-no-files-found: warn
+          retention-days: 1
