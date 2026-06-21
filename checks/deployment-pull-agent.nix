@@ -150,7 +150,13 @@ top@{ config, ... }:
         (lib.optional (
           !lib.hasInfix "--dry-run" staticExecStart
         ) "pull-agent service does not pass dry-run")
+        (lib.optional (
+          staticTimer.timerConfig.OnActiveSec != "7min"
+        ) "timer initial activation interval drifted")
         (lib.optional (staticTimer.timerConfig.OnUnitActiveSec != "7min") "timer interval drifted")
+        (lib.optional (
+          (staticTimer.timerConfig.OnBootSec or null) != null
+        ) "timer must not poll immediately on live activation")
         (lib.optional (staticTimer.timerConfig.RandomizedDelaySec != "73s") "timer jitter drifted")
         (lib.optional (staticTimer.timerConfig.Persistent != true) "timer is not persistent")
       ];
