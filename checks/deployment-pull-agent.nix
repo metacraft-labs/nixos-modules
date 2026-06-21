@@ -41,7 +41,11 @@ top@{ config, ... }:
       switchScript = pkgs.writeShellScript "mcl-test-pull-switch" ''
         set -euo pipefail
         mkdir -p /var/lib/mcl-test
+        install -d -m 0700 /root/mcl-test-pull-agent
+        install -d -m 0755 /home/mcl-test-pull-agent
         printf '%s\n' ${lib.escapeShellArg successGeneration} > /var/lib/mcl-test/current-generation
+        printf 'root-writable\n' > /root/mcl-test-pull-agent/switch-ran
+        printf 'home-writable\n' > /home/mcl-test-pull-agent/switch-ran
         printf 'success\n' >> /var/lib/mcl-test/switch-runs
       '';
       healthScript = pkgs.writeShellScript "mcl-test-pull-health" ''
@@ -161,6 +165,9 @@ top@{ config, ... }:
           !(builtins.elem "XDG_CACHE_HOME=/var/cache/mcl-deploy-agent" staticEnvironment)
         ) "pull-agent service does not set XDG_CACHE_HOME to its writable cache directory")
         (lib.optional (
+          staticService.serviceConfig.ProtectHome != false
+        ) "pull-agent service must leave /root, /home, and /run/user available for switch-to-configuration")
+        (lib.optional (
           staticTimer.timerConfig.OnActiveSec != "7min"
         ) "timer initial activation interval drifted")
         (lib.optional (staticTimer.timerConfig.OnUnitActiveSec != "7min") "timer interval drifted")
@@ -214,6 +221,8 @@ top@{ config, ... }:
                 target.succeed("test \"$(wc -l < /var/lib/mcl-test/switch-runs)\" = 1")
                 target.succeed("grep -qx success /var/lib/mcl-test/switch-runs")
                 target.succeed("test \"$(cat /var/lib/mcl-test/current-generation)\" = '${successGeneration}'")
+                target.succeed("grep -qx root-writable /root/mcl-test-pull-agent/switch-ran")
+                target.succeed("grep -qx home-writable /home/mcl-test-pull-agent/switch-ran")
 
             with subtest("status and events are target-local and pull-agent labelled"):
                 target.succeed(
