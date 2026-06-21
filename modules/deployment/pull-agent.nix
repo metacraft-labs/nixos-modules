@@ -196,7 +196,9 @@
               "XDG_CACHE_HOME=/var/cache/mcl-deploy-agent"
             ];
             NoNewPrivileges = true;
-            ProtectHome = true;
+            # The agent runs switch-to-configuration, whose activation scripts
+            # legitimately update /root, /home, and /run/user.
+            ProtectHome = false;
             PrivateTmp = true;
           };
         };
