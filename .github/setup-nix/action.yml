@@ -142,6 +142,13 @@ runs:
         EOF
         fi
 
+    - name: Reset Nix flake fetcher cache
+      shell: bash
+      run: |
+        cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/nix"
+        rm -f "$cache_dir"/fetcher-cache-v*.sqlite*
+        rm -rf "$cache_dir"/gitv3 "$cache_dir"/tarballs
+
     - uses: cachix/cachix-action@v15
       if: ${{ fromJSON(inputs.push-to-cache || 'false') && steps.cachix.outputs.cache != '' && inputs.cachix-auth-token != '' }}
       with:
