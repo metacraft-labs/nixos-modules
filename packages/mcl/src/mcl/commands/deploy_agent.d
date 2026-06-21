@@ -192,10 +192,15 @@ bool isUrlSource(string source)
     return source.startsWith("https://") || source.startsWith("http://");
 }
 
-string readManifestSource(string source, ulong timeoutSeconds, ProcessRunner fetchRunner)
+bool isMissingHttpManifest(ProcessResult result)
+{
+    return result.exitCode == 22 && result.stderr.canFind("404");
+}
+
+Nullable!string readManifestSource(string source, ulong timeoutSeconds, ProcessRunner fetchRunner)
 {
     if (!isUrlSource(source))
-        return source.readText;
+        return Nullable!string(source.readText);
 
     ProcessResult defaultFetch(string[] command) { return runProcessCapture(command); }
     auto runner = fetchRunner is null ? &defaultFetch : fetchRunner;
@@ -208,8 +213,10 @@ string readManifestSource(string source, ulong timeoutSeconds, ProcessRunner fet
         timeoutSeconds.to!string,
         source,
     ]);
+    if (!result.succeeded && isMissingHttpManifest(result))
+        return Nullable!string.init;
     enforce(result.succeeded, "Manifest fetch failed for " ~ source ~ ": " ~ result.stderr.strip);
-    return result.stdout;
+    return Nullable!string(result.stdout);
 }
 
 string[] manifestSources(DeployAgentArgs args)
@@ -231,12 +238,18 @@ string[] manifestSources(DeployAgentArgs args)
 
 AgentCandidate[] loadAgentCandidates(DeployAgentArgs args, ProcessRunner fetchRunner)
 {
-    return manifestSources(args)
-        .map!(source => AgentCandidate(
+    AgentCandidate[] candidates;
+    foreach (source; manifestSources(args))
+    {
+        auto content = readManifestSource(source, args.fetchTimeoutSeconds, fetchRunner);
+        if (content.isNull)
+            continue;
+        candidates ~= AgentCandidate(
             source: source,
-            manifest: readManifestSource(source, args.fetchTimeoutSeconds, fetchRunner).parseJSON,
-        ))
-        .array;
+            manifest: content.get.parseJSON,
+        );
+    }
+    return candidates;
 }
 
 AgentCandidate latestCandidate(AgentCandidate[] candidates)
@@ -506,6 +519,65 @@ unittest
     assert(status["currentState"].str == "non-retryable");
     assert(status["errorCode"].str == "wrong_target");
     assert(status["observedTarget"].str == "other-target");
+}
+
+@("test_deploy_agent_waits_when_http_manifest_is_missing")
+unittest
+{
+    auto stateDir = deleteme ~ ".deploy-agent-missing-http.state";
+    scope(exit) if (stateDir.exists) stateDir.rmdirRecurse;
+
+    ProcessResult missingFetch(string[] command)
+    {
+        assert(command.canFind("curl"));
+        return ProcessResult(22, "", "curl: (22) The requested URL returned error: 404");
+    }
+
+    DeployAgentArgs args;
+    args.target = "target";
+    args.manifests = ["https://cache.example.test/mcl-deployments/target/latest.json"];
+    args.trustedManifestPublicKey = "ssh-ed25519 test-key";
+    args.stateDir = stateDir;
+
+    assert(deployAgentImpl(args, DeployAgentDependencies(
+        fetchProcess: &missingFetch,
+    )) == 0);
+
+    auto status = agentStatusPath(stateDir, "target").readText.parseJSON;
+    assert(status["target"].str == "target");
+    assert(status["currentState"].str == "waiting");
+    assert(status["retryable"].boolean is true);
+    assert(status["message"].str == "No desired-state manifests found.");
+    assert(("errorCode" in status.object) is null);
+}
+
+@("test_deploy_agent_fails_on_non_missing_http_fetch_error")
+unittest
+{
+    auto stateDir = deleteme ~ ".deploy-agent-http-error.state";
+    scope(exit) if (stateDir.exists) stateDir.rmdirRecurse;
+
+    ProcessResult failingFetch(string[] command)
+    {
+        assert(command.canFind("curl"));
+        return ProcessResult(22, "", "curl: (22) The requested URL returned error: 503");
+    }
+
+    DeployAgentArgs args;
+    args.target = "target";
+    args.manifests = ["https://cache.example.test/mcl-deployments/target/latest.json"];
+    args.trustedManifestPublicKey = "ssh-ed25519 test-key";
+    args.stateDir = stateDir;
+
+    assert(deployAgentImpl(args, DeployAgentDependencies(
+        fetchProcess: &failingFetch,
+    )) == 1);
+
+    auto status = agentStatusPath(stateDir, "target").readText.parseJSON;
+    assert(status["target"].str == "target");
+    assert(status["currentState"].str == "failed");
+    assert(status["retryable"].boolean is true);
+    assert(status["errorCode"].str == "source_read_failed");
 }
 
 @("test_deploy_agent_bounds_failed_apply_retries")

@@ -200,8 +200,8 @@
           description = "Poll signed mcl desired-state manifests for ${cfg.targetName}";
           wantedBy = [ "timers.target" ];
           timerConfig = {
+            OnActiveSec = cfg.interval;
             OnUnitActiveSec = cfg.interval;
-            OnBootSec = cfg.interval;
             RandomizedDelaySec = cfg.jitter;
             Persistent = true;
           };
