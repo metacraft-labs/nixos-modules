@@ -10,7 +10,6 @@ import std.array: join, array, replace, split;
 import std.datetime: SysTime;
 import std.sumtype: SumType, isSumType;
 import std.typecons: Ternary, Nullable;
-import core.stdc.string: strlen;
 
 import mcl.utils.test;
 import mcl.utils.string: enumToString, enumFromString, StringRepresentation;
@@ -262,24 +261,26 @@ JSONValue toJSON(T)(in T value, bool simplify = false)
     }
     else static if (is(T == bool) || is(T == string) || isSomeChar!T || isNumeric!T)
         return JSONValue(value);
-    else static if ((isArray!T && isSomeChar!(ForeachType!T)) ) {
-        return JSONValue(value.idup[0..(strlen(value.ptr)-1)]);
-    }
-    else static if (isArray!T)
+    else static if (is(T == U[], U))
     {
-        if (simplify && value.length == 1)
-            return value.front.toJSON(simplify);
-        else if (simplify  && isBoolean!(ForeachType!T) ) {
-            static if (isBoolean!(ForeachType!T)) {
-                return JSONValue((value.map!(a => a ? '1' : '0').array).to!string);
+        static if (isSomeChar!U)
+            return JSONValue(value);
+        else
+        {
+            if (simplify && value.length == 1)
+                return value.front.toJSON(simplify);
+            else if (simplify  && isBoolean!(ForeachType!T) ) {
+                static if (isBoolean!(ForeachType!T)) {
+                    return JSONValue((value.map!(a => a ? '1' : '0').array).to!string);
+                }
+                else {assert(0);}
             }
-            else {assert(0);}
-        }
-        else {
-            JSONValue[] result;
-            foreach (elem; value)
-                result ~= elem.toJSON(simplify);
-            return JSONValue(result);
+            else {
+                JSONValue[] result;
+                foreach (elem; value)
+                    result ~= elem.toJSON(simplify);
+                return JSONValue(result);
+            }
         }
     }
     else static if (is(T == SysTime)) {
@@ -348,6 +349,10 @@ unittest
     assert(1.toJSON == JSONValue(1));
     assert(true.toJSON == JSONValue(true));
     assert("test".toJSON == JSONValue("test"));
+    // Non-immutable char arrays must round-trip in full (regression: the old
+    // char-array branch truncated the last character via strlen).
+    char[] mutableChars = "test".dup;
+    assert(mutableChars.toJSON == JSONValue("test"));
     assert([1, 2, 3].toJSON == JSONValue([1, 2, 3]));
     assert(["a", "b", "c"].toJSON == JSONValue(["a", "b", "c"]));
     assert([TestEnum.a, TestEnum.b, TestEnum.c].toJSON == JSONValue(["supercalifragilisticexpialidocious", "b", "c"]));
