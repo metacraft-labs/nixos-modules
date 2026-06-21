@@ -13,6 +13,7 @@ import mcl.utils.deployment_events : ClosureSummary, DeploymentEventContext,
 import mcl.utils.process : ProcessResult, ProcessRunner;
 
 enum ulong defaultCacheProbeTimeoutSeconds = 30;
+enum ulong defaultAtticPushTimeoutSeconds = 1800;
 enum ulong cacheProbeMaxAttempts = 3;
 enum ulong atticPushMaxAttempts = 3;
 
@@ -38,6 +39,7 @@ struct CachePushRequest
     string correlationId;
     bool requireSubstitute = true;
     ulong probeTimeoutSeconds = defaultCacheProbeTimeoutSeconds;
+    ulong atticPushTimeoutSeconds = defaultAtticPushTimeoutSeconds;
 }
 
 struct CachePushPlan
@@ -122,9 +124,10 @@ CachePushPlan cachePushPlan(CachePushRequest request)
         case CacheBackend.attic:
             return CachePushPlan(
                 commandName: "attic push",
-                argv: ["attic", "push", "--jobs", "1",
-                    "--ignore-upstream-cache-filter", request.cache]
-                    ~ request.storePaths,
+                argv: cacheCommandWithTimeout([
+                    "attic", "push", "--jobs", "1",
+                    "--ignore-upstream-cache-filter", request.cache,
+                ] ~ request.storePaths, request.atticPushTimeoutSeconds),
                 controller: "attic",
                 substituters: substituters,
                 externalCommand: true,
@@ -400,6 +403,11 @@ private bool hasDisqualifyingMixedProbeFailure(string stderr)
 
 string[] cacheProbeTimeoutCommand(string[] command, ulong timeoutSeconds)
 {
+    return cacheCommandWithTimeout(command, timeoutSeconds);
+}
+
+string[] cacheCommandWithTimeout(string[] command, ulong timeoutSeconds)
+{
     return ["timeout", "--kill-after=5s", timeoutSeconds.to!string ~ "s"] ~ command;
 }
 
@@ -528,6 +536,10 @@ JSONValue cachePushMetadata(
         "probeTimeoutSeconds": JSONValue(cast(long) request.probeTimeoutSeconds),
         "probes": JSONValue(probeJson),
     ];
+
+    if (request.backend == CacheBackend.attic)
+        metadata["atticPushTimeoutSeconds"] = JSONValue(
+            cast(long) request.atticPushTimeoutSeconds);
 
     if (unavailableSubstituters.length)
         metadata["unavailableSubstituters"] = JSONValue(
@@ -793,6 +805,15 @@ private string probeCommandStorePathStdout(string[] command)
     return paths.join("\n") ~ (paths.length ? "\n" : "");
 }
 
+version (unittest)
+private bool isCommandInvocation(string[] command, string executable, string subcommand)
+{
+    foreach (i, arg; command)
+        if (arg == executable && i + 1 < command.length && command[i + 1] == subcommand)
+            return true;
+    return false;
+}
+
 @("test_cache_push_closure_invokes_backend")
 unittest
 {
@@ -846,6 +867,7 @@ unittest
     ), &fakeRunner, &fakeRunner) == 0);
 
     assert(commands.any!(cmd => cmd == [
+        "timeout", "--kill-after=5s", defaultAtticPushTimeoutSeconds.to!string ~ "s",
         "attic", "push", "--jobs", "1",
         "--ignore-upstream-cache-filter", "example-deploy-cache", root,
     ]));
@@ -879,7 +901,7 @@ unittest
     ProcessResult fakeRunner(string[] command)
     {
         commands ~= command;
-        if (command.length >= 2 && command[0] == "attic" && command[1] == "push")
+        if (isCommandInvocation(command, "attic", "push"))
         {
             ++atticPushes;
             return atticPushes == 1
@@ -908,6 +930,7 @@ unittest
 
     assert(atticPushes == 2);
     assert(commands[1] == [
+        "timeout", "--kill-after=5s", defaultAtticPushTimeoutSeconds.to!string ~ "s",
         "attic", "push", "--jobs", "1",
         "--ignore-upstream-cache-filter", "example-deploy-cache", root,
     ]);
@@ -919,6 +942,94 @@ unittest
     assert(events.length == 1);
     assert(events[0]["command"]["status"].str == "succeeded");
     assert(events[0]["metadata"]["coverage"]["complete"].boolean);
+}
+
+@("test_attic_push_retries_timeout_exit_and_succeeds")
+unittest
+{
+    auto root = "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-root";
+    ulong atticPushes;
+    ProcessResult fakeRunner(string[] command)
+    {
+        if (isCommandInvocation(command, "attic", "push"))
+        {
+            ++atticPushes;
+            return atticPushes == 1
+                ? ProcessResult(124, "", "")
+                : ProcessResult(0, "", "");
+        }
+        if (command.length >= 2 && command[0] == "nix" && command[1] == "path-info"
+            && command.canFind("--json"))
+            return ProcessResult(0,
+                `{"/nix/store/0123456789abcdfghijklmnpqrsvwxyz-root":{"narSize":7}}`, "");
+        if (command.length >= 2 && command[0] == "nix" && command[1] == "path-info"
+            && command.canFind("--recursive"))
+            return ProcessResult(0, root ~ "\n", "");
+        if (command.canFind("--store"))
+            return ProcessResult(0, root ~ "\n", "");
+        return ProcessResult(0, "", "");
+    }
+
+    assert(pushClosure(CachePushRequest(
+        backend: CacheBackend.attic,
+        cache: "example-deploy-cache",
+        storePaths: [root],
+        substituters: ["https://cache.example/example-deploy-cache"],
+    ), &fakeRunner, &fakeRunner) == 0);
+
+    assert(atticPushes == 2);
+}
+
+@("test_attic_push_uses_configured_timeout")
+unittest
+{
+    import std.file : deleteme, readText, remove;
+    import std.json : parseJSON;
+    import std.string : splitLines;
+    import std.algorithm : filter;
+
+    auto eventLog = deleteme ~ ".attic-push-timeout-config.events.jsonl";
+    scope(exit)
+        if (eventLog.exists) eventLog.remove;
+
+    auto root = "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-root";
+    string[][] commands;
+    ProcessResult fakeRunner(string[] command)
+    {
+        commands ~= command;
+        if (command.length >= 2 && command[0] == "nix" && command[1] == "path-info"
+            && command.canFind("--json"))
+            return ProcessResult(0,
+                `{"/nix/store/0123456789abcdfghijklmnpqrsvwxyz-root":{"narSize":7}}`, "");
+        if (command.length >= 2 && command[0] == "nix" && command[1] == "path-info"
+            && command.canFind("--recursive"))
+            return ProcessResult(0, root ~ "\n", "");
+        if (command.canFind("--store"))
+            return ProcessResult(0, root ~ "\n", "");
+        return ProcessResult(0, "", "");
+    }
+
+    assert(pushClosure(CachePushRequest(
+        backend: CacheBackend.attic,
+        cache: "example-deploy-cache",
+        storePaths: [root],
+        substituters: ["https://cache.example/example-deploy-cache"],
+        eventLogPath: eventLog,
+        atticPushTimeoutSeconds: 42,
+    ), &fakeRunner, &fakeRunner) == 0);
+
+    assert(commands[1] == [
+        "timeout", "--kill-after=5s", "42s",
+        "attic", "push", "--jobs", "1",
+        "--ignore-upstream-cache-filter", "example-deploy-cache", root,
+    ]);
+
+    auto events = eventLog.readText.splitLines
+        .filter!(line => line.strip != "")
+        .map!(line => line.parseJSON)
+        .array;
+    assert(events.length == 1);
+    assert(events[0]["metadata"]["atticPushTimeoutSeconds"].integer == 42);
 }
 
 @("test_attic_push_transient_gateway_timeout_stops_after_bounded_retries")
@@ -937,7 +1048,7 @@ unittest
     ulong atticPushes;
     ProcessResult fakeRunner(string[] command)
     {
-        if (command.length >= 2 && command[0] == "attic" && command[1] == "push")
+        if (isCommandInvocation(command, "attic", "push"))
         {
             ++atticPushes;
             return ProcessResult(1, "", "HTTP 504 Gateway Timeout\n<html>nginx</html>");
@@ -984,7 +1095,7 @@ unittest
     ulong atticPushes;
     ProcessResult fakeRunner(string[] command)
     {
-        if (command.length >= 2 && command[0] == "attic" && command[1] == "push")
+        if (isCommandInvocation(command, "attic", "push"))
         {
             ++atticPushes;
             return ProcessResult(1, "", "error: cache does not exist");
@@ -1022,7 +1133,7 @@ unittest
     ulong atticPushes;
     ProcessResult fakeRunner(string[] command)
     {
-        if (command.length >= 2 && command[0] == "attic" && command[1] == "push")
+        if (isCommandInvocation(command, "attic", "push"))
         {
             ++atticPushes;
             return atticPushes == 1
@@ -1059,7 +1170,7 @@ unittest
     ulong atticPushes;
     ProcessResult fakeRunner(string[] command)
     {
-        if (command.length >= 2 && command[0] == "attic" && command[1] == "push")
+        if (isCommandInvocation(command, "attic", "push"))
         {
             ++atticPushes;
             return atticPushes == 1
