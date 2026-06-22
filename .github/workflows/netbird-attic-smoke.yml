@@ -1,0 +1,29 @@
+name: NetBird Attic Smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  metacraft-cache:
+    name: Reach Metacraft Attic Cache Over NetBird
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - name: Setup Nix through NetBird
+        uses: ./.github/setup-nix
+        with:
+          netbird-setup-key: ${{ secrets.NETBIRD_SETUP_KEY }}
+          netbird-cache-probe-url: https://cache.metacraft-labs.com/metacraft-public/nix-cache-info
+          substituters: https://cache.metacraft-labs.com/metacraft-public
+          trusted-public-keys: metacraft-public:UtS6PK+p0uZaJK3i/jD2DQOjTpddhQUQmNQDQih5N4Q=
+
+      - name: Verify Nix can query the Attic cache
+        run: |
+          set -euo pipefail
+          curl -fsS https://cache.metacraft-labs.com/metacraft-public/nix-cache-info
+          nix --extra-experimental-features 'nix-command flakes' store info \
+            --store https://cache.metacraft-labs.com/metacraft-public

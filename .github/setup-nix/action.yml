@@ -54,6 +54,26 @@ inputs:
     required: false
     default: |
       nix-${{ runner.os }}-
+  netbird-setup-key:
+    description: Optional NetBird setup key. When set on a Linux GitHub-hosted runner, the action joins NetBird before configuring Nix substituters.
+    required: false
+    default: ''
+  netbird-management-url:
+    description: NetBird management API URL.
+    required: false
+    default: 'https://api.netbird.io:443'
+  netbird-admin-url:
+    description: NetBird admin UI URL.
+    required: false
+    default: 'https://app.netbird.io:443'
+  netbird-cache-probe-url:
+    description: Optional URL to probe after NetBird connects, usually an Attic nix-cache-info endpoint.
+    required: false
+    default: ''
+  netbird-hostname-prefix:
+    description: Hostname prefix for the transient NetBird peer.
+    required: false
+    default: 'gha'
 
 runs:
   using: 'composite'
@@ -84,6 +104,61 @@ runs:
       if: steps.check-nix.outputs.has_nix != 'true'
       with:
         determinate: false
+
+    - name: Connect NetBird
+      if: ${{ inputs.netbird-setup-key != '' && runner.os == 'Linux' }}
+      shell: bash
+      env:
+        NETBIRD_SETUP_KEY: ${{ inputs.netbird-setup-key }}
+        NETBIRD_MANAGEMENT_URL: ${{ inputs.netbird-management-url }}
+        NETBIRD_ADMIN_URL: ${{ inputs.netbird-admin-url }}
+        NETBIRD_CACHE_PROBE_URL: ${{ inputs.netbird-cache-probe-url }}
+        NETBIRD_HOSTNAME_PREFIX: ${{ inputs.netbird-hostname-prefix }}
+      run: |
+        set -euo pipefail
+
+        echo "::add-mask::$NETBIRD_SETUP_KEY"
+
+        if ! command -v netbird >/dev/null 2>&1; then
+          curl -fsSL https://pkgs.netbird.io/install.sh | sh
+        fi
+
+        sudo netbird service install >/dev/null 2>&1 || true
+        sudo netbird service start >/dev/null 2>&1 || true
+
+        repo_slug="${GITHUB_REPOSITORY//\//-}"
+        hostname="${NETBIRD_HOSTNAME_PREFIX}-${repo_slug}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+        hostname="$(echo "$hostname" | tr -c 'A-Za-z0-9._-' '-')"
+
+        sudo netbird up \
+          --setup-key "$NETBIRD_SETUP_KEY" \
+          --hostname "$hostname" \
+          --management-url "$NETBIRD_MANAGEMENT_URL" \
+          --admin-url "$NETBIRD_ADMIN_URL"
+
+        sudo netbird status || true
+
+        if [[ -n "$NETBIRD_CACHE_PROBE_URL" ]]; then
+          for attempt in $(seq 1 30); do
+            if curl -fsS --connect-timeout 2 --max-time 5 "$NETBIRD_CACHE_PROBE_URL" >/dev/null; then
+              echo "NetBird probe succeeded: $NETBIRD_CACHE_PROBE_URL"
+              exit 0
+            fi
+            echo "Waiting for NetBird route to become usable ($attempt/30)..."
+            sleep 2
+          done
+
+          echo "NetBird probe failed after waiting: $NETBIRD_CACHE_PROBE_URL" >&2
+          curl -v --connect-timeout 5 --max-time 10 "$NETBIRD_CACHE_PROBE_URL" >&2 || true
+          exit 1
+        fi
+
+    - name: Reject unsupported NetBird runner
+      if: ${{ inputs.netbird-setup-key != '' && runner.os != 'Linux' }}
+      shell: bash
+      run: |
+        echo "NetBird setup is currently implemented only for Linux GitHub-hosted runners." >&2
+        exit 1
 
     - name: Configure Nix
       shell: bash
