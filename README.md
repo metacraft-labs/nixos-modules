@@ -32,8 +32,7 @@ jobs:
   ci:
     uses: metacraft-labs/nixos-modules/.github/workflows/reusable-flake-checks-ci-matrix.yml@main
     secrets:
-      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
-      CACHIX_ACTIVATE_TOKEN: ${{ secrets.CACHIX_ACTIVATE_TOKEN }}
+      ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
     with:
       runners: | # json
         {
@@ -55,7 +54,6 @@ jobs:
     uses: metacraft-labs/nixos-modules/.github/workflows/reusable-lint.yml@main
     secrets:
       NIX_GITHUB_TOKEN: ${{ secrets.NIX_GITHUB_TOKEN }}
-      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
 ```
 
 #### [`reusable-update-flake-lock.yml`](.github/workflows/reusable-update-flake-lock.yml)
@@ -67,7 +65,6 @@ jobs:
   update-flake-lock:
     uses: metacraft-labs/nixos-modules/.github/workflows/reusable-update-flake-lock.yml@main
     secrets:
-      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
       CREATE_PR_APP_ID: ${{ secrets.APP_ID }}
       CREATE_PR_APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
       NIX_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -86,7 +83,6 @@ jobs:
   update-packages:
     uses: metacraft-labs/nixos-modules/.github/workflows/reusable-update-flake-packages.yml@main
     secrets:
-      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
       CREATE_PR_APP_ID: ${{ secrets.APP_ID }}
       CREATE_PR_APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
 ```
