@@ -296,13 +296,47 @@ jobs:
 
       - name: Decrypt provider credentials
         if: inputs.agenix_plan_secret_path != ''
+        env:
+          AGENIX_SECRET_PATH: ${{ inputs.agenix_plan_secret_path }}
+          CREDENTIALS_ENV_NAME: ${{ inputs.credentials_env_name }}
         run: |
+          set -euo pipefail
+
+          if [ -z "$CREDENTIALS_ENV_NAME" ]; then
+            echo "::error::credentials_env_name must be set when agenix_plan_secret_path is set."
+            exit 1
+          fi
+
+          token_file="$(mktemp "$RUNNER_TEMP/provider-token.XXXXXX")"
+          trap 'rm -f "$token_file"' EXIT
+
           install -m 600 /dev/null "$RUNNER_TEMP/ci-key"
-          echo "${{ secrets.AGENIX_CI_PRIVATE_KEY }}" > "$RUNNER_TEMP/ci-key"
-          TOKEN="$(nix develop --accept-flake-config --command age -d -i "$RUNNER_TEMP/ci-key" \
-            "${{ inputs.agenix_plan_secret_path }}")"
+          printf '%s\n' "${{ secrets.AGENIX_CI_PRIVATE_KEY }}" > "$RUNNER_TEMP/ci-key"
+          if [ ! -s "$RUNNER_TEMP/ci-key" ]; then
+            echo "::error::AGENIX_CI_PRIVATE_KEY is empty or unavailable."
+            exit 1
+          fi
+
+          nix develop --accept-flake-config --command bash -euo pipefail -c \
+            'age -d -i "$1" "$2" > "$3"' \
+            bash "$RUNNER_TEMP/ci-key" "$AGENIX_SECRET_PATH" "$token_file" >/dev/null
+
+          TOKEN="$(<"$token_file")"
+          if [ -z "$TOKEN" ]; then
+            echo "::error::Decrypted provider credential is empty."
+            exit 1
+          fi
+          if [[ "$TOKEN" == *$'\n'* || "$TOKEN" == *$'\r'* ]]; then
+            echo "::error::Decrypted provider credential must be a single line."
+            exit 1
+          fi
+
           echo "::add-mask::$TOKEN"
-          echo "${{ inputs.credentials_env_name }}=$TOKEN" >> "$GITHUB_ENV"
+          {
+            printf '%s<<__MCL_TERRAFORM_SECRET__\n' "$CREDENTIALS_ENV_NAME"
+            printf '%s\n' "$TOKEN"
+            printf '__MCL_TERRAFORM_SECRET__\n'
+          } >> "$GITHUB_ENV"
 
       - name: Configure AWS credentials for plan
         if: inputs.aws_plan_role_arn != ''
@@ -648,13 +682,47 @@ jobs:
 
       - name: Decrypt provider credentials
         if: inputs.agenix_apply_secret_path != ''
+        env:
+          AGENIX_SECRET_PATH: ${{ inputs.agenix_apply_secret_path }}
+          CREDENTIALS_ENV_NAME: ${{ inputs.credentials_env_name }}
         run: |
+          set -euo pipefail
+
+          if [ -z "$CREDENTIALS_ENV_NAME" ]; then
+            echo "::error::credentials_env_name must be set when agenix_apply_secret_path is set."
+            exit 1
+          fi
+
+          token_file="$(mktemp "$RUNNER_TEMP/provider-token.XXXXXX")"
+          trap 'rm -f "$token_file"' EXIT
+
           install -m 600 /dev/null "$RUNNER_TEMP/ci-key"
-          echo "${{ secrets.AGENIX_CI_PRIVATE_KEY }}" > "$RUNNER_TEMP/ci-key"
-          TOKEN="$(nix develop --accept-flake-config --command age -d -i "$RUNNER_TEMP/ci-key" \
-            "${{ inputs.agenix_apply_secret_path }}")"
+          printf '%s\n' "${{ secrets.AGENIX_CI_PRIVATE_KEY }}" > "$RUNNER_TEMP/ci-key"
+          if [ ! -s "$RUNNER_TEMP/ci-key" ]; then
+            echo "::error::AGENIX_CI_PRIVATE_KEY is empty or unavailable."
+            exit 1
+          fi
+
+          nix develop --accept-flake-config --command bash -euo pipefail -c \
+            'age -d -i "$1" "$2" > "$3"' \
+            bash "$RUNNER_TEMP/ci-key" "$AGENIX_SECRET_PATH" "$token_file" >/dev/null
+
+          TOKEN="$(<"$token_file")"
+          if [ -z "$TOKEN" ]; then
+            echo "::error::Decrypted provider credential is empty."
+            exit 1
+          fi
+          if [[ "$TOKEN" == *$'\n'* || "$TOKEN" == *$'\r'* ]]; then
+            echo "::error::Decrypted provider credential must be a single line."
+            exit 1
+          fi
+
           echo "::add-mask::$TOKEN"
-          echo "${{ inputs.credentials_env_name }}=$TOKEN" >> "$GITHUB_ENV"
+          {
+            printf '%s<<__MCL_TERRAFORM_SECRET__\n' "$CREDENTIALS_ENV_NAME"
+            printf '%s\n' "$TOKEN"
+            printf '__MCL_TERRAFORM_SECRET__\n'
+          } >> "$GITHUB_ENV"
 
       - name: Configure AWS credentials for apply
         if: inputs.aws_apply_role_arn != ''
@@ -790,13 +858,47 @@ jobs:
 
       - name: Decrypt provider credentials
         if: inputs.agenix_plan_secret_path != ''
+        env:
+          AGENIX_SECRET_PATH: ${{ inputs.agenix_plan_secret_path }}
+          CREDENTIALS_ENV_NAME: ${{ inputs.credentials_env_name }}
         run: |
+          set -euo pipefail
+
+          if [ -z "$CREDENTIALS_ENV_NAME" ]; then
+            echo "::error::credentials_env_name must be set when agenix_plan_secret_path is set."
+            exit 1
+          fi
+
+          token_file="$(mktemp "$RUNNER_TEMP/provider-token.XXXXXX")"
+          trap 'rm -f "$token_file"' EXIT
+
           install -m 600 /dev/null "$RUNNER_TEMP/ci-key"
-          echo "${{ secrets.AGENIX_CI_PRIVATE_KEY }}" > "$RUNNER_TEMP/ci-key"
-          TOKEN="$(nix develop --accept-flake-config --command age -d -i "$RUNNER_TEMP/ci-key" \
-            "${{ inputs.agenix_plan_secret_path }}")"
+          printf '%s\n' "${{ secrets.AGENIX_CI_PRIVATE_KEY }}" > "$RUNNER_TEMP/ci-key"
+          if [ ! -s "$RUNNER_TEMP/ci-key" ]; then
+            echo "::error::AGENIX_CI_PRIVATE_KEY is empty or unavailable."
+            exit 1
+          fi
+
+          nix develop --accept-flake-config --command bash -euo pipefail -c \
+            'age -d -i "$1" "$2" > "$3"' \
+            bash "$RUNNER_TEMP/ci-key" "$AGENIX_SECRET_PATH" "$token_file" >/dev/null
+
+          TOKEN="$(<"$token_file")"
+          if [ -z "$TOKEN" ]; then
+            echo "::error::Decrypted provider credential is empty."
+            exit 1
+          fi
+          if [[ "$TOKEN" == *$'\n'* || "$TOKEN" == *$'\r'* ]]; then
+            echo "::error::Decrypted provider credential must be a single line."
+            exit 1
+          fi
+
           echo "::add-mask::$TOKEN"
-          echo "${{ inputs.credentials_env_name }}=$TOKEN" >> "$GITHUB_ENV"
+          {
+            printf '%s<<__MCL_TERRAFORM_SECRET__\n' "$CREDENTIALS_ENV_NAME"
+            printf '%s\n' "$TOKEN"
+            printf '__MCL_TERRAFORM_SECRET__\n'
+          } >> "$GITHUB_ENV"
 
       - name: Configure AWS credentials for drift
         if: inputs.aws_plan_role_arn != '' || inputs.aws_drift_role_arn != ''
