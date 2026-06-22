@@ -19,9 +19,6 @@ on:
         required: false
         type: string
     secrets:
-      CACHIX_AUTH_TOKEN:
-        description: 'Cachix auth token'
-        required: false
       NIX_GITHUB_TOKEN:
         description: GitHub token to add as access-token in nix.conf
         required: false
@@ -47,8 +44,6 @@ jobs:
         uses: metacraft-labs/nixos-modules/.github/setup-nix@main
         with:
           push-to-cache: false
-          cachix-cache: ${{ vars.CACHIX_CACHE }}
-          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
           nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}

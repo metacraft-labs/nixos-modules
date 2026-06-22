@@ -116,9 +116,6 @@ on:
       NIX_GITHUB_TOKEN:
         description: 'GitHub token for Nix flake fetches'
         required: false
-      CACHIX_AUTH_TOKEN:
-        description: 'Cachix auth token for binary cache'
-        required: false
 
 permissions:
   contents: read
@@ -143,8 +140,6 @@ jobs:
         with:
           push-to-cache: false
           nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
-          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          cachix-cache: ${{ vars.CACHIX_CACHE }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
 
@@ -289,8 +284,6 @@ jobs:
         with:
           push-to-cache: false
           nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
-          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          cachix-cache: ${{ vars.CACHIX_CACHE }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
 
@@ -668,8 +661,6 @@ jobs:
         with:
           push-to-cache: false
           nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
-          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          cachix-cache: ${{ vars.CACHIX_CACHE }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
 
@@ -851,8 +842,6 @@ jobs:
         with:
           push-to-cache: false
           nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
-          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          cachix-cache: ${{ vars.CACHIX_CACHE }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
 

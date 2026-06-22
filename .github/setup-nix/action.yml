@@ -3,18 +3,10 @@ description: Installs Nix, configures binary caches, and optionally builds/activ
 
 inputs:
   push-to-cache:
-    description: Whether to push to the configured Cachix cache
+    description: Deprecated compatibility input; ignored. Use explicit Attic cache push steps instead.
     type: boolean
     required: false
     default: false
-  cachix-cache:
-    description: The Cachix cache name to use. Set to 'disabled', 'none', or 'false' to force-disable Cachix.
-    required: false
-    default: ''
-  cachix-auth-token:
-    description: Cachix auth token
-    required: false
-    default: ''
   trusted-public-keys:
     description: Trusted public keys
     required: false
@@ -36,7 +28,7 @@ inputs:
     default: 'gitlab.com'
     required: false
   nix-version:
-    description: Nix version to install
+    description: Deprecated compatibility input; ignored by the Determinate Nix installer.
     default: ''
     required: false
   use-direnv:
@@ -87,25 +79,11 @@ runs:
           echo "Nix is not installed, will install it"
         fi
 
-    - name: Normalize Cachix inputs
-      id: cachix
-      shell: bash
-      env:
-        INPUT_CACHIX_CACHE: ${{ inputs.cachix-cache }}
-      run: |
-        cachix_cache="$INPUT_CACHIX_CACHE"
-        case "$cachix_cache" in
-          "" | disabled | none | false)
-            cachix_cache=""
-            ;;
-        esac
-        printf 'cache=%s\n' "$cachix_cache" >> "$GITHUB_OUTPUT"
-
     - name: Install Nix
-      uses: cachix/install-nix-action@v31
+      uses: DeterminateSystems/nix-installer-action@v22
       if: steps.check-nix.outputs.has_nix != 'true'
       with:
-        install_url: ${{ inputs.nix-version != '' && format('https://releases.nixos.org/nix/nix-{0}/install', inputs.nix-version) || '' }}
+        determinate: false
 
     - name: Configure Nix
       shell: bash
@@ -128,6 +106,7 @@ runs:
           connect-timeout = 5
           narinfo-cache-negative-ttl = 120
           allow-import-from-derivation = true
+          experimental-features = nix-command flakes
 
           substituters = https://cache.nixos.org ${{inputs.substituters}}
           trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= ${{inputs.trusted-public-keys}}
@@ -136,11 +115,6 @@ runs:
 
         touch "$HOME/.config/nix/netrc"
         chmod 0600 "$HOME/.config/nix/netrc"
-        if [[ -n "${{ steps.cachix.outputs.cache }}" && -n "${{ inputs.cachix-auth-token }}" ]]; then
-          cat << EOF >> "$HOME/.config/nix/netrc"
-          machine ${{ steps.cachix.outputs.cache }}.cachix.org password ${{ inputs.cachix-auth-token }}
-        EOF
-        fi
 
     - name: Reset Nix flake fetcher cache
       shell: bash
@@ -148,12 +122,6 @@ runs:
         cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/nix"
         rm -f "$cache_dir"/fetcher-cache-v*.sqlite*
         rm -rf "$cache_dir"/gitv3 "$cache_dir"/tarballs
-
-    - uses: cachix/cachix-action@v15
-      if: ${{ fromJSON(inputs.push-to-cache || 'false') && steps.cachix.outputs.cache != '' && inputs.cachix-auth-token != '' }}
-      with:
-        name: ${{ steps.cachix.outputs.cache }}
-        authToken: ${{ inputs.cachix-auth-token }}
 
     - name: Restore/Save Nix Store GHA Cache
       uses: nix-community/cache-nix-action@v7
