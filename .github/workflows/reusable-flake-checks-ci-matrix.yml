@@ -32,24 +32,19 @@ on:
         default: '["self-hosted", "nixos", "x86-64-v2", "bare-metal"]'
         required: false
         type: string
-      run-cachix-deploy:
-        description: 'Deploy to cachix'
-        default: false
-        required: false
-        type: 'boolean'
       push-deployment-caches:
         description: 'Push deployment target closures to configured deployment cache backends'
         default: false
         required: false
         type: 'boolean'
       deployment-cache-push-backends:
-        description: 'Comma-separated cache push backends for deployment closures: cachix, attic, none'
-        default: 'cachix'
+        description: 'Comma-separated cache push backends for deployment closures: attic, none'
+        default: 'attic'
         required: false
         type: string
       deployment-cache-required-backends:
         description: 'Comma-separated attempted cache push backends that must succeed'
-        default: 'cachix'
+        default: 'attic'
         required: false
         type: string
       deployment-cache-optional-timeout-seconds:
@@ -58,12 +53,6 @@ on:
         required: false
         type: string
     secrets:
-      CACHIX_AUTH_TOKEN:
-        description: 'Cachix auth token'
-        required: false
-      CACHIX_ACTIVATE_TOKEN:
-        description: 'Cachix activate token'
-        required: false
       ATTIC_TOKEN:
         description: 'Attic push token for optional deployment closure mirroring'
         required: false
@@ -151,8 +140,6 @@ jobs:
         uses: metacraft-labs/nixos-modules/.github/setup-nix@main
         with: &setup-nix-no-push
           push-to-cache: false
-          cachix-cache: ${{ vars.CACHIX_CACHE }}
-          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
           nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
@@ -164,8 +151,6 @@ jobs:
       - name: Generate Shard Matrix
         id: generate-matrix
         env:
-          CACHIX_CACHE: ${{ vars.CACHIX_CACHE != 'disabled' && vars.CACHIX_CACHE || '' }}
-          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
           EXTRA_CACHE_URLS: ${{ vars.SUBSTITUTERS }}
           SYSTEM_TO_GITHUB_RUNNER_LABELS: ${{ inputs.runners }}
         run: ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} shard-matrix
@@ -190,7 +175,13 @@ jobs:
     steps:
       - name: Setup Nix
         uses: metacraft-labs/nixos-modules/.github/setup-nix@main
-        with: *setup-nix-no-push
+        with:
+          push-to-cache: false
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+          nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
+          nix-gitlab-token: ${{ secrets.NIX_GITLAB_TOKEN }}
+          nix-gitlab-domain: ${{ vars.NIX_GITLAB_DOMAIN }}
 
       - uses: actions/checkout@v6.0.2
 
@@ -198,8 +189,6 @@ jobs:
         id: generate-matrix
         shell: bash
         env:
-          CACHIX_CACHE: ${{ vars.CACHIX_CACHE != 'disabled' && vars.CACHIX_CACHE || '' }}
-          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
           EXTRA_CACHE_URLS: ${{ vars.SUBSTITUTERS }}
           SYSTEM_TO_GITHUB_RUNNER_LABELS: ${{ inputs.runners }}
         run: |
@@ -233,7 +222,13 @@ jobs:
     steps:
       - name: Setup Nix
         uses: metacraft-labs/nixos-modules/.github/setup-nix@main
-        with: *setup-nix-no-push
+        with:
+          push-to-cache: false
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+          nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
+          nix-gitlab-token: ${{ secrets.NIX_GITLAB_TOKEN }}
+          nix-gitlab-domain: ${{ vars.NIX_GITLAB_DOMAIN }}
 
       - name: Download CI matrix shards
         uses: actions/download-artifact@v8
@@ -246,8 +241,6 @@ jobs:
         env:
           EVAL_MATRIX: ${{ needs.shard-matrix.outputs.eval_matrix }}
           MCL_FLAKE_CMD: ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }}
-          CACHIX_CACHE: ${{ vars.CACHIX_CACHE != 'disabled' && vars.CACHIX_CACHE || '' }}
-          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
           EXTRA_CACHE_URLS: ${{ vars.SUBSTITUTERS }}
           SYSTEM_TO_GITHUB_RUNNER_LABELS: ${{ inputs.runners }}
         run: |
@@ -301,8 +294,6 @@ jobs:
       - name: Generate CI matrix comment
         env:
           IS_INITIAL: 'true'
-          CACHIX_CACHE: ${{ vars.CACHIX_CACHE != 'disabled' && vars.CACHIX_CACHE || '' }}
-          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
           EXTRA_CACHE_URLS: ${{ vars.SUBSTITUTERS }}
           PRECALC_MATRIX: ${{ steps.merge.outputs.full_matrix }}
         run: ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} print-table
@@ -353,9 +344,7 @@ jobs:
         if: ${{ !matrix.noop }}
         uses: metacraft-labs/nixos-modules/.github/setup-nix@main
         with:
-          push-to-cache: true
-          cachix-cache: ${{ vars.CACHIX_CACHE }}
-          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          push-to-cache: false
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
           nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
@@ -369,14 +358,14 @@ jobs:
             '.#${{ matrix.attrPath }}'
 
       # Cache push runs only when the caller requests deployment cache
-      # publication, or when it requests legacy Cachix Deploy activation.
+      # publication.
       # On PR check runs the build itself already validates that the closure
       # is buildable; redoing the push + per-path substitute probe on every
       # matrix job would multiply runtime by 10x — a single NixOS system
       # closure has thousands of paths and the probe's nix-copy fallback
       # has timed out 6h+ jobs in the past (infra#965 first attempt).
       - name: Push deployment closure caches ${{ matrix.name }}
-        if: ${{ (inputs.push-deployment-caches || inputs.run-cachix-deploy) && !matrix.noop && matrix.deploymentTarget }}
+        if: ${{ inputs.push-deployment-caches && !matrix.noop && matrix.deploymentTarget }}
         shell: bash
         env:
           DEPLOY_TARGET: ${{ matrix.name }}
@@ -386,8 +375,6 @@ jobs:
           DEPLOYMENT_CACHE_PUSH_BACKENDS: ${{ inputs.deployment-cache-push-backends }}
           DEPLOYMENT_CACHE_REQUIRED_BACKENDS: ${{ inputs.deployment-cache-required-backends }}
           DEPLOYMENT_CACHE_OPTIONAL_TIMEOUT_SECONDS: ${{ inputs.deployment-cache-optional-timeout-seconds }}
-          CACHIX_CACHE: ${{ vars.CACHIX_CACHE != 'disabled' && vars.CACHIX_CACHE || '' }}
-          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
           ATTIC_CACHE: ${{ vars.ATTIC_CACHE }}
           ATTIC_SUBSTITUTER: ${{ vars.ATTIC_SUBSTITUTER }}
           ATTIC_ENDPOINT: ${{ vars.ATTIC_ENDPOINT }}
@@ -529,13 +516,6 @@ jobs:
             fi
 
             case "$backend" in
-              cachix)
-                if ! require_backend_vars "$backend" "$required" CACHIX_CACHE CACHIX_AUTH_TOKEN; then
-                  continue
-                fi
-                cache="$CACHIX_CACHE"
-                substituter="https://${CACHIX_CACHE}.cachix.org"
-                ;;
               attic)
                 if ! require_backend_vars "$backend" "$required" ATTIC_TOKEN ATTIC_CACHE ATTIC_SUBSTITUTER ATTIC_TRUSTED_PUBLIC_KEY; then
                   continue
@@ -550,9 +530,10 @@ jobs:
                   continue
                 fi
 
-                attic_endpoint="$ATTIC_ENDPOINT"
+                attic_endpoint="${ATTIC_ENDPOINT:-}"
                 if [[ -z "$attic_endpoint" ]]; then
-                  attic_endpoint="${ATTIC_SUBSTITUTER%/$ATTIC_CACHE}"
+                  attic_cache_suffix="/$ATTIC_CACHE"
+                  attic_endpoint="${ATTIC_SUBSTITUTER%"$attic_cache_suffix"}"
                 fi
                 attic_endpoint="${attic_endpoint%/}/"
                 if ! run_backend_command "$backend" "$required" "attic login" \
@@ -613,7 +594,7 @@ jobs:
               --target "$DEPLOY_TARGET" \
               --system "$DEPLOY_SYSTEM" \
               --kind "$DEPLOY_KIND" \
-              --transport cachix-agent \
+              --transport attic-ci \
               --event-log .result/deployment-cache-push-events.jsonl \
               "${substituter_args[@]}" \
               "${trusted_args[@]}" \
@@ -624,7 +605,7 @@ jobs:
           done
 
       - uses: actions/upload-artifact@v7
-        if: ${{ always() && (inputs.push-deployment-caches || inputs.run-cachix-deploy) && !matrix.noop && matrix.deploymentTarget }}
+        if: ${{ always() && inputs.push-deployment-caches && !matrix.noop && matrix.deploymentTarget }}
         continue-on-error: true
         with:
           name: deployment-cache-push-${{ github.run_id }}-${{ strategy.job-index }}
@@ -644,13 +625,18 @@ jobs:
     steps:
       - name: Setup Nix
         uses: metacraft-labs/nixos-modules/.github/setup-nix@main
-        with: *setup-nix-no-push
+        with:
+          push-to-cache: false
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+          nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
+          nix-gitlab-token: ${{ secrets.NIX_GITLAB_TOKEN }}
+          nix-gitlab-domain: ${{ vars.NIX_GITLAB_DOMAIN }}
 
       - name: Print CI Matrix
         env:
           IS_INITIAL: 'false'
-          CACHIX_CACHE: ${{ vars.CACHIX_CACHE != 'disabled' && vars.CACHIX_CACHE || '' }}
-          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          EXTRA_CACHE_URLS: ${{ vars.SUBSTITUTERS }}
           PRECALC_MATRIX: ${{
             needs.merge-matrices.result == 'success' &&
             needs.merge-matrices.outputs.full_matrix ||
@@ -675,57 +661,3 @@ jobs:
             contains(needs.*.result, 'failure') ||
             contains(needs.*.result, 'cancelled')
           )
-
-      - uses: actions/checkout@v6.0.2
-        if: inputs.run-cachix-deploy
-
-      - name: Deploy
-        if: inputs.run-cachix-deploy
-        env:
-          CACHIX_CACHE: ${{ vars.CACHIX_CACHE != 'disabled' && vars.CACHIX_CACHE || '' }}
-          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          CACHIX_ACTIVATE_TOKEN: '${{ secrets.CACHIX_ACTIVATE_TOKEN }}'
-          SYSTEM_TO_GITHUB_RUNNER_LABELS: ${{ inputs.runners }}
-          MCL_DEPLOY_EVENT_LOG: .result/deployment-events.jsonl
-          PRECALC_MATRIX: ${{
-            needs.merge-matrices.result == 'success' &&
-            needs.merge-matrices.outputs.full_matrix ||
-            needs.shard-matrix.outputs.full_matrix
-            }}
-        run: |
-          mkdir -p .result
-          ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} deploy-spec
-
-      - name: Generate Deployment Summary
-        if: always() && inputs.run-cachix-deploy
-        run: |
-          if [[ -f .result/deployment-events.jsonl ]]; then
-            # `--` separates `nix run` flags from mcl's flags. Without it,
-            # `nix run` greedily parses `--output` as one of its own and
-            # exits with "unrecognised flag '--output'".
-            ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} -- deploy-status summarize \
-              .result/deployment-events.jsonl \
-              --output .result/deployment-summary.md \
-              --json-output .result/deployment-summary.json
-            cat .result/deployment-summary.md >> "$GITHUB_STEP_SUMMARY"
-          else
-            {
-              echo '# Deployment Summary'
-              echo
-              echo 'No deployment events were written.'
-            } | tee .result/deployment-summary.md >> "$GITHUB_STEP_SUMMARY"
-            printf '{"finalState":"unknown","targetCount":0,"failureCount":0,"targets":[]}\n' \
-              > .result/deployment-summary.json
-          fi
-
-      - uses: actions/upload-artifact@v7
-        if: always() && inputs.run-cachix-deploy
-        continue-on-error: true
-        with:
-          name: deployment-events-${{ github.run_id }}
-          path: |
-            .result/deployment-events.jsonl
-            .result/deployment-summary.md
-            .result/deployment-summary.json
-          if-no-files-found: warn
-          retention-days: 1

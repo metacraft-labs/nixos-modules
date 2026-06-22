@@ -13,7 +13,6 @@ jobs:
     uses: ./.github/workflows/reusable-update-flake-lock.yml
     secrets:
       NIX_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
       CREATE_PR_APP_ID: ${{ secrets.CREATE_PR_APP_ID }}
       CREATE_PR_APP_PRIVATE_KEY: ${{ secrets.CREATE_PR_APP_PRIVATE_KEY }}
       GIT_GPG_SIGNING_SECRET_KEY: ${{ secrets.GIT_GPG_SIGNING_SECRET_KEY }}
