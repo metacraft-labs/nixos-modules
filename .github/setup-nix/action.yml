@@ -104,6 +104,8 @@ runs:
       if: steps.check-nix.outputs.has_nix != 'true'
       with:
         determinate: false
+        extra-conf: |
+          auto-optimise-store = false
 
     - name: Connect NetBird
       if: ${{ inputs.netbird-setup-key != '' && runner.os == 'Linux' }}
@@ -176,6 +178,7 @@ runs:
             ''
           }}
 
+          auto-optimise-store = false
           fallback = true
           download-attempts = 2
           connect-timeout = 5
@@ -187,6 +190,10 @@ runs:
           trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= ${{inputs.trusted-public-keys}}
           netrc-file = $HOME/.config/nix/netrc
         EOF
+
+        if [ -f /etc/nix/nix.conf ]; then
+          echo "auto-optimise-store = false" | sudo tee -a /etc/nix/nix.conf
+        fi
 
         touch "$HOME/.config/nix/netrc"
         chmod 0600 "$HOME/.config/nix/netrc"
