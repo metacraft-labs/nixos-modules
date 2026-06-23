@@ -2,8 +2,8 @@
 
 * Document
   :PROPERTIES:
-  :next_steps: Verify M1/M2 deliverables in consuming repos; begin integration testing
-  :last_updated: 2026-03-13
+  :next_steps: Roll out reusable drift backend fix to consuming repos; verify scheduled drift in Agent Harbor, Metacraft, and Blocksense
+  :last_updated: 2026-06-23
   :current_milestone: M2 (done)
   :END:
 
@@ -21,6 +21,12 @@
   Rather than duplicating CI workflows, policy scripts, and dev shell additions
   in each repo, the shared infrastructure lives here in nixos-modules and is
   consumed by downstream repos.
+
+  2026-06-23 integration note: Agent Harbor now consumes the reusable workflow
+  for AWS and Cloudflare Terraform roots backed by AWS S3 state. Its PR plan
+  and merge-to-live apply path have been proven in CI. Scheduled drift checks
+  still need a production run after the reusable drift job resolves backend
+  config files the same way as plan/apply jobs.
 
   Consuming repos and their dependencies on this status doc's milestones:
   - [[https://github.com/nickolay-kondratyev/blocksense-infra][blocksense/infra]] — Cloudflare resource management ([[https://github.com/nickolay-kondratyev/blocksense-infra/blob/main/docs/Cloudflare-Agent-Harbor.status.org][status]])
@@ -348,7 +354,7 @@
 
     - test_name: verify_drift_detection_schedule
       description: Scheduled drift detection job runs on main, detects intentional drift, and alerts
-      status: pending
+      status: pending after 2026-06-23 backend resolver fix lands in a consuming repo
 
     - test_name: verify_terranix_mode
       description: When Terranix flag is set, terranix runs before tofu init to generate .tf.json files
