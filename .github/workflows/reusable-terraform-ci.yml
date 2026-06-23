@@ -311,7 +311,7 @@ jobs:
           fi
 
           nix develop --accept-flake-config --command bash -euo pipefail -c \
-            'age -d -i "$1" "$2" > "$3"' \
+            "age -d -i \"\$1\" \"\$2\" > \"\$3\"" \
             bash "$RUNNER_TEMP/ci-key" "$AGENIX_SECRET_PATH" "$token_file" >/dev/null
 
           TOKEN="$(<"$token_file")"
@@ -695,7 +695,7 @@ jobs:
           fi
 
           nix develop --accept-flake-config --command bash -euo pipefail -c \
-            'age -d -i "$1" "$2" > "$3"' \
+            "age -d -i \"\$1\" \"\$2\" > \"\$3\"" \
             bash "$RUNNER_TEMP/ci-key" "$AGENIX_SECRET_PATH" "$token_file" >/dev/null
 
           TOKEN="$(<"$token_file")"
@@ -832,6 +832,7 @@ jobs:
     if: >-
       inputs.mode == 'drift'
       && (inputs.credentials_env_name != '' || inputs.agenix_plan_secret_path != '' || inputs.aws_plan_role_arn != '' || inputs.aws_drift_role_arn != '')
+    needs: offline-checks
     runs-on: ${{ fromJSON(inputs.runner) }}
     steps:
       - name: Checkout
@@ -869,7 +870,7 @@ jobs:
           fi
 
           nix develop --accept-flake-config --command bash -euo pipefail -c \
-            'age -d -i "$1" "$2" > "$3"' \
+            "age -d -i \"\$1\" \"\$2\" > \"\$3\"" \
             bash "$RUNNER_TEMP/ci-key" "$AGENIX_SECRET_PATH" "$token_file" >/dev/null
 
           TOKEN="$(<"$token_file")"
@@ -899,18 +900,40 @@ jobs:
           role-duration-seconds: ${{ inputs.aws_role_duration_seconds }}
 
       - name: Init
+        env:
+          BACKEND_CONFIG_FILE: ${{ inputs.backend_config_file }}
+          WORKING_DIRECTORY: ${{ inputs.working_directory }}
         run: |
-          cd ${{ inputs.working_directory }}
+          set -euo pipefail
+
+          backend_config_files="${BACKEND_CONFIG_FILE:-}"
+
+          cd "$WORKING_DIRECTORY"
+
+          backend_args=()
+          while IFS= read -r backend_config_file; do
+            [ -n "$backend_config_file" ] || continue
+            if [[ "$backend_config_file" = /* ]]; then
+              backend_path="$backend_config_file"
+            else
+              backend_path="$GITHUB_WORKSPACE/$backend_config_file"
+            fi
+            if [ ! -f "$backend_path" ]; then
+              echo "::error::Backend config file does not exist: $backend_path"
+              exit 1
+            fi
+            backend_args+=("-backend-config=$(realpath --relative-to="$PWD" "$backend_path")")
+          done < <(printf '%s\n' "$backend_config_files" | tr ',' '\n')
+
           tofu_bin="$(nix develop --accept-flake-config --command bash -euo pipefail -c 'command -v tofu' | tail -n 1)"
-          env -u AWS_PROFILE -u AWS_DEFAULT_PROFILE "$tofu_bin" init \
-            ${{ inputs.backend_config_file != '' && format('-backend-config=../{0}', inputs.backend_config_file) || '' }}
+          env -u AWS_PROFILE -u AWS_DEFAULT_PROFILE "$tofu_bin" init -input=false "${backend_args[@]}"
 
       - name: Detect drift
         id: drift
         run: |
           cd ${{ inputs.working_directory }}
           tofu_bin="$(nix develop --accept-flake-config --command bash -euo pipefail -c 'command -v tofu' | tail -n 1)"
-          env -u AWS_PROFILE -u AWS_DEFAULT_PROFILE "$tofu_bin" plan -detailed-exitcode 2>&1 | tee /tmp/drift-plan.txt || {
+          env -u AWS_PROFILE -u AWS_DEFAULT_PROFILE "$tofu_bin" plan -input=false -no-color -detailed-exitcode 2>&1 | tee /tmp/drift-plan.txt || {
             exit_code=$?
             if [ "$exit_code" -eq 2 ]; then
               echo "drift_detected=true" >> "$GITHUB_OUTPUT"
