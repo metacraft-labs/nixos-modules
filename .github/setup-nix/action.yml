@@ -181,7 +181,7 @@ runs:
           connect-timeout = 5
           narinfo-cache-negative-ttl = 120
           allow-import-from-derivation = true
-          experimental-features = nix-command flakes
+          experimental-features = nix-command flakes pipe-operators
 
           substituters = https://cache.nixos.org ${{inputs.substituters}}
           trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= ${{inputs.trusted-public-keys}}
@@ -251,7 +251,7 @@ runs:
       shell: bash
       run: |
         echo "::group::Building Nix DevShell"
-        nix --extra-experimental-features "nix-command flakes" \
+        nix --extra-experimental-features "nix-command flakes pipe-operators" \
           print-dev-env "${{ steps.determine-devshell.outputs.flake-ref }}" >/dev/null
         echo "::endgroup::"
 
