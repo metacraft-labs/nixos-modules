@@ -15,6 +15,18 @@ inputs:
     description: Substituters
     required: false
     default: ''
+  attic-token:
+    description: Attic token used to upload newly built store paths.
+    required: false
+    default: ''
+  attic-cache:
+    description: Attic cache name to upload newly built store paths to.
+    required: false
+    default: ''
+  attic-endpoint:
+    description: Attic server endpoint.
+    required: false
+    default: 'https://cache.metacraft-labs.com/'
   nix-github-token:
     description: GitHub token to add as access-token in nix.conf
     default: ''
@@ -190,6 +202,27 @@ runs:
 
         touch "$HOME/.config/nix/netrc"
         chmod 0600 "$HOME/.config/nix/netrc"
+
+    - name: Start Attic watch-store
+      if: ${{ inputs.attic-token != '' && inputs.attic-cache != '' }}
+      shell: bash
+      env:
+        ATTIC_TOKEN: ${{ inputs.attic-token }}
+        ATTIC_CACHE: ${{ inputs.attic-cache }}
+        ATTIC_ENDPOINT: ${{ inputs.attic-endpoint }}
+      run: |
+        set -euo pipefail
+        echo "::add-mask::$ATTIC_TOKEN"
+
+        attic=(nix shell --accept-flake-config nixpkgs#attic-client -c attic)
+        "${attic[@]}" login --set-default ci "$ATTIC_ENDPOINT" "$ATTIC_TOKEN"
+
+        log="${RUNNER_TEMP:-/tmp}/attic-watch-store.log"
+        nohup "${attic[@]}" watch-store \
+          --jobs 1 \
+          "$ATTIC_CACHE" >"$log" 2>&1 &
+        echo "$!" > "${RUNNER_TEMP:-/tmp}/attic-watch-store.pid"
+        echo "Attic watch-store started for $ATTIC_CACHE (log: $log)"
 
     - name: Reset Nix flake fetcher cache
       shell: bash
