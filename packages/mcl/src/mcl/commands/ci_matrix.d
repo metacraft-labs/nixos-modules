@@ -1268,7 +1268,7 @@ bool isCached(in Package pkg, string binaryCacheHttpEndpoint, in string[string] 
 {
     import std.algorithm : canFind;
     import std.string : lineSplitter;
-    import std.net.curl : HTTP, httpGet = get, HTTPStatusException;
+    import std.net.curl : CurlException, HTTP, httpGet = get, HTTPStatusException;
     import core.time : dur;
 
     auto http = HTTP();
@@ -1304,6 +1304,10 @@ bool isCached(in Package pkg, string binaryCacheHttpEndpoint, in string[string] 
         else
             throw e;
     }
+    catch (CurlException)
+    {
+        return false;
+    }
 }
 
 @("isCached")
@@ -1325,6 +1329,11 @@ unittest
     testPackage.output ~= "non-existant";
     assert(!testPackage.isCached(
         binaryCacheHttpEndpoint: nixosCacheEndpoint,
+        httpHeaders: string[string].init,
+    ));
+
+    assert(!testPackage.isCached(
+        binaryCacheHttpEndpoint: "http://127.0.0.1:1",
         httpHeaders: string[string].init,
     ));
 }
