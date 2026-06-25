@@ -60,10 +60,10 @@
               diff -u migrated.once fixture/flake.nix
               attic-migrate-flake --check fixture
 
-              grep -q 'https://cache.metacraft-labs.com/metacraft-public' fixture/flake.nix
-              grep -q 'https://cache.metacraft-labs.com/metacraft-codetracer' fixture/flake.nix
-              grep -q 'metacraft-public:UtS6PK+p0uZaJK3i/jD2DQOjTpddhQUQmNQDQih5N4Q=' fixture/flake.nix
-              grep -q 'metacraft-codetracer:9OV9wCDX560bt5/MrD4dlqnPpCitAEjpoqhNfQpWY3U=' fixture/flake.nix
+              grep -q 'https://cache.metacraft-labs.com/metacraft-private-infrastructure' fixture/flake.nix
+              grep -q 'https://cache.metacraft-labs.com/metacraft-private-infrastructure' fixture/flake.nix
+              grep -q 'metacraft-private-infrastructure:TWjFAlGXK9Mky5VG3PBln2MqYz4XPw3MTHHVPYZiAhE=' fixture/flake.nix
+              grep -q 'metacraft-private-infrastructure:TWjFAlGXK9Mky5VG3PBln2MqYz4XPw3MTHHVPYZiAhE=' fixture/flake.nix
               ! grep -q 'metacraft-private-infrastructure:' fixture/flake.nix
               grep -q 'knownCachixOutsideNixConfig = "https://mcl-public-cache.cachix.org"' fixture/flake.nix
               grep -q 'unknownCachixOutsideNixConfig = "https://surprise.cachix.org"' fixture/flake.nix
@@ -100,12 +100,12 @@
 
               required_mappings = {
                   "nix-blockchain-development.cachix.org": (
-                      "metacraft-public",
-                      "metacraft-public:UtS6PK+p0uZaJK3i/jD2DQOjTpddhQUQmNQDQih5N4Q=",
+                      "metacraft-private-infrastructure",
+                      "metacraft-private-infrastructure:TWjFAlGXK9Mky5VG3PBln2MqYz4XPw3MTHHVPYZiAhE=",
                   ),
                   "blocksense-infra.cachix.org": (
                       "blocksense-public",
-                      "blocksense-public:OOgTc0ye1FONCiVHMrbpScc/HP+lX3uoU0EfwzX6ypE=",
+                      "metacraft-private-infrastructure:TWjFAlGXK9Mky5VG3PBln2MqYz4XPw3MTHHVPYZiAhE=",
                   ),
               }
               caches_by_host = {cache["host"]: cache for cache in caches}
@@ -271,7 +271,7 @@
                       "FAKE_ATTIC_LOG": str(fake_attic_log),
                       "FAKE_NIX_LOG": str(fake_nix_log),
                       "INPUT_ENDPOINT": "https://cache.metacraft-labs.test",
-                      "INPUT_CACHE": "metacraft-public",
+                      "INPUT_CACHE": "metacraft-private-infrastructure",
                       "INPUT_TOKEN": "",
                       "INPUT_FLAKE": ".",
                       "INPUT_ATTRIBUTES": "packages.x86_64-linux.foo, checks.x86_64-linux.bar\ngithub:metacraft/example#prebuilt packages.x86_64-linux.foo",
@@ -298,10 +298,10 @@
                   attic_log = fake_attic_log.read_text().splitlines()
                   assert attic_log[0] == "login --set-default attic-push-flake-outputs https://cache.metacraft-labs.test test-token", attic_log
                   assert attic_log[1:] == [
-                      "push --jobs 2 metacraft-public /nix/store/bar",
-                      "push --jobs 2 metacraft-public /nix/store/prebuilt",
-                      "push --jobs 2 metacraft-public /nix/store/foo-one",
-                      "push --jobs 2 metacraft-public /nix/store/foo-two",
+                      "push --jobs 2 metacraft-private-infrastructure /nix/store/bar",
+                      "push --jobs 2 metacraft-private-infrastructure /nix/store/prebuilt",
+                      "push --jobs 2 metacraft-private-infrastructure /nix/store/foo-one",
+                      "push --jobs 2 metacraft-private-infrastructure /nix/store/foo-two",
                   ], attic_log
 
                   nix_log = fake_nix_log.read_text()
