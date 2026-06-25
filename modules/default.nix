@@ -17,6 +17,7 @@
     ./mcl-disko
     ./pharos
     ./commands.nix
+    ./attic-cache-host
     ./virtualisation/desktop-vms.nix
     ./nix-topology
   ];
