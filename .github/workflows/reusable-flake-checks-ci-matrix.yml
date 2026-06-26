@@ -146,6 +146,20 @@ jobs:
           nix-gitlab-token: ${{ secrets.NIX_GITLAB_TOKEN }}
           nix-gitlab-domain: ${{ vars.NIX_GITLAB_DOMAIN }}
 
+      - name: Authenticate nix to the private Attic cache
+        shell: bash
+        env:
+          ATTIC_SUBSTITUTER: ${{ vars.ATTIC_SUBSTITUTER }}
+          ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
+        run: |
+          [ -n "$ATTIC_SUBSTITUTER" ] && [ -n "$ATTIC_TOKEN" ] || exit 0
+          h="${ATTIC_SUBSTITUTER#http://}"; h="${h#https://}"; h="${h%%/*}"
+          mkdir -p "$HOME/.config/nix"
+          touch "$HOME/.config/nix/netrc"
+          chmod 0600 "$HOME/.config/nix/netrc"
+          grep -q "^machine $h " "$HOME/.config/nix/netrc" 2>/dev/null || \
+            printf 'machine %s password %s\n' "$h" "$ATTIC_TOKEN" >> "$HOME/.config/nix/netrc"
+
       - uses: actions/checkout@v6.0.2
 
       - name: Generate Shard Matrix
@@ -153,6 +167,10 @@ jobs:
         env:
           EXTRA_CACHE_URLS: ${{ vars.SUBSTITUTERS }}
           SYSTEM_TO_GITHUB_RUNNER_LABELS: ${{ inputs.runners }}
+          # Authenticate mcl's cache-status (narinfo) probe to the private
+          # Attic cache; scoped to the Attic host inside mcl.
+          ATTIC_SUBSTITUTER: ${{ vars.ATTIC_SUBSTITUTER }}
+          ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
         run: ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} shard-matrix
 
       - name: Post CI matrix comment
@@ -183,6 +201,20 @@ jobs:
           nix-gitlab-token: ${{ secrets.NIX_GITLAB_TOKEN }}
           nix-gitlab-domain: ${{ vars.NIX_GITLAB_DOMAIN }}
 
+      - name: Authenticate nix to the private Attic cache
+        shell: bash
+        env:
+          ATTIC_SUBSTITUTER: ${{ vars.ATTIC_SUBSTITUTER }}
+          ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
+        run: |
+          [ -n "$ATTIC_SUBSTITUTER" ] && [ -n "$ATTIC_TOKEN" ] || exit 0
+          h="${ATTIC_SUBSTITUTER#http://}"; h="${h#https://}"; h="${h%%/*}"
+          mkdir -p "$HOME/.config/nix"
+          touch "$HOME/.config/nix/netrc"
+          chmod 0600 "$HOME/.config/nix/netrc"
+          grep -q "^machine $h " "$HOME/.config/nix/netrc" 2>/dev/null || \
+            printf 'machine %s password %s\n' "$h" "$ATTIC_TOKEN" >> "$HOME/.config/nix/netrc"
+
       - uses: actions/checkout@v6.0.2
 
       - name: Generate CI Matrix
@@ -191,6 +223,10 @@ jobs:
         env:
           EXTRA_CACHE_URLS: ${{ vars.SUBSTITUTERS }}
           SYSTEM_TO_GITHUB_RUNNER_LABELS: ${{ inputs.runners }}
+          # Authenticate mcl's cache-status (narinfo) probe to the private
+          # Attic cache; scoped to the Attic host inside mcl.
+          ATTIC_SUBSTITUTER: ${{ vars.ATTIC_SUBSTITUTER }}
+          ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
         run: |
           ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} -- ci-matrix \
             --flake-attribute-path "${{ matrix.flakeAttrPath }}" \
@@ -295,6 +331,8 @@ jobs:
         env:
           IS_INITIAL: 'true'
           EXTRA_CACHE_URLS: ${{ vars.SUBSTITUTERS }}
+          ATTIC_SUBSTITUTER: ${{ vars.ATTIC_SUBSTITUTER }}
+          ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
           PRECALC_MATRIX: ${{ steps.merge.outputs.full_matrix }}
         run: ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} print-table
 
@@ -350,6 +388,20 @@ jobs:
           nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
           nix-gitlab-token: ${{ secrets.NIX_GITLAB_TOKEN }}
           nix-gitlab-domain: ${{ vars.NIX_GITLAB_DOMAIN }}
+
+      - name: Authenticate nix to the private Attic cache
+        shell: bash
+        env:
+          ATTIC_SUBSTITUTER: ${{ vars.ATTIC_SUBSTITUTER }}
+          ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
+        run: |
+          [ -n "$ATTIC_SUBSTITUTER" ] && [ -n "$ATTIC_TOKEN" ] || exit 0
+          h="${ATTIC_SUBSTITUTER#http://}"; h="${h#https://}"; h="${h%%/*}"
+          mkdir -p "$HOME/.config/nix"
+          touch "$HOME/.config/nix/netrc"
+          chmod 0600 "$HOME/.config/nix/netrc"
+          grep -q "^machine $h " "$HOME/.config/nix/netrc" 2>/dev/null || \
+            printf 'machine %s password %s\n' "$h" "$ATTIC_TOKEN" >> "$HOME/.config/nix/netrc"
 
       - name: Build ${{ matrix.name }}
         if: ${{ !matrix.noop }}
@@ -637,6 +689,8 @@ jobs:
         env:
           IS_INITIAL: 'false'
           EXTRA_CACHE_URLS: ${{ vars.SUBSTITUTERS }}
+          ATTIC_SUBSTITUTER: ${{ vars.ATTIC_SUBSTITUTER }}
+          ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
           PRECALC_MATRIX: ${{
             needs.merge-matrices.result == 'success' &&
             needs.merge-matrices.outputs.full_matrix ||
