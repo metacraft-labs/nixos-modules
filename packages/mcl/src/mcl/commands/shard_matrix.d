@@ -46,6 +46,8 @@ export int shard_matrix(ShardMatrixArgs args)
             cachixCache: args.cachixCache,
             extraCachixCaches: args.extraCachixCaches,
             extraCacheUrls: args.extraCacheUrls,
+            atticSubstituter: args.atticSubstituter,
+            atticAuthToken: args.atticAuthToken,
             cachixAuthToken: args.cachixAuthToken,
             precalcMatrix: null,
             nixSystemToGHRunner: args.nixSystemToGHRunner,

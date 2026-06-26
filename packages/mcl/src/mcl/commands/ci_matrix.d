@@ -3,7 +3,7 @@ module mcl.commands.ci_matrix;
 import std.stdio : writeln, stderr, stdout;
 import std.traits : EnumMembers;
 import std.string : indexOf, splitLines, strip;
-import std.algorithm : map, filter, reduce, chunkBy, find, any, sort, startsWith, each, canFind, fold;
+import std.algorithm : map, filter, reduce, chunkBy, find, any, sort, startsWith, endsWith, each, canFind, fold;
 import std.file : write, readText, dirEntries, SpanMode, append;
 import std.range : array, enumerate, empty, front, indexed, iota, join, chain, split;
 import std.exception : ifThrown;
@@ -449,11 +449,37 @@ mixin template CiMatrixBaseArgs()
             .to!(string[]);
     }
 
-    string[string] cacheStatusAuthHeaders() const
+    @(NamedArgument(["attic-substituter"])
+        .Placeholder("url")
+        .EnvFallback("ATTIC_SUBSTITUTER")
+    )
+    string atticSubstituter;
+
+    @(NamedArgument(["attic-auth-token"])
+        .Placeholder("token")
+        .EnvFallback("ATTIC_TOKEN")
+    )
+    string atticAuthToken;
+
+    // Authorization header for the cache-status (narinfo) probe of one cache
+    // URL. Each bearer token is scoped to its own host, so a token is never
+    // transmitted to an unrelated substituter (e.g. cache.nixos.org):
+    //   * the Attic ATTIC_TOKEN is sent only to the configured Attic host
+    //     (derived from ATTIC_SUBSTITUTER). Required because the Attic
+    //     deployment cache is private — an unauthenticated narinfo GET 401s.
+    //   * the legacy Cachix token is sent only to *.cachix.org hosts.
+    string[string] cacheStatusAuthHeadersForUrl(string url) const
     {
-        return this.cachixAuthToken.length
-            ? ["Authorization": "Bearer " ~ this.cachixAuthToken]
-            : null;
+        import mcl.commands.ci_matrix : cacheUrlHost;
+        import std.algorithm.searching : endsWith;
+
+        const host = cacheUrlHost(url);
+        if (this.atticAuthToken.length && this.atticSubstituter.length
+            && host == cacheUrlHost(this.atticSubstituter))
+            return ["Authorization": "Bearer " ~ this.atticAuthToken];
+        if (this.cachixAuthToken.length && host.endsWith(".cachix.org"))
+            return ["Authorization": "Bearer " ~ this.cachixAuthToken];
+        return null;
     }
 
     @(NamedArgument(["cachix-auth-token"])
@@ -505,10 +531,12 @@ unittest
         "https://attic.example/cache",
         "https://mirror.example/cache",
     ]);
-    assert(args.cacheStatusAuthHeaders is null);
+    // No tokens configured -> no auth header for any URL.
+    assert(args.cacheStatusAuthHeadersForUrl("https://team-cache.cachix.org") is null);
+    assert(args.cacheStatusAuthHeadersForUrl("https://attic.example/cache") is null);
 }
 
-@("ci matrix cache status authorization is optional")
+@("ci matrix cache status authorization is optional and host-scoped")
 unittest
 {
     auto args = CiMatrixArgs(
@@ -522,7 +550,31 @@ unittest
         "https://primary-cache.cachix.org",
         "https://cache.nixos.org",
     ]);
-    assert(args.cacheStatusAuthHeaders["Authorization"] == "Bearer secret");
+    // Legacy Cachix token is sent only to *.cachix.org hosts.
+    assert(args.cacheStatusAuthHeadersForUrl("https://primary-cache.cachix.org")["Authorization"] == "Bearer secret");
+    assert(args.cacheStatusAuthHeadersForUrl("https://cache.nixos.org") is null);
+}
+
+@("ci matrix cache status sends ATTIC_TOKEN only to the Attic host")
+unittest
+{
+    auto args = CiMatrixArgs(
+        cachixCache: "",
+        extraCachixCaches: [],
+        extraCacheUrls: [
+            "https://cache.nixos.org https://cache.metacraft-labs.com/metacraft-private-infrastructure"
+        ],
+        cachixAuthToken: "",
+        atticSubstituter: "https://cache.metacraft-labs.com/metacraft-private-infrastructure",
+        atticAuthToken: "attic-secret",
+    );
+
+    // The private Attic cache gets the bearer token (otherwise its narinfo
+    // GET 401s); cache.nixos.org must NOT receive the Attic token.
+    assert(args.cacheStatusAuthHeadersForUrl(
+        "https://cache.metacraft-labs.com/metacraft-private-infrastructure"
+    )["Authorization"] == "Bearer attic-secret");
+    assert(args.cacheStatusAuthHeadersForUrl("https://cache.nixos.org") is null);
 }
 
 @(Command("print-table", "print_table")
@@ -585,7 +637,7 @@ Package[] checkCacheStatus(T)(Package[] packages, auto ref T args)
         if (pkg.cachedAt.empty)
         {
             pkg.cachedAt ~= args.binaryCacheUrls
-                .filter!(url => pkg.isCached(url, args.cacheStatusAuthHeaders))
+                .filter!(url => pkg.isCached(url, args.cacheStatusAuthHeadersForUrl(url)))
                 .map!(url => pkg.getNarInfoUrl(url))
                 .array;
         }
@@ -1262,6 +1314,31 @@ void appendGHCIBuildOutput(Package[] packages, string outputPath)
 
     outputPath.append(buildMatrixLine);
     outputPath.append(fullMatrixLine);
+}
+
+// Extract the host[:port] from a cache URL ("https://host/path" -> "host").
+// Used to scope cache-status auth headers to the matching host only.
+string cacheUrlHost(string url)
+{
+    string s = url;
+    foreach (scheme; ["https://", "http://"])
+    {
+        if (s.startsWith(scheme))
+        {
+            s = s[scheme.length .. $];
+            break;
+        }
+    }
+    const slash = s.indexOf('/');
+    return slash >= 0 ? s[0 .. slash] : s;
+}
+
+@("ci_matrix.cacheUrlHost")
+unittest
+{
+    assert(cacheUrlHost("https://cache.metacraft-labs.com/metacraft-private-infrastructure") == "cache.metacraft-labs.com");
+    assert(cacheUrlHost("https://cache.nixos.org") == "cache.nixos.org");
+    assert(cacheUrlHost("http://127.0.0.1:8080/x") == "127.0.0.1:8080");
 }
 
 bool isCached(in Package pkg, string binaryCacheHttpEndpoint, in string[string] httpHeaders = null)
