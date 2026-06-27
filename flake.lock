@@ -382,16 +382,16 @@
         "nixpkgs": "nixpkgs_6"
       },
       "locked": {
-        "lastModified": 1782539495,
+        "lastModified": 1782557549,
         "narHash": "sha256-vBrB1dXAjdzn3Pv6TdFU4S3fNm455zEt5FPGlK9ImX8=",
-        "owner": "metacraft-labs",
+        "owner": "PetarKirov",
         "repo": "dlang.nix",
-        "rev": "8e658f73a709254d3fb7cc5d34bc32476c768734",
+        "rev": "24fb2dc3c7fc8bcabbdf1a96035a5d9acfaef31e",
         "type": "github"
       },
       "original": {
-        "owner": "metacraft-labs",
-        "ref": "fix/dcd-leavedotgit-reproducible",
+        "owner": "PetarKirov",
+        "ref": "feat/build-dub-package",
         "repo": "dlang.nix",
         "type": "github"
       }

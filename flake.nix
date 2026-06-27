@@ -211,11 +211,7 @@
     };
 
     dlang-nix = {
-      # Fork of PetarKirov/dlang.nix's feat/build-dub-package branch with DCD's
-      # source FOD made reproducible (drops `leaveDotGit`, which packs a `.git`
-      # directory whose contents depend on the git-server and broke the pinned
-      # hash). Tracks PetarKirov/dlang.nix#229; switch back to upstream once merged.
-      url = "github:metacraft-labs/dlang.nix/fix/dcd-leavedotgit-reproducible";
+      url = "github:PetarKirov/dlang.nix/feat/build-dub-package";
       inputs = {
         flake-compat.follows = "flake-compat";
         flake-parts.follows = "flake-parts";
