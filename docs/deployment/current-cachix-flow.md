@@ -24,7 +24,7 @@ backend, and activation is performed out-of-band by an operator via
    `mcl cache push-closure` for each deployment target and the configured
    `deployment-cache-push-backends` (`attic` by default, with `none` as the
    only non-Attic option), using the Attic CI transport (`--transport
-   attic-ci`).
+attic-ci`).
 7. `results` runs on the JSON-encoded `results-runner` input, which defaults
    to self-hosted Linux fleet runner labels. It prints the final matrix and
    updates the pull request comment.
@@ -55,20 +55,20 @@ captured — gaps the previous Cachix Deploy path left outside the workflow.
 
 ## Deployment Inputs
 
-| Input                | Current source                                                                                        | Notes                                                                     |
-| -------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| Flake attr           | Build matrix `matrix.attrPath`                                                                        | Out-of-band activation selects the desired system path explicitly.        |
-| Target machine       | Build matrix `matrix.name` (deployment target name)                                                  | Must match the target-side reconciler / SSH apply identity.               |
-| Store path           | Build matrix `matrix.output`                                                                          | Expected to be a NixOS system toplevel.                                   |
-| Closure size         | Not recorded by the workflow today                                                                    | M1+ event emission should record closure count and bytes.                 |
-| Attic cache          | GitHub variables `ATTIC_CACHE`, `ATTIC_SUBSTITUTER`, `ATTIC_TRUSTED_PUBLIC_KEY`                       | Used when `deployment-cache-push-backends` includes `attic`.              |
-| Substituters         | GitHub variable `SUBSTITUTERS` plus default cache URLs supplied to `mcl`                              | Used for Nix setup and cache-status checks.                               |
-| Trusted public keys  | GitHub variable `TRUSTED_PUBLIC_KEYS`                                                                 | Required for substituter trust on runners.                                |
-| Results runner       | Workflow input `results-runner`, JSON default `["self-hosted", "nixos", "x86-64-v2", "bare-metal"]`   | Keeps deploy orchestration on self-hosted runners by default.             |
-| Deploy token         | Removed in c056211 (`CACHIX_ACTIVATE_TOKEN` no longer passed to CI)                                   | There is no in-CI activation step; activation is out-of-band.             |
-| Cache push token     | Secret `ATTIC_TOKEN`                                                                                  | Used by Attic cache pushes and cache-status checks; `CACHIX_AUTH_TOKEN` removed in c056211. |
-| Source access tokens | `NIX_GITHUB_TOKEN`, `NIX_GITLAB_TOKEN`, `NIX_GITLAB_DOMAIN`                                           | Used by Nix access-token setup.                                           |
-| Health checks        | Not modeled in the reusable workflow                                                                  | Future events should model check command, timeout, attempts, and result.  |
+| Input                | Current source                                                                                      | Notes                                                                                       |
+| -------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Flake attr           | Build matrix `matrix.attrPath`                                                                      | Out-of-band activation selects the desired system path explicitly.                          |
+| Target machine       | Build matrix `matrix.name` (deployment target name)                                                 | Must match the target-side reconciler / SSH apply identity.                                 |
+| Store path           | Build matrix `matrix.output`                                                                        | Expected to be a NixOS system toplevel.                                                     |
+| Closure size         | Not recorded by the workflow today                                                                  | M1+ event emission should record closure count and bytes.                                   |
+| Attic cache          | GitHub variables `ATTIC_CACHE`, `ATTIC_SUBSTITUTER`, `ATTIC_TRUSTED_PUBLIC_KEY`                     | Used when `deployment-cache-push-backends` includes `attic`.                                |
+| Substituters         | GitHub variable `SUBSTITUTERS` plus default cache URLs supplied to `mcl`                            | Used for Nix setup and cache-status checks.                                                 |
+| Trusted public keys  | GitHub variable `TRUSTED_PUBLIC_KEYS`                                                               | Required for substituter trust on runners.                                                  |
+| Results runner       | Workflow input `results-runner`, JSON default `["self-hosted", "nixos", "x86-64-v2", "bare-metal"]` | Keeps deploy orchestration on self-hosted runners by default.                               |
+| Deploy token         | Removed in c056211 (`CACHIX_ACTIVATE_TOKEN` no longer passed to CI)                                 | There is no in-CI activation step; activation is out-of-band.                               |
+| Cache push token     | Secret `ATTIC_TOKEN`                                                                                | Used by Attic cache pushes and cache-status checks; `CACHIX_AUTH_TOKEN` removed in c056211. |
+| Source access tokens | `NIX_GITHUB_TOKEN`, `NIX_GITLAB_TOKEN`, `NIX_GITLAB_DOMAIN`                                         | Used by Nix access-token setup.                                                             |
+| Health checks        | Not modeled in the reusable workflow                                                                | Future events should model check command, timeout, attempts, and result.                    |
 
 ## Current Cachix Deploy Monitoring Path
 
