@@ -26,8 +26,10 @@
           # Build dub with the current nixpkgs ldc (1.41), which compiles it
           # fine on darwin. Linux still builds with dlang.nix's own compiler.
           dub =
-            let dub' = self'.legacyPackages.inputs.dlang-nix.dub;
-            in if isLinux then dub' else dub'.override { dcompiler = pkgs.ldc; };
+            let
+              dub' = self'.legacyPackages.inputs.dlang-nix.dub;
+            in
+            if isLinux then dub' else dub'.override { dcompiler = pkgs.ldc; };
           inherit (self'.legacyPackages.inputs.nixpkgs)
             cachix
             nix
