@@ -187,10 +187,15 @@
               if command not in text:
                   raise SystemExit(f"documented command fragment not found in workflow: {command}")
 
-          deploy = inventory["deployPath"]
-          for value in [deploy["entryJob"], deploy["deployStep"], deploy["deployCondition"], deploy["mclCommand"]]:
+          publish = inventory["deploymentCachePublishPath"]
+          for value in [publish["entryJob"], publish["publishStep"], publish["publishCondition"], publish["mclCommand"]]:
               if value not in text:
-                  raise SystemExit(f"deploy path value not found in workflow: {value}")
+                  raise SystemExit(f"deployment cache publish path value not found in workflow: {value}")
+
+          removed = inventory["removedDeployPath"]
+          for token in removed["absentTokens"]:
+              if token in text:
+                  raise SystemExit(f"legacy Cachix Deploy token must be absent from the Attic-only workflow: {token}")
 
           monitoring = inventory["monitoringPath"]
           required_monitoring_sources = {
@@ -243,12 +248,12 @@
               re.search(
                   r"deployment-cache-required-backends:\s*\n"
                   r"\s+description:.*\n"
-                  r"\s+default:\s*'cachix'\s*\n"
+                  r"\s+default:\s*'attic'\s*\n"
                   r"\s+required:\s*false\s*\n"
                   r"\s+type:\s*string",
                   text,
               ),
-              "reusable workflow must expose deployment-cache-required-backends defaulting to cachix",
+              "reusable workflow must expose deployment-cache-required-backends defaulting to attic",
           )
           require(
               re.search(
@@ -294,6 +299,9 @@
               'require_backend_vars "$backend" "$required" ATTIC_TOKEN ATTIC_CACHE ATTIC_SUBSTITUTER ATTIC_TRUSTED_PUBLIC_KEY' in text,
               "Attic variables must be checked manually through the backend policy",
           )
+          require("cachix)" not in text, "Attic-only cache push must not retain a cachix backend case")
+          require("CACHIX_CACHE" not in text and "CACHIX_AUTH_TOKEN" not in text, "Attic-only cache push step must not reference Cachix env")
+          require("--transport attic-ci" in text, "deployment cache push must use the Attic CI transport")
           for forbidden in [
               ': "''${ATTIC_TOKEN:?',
               ': "''${ATTIC_CACHE:?',
@@ -322,7 +330,7 @@
               "cache push and substitute probe must honor required versus optional policy",
           )
           require(
-              "if: ''${{ always() && (inputs.push-deployment-caches || inputs.run-cachix-deploy) && !matrix.noop && matrix.deploymentTarget }}" in text,
+              "if: ''${{ always() && inputs.push-deployment-caches && !matrix.noop && matrix.deploymentTarget }}" in text,
               "cache push event artifact upload must remain available after optional backend failures",
           )
 
@@ -418,11 +426,9 @@
                   "DEPLOY_SYSTEM": "x86_64-linux",
                   "DEPLOY_KIND": "server",
                   "DEPLOY_STORE_PATH": "${pkgs.hello}",
-                  "DEPLOYMENT_CACHE_PUSH_BACKENDS": "cachix,attic",
-                  "DEPLOYMENT_CACHE_REQUIRED_BACKENDS": "cachix",
+                  "DEPLOYMENT_CACHE_PUSH_BACKENDS": "attic,none",
+                  "DEPLOYMENT_CACHE_REQUIRED_BACKENDS": "attic",
                   "DEPLOYMENT_CACHE_OPTIONAL_TIMEOUT_SECONDS": "1",
-                  "CACHIX_CACHE": "required-cache",
-                  "CACHIX_AUTH_TOKEN": "required-token",
                   "ATTIC_CACHE": "mirror-cache",
                   "ATTIC_SUBSTITUTER": "https://attic.example/mirror-cache",
                   "ATTIC_ENDPOINT": "",
@@ -481,10 +487,10 @@
 
               run_case(
                   "optional_attic_missing_vars",
-                  {"ATTIC_TOKEN": ""},
+                  {"DEPLOYMENT_CACHE_REQUIRED_BACKENDS": "none", "ATTIC_TOKEN": ""},
                   0,
                   stdout_contains=("::warning title=Optional deployment cache backend::backend=attic",),
-                  log_contains=("mcl backend=cachix",),
+                  log_contains=("mcl backend=none",),
                   log_absent=("nix shell", "mcl backend=attic"),
                   expect_artifact=True,
               )
@@ -504,7 +510,7 @@
                   "optional_attic_login_failure",
                   {
                       "DEPLOYMENT_CACHE_PUSH_BACKENDS": "attic",
-                      "DEPLOYMENT_CACHE_REQUIRED_BACKENDS": "cachix",
+                      "DEPLOYMENT_CACHE_REQUIRED_BACKENDS": "none",
                       "NIX_FAIL_LOGIN": "1",
                   },
                   0,
@@ -529,7 +535,7 @@
                   "optional_attic_push_failure_preserves_artifact",
                   {
                       "DEPLOYMENT_CACHE_PUSH_BACKENDS": "attic",
-                      "DEPLOYMENT_CACHE_REQUIRED_BACKENDS": "cachix",
+                      "DEPLOYMENT_CACHE_REQUIRED_BACKENDS": "none",
                       "MCL_FAIL_BACKEND": "attic",
                   },
                   0,
@@ -538,15 +544,15 @@
                   expect_artifact=True,
               )
               run_case(
-                  "required_cachix_push_failure",
+                  "required_attic_push_failure",
                   {
-                      "DEPLOYMENT_CACHE_PUSH_BACKENDS": "cachix",
-                      "DEPLOYMENT_CACHE_REQUIRED_BACKENDS": "cachix",
-                      "MCL_FAIL_BACKEND": "cachix",
+                      "DEPLOYMENT_CACHE_PUSH_BACKENDS": "attic",
+                      "DEPLOYMENT_CACHE_REQUIRED_BACKENDS": "attic",
+                      "MCL_FAIL_BACKEND": "attic",
                   },
                   23,
-                  stderr_contains=("Required deployment cache backend cachix failed during cache push and substitute probe",),
-                  log_contains=("mcl backend=cachix",),
+                  stderr_contains=("Required deployment cache backend attic failed during cache push and substitute probe",),
+                  log_contains=("nix shell nixpkgs#attic-client -c attic login", "mcl backend=attic"),
                   expect_artifact=True,
               )
               run_case(
@@ -573,29 +579,29 @@
                   expect_artifact=True,
               )
               run_case(
-                  "cachix_probe_keeps_fallback_substituters",
+                  "none_probe_keeps_fallback_substituters",
                   {
-                      "DEPLOYMENT_CACHE_PUSH_BACKENDS": "cachix",
-                      "DEPLOYMENT_CACHE_REQUIRED_BACKENDS": "cachix",
+                      "DEPLOYMENT_CACHE_PUSH_BACKENDS": "none",
+                      "DEPLOYMENT_CACHE_REQUIRED_BACKENDS": "none",
                       "DEPLOYMENT_TRUSTED_SUBSTITUTERS": "https://aux.example",
                       "DEPLOYMENT_TRUSTED_PUBLIC_KEYS": "aux-public-key",
                   },
                   0,
                   log_contains=(
-                      "mcl backend=cachix",
-                      "--substituter https://required-cache.cachix.org --require-substitute",
+                      "mcl backend=none",
                       "--substituter https://aux.example",
                       "--substituter https://cache.nixos.org",
                       "--trusted-public-key aux-public-key",
                       "cache.nixos.org-1:",
                   ),
+                  log_absent=("--require-substitute",),
                   expect_artifact=True,
               )
               run_case(
                   "optional_attic_timeout",
                   {
                       "DEPLOYMENT_CACHE_PUSH_BACKENDS": "attic",
-                      "DEPLOYMENT_CACHE_REQUIRED_BACKENDS": "cachix",
+                      "DEPLOYMENT_CACHE_REQUIRED_BACKENDS": "none",
                       "MCL_SLEEP_BACKEND": "attic",
                   },
                   0,

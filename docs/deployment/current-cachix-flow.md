@@ -2,11 +2,12 @@
 
 The current production-capable deploy path is the reusable GitHub Actions
 workflow documented in [current-flow-inventory.json](current-flow-inventory.json).
-Deployment cache publication and legacy Cachix Deploy activation have separate
-workflow gates. `push-deployment-caches` publishes deployment target closures
-to the configured deployment cache backends. `run-cachix-deploy` keeps the
-legacy activation path available and also implies deployment cache publication
-for backward compatibility.
+As of c056211 the in-CI Cachix Deploy activation was removed: the
+`run-cachix-deploy` gate, the `mcl deploy-spec` activation step, and all
+`CACHIX_*` workflow inputs no longer exist. A single `push-deployment-caches`
+gate now controls deployment-closure publication to the Attic deployment cache
+backend, and activation is performed out-of-band by an operator via
+`mcl deploy-ssh` / `mcl deploy-reconcile`.
 
 ## CI Flow
 
@@ -19,55 +20,53 @@ for backward compatibility.
    package table.
 5. `build` runs `nix build -L --no-link --keep-going --show-trace
 '.#${{ matrix.attrPath }}'` for each matrix item.
-6. When `inputs.push-deployment-caches || inputs.run-cachix-deploy` is true,
-   `build` runs `mcl cache push-closure` for each deployment target and the
-   configured `deployment-cache-push-backends`.
+6. When `inputs.push-deployment-caches` is true, `build` runs
+   `mcl cache push-closure` for each deployment target and the configured
+   `deployment-cache-push-backends` (`attic` by default, with `none` as the
+   only non-Attic option), using the Attic CI transport (`--transport
+   attic-ci`).
 7. `results` runs on the JSON-encoded `results-runner` input, which defaults
    to self-hosted Linux fleet runner labels. It prints the final matrix and
    updates the pull request comment.
-8. When `inputs.run-cachix-deploy` is true, `results` checks out the repository
-   and runs `mcl deploy-spec`.
+8. There is no longer an in-CI activation step. The removed `run-cachix-deploy`
+   gate and `mcl deploy-spec` step have no replacement in the workflow;
+   activation happens out-of-band via `mcl deploy-ssh` / `mcl deploy-reconcile`.
 
 ## Target Activation Flow
 
-`mcl deploy-spec` evaluates `legacyPackages.x86_64-linux.serverMachines`.
-For each evaluated machine, it checks whether the system output is already
-available through the configured binary cache URLs. If any server machine is
-missing from cache, the command fails before activation.
+In-CI activation was removed in c056211. The workflow no longer evaluates a
+deploy spec, no longer writes a `cachix-deploy-spec.json`, and no longer runs
+`cachix deploy activate`. The reusable workflow now stops at building and (when
+`push-deployment-caches` is enabled) publishing deployment closures to the Attic
+deployment cache.
 
-When all target system outputs are cached, `mcl deploy-spec` writes a
-`cachix-deploy-spec.json` file under the local result directory. The spec maps
-agent names to Nix store paths:
+Activation is performed out-of-band by an operator after CI publishes the
+closure. The supported activation paths are:
 
-```json
-{
-  "agents": {
-    "target-name": "/nix/store/hash-nixos-system-target-name-version"
-  }
-}
-```
+- `mcl deploy-ssh` for a supervised, signed, forced-command SSH push to a
+  single target; and
+- `mcl deploy-reconcile` for the state-directory reconciler / pull-agent path.
 
-`mcl deploy-spec` then runs `cachix deploy activate <spec> --async`. The remote
-Cachix Deploy service records an activation request. The target-side
-`cachix-agent` restores the requested store path and invokes the system
-activation switch. The reusable workflow does not currently collect target-side
-journald logs, activation generation, health-check output, or rollback status.
+A manual `cachix deploy activate` fallback remains available to operators only
+as an explicit rollback window during the operational retirement; it is not part
+of the CI workflow. The new paths emit a deployment event stream so target-side
+restore, switch, generation number, health-check, and rollback status are
+captured — gaps the previous Cachix Deploy path left outside the workflow.
 
 ## Deployment Inputs
 
 | Input                | Current source                                                                                        | Notes                                                                     |
 | -------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| Flake attr           | Build matrix `matrix.attrPath`; deploy command evaluates `legacyPackages.x86_64-linux.serverMachines` | The deploy attr is fixed in `mcl deploy-spec`.                            |
-| Target machine       | Evaluated package name, then Cachix Deploy agent name                                                 | Must match the target-side agent identity.                                |
-| Store path           | Build matrix `matrix.output`; deploy spec agent value                                                 | Expected to be a NixOS system toplevel.                                   |
+| Flake attr           | Build matrix `matrix.attrPath`                                                                        | Out-of-band activation selects the desired system path explicitly.        |
+| Target machine       | Build matrix `matrix.name` (deployment target name)                                                  | Must match the target-side reconciler / SSH apply identity.               |
+| Store path           | Build matrix `matrix.output`                                                                          | Expected to be a NixOS system toplevel.                                   |
 | Closure size         | Not recorded by the workflow today                                                                    | M1+ event emission should record closure count and bytes.                 |
-| Cachix cache name    | GitHub variable `CACHIX_CACHE`                                                                        | Used by setup, optional Cachix cache push, and `mcl` cache-status checks. |
 | Attic cache          | GitHub variables `ATTIC_CACHE`, `ATTIC_SUBSTITUTER`, `ATTIC_TRUSTED_PUBLIC_KEY`                       | Used when `deployment-cache-push-backends` includes `attic`.              |
 | Substituters         | GitHub variable `SUBSTITUTERS` plus default cache URLs supplied to `mcl`                              | Used for Nix setup and cache-status checks.                               |
 | Trusted public keys  | GitHub variable `TRUSTED_PUBLIC_KEYS`                                                                 | Required for substituter trust on runners.                                |
 | Results runner       | Workflow input `results-runner`, JSON default `["self-hosted", "nixos", "x86-64-v2", "bare-metal"]`   | Keeps deploy orchestration on self-hosted runners by default.             |
-| Deploy token         | Secret `CACHIX_ACTIVATE_TOKEN`                                                                        | Passed only to the deploy step environment.                               |
-| Cache push tokens    | Secrets `CACHIX_AUTH_TOKEN`, `ATTIC_TOKEN`                                                            | Used by setup, optional cache pushes, and cache-status checks.            |
+| Deploy token         | Removed in c056211 (`CACHIX_ACTIVATE_TOKEN` no longer passed to CI)                                   | There is no in-CI activation step; activation is out-of-band.             |
+| Cache push token     | Secret `ATTIC_TOKEN`                                                                                  | Used by Attic cache pushes and cache-status checks; `CACHIX_AUTH_TOKEN` removed in c056211. |
 | Source access tokens | `NIX_GITHUB_TOKEN`, `NIX_GITLAB_TOKEN`, `NIX_GITLAB_DOMAIN`                                           | Used by Nix access-token setup.                                           |
 | Health checks        | Not modeled in the reusable workflow                                                                  | Future events should model check command, timeout, attempts, and result.  |
 
