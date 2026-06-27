@@ -67,7 +67,9 @@
             exec python3 ${../scripts/attic-migrate-flake} "$@"
           '';
         };
-        cachix-deploy-metrics = pkgs.callPackage ./cachix-deploy-metrics { };
+        cachix-deploy-metrics = pkgs.callPackage ./cachix-deploy-metrics {
+          dCompiler = inputs'.dlang-nix.packages.ldc;
+        };
         consumer-flake-cachix-inventory-tool = pkgs.writeShellApplication {
           name = "consumer-flake-cachix-inventory";
           runtimeInputs = [ pkgs.python3 ];
@@ -84,7 +86,9 @@
         };
         lido-withdrawals-automation = pkgs.callPackage ./lido-withdrawals-automation { };
         pyroscope = pkgs.callPackage ./pyroscope { };
-        random-alerts = pkgs.callPackage ./random-alerts { };
+        random-alerts = pkgs.callPackage ./random-alerts {
+          dCompiler = inputs'.dlang-nix.packages."ldc-binary-1_38_0";
+        };
         mcl = pkgs.callPackage ./mcl {
           dCompiler = inputs'.dlang-nix.packages."ldc-binary-1_38_0";
           inherit (legacyPackages.inputs.nixpkgs) cachix nix nix-eval-jobs;

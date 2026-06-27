@@ -32,6 +32,7 @@ let
           mcl.secrets.extraKeys = [ (builtins.readFile ./test-keys/.ssh/extra_id_ed25519.pub) ];
           boot.loader.grub.enable = false;
           fileSystems."/".device = "none";
+          fileSystems."/".fsType = "tmpfs";
           system.stateVersion = "25.11";
         }
       ];

@@ -1,7 +1,8 @@
-{ buildDubPackage, ... }:
+{ buildDubPackage, dCompiler, ... }:
 buildDubPackage rec {
   pname = "random-alerts";
   version = "1.0.0";
+  inherit dCompiler;
   src = ./.;
   dubLock = {
     dependencies = { };

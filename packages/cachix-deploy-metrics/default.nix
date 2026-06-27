@@ -4,11 +4,13 @@
   pkg-config,
   openssl,
   zlib,
+  dCompiler,
   ...
 }:
 buildDubPackage rec {
   pname = "cachix-deploy-metrics";
   version = "unstable";
+  inherit dCompiler;
   src = lib.fileset.toSource {
     root = ./.;
     fileset = lib.fileset.fileFilter (
