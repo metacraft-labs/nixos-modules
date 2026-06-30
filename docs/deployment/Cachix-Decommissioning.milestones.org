@@ -113,6 +113,52 @@ Metacraft Cachix account.
     nixos-modules, infra, and dotfiles (excluding the out-of-scope third-party
     cache and nix tooling inputs).
 
+* Operator commands for the gated steps (CD-1..CD-4)
+  These are the operational steps an operator drives by hand; sources are
+  ~docs/deployment/operator-command-surface.json~ and ~rehearsal-harness.md~.
+
+** CD-1 — M7 full-topology runtime evidence
+   - Run the Incus rehearsal harness for each scenario, capturing artifacts:
+     : MCL_DEPLOYMENT_INCUS_ARTIFACT_DIR=<dir> scripts/deployment-incus-rehearsal.sh   # infra repo
+     scenarios: ~full-topology~, ~full-topology-failures~, ~offline-latest-only~,
+     ~forced-command~, ~pull-agent~ (also ~break-glass~).
+   - Pre-flight: ~scripts/deployment-incus-rehearsal.sh --check-env~ /
+     ~--check-runtime~ / ~--dry-run~.
+   - infra just targets: ~deployment-incus-rehearsal~,
+     ~test-deployment-incus-rehearsal~.
+   - The artifact dir must contain a runtime command log showing NO Cachix
+     Deploy activation, deployment JSONL, journald snippets, topology summary,
+     and final desired-state per container.
+
+** CD-2 / CD-3 — live canary on the Attic path
+   - Deploy/reconcile over Attic (no Cachix):
+     : mcl deploy-plan        # dry-run plan: target, store path, closure, backend=attic, transport
+     : mcl deploy-ssh         # direct-ssh activation
+     : mcl deploy-reconcile   # reconciler-driven activation
+     : mcl deploy-status summarize
+   - infra just targets: ~deploy-machine-direct-ssh~,
+     ~deploy-machine-remote-switch~, ~rollback-machine-direct-ssh~,
+     ~attic-verify-host-substituters~.
+   - Local pre-canary VM check: nix check
+     ~deployment-scheduled-canary-local-vm~ (the ~local-production-cutover-canary~
+     simulation target).
+
+** CD-4 — batch rollout
+   - Same ~mcl deploy-*~ surface, target by ~rolloutBatches~ order; verify with
+     ~mcl deploy-status summarize~ and ~attic-verify-host-substituters~ after
+     each batch.
+
+** Recording evidence into the gate (only when real)
+   Edit ~docs/deployment/production-cutover-gates.json~:
+   - CD-1 done  -> ~m7FullTopology.evidenceRecorded = true~ (+ evidence links).
+   - CD-2 done  -> ~firstTargetSelection.selectedProductionTarget = "<host>"~.
+   - CD-3 done  -> ~liveCanaryCycles.recorded = 2~ with one ~evidence~ entry per
+     cycle.
+   The guardrail check ~deployment-no-default-cachix-deploy-call~ enforces the
+   non-fabrication invariant; CI fails if these are advanced without the
+   matching evidence. Once CD-1..CD-4 are recorded, CD-5..CD-7 (code retirement,
+   monitoring migration, account teardown) become unblocked.
+
 * Notes
   - Cachix decommissioning and the solunska -> high-mem-server rename
     (~metacraft-labs/infra~: ~docs/High-Mem-Server-Rename.milestones.org~) are
