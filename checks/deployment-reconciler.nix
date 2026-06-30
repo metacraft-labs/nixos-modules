@@ -139,10 +139,10 @@ top@{ config, ... }:
           fi
 
           mkdir -p /var/lib/mcl-test
-          printf 'start:%s\n' "$$" >> /var/lib/mcl-test/reconciler-runs
+          printf 'start:%s:%s\n' "$$" "$*" >> /var/lib/mcl-test/reconciler-runs
           touch /var/lib/mcl-test/reconciler-started
           sleep 12
-          printf 'end:%s\n' "$$" >> /var/lib/mcl-test/reconciler-runs
+          printf 'end:%s:%s\n' "$$" "$*" >> /var/lib/mcl-test/reconciler-runs
         '';
       };
 
@@ -972,8 +972,8 @@ top@{ config, ... }:
             with subtest("lock releases after the service exits"):
                 controller.wait_until_succeeds("test \"$(grep -c '^end:' /var/lib/mcl-test/reconciler-runs)\" = 1")
                 controller.succeed("${pkgs.util-linux}/bin/flock -n /run/lock/mcl-test-reconciler.lock ${lib.getExe slowMcl} deploy-reconcile --after-service")
-                controller.succeed("test \"$(grep -c '^start:' /var/lib/mcl-test/reconciler-runs)\" = 2")
-                controller.succeed("test \"$(grep -c '^end:' /var/lib/mcl-test/reconciler-runs)\" = 2")
+                controller.succeed("test \"$(grep -c '^start:.*--after-service' /var/lib/mcl-test/reconciler-runs)\" = 1")
+                controller.succeed("test \"$(grep -c '^end:.*--after-service' /var/lib/mcl-test/reconciler-runs)\" = 1")
           '';
         };
 

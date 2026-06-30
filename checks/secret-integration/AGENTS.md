@@ -30,21 +30,21 @@ path (`/nix/store/...`), which would be read-only.
 
 `default.nix` sets up:
 
-1. Three `nixosConfigurations` (all built from the shared `mkMachine`
-   helper, using `mcl-host-info`/`mcl-secrets` and test SSH keys from
-   `test-keys/`):
+1. Three `nixosConfigurations`:
    - `test-secret-machine` — the primary, fully-valid machine.
-   - `broken-machine` — its `mcl.secrets.services.broken-svc.secrets` is a
-     `throw`, so forcing its secrets fails. Used to verify `list`'s
-     per-machine `tryEval` resilience (the whole-fleet eval must not abort).
+   - `broken-machine` — a machine-shaped fixture whose
+     `mcl.secrets.services.broken-svc.secrets` is a `throw`, so forcing its
+     secrets fails. Used to verify `list`'s per-machine `tryEval` resilience
+     (the whole-fleet eval must not abort) without making `nix flake check`
+     force the intentional error.
    - `test-secret-machine-vm` — a valid machine whose name ends in `-vm`,
      used to verify VM filtering in `list`.
 2. A `writeShellApplication` check that runs `test-mcl-secret.sh` with
    `mcl`, `age`, `git`, and `nix` on `PATH`.
 
-Note: these test machines intentionally do **not** build a full
-`system.build.toplevel` (they lack `age.identityPaths`, etc.); `list` only
-forces `mcl.secrets.services.*.secrets` attr-names, never `toplevel`.
+The valid machines use test SSH keys from `test-keys/` and set
+`age.identityPaths` so their NixOS toplevels evaluate cleanly under
+`nix flake check`.
 
 `test-mcl-secret.sh` covers these scenarios:
 

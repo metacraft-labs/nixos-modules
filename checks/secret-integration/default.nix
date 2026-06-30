@@ -30,6 +30,7 @@ let
             sshKey = builtins.readFile ./test-keys/.ssh/id_ed25519.pub;
           };
           mcl.secrets.extraKeys = [ (builtins.readFile ./test-keys/.ssh/extra_id_ed25519.pub) ];
+          age.identityPaths = [ ./test-keys/.ssh/id_ed25519 ];
           boot.loader.grub.enable = false;
           fileSystems."/".device = "none";
           system.stateVersion = "25.11";
@@ -60,12 +61,23 @@ in
     };
   };
 
-  # A machine whose secrets fail to evaluate. `mcl secret list` forces
-  # `attrNames services.<name>.secrets`, so a throwing `secrets` attrset
+  # A machine-shaped fixture whose secrets fail to evaluate. `mcl secret list`
+  # forces `attrNames services.<name>.secrets`, so a throwing `secrets` attrset
   # triggers the `builtins.tryEval` guard and yields an `__error__` marker
-  # instead of aborting the whole-fleet evaluation.
-  flake.nixosConfigurations.broken-machine = mkMachine {
-    mcl.secrets.services.broken-svc.secrets = throw "intentional eval failure for broken-machine";
+  # instead of aborting the whole-fleet evaluation. This is intentionally not a
+  # full nixosSystem: flake-check still gets a toplevel derivation, while the
+  # command-specific test remains the only path that forces the secret error.
+  flake.nixosConfigurations.broken-machine = {
+    config = {
+      system.build.toplevel =
+        inputs.nixpkgs.legacyPackages.x86_64-linux.runCommand "nixos-system-broken-machine-secret-fixture"
+          { }
+          ''
+            mkdir -p "$out"
+          '';
+
+      mcl.secrets.services.broken-svc.secrets = throw "intentional eval failure for broken-machine";
+    };
   };
 
   # A valid machine whose name ends in `-vm`; `list` hides it unless
