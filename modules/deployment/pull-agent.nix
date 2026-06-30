@@ -187,6 +187,13 @@
           description = "Pull and apply signed mcl desired-state manifests for ${cfg.targetName}";
           after = [ "network-online.target" ];
           wants = [ "network-online.target" ];
+          # This service runs switch-to-configuration, and the closure it activates
+          # contains a new version of this very unit (the mcl store path changes on
+          # every publish). With the default restartIfChanged, switch-to-configuration
+          # would restart mcl-deploy-agent mid-switch, sending TERM to the process
+          # performing the switch and aborting it. Keep the running invocation alive;
+          # the new unit definition takes effect on the next timer activation.
+          restartIfChanged = false;
           serviceConfig = {
             Type = "oneshot";
             ExecStart = "${pkgs.util-linux}/bin/flock -n ${escapeShellArg cfg.lockFile} ${agentCommand}";

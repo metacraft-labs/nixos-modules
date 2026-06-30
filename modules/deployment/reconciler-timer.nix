@@ -128,6 +128,11 @@
           description = "Reconcile pending mcl desired-state deployments";
           after = [ "network-online.target" ];
           wants = [ "network-online.target" ];
+          # Like mcl-deploy-agent, this runs switch-to-configuration and the
+          # activated closure contains a new version of this unit, so the default
+          # restartIfChanged would TERM the reconciler mid-switch. Keep the running
+          # invocation alive; the new definition applies on the next activation.
+          restartIfChanged = false;
           serviceConfig = {
             Type = "oneshot";
             ExecStart = "${pkgs.util-linux}/bin/flock -n ${escapeShellArg cfg.lockFile} ${reconcileCommand}";
