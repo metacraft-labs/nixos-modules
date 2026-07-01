@@ -128,10 +128,12 @@
           description = "Reconcile pending mcl desired-state deployments";
           after = [ "network-online.target" ];
           wants = [ "network-online.target" ];
-          # Like mcl-deploy-agent, this runs switch-to-configuration and the
-          # activated closure contains a new version of this unit, so the default
-          # restartIfChanged would TERM the reconciler mid-switch. Keep the running
-          # invocation alive; the new definition applies on the next activation.
+          # Hardening, same rationale as mcl-deploy-agent: this runs
+          # switch-to-configuration and the activated closure contains a new version
+          # of this unit, so keep restartIfChanged false to avoid restarting it
+          # mid-switch. Defensive only -- the historical deploy wedge was a lost
+          # dbus JobRemoved signal blocking switch-to-configuration-ng, fixed in the
+          # consumer via dbus-broker plus a TimeoutStartSec bound, not here.
           restartIfChanged = false;
           serviceConfig = {
             Type = "oneshot";
