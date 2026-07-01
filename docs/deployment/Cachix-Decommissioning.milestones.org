@@ -51,12 +51,12 @@ binary-cache push/substitution, our monitoring of the Cachix Deploy API, our
   ~cachix-deploy-metrics~ blobs; the ~default-vm-config~ equivalents). They were
   wired to nothing.
 
-* TODO  Delete the Cachix account and caches
-  The final step, done by an operator in the Cachix dashboard (irreversible):
-  delete the Metacraft Cachix caches and cancel the org/subscription. After
-  this, nothing — capability, config, secret, or account — ties Metacraft to
-  Cachix, while the reusable Cachix support in nixos-modules stays intact for
-  anyone who wants it.
+* DONE  Delete the Cachix account and caches
+  Done (2026-07-01, operator): the Metacraft Cachix caches were deleted and
+  the org/subscription cancelled. Nothing — capability, config, secret, or
+  account — now ties Metacraft to Cachix, while the reusable Cachix support in
+  nixos-modules stays intact for anyone who wants it. Cachix decommissioning is
+  complete.
 
 * Notes
   - Independent of the solunska → high-mem-server rename
