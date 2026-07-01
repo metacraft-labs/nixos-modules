@@ -1,166 +1,63 @@
-#+title: Cachix Decommissioning — Milestones
+#+title: Cachix Decommissioning — Status
 #+options: toc:nil num:nil
 
 * Overview
 
-This plan retires Cachix from the Metacraft infrastructure. "Cachix" is two
-products and they are at very different stages:
+Goal: Metacraft infrastructure should rely on Cachix for *nothing*. This is
+about removing *our own use* of Cachix — NOT about removing Cachix support from
+the tooling.
 
-- *Binary cache* (substituter / ~cachix push~) — ALREADY migrated to the single
-  NetBird-gated *Attic* cache (~cache.metacraft-labs.com~). Effectively done.
-- *Cachix Deploy* (activation agents + Deploy API) — deliberately RETAINED as a
-  gated fallback. The CI cutover landed in the truthful state
-  "CI backend cutover complete, operational retirement pending".
+*Reusable Cachix capabilities stay.* ~nixos-modules~ is general-purpose; its
+Cachix features (the ~mcl deploy-spec~ command and ~mcl.utils.cachix~, the
+~cachix-deploy-metrics~ package/module, the Cachix cache-push backend, the
+~deployment-cachix-fallback-simulation~ guardrail) remain available for anyone
+who wants them. Consumers instantiate policy; the library provides recipes.
 
-"Shutting down Cachix" therefore means: finish retiring Cachix Deploy along the
-documented Removal Gate, then decommission the Cachix account, agents, caches,
-secrets, and residual references.
+Third-party public Cachix caches (e.g. ~dlang-community.cachix.org~) may also
+still be used — they are not our account.
 
-The order is enforced by ~docs/deployment/production-cutover-gates.json~ and the
-guardrail check ~checks/deployment-production-cutover.nix~, whose non-fabrication
-invariant blocks declaring retirement until the real evidence exists:
+What we remove is our *usage*: our Cachix Deploy activation path, our Cachix
+binary-cache push/substitution, our monitoring of the Cachix Deploy API, our
+~CACHIX_*~ CI secrets, and finally our Cachix account itself.
 
-: removalGateSatisfied  =>  liveCanaryCycles.recorded >= 2
-:                       AND m7FullTopology.evidenceRecorded
-:                       AND manualFallbackRetired
+* DONE  Binary cache → Attic
+  All Metacraft caching runs on the single NetBird-gated Attic cache
+  (~cache.metacraft-labs.com~). No Metacraft ~*.cachix.org~ push or substituter
+  remains.
 
-Do NOT advance the four HUMAN-CONFIRM gate fields without the corresponding
-operational evidence genuinely existing.
+* DONE  Cachix Deploy usage removed
+  The production activation path is Attic-only (~mcl deploy-ssh~ /
+  ~mcl deploy-reconcile~ / the pull-agent + forced-command ssh-apply). The
+  Cachix Deploy recipes were removed in ~metacraft-labs/infra~; infra tests now
+  *enforce* that Cachix Deploy is not a production activation path or rollback
+  fallback.
 
-*Explicitly out of scope (leave in place):* the third-party
-~dlang-community.cachix.org~ substituter, and the nix tooling inputs
-~github:cachix/{cachix,git-hooks.nix,devenv}~ — these are unrelated to the
-Metacraft Cachix account.
+* DONE  Cachix Deploy monitoring usage removed
+  ~services.cachix-deploy-metrics~ is enabled on no host; Prometheus no longer
+  scrapes it (asserted ~== null~). Deployment observability is Attic/event-stream
+  based (~deployment-event-metrics~ → Prometheus → Loki → Grafana). The
+  ~cachix-deploy-metrics~ package/module remain in nixos-modules as a capability.
 
-* DONE  CD-0 Baseline — CI backend cutover complete
-  Already true; recorded here for context.
-  - [X] Binary cache migrated to single NetBird-gated Attic cache.
-  - [X] ~c056211~ removed Cachix Deploy + the cachix cache backend from CI
-    workflows (~deployBackendRemovedFromCI = true~,
-    ~cacheBackendRemovedFromCI = true~).
-  - [X] Guardrail docs/checks reconciled to the Attic-only end state (PR #516),
-    without weakening tests or fabricating canary history.
-  - [X] ~dlang-nix~ input back on upstream; nixos-modules CI green; main == dev.
+* DONE  CACHIX_* CI secrets removed
+  No ~CACHIX_*~ secrets remain on the metacraft-labs org or the infra/nixos-modules
+  repos. ~scripts/attic-cache/configure-github-repo.sh~ deletes any legacy
+  ~CACHIX_*~ variables/secrets on every repo it configures. (A general-purpose
+  ~EXTRA_CACHIX_CACHES~ variable — a capability knob for third-party caches —
+  may remain; it is not our-account usage.)
 
-* TODO  CD-1 Produce M7 full-topology runtime evidence
-  Gate field: ~m7FullTopology.evidenceRecorded~ (currently ~false~).
-  - [ ] Run the five M7 scenarios on the Attic-only deploy path
-    (~attic-direct-ssh-shadow~ via ~mcl deploy-ssh~ / ~mcl deploy-reconcile~):
-    ~full-topology~, ~full-topology-failures~, ~offline-latest-only~,
-    ~forced-command~, ~pull-agent~.
-  - [ ] Capture the accepted-evidence artifacts (runtime artifact directory,
-    command log showing NO Cachix Deploy activation, deployment event JSONL,
-    target journal snippets, cache logs, metrics/status output, final state per
-    rollout group).
-  - [ ] Set ~m7FullTopology.evidenceRecorded = true~ with links to the evidence.
+* DONE  Orphaned secret residue removed
+  ~metacraft-labs/infra~ PR #1173 removed the leftover agenix secret files from
+  the Cachix era (~cachix-agent.token~; per-host ~secrets/cachix-deploy~ and
+  ~cachix-deploy-metrics~ blobs; the ~default-vm-config~ equivalents). They were
+  wired to nothing.
 
-* TODO  CD-2 Select and approve the first live canary target
-  Gate field: ~firstTargetSelection.selectedProductionTarget~ (currently ~null~).
-  - [ ] Choose a low-risk real production host for the first Attic-only live
-    deploy.
-  - [ ] Obtain human approval (~requiresHumanApprovalBeforeLiveSelection~).
-  - [ ] Record the selected target; keep ~simulationTarget.production = false~.
-
-* TODO  CD-3 Run two successful live canary cycles
-  Gate field: ~liveCanaryCycles.recorded~ (currently ~0~; required ~2~).
-  - [ ] Live canary cycle #1 on the Attic path; capture evidence entry.
-  - [ ] Live canary cycle #2; capture evidence entry.
-  - [ ] Set ~liveCanaryCycles.recorded = 2~ with one ~evidence~ entry per cycle.
-    The check fails loudly if this is set without real cycles.
-
-* TODO  CD-4 Batch rollout and rollback-window closeout
-  Gate field: ~rolloutBatches~.
-  - [ ] ~first-production-canary~ (no prior live-cycle evidence required).
-  - [ ] ~batch-1-directly-reachable-servers~.
-  - [ ] ~batch-2-remote-servers~.
-  - [ ] ~batch-3-explicitly-opted-in-workstations~.
-  - [ ] Close the rollback window once all batches are migrated and stable.
-
-* TODO  CD-5 Retire the Cachix Deploy code and flip the gate
-  Blocked on CD-1..CD-4. Touches nixos-modules.
-  - [ ] Remove the Cachix-based ~deploy-spec~ path from
-    ~packages/mcl/src/mcl/commands/deploy_spec.d~ and its
-    ~mcl.utils.cachix~ helper (~cachix push~ / ~cachix deploy activate~).
-  - [ ] Remove the now-dead ~deployment-cachix-fallback-simulation~ assertions
-    and de-cachix the summary-artifact fixture in
-    ~checks/deployment-docs.nix~ and ~checks/deployment-production-cutover.nix~.
-  - [ ] Set ~cachixRetirement.manualFallbackRetired = true~ and
-    ~removalGateSatisfied = true~. The non-fabrication invariant now permits
-    this only because CD-1..CD-4 are real.
-  - [ ] Update ~production-cutover.md~ wording; ensure all guardrail checks pass.
-
-* TODO  CD-6 Migrate monitoring off the Cachix Deploy API
-  - [ ] Replace the ~cachix-deploy-metrics~ Prometheus exporter (package +
-    module + ~main.d~, scrapes the Cachix Deploy API) with an Attic /
-    event-stream monitor.
-  - [ ] Update the "Current Cachix Deploy Monitoring Path" section of
-    ~current-cachix-flow.md~ and its four source assertions in
-    ~checks/deployment-docs.nix~; rename the doc to the Attic flow.
-  - [ ] Remove the infra monitoring wiring
-    (~tests/deployment-monitoring-infra.nix~).
-
-* TODO  CD-7 Decommission Cachix infrastructure and account
-  The actual shutdown; do last.
-  - [ ] Remove org/repo GitHub secrets + vars: ~CACHIX_AUTH_TOKEN~,
-    ~CACHIX_ACTIVATE_TOKEN~, ~CACHIX_CACHE~ (no longer referenced by CI).
-  - [ ] Stop and delete the Cachix Deploy agents on all targets.
-  - [ ] Remove residual infra references: ~cachix-agent.token~ (already empty),
-    ~tests/deployment-production-cutover.nix~,
-    ~tests/deployment-incus-rehearsal.nix~, ~services/attic-substituter~ and
-    ~services/attic~ migration notes.
-  - [ ] Delete the Cachix caches and cancel the Metacraft Cachix org/subscription.
-  - [ ] Final sweep: confirm no remaining Metacraft Cachix references across
-    nixos-modules, infra, and dotfiles (excluding the out-of-scope third-party
-    cache and nix tooling inputs).
-
-* Operator commands for the gated steps (CD-1..CD-4)
-  These are the operational steps an operator drives by hand; sources are
-  ~docs/deployment/operator-command-surface.json~ and ~rehearsal-harness.md~.
-
-** CD-1 — M7 full-topology runtime evidence
-   - Run the Incus rehearsal harness for each scenario, capturing artifacts:
-     : MCL_DEPLOYMENT_INCUS_ARTIFACT_DIR=<dir> scripts/deployment-incus-rehearsal.sh   # infra repo
-     scenarios: ~full-topology~, ~full-topology-failures~, ~offline-latest-only~,
-     ~forced-command~, ~pull-agent~ (also ~break-glass~).
-   - Pre-flight: ~scripts/deployment-incus-rehearsal.sh --check-env~ /
-     ~--check-runtime~ / ~--dry-run~.
-   - infra just targets: ~deployment-incus-rehearsal~,
-     ~test-deployment-incus-rehearsal~.
-   - The artifact dir must contain a runtime command log showing NO Cachix
-     Deploy activation, deployment JSONL, journald snippets, topology summary,
-     and final desired-state per container.
-
-** CD-2 / CD-3 — live canary on the Attic path
-   - Deploy/reconcile over Attic (no Cachix):
-     : mcl deploy-plan        # dry-run plan: target, store path, closure, backend=attic, transport
-     : mcl deploy-ssh         # direct-ssh activation
-     : mcl deploy-reconcile   # reconciler-driven activation
-     : mcl deploy-status summarize
-   - infra just targets: ~deploy-machine-direct-ssh~,
-     ~deploy-machine-remote-switch~, ~rollback-machine-direct-ssh~,
-     ~attic-verify-host-substituters~.
-   - Local pre-canary VM check: nix check
-     ~deployment-scheduled-canary-local-vm~ (the ~local-production-cutover-canary~
-     simulation target).
-
-** CD-4 — batch rollout
-   - Same ~mcl deploy-*~ surface, target by ~rolloutBatches~ order; verify with
-     ~mcl deploy-status summarize~ and ~attic-verify-host-substituters~ after
-     each batch.
-
-** Recording evidence into the gate (only when real)
-   Edit ~docs/deployment/production-cutover-gates.json~:
-   - CD-1 done  -> ~m7FullTopology.evidenceRecorded = true~ (+ evidence links).
-   - CD-2 done  -> ~firstTargetSelection.selectedProductionTarget = "<host>"~.
-   - CD-3 done  -> ~liveCanaryCycles.recorded = 2~ with one ~evidence~ entry per
-     cycle.
-   The guardrail check ~deployment-no-default-cachix-deploy-call~ enforces the
-   non-fabrication invariant; CI fails if these are advanced without the
-   matching evidence. Once CD-1..CD-4 are recorded, CD-5..CD-7 (code retirement,
-   monitoring migration, account teardown) become unblocked.
+* TODO  Delete the Cachix account and caches
+  The final step, done by an operator in the Cachix dashboard (irreversible):
+  delete the Metacraft Cachix caches and cancel the org/subscription. After
+  this, nothing — capability, config, secret, or account — ties Metacraft to
+  Cachix, while the reusable Cachix support in nixos-modules stays intact for
+  anyone who wants it.
 
 * Notes
-  - Cachix decommissioning and the solunska -> high-mem-server rename
-    (~metacraft-labs/infra~: ~docs/High-Mem-Server-Rename.milestones.org~) are
-    independent; either order works. Avoid running the rename of the Attic cache
-    host concurrently with cache-touching Cachix steps.
+  - Independent of the solunska → high-mem-server rename
+    (~metacraft-labs/infra~: ~docs/High-Mem-Server-Rename.milestones.org~).
