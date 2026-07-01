@@ -11,6 +11,7 @@
     ./deployment-pull-agent.nix
     ./deployment-reconciler.nix
     ./repro-binary-cache-systemd.nix
+    ./repro-binary-cache-cross-host.nix
     ./consumer-flake-attic.nix
     ./linux-vm-cloud-init
     ./netbird-with-agenix.nix
