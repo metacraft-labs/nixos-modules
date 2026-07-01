@@ -187,12 +187,16 @@
           description = "Pull and apply signed mcl desired-state manifests for ${cfg.targetName}";
           after = [ "network-online.target" ];
           wants = [ "network-online.target" ];
-          # This service runs switch-to-configuration, and the closure it activates
-          # contains a new version of this very unit (the mcl store path changes on
-          # every publish). With the default restartIfChanged, switch-to-configuration
-          # would restart mcl-deploy-agent mid-switch, sending TERM to the process
-          # performing the switch and aborting it. Keep the running invocation alive;
-          # the new unit definition takes effect on the next timer activation.
+          # Hardening: this service runs switch-to-configuration, and the closure it
+          # activates contains a new version of this very unit (its mcl store path
+          # changes on every publish). Keep restartIfChanged false so a change to
+          # this unit can't make switch-to-configuration restart it mid-switch; the
+          # new definition takes effect on the next timer activation instead.
+          # NOTE: this is defensive, not the fix for the historical deploy wedge.
+          # That wedge was switch-to-configuration-ng blocking forever on a lost
+          # systemd JobRemoved D-Bus signal on the classic dbus-daemon, fixed in the
+          # consumer (infra) via services.dbus.implementation = "broker" plus a
+          # TimeoutStartSec bound on this service.
           restartIfChanged = false;
           serviceConfig = {
             Type = "oneshot";
