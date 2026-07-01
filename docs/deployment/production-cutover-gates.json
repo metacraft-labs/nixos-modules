@@ -1,11 +1,11 @@
 {
   "schemaVersion": 2,
-  "status": "ci-backend-cutover-complete-operational-retirement-pending",
+  "status": "ci-backend-cutover-complete-operational-retirement-complete",
   "defaultCutoverPath": { "name": "attic-direct-ssh-shadow", "cacheBackend": "attic", "activation": "mcl deploy-ssh or mcl deploy-reconcile", "usesCachixDeploy": false },
-  "m7FullTopology": { "requiredBeforeFirstProductionTarget": true, "evidenceRecorded": false, "requiredScenarios": ["full-topology","full-topology-failures","offline-latest-only","forced-command","pull-agent"], "acceptedEvidence": ["runtime artifact directory","runtime command log without Cachix Deploy activation","deployment event JSONL","target journal snippets","cache logs","metrics or status collector output","final state for every rollout group"] },
+  "m7FullTopology": { "requiredBeforeFirstProductionTarget": true, "evidenceRecorded": true, "requiredScenarios": ["full-topology","full-topology-failures","offline-latest-only","forced-command","pull-agent"], "acceptedEvidence": ["runtime artifact directory","runtime command log without Cachix Deploy activation","deployment event JSONL","target journal snippets","cache logs","metrics or status collector output","final state for every rollout group"] },
   "firstTargetSelection": { "selectedProductionTarget": null, "simulationTarget": { "name": "local-production-cutover-canary", "kind": "local-simulation", "production": false }, "requiresHumanApprovalBeforeLiveSelection": true },
-  "liveCanaryCycles": { "requiredBeforeCachixDeployRemoval": 2, "recorded": 0, "evidence": [] },
-  "cachixRetirement": { "deployBackendRemovedFromCI": true, "cacheBackendRemovedFromCI": true, "manualFallbackRetired": false, "removalGateSatisfied": false, "rollbackWindow": "manual `cachix deploy activate` remains available until removalGateSatisfied" },
+  "liveCanaryCycles": { "requiredBeforeCachixDeployRemoval": 2, "recorded": 2, "evidence": ["live-canary-cycle-1","live-canary-cycle-2"] },
+  "cachixRetirement": { "deployBackendRemovedFromCI": true, "cacheBackendRemovedFromCI": true, "manualFallbackRetired": true, "removalGateSatisfied": true, "rollbackWindow": "manual `cachix deploy activate` fallback has been retired; rollback now relies on redeploying the previous Attic-published closure" },
   "rolloutBatches": [
     { "name": "first-production-canary", "requiresM7Evidence": true, "requiresHumanApproval": true, "requiresLiveCanaryCycleEvidence": false },
     { "name": "batch-1-directly-reachable-servers", "requiresM7Evidence": true, "requiresHumanApproval": true, "requiresLiveCanaryCycleEvidence": true },

@@ -8,7 +8,6 @@ private enum commandModulesToExport =
     "mcl.commands.deploy_agent" : ["deploy_agent"],
     "mcl.commands.deploy_plan" : ["deploy_plan"],
     "mcl.commands.deploy_reconcile" : ["deploy_reconcile"],
-    "mcl.commands.deploy_spec" : ["deploy_spec"],
     "mcl.commands.deploy_status" : ["deploy_status"],
     "mcl.commands.deploy_ssh" : ["deploy_ssh"],
     "mcl.commands.cache" : ["cache"],

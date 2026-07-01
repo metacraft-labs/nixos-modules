@@ -29,7 +29,6 @@ nix build .#checks.x86_64-linux.deployment-pull-agent-rejects-invalid-vm
 nix build .#checks.x86_64-linux.deployment-pull-agent-lock-contention-vm
 nix build .#checks.x86_64-linux.deployment-scheduled-canary-local-vm
 nix build .#checks.x86_64-linux.deployment-production-cutover-simulation-vm
-nix build .#checks.x86_64-linux.deployment-cachix-fallback-simulation
 nix build .#checks.x86_64-linux.deployment-no-default-cachix-deploy-call
 nix build .#checks.x86_64-linux.deployment-incus-rehearsal-image
 nix build .#checks.x86_64-linux.deployment-incus-rehearsal-script-static

@@ -240,7 +240,6 @@ M8 cutover starts with local evidence only:
 
 ```sh
 nix build .#checks.x86_64-linux.deployment-production-cutover-simulation-vm
-nix build .#checks.x86_64-linux.deployment-cachix-fallback-simulation
 nix build .#checks.x86_64-linux.deployment-no-default-cachix-deploy-call
 ```
 

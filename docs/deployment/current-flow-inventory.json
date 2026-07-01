@@ -55,10 +55,7 @@
   "monitoringPath": {
     "serviceOption": "services.cachix-deploy-metrics",
     "sourceFiles": [
-      "metacraft-labs/infra/services/monitoring/cachix-deploy-metrics/default.nix",
-      "modules/cachix-deploy-metrics/default.nix",
-      "packages/cachix-deploy-metrics/default.nix",
-      "packages/cachix-deploy-metrics/main.d"
+      "metacraft-labs/infra/services/monitoring/cachix-deploy-metrics/default.nix"
     ],
     "exporterEndpoint": "/metrics",
     "defaultPort": 9160,

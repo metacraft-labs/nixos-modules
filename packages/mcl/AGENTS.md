@@ -10,7 +10,6 @@ This document provides instructions for AI agents working on the `mcl` (Metacraf
 - Remote host management (`hosts`)
 - CI matrix generation (`ci-matrix`, `shard-matrix`)
 - Machine configuration (`machine`, `config`)
-- Deployment (`deploy-spec`)
 
 ## Code Style Philosophy
 

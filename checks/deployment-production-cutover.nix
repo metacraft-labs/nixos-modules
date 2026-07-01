@@ -373,81 +373,6 @@ top@{ config, ... }:
           '';
         };
 
-        deployment-cachix-fallback-simulation =
-          pkgs.runCommand "deployment-cachix-fallback-simulation"
-            {
-              nativeBuildInputs = [
-                pkgs.coreutils
-                pkgs.jq
-                pkgs.python3
-              ];
-            }
-            ''
-              tmp="$(mktemp -d)"
-              fake_bin="$tmp/bin"
-              mkdir -p "$fake_bin" "$NIX_BUILD_TOP/.result"
-              cat > "$fake_bin/cachix" <<'SH'
-              #!${pkgs.bash}/bin/bash
-              set -euo pipefail
-              printf '%s\n' "$*" >> "$FAKE_CACHIX_LOG"
-              test "''${1:-}" = deploy
-              test "''${2:-}" = activate
-              test "''${3:-}" = .result/cachix-deploy-spec.json
-              test "''${4:-}" = --async
-              SH
-              chmod +x "$fake_bin/cachix"
-
-              spec="$NIX_BUILD_TOP/.result/cachix-deploy-spec.json"
-              events="$tmp/fallback-events.jsonl"
-              cat > "$spec" <<JSON
-              {
-                "agents": {
-                  "fallback-canary": "${pkgs.hello}"
-                }
-              }
-              JSON
-
-              export FAKE_CACHIX_LOG="$tmp/fake-cachix.log"
-              cd "$NIX_BUILD_TOP"
-              PATH="$fake_bin:$PATH" cachix deploy activate .result/cachix-deploy-spec.json --async
-
-              cat > "$events" <<JSON
-              {"schemaVersion":1,"deploymentId":"fallback-simulation","correlationId":"fallback-simulation","phase":"activate-requested","target":{"name":"fallback-canary","system":"x86_64-linux","kind":"server","transport":"cachix-agent"},"backend":{"cache":"fallback-cache","substituters":["https://fallback-cache.cachix.org"],"controller":"cachix-deploy"},"storePaths":{"system":"${pkgs.hello}"},"timestamps":{"startedAt":"2026-06-03T00:00:00Z","finishedAt":"2026-06-03T00:00:00Z"},"command":{"name":"cachix deploy activate","argv":["cachix","deploy","activate",".result/cachix-deploy-spec.json","--async"],"status":"succeeded","exitCode":0},"metadata":{"fallback":true,"explicitOnly":true}}
-              JSON
-
-              grep -qx 'deploy activate .result/cachix-deploy-spec.json --async' "$FAKE_CACHIX_LOG"
-              export FALLBACK_EVENTS="$events"
-              python3 - <<'PY'
-              import json
-              import os
-              from pathlib import Path
-
-              events = [
-                  json.loads(line)
-                  for line in Path(os.environ["FALLBACK_EVENTS"]).read_text().splitlines()
-                  if line.strip()
-              ]
-              activate = [event for event in events if event["phase"] == "activate-requested"]
-              assert len(activate) == 1, events
-              event = activate[0]
-              assert event["target"]["name"] == "fallback-canary", event
-              assert event["backend"]["controller"] == "cachix-deploy", event
-              assert event["command"]["name"] == "cachix deploy activate", event
-              assert event["command"]["status"] == "succeeded", event
-              assert event["metadata"]["fallback"] is True, event
-              assert event["metadata"]["explicitOnly"] is True, event
-              assert event["command"]["argv"] == [
-                  "cachix",
-                  "deploy",
-                  "activate",
-                  ".result/cachix-deploy-spec.json",
-                  "--async",
-              ], event
-              PY
-
-              touch "$out"
-            '';
-
         deployment-no-default-cachix-deploy-call =
           pkgs.runCommand "deployment-no-default-cachix-deploy-call"
             {
@@ -464,7 +389,6 @@ top@{ config, ... }:
               workflow = Path("${workflow}").read_text()
               setup_nix = Path("${setupNix}").read_text()
               cutover_doc = Path("${docs}/production-cutover.md").read_text()
-              deploy_spec = Path("${repoRoot}/packages/mcl/src/mcl/commands/deploy_spec.d").read_text()
 
               assert gate["defaultCutoverPath"]["usesCachixDeploy"] is False, gate
               assert gate["defaultCutoverPath"]["cacheBackend"] == "attic", gate
@@ -484,10 +408,13 @@ top@{ config, ... }:
                   assert retire["manualFallbackRetired"] is True, gate
               else:
                   assert retire["manualFallbackRetired"] is False, gate
+              # Bidirectional coupling: the deploy-spec command (the manual Cachix
+              # fallback) exists iff it has not been retired.
+              deploySpecPath = Path("${repoRoot}/packages/mcl/src/mcl/commands/deploy_spec.d")
               if retire["manualFallbackRetired"]:
-                  assert "cachix deploy activate" not in deploy_spec, "manual Cachix fallback must be removed once retired"
+                  assert not deploySpecPath.exists(), "deploy-spec command must be removed once the manual fallback is retired"
               else:
-                  assert "cachix deploy activate" in deploy_spec, "manual Cachix fallback must remain available until the removal gate is satisfied"
+                  assert deploySpecPath.exists(), "deploy-spec command must remain available until the manual fallback is retired"
 
               assert re.search(
                   r"non-nix-runner:\s*\n"

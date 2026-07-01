@@ -99,7 +99,6 @@ The `mcl` tool is a Swiss-knife CLI for managing NixOS deployments. For developm
 | `hosts`        | Remote host management and network scanning                                                                              |
 | `ci`           | Evaluates packages and compares to cached versions                                                                       |
 | `shard-matrix` | Splits packages into shards for distributed CI. See [Shard Splitting Architecture](docs/shard-splitting-architecture.md) |
-| `deploy-spec`  | Deploys machine specs to Cachix                                                                                          |
 | `machine`      | Create and manage NixOS machine configurations                                                                           |
 
 Run `mcl --help` or `mcl <command> --help` for usage details and environment variables.

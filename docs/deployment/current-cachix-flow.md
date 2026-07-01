@@ -47,9 +47,9 @@ closure. The supported activation paths are:
   single target; and
 - `mcl deploy-reconcile` for the state-directory reconciler / pull-agent path.
 
-A manual `cachix deploy activate` fallback remains available to operators only
-as an explicit rollback window during the operational retirement; it is not part
-of the CI workflow. The new paths emit a deployment event stream so target-side
+The manual `cachix deploy activate` fallback has been retired; it is no longer
+available to operators and was never part of the CI workflow. The new paths emit
+a deployment event stream so target-side
 restore, switch, generation number, health-check, and rollback status are
 captured — gaps the previous Cachix Deploy path left outside the workflow.
 
@@ -70,35 +70,29 @@ captured — gaps the previous Cachix Deploy path left outside the workflow.
 | Source access tokens | `NIX_GITHUB_TOKEN`, `NIX_GITLAB_TOKEN`, `NIX_GITLAB_DOMAIN`                                         | Used by Nix access-token setup.                                                             |
 | Health checks        | Not modeled in the reusable workflow                                                                | Future events should model check command, timeout, attempts, and result.                    |
 
-## Current Cachix Deploy Monitoring Path
+## Historical Cachix Deploy Monitoring Path
 
-The existing monitoring path is implemented by the following sources:
+The monitoring path that observed Cachix Deploy has been retired together with
+the rest of the Cachix Deploy flow. The in-repo NixOS module, package, and D
+exporter were removed; the only remaining source is the infrastructure service
+definition:
 
 - `metacraft-labs/infra/services/monitoring/cachix-deploy-metrics/default.nix`
-- `modules/cachix-deploy-metrics/default.nix`
-- `packages/cachix-deploy-metrics/default.nix`
-- `packages/cachix-deploy-metrics/main.d`
 
-The infrastructure service imports the shared NixOS module and enables
-`services.cachix-deploy-metrics`. Its current configuration binds the exporter
-on all addresses, reads the Cachix API token through `auth-token-path`, passes a
-Cachix Deploy `workspace`, and derives `agent-names` from the server machine
-directories under the infrastructure tree. Concrete private workspace and host
-names are recorded only in [private-inventory.md](private-inventory.md).
+That infrastructure service enabled `services.cachix-deploy-metrics`. Its
+configuration bound the exporter on all addresses, read the Cachix API token
+through `auth-token-path`, passed a Cachix Deploy `workspace`, and derived
+`agent-names` from the server machine directories under the infrastructure tree.
+Concrete private workspace and host names are recorded only in
+[private-inventory.md](private-inventory.md).
 
-The shared NixOS module turns that configuration into the
-`cachix-deploy-metrics` systemd service. The service is a Prometheus exporter:
-it runs the packaged binary with `--port`, `--bind-addresses`,
-`--scrape-interval`, `--auth-token-path`, `--workspace`, and `--agent-names`,
-then serves Prometheus text format at `/metrics`. The module default port is
-`9160`; the observed infrastructure service inherits that port and sets a
-one-second scrape interval through the module default.
-
-The package builds the D exporter from `packages/cachix-deploy-metrics/main.d`.
-The exporter reads the token either from `--auth-token` or `--auth-token-path`,
-then polls the Cachix Deploy API endpoint
-`https://app.cachix.org/api/v1/deploy/agent/<workspace>/<agent>`. It maps the
-API `lastDeployment` state into these metrics:
+`services.cachix-deploy-metrics` was a Prometheus exporter: it ran with
+`--port`, `--bind-addresses`, `--scrape-interval`, `--auth-token-path`,
+`--workspace`, and `--agent-names`, then served Prometheus text format at
+`/metrics` on default port `9160` with a one-second scrape interval. It read the
+token from `--auth-token` or `--auth-token-path`, then polled the Cachix Deploy
+API endpoint `https://app.cachix.org/api/v1/deploy/agent/<workspace>/<agent>`
+and mapped the API `lastDeployment` state into these metrics:
 
 - `cachix_deploy_status`
 - `cachix_deploy_counter`
@@ -106,12 +100,11 @@ API `lastDeployment` state into these metrics:
 - `cachix_deploy_last_finished_time`
 - `cachix_deploy_in_progress_duration_seconds`
 
-This path observes Cachix Deploy API state for the last deployment per agent.
-It does not consume the new M0 deployment event stream, target journald,
+That path observed Cachix Deploy API state for the last deployment per agent. It
+never consumed the deployment event stream, target journald,
 switch-to-configuration logs, health-check output, rollback evidence, or a
-cross-system correlation id. Those gaps are why later milestones need event and
-desired-state status artifacts rather than relying on the current exporter
-alone.
+cross-system correlation id, which is why later milestones rely on event and
+desired-state status artifacts rather than that exporter.
 
 ## Observability Gaps
 

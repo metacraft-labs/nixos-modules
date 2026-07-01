@@ -67,7 +67,6 @@
             exec python3 ${../scripts/attic-migrate-flake} "$@"
           '';
         };
-        cachix-deploy-metrics = pkgs.callPackage ./cachix-deploy-metrics { };
         consumer-flake-cachix-inventory-tool = pkgs.writeShellApplication {
           name = "consumer-flake-cachix-inventory";
           runtimeInputs = [ pkgs.python3 ];

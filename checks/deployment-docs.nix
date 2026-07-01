@@ -200,9 +200,6 @@
           monitoring = inventory["monitoringPath"]
           required_monitoring_sources = {
               "metacraft-labs/infra/services/monitoring/cachix-deploy-metrics/default.nix",
-              "modules/cachix-deploy-metrics/default.nix",
-              "packages/cachix-deploy-metrics/default.nix",
-              "packages/cachix-deploy-metrics/main.d",
           }
           documented_sources = set(monitoring["sourceFiles"])
           missing_sources = sorted(required_monitoring_sources - documented_sources)

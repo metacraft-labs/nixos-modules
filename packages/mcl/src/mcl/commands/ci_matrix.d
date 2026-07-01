@@ -26,7 +26,6 @@ import mcl.utils.process : execute;
 import mcl.utils.nix : nix;
 
 import mcl.commands.ci: CiArgs;
-import mcl.commands.deploy_spec: DeploySpecArgs;
 
 version (OSX)
 {
@@ -610,7 +609,7 @@ string flakeAttr(string prefix, NixSystem system, string[] attrs...)
 }
 
 Package[] checkCacheStatus(T)(Package[] packages, auto ref T args)
-    if (is(T == CiMatrixArgs) || is(T == PrintTableArgs) || is(T == CiArgs) || is(T == DeploySpecArgs))
+    if (is(T == CiMatrixArgs) || is(T == PrintTableArgs) || is(T == CiArgs))
 {
     import std.array : appender;
     import std.parallelism : parallel;
@@ -904,7 +903,7 @@ unittest
 }
 
 Package[] nixEvalJobs(T)(string flakeAttrPath, auto ref T args)
-    if (is(T == CiMatrixArgs) || is(T == PrintTableArgs) || is(T == CiArgs) || is(T == DeploySpecArgs))
+    if (is(T == CiMatrixArgs) || is(T == PrintTableArgs) || is(T == CiArgs))
 {
     Package[] result = [];
 
@@ -1003,7 +1002,7 @@ NixSystem[] getSupportedSystems(string flakeRef = ".")
 }
 
 Package[] nixEvalForAllSystems(T)(auto ref T args)
-    if (is(T == CiMatrixArgs) || is(T == PrintTableArgs) || is(T == CiArgs) || is(T == DeploySpecArgs))
+    if (is(T == CiMatrixArgs) || is(T == PrintTableArgs) || is(T == CiArgs))
 {
     const systems = getSupportedSystems();
 
@@ -1020,7 +1019,7 @@ Package[] nixEvalForAllSystems(T)(auto ref T args)
 }
 
 int getNixEvalWorkerCount(T)(auto ref T args)
-    if (is(T == CiMatrixArgs) || is(T == PrintTableArgs) || is(T == CiArgs) || is(T == DeploySpecArgs))
+    if (is(T == CiMatrixArgs) || is(T == PrintTableArgs) || is(T == CiArgs))
 {
     return args.maxWorkers == 0 ? (threadsPerCPU() < 8 ? threadsPerCPU() : 8) : args.maxWorkers;
 }
@@ -1037,7 +1036,7 @@ unittest
 }
 
 int getAvailableMemoryMB(T)(auto ref T args)
-    if (is(T == CiMatrixArgs) || is(T == PrintTableArgs) || is(T == CiArgs) || is(T == DeploySpecArgs))
+    if (is(T == CiMatrixArgs) || is(T == PrintTableArgs) || is(T == CiArgs))
 {
     if (args.maxMemory != 0)
         return args.maxMemory;
@@ -1102,34 +1101,8 @@ unittest
     assert(getAvailableMemoryMB(args) == 1024);
 }
 
-void saveCachixDeploySpec(Package[] packages)
-{
-    // TODO: check if we really need to filter out the cached packages
-    auto agents = packages
-        .filter!(pkg => pkg.cachedAt.empty)
-        .map!(pkg => JSONValue([
-            "package": pkg.name,
-            "out": pkg.output,
-        ]))
-        .array;
-    auto resPath = resultDir.buildPath("cachix-deploy-spec.json");
-    resPath.write(JSONValue(agents).toString(JSONOptions.doNotEscapeSlashes));
-}
-
-@("saveCachixDeploySpec")
-unittest
-{
-    import std.file : rmdirRecurse;
-
-    createResultDirs();
-    saveCachixDeploySpec(cast(Package[]) testPackageArray);
-    JSONValue deploySpec = parseJSON(resultDir.buildPath("cachix-deploy-spec.json").readText);
-    assert(testPackageArray[1].name == deploySpec[0]["package"].str);
-    assert(testPackageArray[1].output == deploySpec[0]["out"].str);
-}
-
 void saveGHCIMatrix(T)(Package[] packages, auto ref T args)
-    if (is(T == CiMatrixArgs) || is(T == PrintTableArgs) || is(T == CiArgs) || is(T == DeploySpecArgs))
+    if (is(T == CiMatrixArgs) || is(T == PrintTableArgs) || is(T == CiArgs))
 {
     auto matrix = JSONValue([
         "include": JSONValue(packages.map!toJSON.array)
@@ -1284,7 +1257,7 @@ unittest
 }
 
 void printTableForCacheStatus(T)(Package[] packages, auto ref T args)
-    if (is(T == CiMatrixArgs) || is(T == PrintTableArgs) || is(T == CiArgs) || is(T == DeploySpecArgs))
+    if (is(T == CiMatrixArgs) || is(T == PrintTableArgs) || is(T == CiArgs))
 {
     createResultDirs();
 
@@ -1292,7 +1265,6 @@ void printTableForCacheStatus(T)(Package[] packages, auto ref T args)
     {
         saveGHCIMatrix(packages, args);
     }
-    saveCachixDeploySpec(packages);
     saveGHCIComment(convertNixEvalToTableSummary(packages, args.isInitial));
 
     const outputPath = args.githubOutput
@@ -1416,7 +1388,7 @@ unittest
 }
 
 Package[] getPrecalcMatrix(T)(auto ref T args)
-    if (is(T == PrintTableArgs) || is(T == DeploySpecArgs))
+    if (is(T == PrintTableArgs))
 {
     auto precalcMatrixStr = args.precalcMatrix == "" ? `{"include": []}` : args.precalcMatrix;
     return parseJSON(precalcMatrixStr)["include"].array.map!(fromJSON!Package).array;
