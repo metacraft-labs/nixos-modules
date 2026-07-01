@@ -10,6 +10,7 @@
     ./deployment-production-cutover.nix
     ./deployment-pull-agent.nix
     ./deployment-reconciler.nix
+    ./repro-binary-cache-systemd.nix
     ./consumer-flake-attic.nix
     ./linux-vm-cloud-init
     ./netbird-with-agenix.nix

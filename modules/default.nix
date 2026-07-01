@@ -18,6 +18,7 @@
     ./pharos
     ./commands.nix
     ./attic-cache-host
+    ./mcl-repro-binary-cache
     ./virtualisation/desktop-vms.nix
     ./nix-topology
   ];

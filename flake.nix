@@ -16,6 +16,16 @@
     nixos-2505.url = "github:NixOS/nixpkgs/nixos-25.05";
     nixos-2511.url = "github:NixOS/nixpkgs/nixos-25.11";
 
+    # Windows-Runner-Binary-Cache-Deploy M1 — the reprobuild flake provides the
+    # `repro-binary-cache` package (the binary-cache HTTP daemon) that the
+    # `services.mcl-repro-binary-cache` NixOS module packages into a systemd
+    # unit, mirroring how `mcl.attic-cache-host` packages atticd. reprobuild
+    # already pins `nixpkgs.follows = "nixos-modules/nixpkgs-unstable"`, so it is
+    # built against the same unstable package set as this repo. (There is no
+    # lock cycle: reprobuild's `nixos-modules` input keeps its own pinned
+    # revision; Nix resolves each flake's inputs independently.)
+    reprobuild.url = "github:metacraft-labs/reprobuild";
+
     nixpkgs.follows = "nixos-2511";
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
 
