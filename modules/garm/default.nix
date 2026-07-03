@@ -47,9 +47,54 @@
         { config, ... }: config.packages.garm
       );
 
+      # Default to this flake's `garm-provider-vmharness` package (M1). Consumers
+      # may override `providers.vmharness.package`.
+      defaultVmharnessPackage = withSystem pkgs.stdenv.hostPlatform.system (
+        { config, ... }: config.packages.garm-provider-vmharness
+      );
+
       stateDir = cfg.stateDir;
       dbFile = "${stateDir}/garm.sqlite";
       renderedConfig = "${stateDir}/config.toml";
+
+      vmh = cfg.providers.vmharness;
+
+      # The provider's own config.toml (a DIFFERENT file from garm's config).
+      # It holds NO secrets — only the virsh/vm-harness binary paths, the
+      # libvirt URI/network, and the golden-image map — so it is safe in the
+      # Nix store. Passed to the provider verbatim via GARM_PROVIDER_CONFIG_FILE.
+      vmharnessConfigFile = pkgs.writeText "garm-provider-vmharness.toml" ''
+        backend = "${vmh.backend}"
+        virsh_path = "${vmh.virshPath}"
+        vm_harness_path = "${vmh.vmHarnessPath}"
+        libvirt_uri = "${vmh.libvirtURI}"
+        network = "${vmh.network}"
+      ''
+      + lib.concatStrings (
+        lib.mapAttrsToList (image: spec: ''
+
+          [images."${image}"]
+          source_image = "${spec.sourceImage}"
+          os_name = "${spec.osName}"
+          os_version = "${spec.osVersion}"
+        '') vmh.images
+      );
+
+      # The `[[provider]]` block appended to garm's config when the vmharness
+      # provider is enabled. External-provider keys per config/external.go:
+      # provider_executable / config_file / interface_version.
+      vmharnessProviderBlock = optionalString vmh.enable ''
+
+        [[provider]]
+        name = "${vmh.name}"
+        provider_type = "external"
+        description = "libvirt/KVM Windows ephemeral runners via vm-harness"
+
+          [provider.external]
+          provider_executable = "${lib.getExe vmh.package}"
+          config_file = "${vmharnessConfigFile}"
+          interface_version = "v0.1.1"
+      '';
 
       # The config template written to the Nix store. Secret fields carry
       # sentinel tokens that the ExecStartPre hook replaces with real secrets
@@ -87,7 +132,10 @@
 
           [database.sqlite3]
           db_file = "${dbFile}"
-      '';
+      ''
+      # M1: optionally append the vmharness external provider. Empty (the
+      # default) keeps the forge-less/provider-less M0 boot intact.
+      + vmharnessProviderBlock;
 
       # First-run/refresh renderer. Resolves the two secrets, then substitutes
       # them into the template to produce the runtime config under $STATE_DIR.
@@ -282,6 +330,92 @@
           internal = true;
           visible = false;
           description = "LoadCredential name for the DB passphrase file.";
+        };
+
+        # Ephemeral-Windows-Runners-GARM M1 — the vmharness external provider.
+        # OPT-IN (enable default off) so M0's forge-less/provider-less boot is
+        # unaffected. When enabled, a `[[provider]]` block pointing at the
+        # `garm-provider-vmharness` binary + its (secret-free) config.toml is
+        # appended to garm's config.
+        providers.vmharness = {
+          enable = mkEnableOption "the garm-provider-vmharness external provider (libvirt/KVM Windows runners)";
+
+          package = mkOption {
+            type = types.package;
+            default = defaultVmharnessPackage;
+            defaultText = lib.literalMD "this flake's `garm-provider-vmharness` package";
+            description = "Package providing the `garm-provider-vmharness` binary.";
+          };
+
+          name = mkOption {
+            type = types.str;
+            default = "vmharness";
+            description = "GARM provider name (the `[[provider]].name`), referenced by pools.";
+          };
+
+          backend = mkOption {
+            type = types.enum [ "libvirt" ];
+            default = "libvirt";
+            description = "vm-harness backend the provider drives.";
+          };
+
+          virshPath = mkOption {
+            type = types.str;
+            default = "${pkgs.libvirt}/bin/virsh";
+            defaultText = lib.literalMD "`\${pkgs.libvirt}/bin/virsh`";
+            description = "Path to the `virsh` binary the provider shells to.";
+          };
+
+          vmHarnessPath = mkOption {
+            type = types.str;
+            default = "vm-harness";
+            description = ''
+              Path to the `vm-harness` binary used for per-job clone (M2) and
+              config-drive injection (M3). Recorded now; the real clone/inject
+              lands in later milestones.
+            '';
+          };
+
+          libvirtURI = mkOption {
+            type = types.str;
+            default = "qemu:///system";
+            description = "libvirt connection URI passed to virsh.";
+          };
+
+          network = mkOption {
+            type = types.str;
+            default = "default";
+            description = "libvirt network the per-job domains attach to.";
+          };
+
+          images = mkOption {
+            default = { };
+            description = ''
+              Map of pool image identifier (BootstrapInstance.image) to a golden
+              source. If a pool's image is absent here, the raw image string is
+              used as the source directly.
+            '';
+            type = types.attrsOf (
+              types.submodule {
+                options = {
+                  sourceImage = mkOption {
+                    type = types.str;
+                    description = "Golden qcow2/volume the per-job domain is cloned from.";
+                  };
+                  osName = mkOption {
+                    type = types.str;
+                    default = "windows";
+                    description = "Reported OS name (surfaced in ProviderInstance.os_name).";
+                  };
+                  osVersion = mkOption {
+                    type = types.str;
+                    default = "";
+                    description = "Reported OS version (surfaced in ProviderInstance.os_version).";
+                  };
+                };
+              }
+            );
+          };
         };
       };
 
