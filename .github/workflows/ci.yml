@@ -37,7 +37,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout first to use locally defined actions
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@v7.0.0
 
       - name: Setup Nix
         uses: ./.github/setup-nix
@@ -61,7 +61,7 @@ jobs:
     runs-on: [self-hosted, nixos, x86-64-v2, bare-metal]
     steps:
       - name: Checkout first to use locally defined actions
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@v7.0.0
 
       - name: Stage the devShell test fixture as the workspace flake
         run: |
@@ -107,7 +107,7 @@ jobs:
     runs-on: [self-hosted, nixos, x86-64-v2, bare-metal]
     steps:
       - name: Checkout first to use locally defined actions
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@v7.0.0
 
       - name: Setup Nix
         uses: ./.github/setup-nix
@@ -146,7 +146,7 @@ jobs:
     runs-on: [self-hosted, nixos, x86-64-v3, bare-metal]
     steps:
       - name: Checkout first to use locally defined actions
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@v7.0.0
 
       - name: Setup Nix
         uses: ./.github/setup-nix
