@@ -20,6 +20,7 @@
     ./attic-cache-host
     ./mcl-repro-binary-cache
     ./mcl-repro-deploy-agent
+    ./garm
     ./virtualisation/desktop-vms.nix
     ./nix-topology
   ];

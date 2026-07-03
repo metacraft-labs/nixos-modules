@@ -94,6 +94,9 @@
         aztec = pkgs.callPackage ./aztec { };
       }
       // optionalAttrs isLinux {
+        # Ephemeral-Windows-Runners-GARM M0 — the GARM control-plane package
+        # (garm daemon + garm-cli), consumed by `services.garm` and its VM gate.
+        garm = pkgs.callPackage ./garm { };
         deployment-event-metrics = pkgs.callPackage ./deployment-event-metrics { };
         folder-size-metrics = pkgs.callPackage ./folder-size-metrics { };
         ci-image = pkgs.callPackage ./ci-image {

@@ -10,6 +10,7 @@
     ./deployment-production-cutover.nix
     ./deployment-pull-agent.nix
     ./deployment-reconciler.nix
+    ./garm-service-boot.nix
     ./repro-binary-cache-systemd.nix
     ./repro-binary-cache-cross-host.nix
     ./repro-deploy-agent-https.nix
