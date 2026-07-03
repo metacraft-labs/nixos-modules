@@ -160,7 +160,7 @@ jobs:
           grep -q "^machine $h " "$HOME/.config/nix/netrc" 2>/dev/null || \
             printf 'machine %s password %s\n' "$h" "$ATTIC_TOKEN" >> "$HOME/.config/nix/netrc"
 
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7.0.0
 
       - name: Generate Shard Matrix
         id: generate-matrix
@@ -215,7 +215,7 @@ jobs:
           grep -q "^machine $h " "$HOME/.config/nix/netrc" 2>/dev/null || \
             printf 'machine %s password %s\n' "$h" "$ATTIC_TOKEN" >> "$HOME/.config/nix/netrc"
 
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7.0.0
 
       - name: Generate CI Matrix
         id: generate-matrix
@@ -375,7 +375,7 @@ jobs:
         run: |
           echo "All evaluated outputs were already present in the configured caches."
 
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7.0.0
         if: ${{ !matrix.noop }}
 
       - name: Setup Nix
