@@ -19,6 +19,7 @@
     ./commands.nix
     ./attic-cache-host
     ./mcl-repro-binary-cache
+    ./mcl-repro-deploy-agent
     ./virtualisation/desktop-vms.nix
     ./nix-topology
   ];

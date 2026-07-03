@@ -101,9 +101,62 @@
           default = false;
           description = "Open `port` in the host firewall for the listen address.";
         };
+
+        # Windows-Runner-Binary-Cache-Deploy M7 prereq (c) — opt-in HTTPS.
+        #
+        # When BOTH tlsCertFile and tlsKeyFile are set, the daemon is passed
+        # `--tls-cert`/`--tls-key` and serves over TLS (the `-d:ssl` server
+        # accept loop in server.nim). Both null (the default) keeps the plain
+        # HTTP behaviour byte-identical to M1/M2. The files are handed to the
+        # DynamicUser service via systemd LoadCredential, so they may live in
+        # a root-only path (e.g. an agenix secret) yet still be readable by
+        # the sandboxed unit at %d/<name>.
+        tlsCertFile = mkOption {
+          type = types.nullOr types.path;
+          default = null;
+          description = ''
+            PEM certificate for HTTPS, passed to the daemon as `--tls-cert`.
+            Must be set together with `tlsKeyFile`. Null (default) ⇒ plain
+            HTTP, behaviour unchanged. Loaded via systemd LoadCredential so
+            it need not be world-readable.
+          '';
+        };
+
+        tlsKeyFile = mkOption {
+          type = types.nullOr types.path;
+          default = null;
+          description = ''
+            PEM private key for the HTTPS certificate, passed as `--tls-key`.
+            Must be set together with `tlsCertFile`. Loaded via systemd
+            LoadCredential so the private key never needs to be world-readable.
+          '';
+        };
+
+        allowedSignersFile = mkOption {
+          type = types.nullOr types.path;
+          default = null;
+          description = ''
+            Publish-authorization allowlist, passed to the daemon as
+            `--allowed-signers`. One 130-char hex ECDSA-P256 producer pubkey
+            per non-blank/#-line (the cache's trust-anchor format). When set,
+            POST /publish is ENFORCED: a manifest whose producer pubkey is not
+            listed is rejected HTTP 403 with nothing stored. Null (default) ⇒
+            permissive publish (v1 single-tenant default, unchanged). Loaded
+            via systemd LoadCredential.
+          '';
+        };
       };
 
       config = mkIf cfg.enable {
+        assertions = [
+          {
+            assertion = (cfg.tlsCertFile == null) == (cfg.tlsKeyFile == null);
+            message =
+              "services.mcl-repro-binary-cache: tlsCertFile and tlsKeyFile must "
+              + "be set together (both null for plain HTTP, or both a path for HTTPS).";
+          }
+        ];
+
         environment.systemPackages = [ cfg.package ];
 
         networking.firewall = mkIf cfg.openFirewall {
@@ -125,6 +178,15 @@
                 "--listen=${cfg.listenAddress}:${toString cfg.port}"
               ]
               ++ lib.optional (cfg.storeDir != null) "--store-dir=${cfg.storeDir}"
+              # M7 prereq (c): HTTPS + publish-authorization allowlist. The
+              # cert/key/signers files are LoadCredential-provisioned under
+              # $CREDENTIALS_DIRECTORY (%d) so the DynamicUser + ProtectSystem=
+              # strict sandbox can read them without them being world-readable.
+              ++ lib.optionals (cfg.tlsCertFile != null) [
+                "--tls-cert=%d/tls-cert"
+                "--tls-key=%d/tls-key"
+              ]
+              ++ lib.optional (cfg.allowedSignersFile != null) "--allowed-signers=%d/allowed-signers"
             );
             Restart = "on-failure";
             RestartSec = "5s";
@@ -134,6 +196,17 @@
             DynamicUser = true;
             StateDirectory = "repro-binary-cache";
             StateDirectoryMode = "0700";
+
+            # M7 prereq (c): stage the TLS cert/key + allowed-signers file into
+            # the per-service credentials store (%d = $CREDENTIALS_DIRECTORY),
+            # readable by the sandboxed DynamicUser even under ProtectSystem=
+            # strict. Only wired when the corresponding option is set.
+            LoadCredential =
+              lib.optionals (cfg.tlsCertFile != null) [
+                "tls-cert:${cfg.tlsCertFile}"
+                "tls-key:${cfg.tlsKeyFile}"
+              ]
+              ++ lib.optional (cfg.allowedSignersFile != null) "allowed-signers:${cfg.allowedSignersFile}";
 
             Environment =
               lib.optional (
