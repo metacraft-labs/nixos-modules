@@ -39,14 +39,6 @@ top@{ ... }:
       reproBinaryCacheClient = inputs'.reprobuild.packages.repro-binary-cache-client;
       repro = inputs'.reprobuild.packages.reprobuild;
 
-      # `repro` dlopen()s libclingo.so + libzstd.so.1 by bare leaf name, so any
-      # direct invocation (outside the unit, which sets its own LD_LIBRARY_PATH)
-      # needs these on the loader path — same dirs the reprobuild dev shell uses.
-      reproLibPath = lib.makeLibraryPath [
-        pkgs.clingo
-        pkgs.zstd
-      ];
-
       # --- Fixture provenance -------------------------------------------------
       # Minted with:
       #   $ cat > sign.nim <<'NIM'
@@ -307,7 +299,6 @@ top@{ ... }:
                 # must NOT change.
                 out = agent.execute(
                     "env REPRO_BINARY_CACHE_CA_FILE=" + ca + " "
-                    "LD_LIBRARY_PATH=${reproLibPath} "
                     "repro deploy-agent "
                     "--target windows-runner-001 "
                     "--manifest https://server/untrusted.rdm "

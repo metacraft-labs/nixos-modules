@@ -262,16 +262,10 @@
               ) "REPRO_BINARY_CACHE_URL=${cfg.binaryCacheUrl}"
               ++ lib.optional (cfg.caFile != null) "REPRO_BINARY_CACHE_CA_FILE=%d/ca"
               ++ lib.optional (cfg.tlsInsecure && cfg.caFile == null) "REPRO_BINARY_CACHE_TLS_INSECURE=1"
-              # The `repro` binary dlopen()s libclingo.so (repro_solver's ASP
-              # solver, at module init) and libzstd.so.1 (the binary-cache
-              # streaming path) by BARE leaf name — reprobuild's build bakes the
-              # dlopen with no rpath for these and relies on a runtime
-              # LD_LIBRARY_PATH (see reprobuild flake.nix devShell + build_apps.sh
-              # rodata-bake guard). Without this the unit aborts at startup with
-              # "could not load: libclingo.so". Provide the same lib dirs the
-              # reprobuild dev shell does so the packaged `repro` resolves them
-              # inside the ProtectSystem=strict sandbox.
-              ++ [ "LD_LIBRARY_PATH=${lib.makeLibraryPath [ pkgs.clingo pkgs.zstd ]}" ]
+              # NOTE: the packaged `repro` dlopen()s libclingo.so + libzstd.so.1
+              # (repro_solver + the binary-cache streaming path) but is now
+              # SELF-CONTAINED — reprobuild's flake.nix postFixup bakes both into
+              # the binary's DT_RPATH, so no LD_LIBRARY_PATH is needed here.
               # The apply path shells out to `repro` for profile compilation; give
               # it a writable HOME/cache under the runtime dir.
               ++ [
