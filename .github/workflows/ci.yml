@@ -7,9 +7,10 @@ on:
   # Allow this workflow to be run in merge queues:
   merge_group:
 
-  # Run this workflow when PRs target `main` and when they're merged in `main`:
+  # Run this workflow when PRs target the active integration branches:
   pull_request:
     branches:
+      - dev
       - main
 
 concurrency:
