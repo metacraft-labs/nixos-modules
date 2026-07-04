@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	garmErrors "github.com/cloudbase/garm-provider-common/errors"
@@ -56,9 +57,32 @@ type VirshBackend struct {
 	// Recorded for the seam; unused by the M1 protocol path.
 	VMHarnessPath string
 	// PoolDir is the libvirt image pool directory where per-job artifacts
-	// (the config-drive ISO) are written. Empty => config-drive injection is
-	// skipped (the hermetic M1 gate uses a mock virsh and no real boot).
+	// (the CoW overlay, config-drive ISO, and OVMF nvram) are written. Empty
+	// => the M1 hermetic path: no CoW clone, no config-drive, no OVMF (the
+	// mock virsh never boots a real guest).
 	PoolDir string
+	// QemuImgPath is the qemu-img binary used to create the per-job CoW
+	// overlay over the golden. Defaults to "qemu-img".
+	QemuImgPath string
+	// UEFI firmware for Windows 11 guests. When UEFILoader is set, Create
+	// makes a per-job writable nvram from UEFINVRAMTemplate and the domain
+	// boots via OVMF pflash.
+	UEFILoader        string
+	UEFINVRAMTemplate string
+	// MemoryMB / VCPUs size the per-job domain (0 => builder defaults).
+	MemoryMB int
+	VCPUs    int
+}
+
+// overlayPath is the per-job CoW overlay file (next to the config-drive so
+// teardown removes exactly the job's artifacts, never the golden).
+func (v *VirshBackend) overlayPath(name string) string {
+	return filepath.Join(v.PoolDir, name+".overlay.qcow2")
+}
+
+// nvramPath is the per-job writable OVMF nvram file.
+func (v *VirshBackend) nvramPath(name string) string {
+	return filepath.Join(v.PoolDir, name+".nvram.fd")
 }
 
 // run executes virsh with the connection URI and the given args, returning
@@ -111,6 +135,41 @@ func (v *VirshBackend) Create(ctx context.Context, args CreateArgs) (Instance, e
 		return Instance{}, fmt.Errorf("marshaling metadata: %w", err)
 	}
 
+	// M4: on a real host (PoolDir set) materialise a FRESH per-job VM cloned
+	// from the golden — a thin CoW overlay so the golden backs any number of
+	// concurrent jobs untouched. Skipped for the hermetic M1 gate (mock virsh,
+	// no PoolDir), which exercises only the metadata round-trip and points the
+	// disk straight at SourceImage.
+	if v.PoolDir != "" && args.SourceImage != "" {
+		overlay := v.overlayPath(args.Name)
+		qemuImg := v.QemuImgPath
+		if qemuImg == "" {
+			qemuImg = "qemu-img"
+		}
+		cmd := exec.CommandContext(ctx, qemuImg, "create", "-f", "qcow2",
+			"-b", args.SourceImage, "-F", "qcow2", overlay)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return Instance{}, fmt.Errorf("qemu-img create overlay for %s: %w: %s",
+				args.Name, err, strings.TrimSpace(string(out)))
+		}
+		args.DiskSource = overlay
+		// Windows 11 needs UEFI: give the domain a per-job writable nvram
+		// derived (by libvirt, via the <nvram template=...>) from the OVMF
+		// vars template. We record the paths so buildDomainXML emits the
+		// pflash loader + nvram and Delete can remove the per-job nvram.
+		if v.UEFILoader != "" {
+			args.UEFILoader = v.UEFILoader
+			args.UEFINVRAM = v.nvramPath(args.Name)
+			args.UEFINVRAMTemplate = v.UEFINVRAMTemplate
+		}
+		if args.MemoryMB == 0 {
+			args.MemoryMB = v.MemoryMB
+		}
+		if args.VCPUs == 0 {
+			args.VCPUs = v.VCPUs
+		}
+	}
+
 	// M3: when a bootstrap is present AND we have a real pool directory,
 	// build a cloudbase-init config-drive ISO carrying the rendered bootstrap
 	// (openstack/latest/user_data) and attach it as a read-only CD-ROM so the
@@ -121,6 +180,7 @@ func (v *VirshBackend) Create(ctx context.Context, args CreateArgs) (Instance, e
 	if len(args.Bootstrap) > 0 && v.PoolDir != "" {
 		iso := configDriveISOPath(v.PoolDir, args.Name)
 		if _, err := buildConfigDriveISO(ctx, iso, args.Name, args.Bootstrap); err != nil {
+			v.cleanupArtifacts(args.Name)
 			return Instance{}, fmt.Errorf("building config-drive for %s: %w", args.Name, err)
 		}
 		configDriveISO = iso
@@ -135,18 +195,33 @@ func (v *VirshBackend) Create(ctx context.Context, args CreateArgs) (Instance, e
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		v.cleanupArtifacts(args.Name)
 		return Instance{}, fmt.Errorf("virsh define %s: %w: %s", args.Name, err, strings.TrimSpace(stderr.String()))
 	}
 
-	// Start the domain so GARM sees it as running (best-effort: a real libvirt
-	// backend boots the clone here; the mock records the transition).
+	// Start the domain so GARM sees it as running. A real libvirt backend boots
+	// the CoW clone here; the mock records the transition.
 	if _, err := v.run(ctx, "start", args.Name); err != nil {
-		// Not fatal for M1's metadata contract, but surface it: a domain that
-		// won't start is an error the caller reports back to GARM.
+		// Roll back: undefine the just-defined domain and remove its artifacts
+		// so a failed create leaves no residue.
+		_, _ = v.run(ctx, "undefine", args.Name, "--nvram")
+		v.cleanupArtifacts(args.Name)
 		return Instance{}, fmt.Errorf("starting domain %s: %w", args.Name, err)
 	}
 
 	return v.Get(ctx, args.Name)
+}
+
+// cleanupArtifacts removes the per-job overlay, OVMF nvram, and config-drive
+// ISO for a domain. Best-effort + idempotent (absence is fine); scoped to
+// exactly this job's files so the golden and shared ISOs are never touched.
+func (v *VirshBackend) cleanupArtifacts(name string) {
+	if v.PoolDir == "" {
+		return
+	}
+	_ = os.Remove(v.overlayPath(name))
+	_ = os.Remove(v.nvramPath(name))
+	_ = os.Remove(configDriveISOPath(v.PoolDir, name))
 }
 
 // Delete destroys + undefines the domain. Idempotent: absence => nil (the
@@ -173,30 +248,25 @@ func (v *VirshBackend) Delete(ctx context.Context, idOrName string) error {
 		}
 	}
 
-	if _, uerr := v.run(ctx, "undefine", name, "--nvram", "--remove-all-storage"); uerr != nil {
-		// Retry without the extra flags for backends that reject them, then
-		// treat not-found as success.
+	// Undefine + remove the libvirt-managed nvram. We deliberately do NOT pass
+	// --remove-all-storage: virsh refuses it for overlays living outside a
+	// libvirt-managed storage pool AND it can nuke pool-shared read-only ISOs
+	// (the golden). We remove exactly this job's artifacts ourselves below.
+	if _, uerr := v.run(ctx, "undefine", name, "--nvram"); uerr != nil {
+		// Retry without flags for backends that reject them, then treat
+		// not-found as success.
 		if _, uerr2 := v.run(ctx, "undefine", name); uerr2 != nil {
 			if isNotFound(uerr2) {
-				v.removeConfigDrive(name)
+				v.cleanupArtifacts(name)
 				return nil
 			}
 			return uerr2
 		}
 	}
-	// M3: remove this job's config-drive ISO (per-job artifact; the golden is
-	// never touched). Best-effort — absence is fine.
-	v.removeConfigDrive(name)
+	// Remove this job's per-job artifacts (overlay + nvram + config-drive).
+	// The golden is never touched. Best-effort — absence is fine.
+	v.cleanupArtifacts(name)
 	return nil
-}
-
-// removeConfigDrive deletes the per-job config-drive ISO if present. Never
-// errors (teardown must be idempotent).
-func (v *VirshBackend) removeConfigDrive(name string) {
-	if v.PoolDir == "" {
-		return
-	}
-	_ = os.Remove(configDriveISOPath(v.PoolDir, name))
 }
 
 // resolveName maps a provider_id (UUID) or name to the domain name. If the

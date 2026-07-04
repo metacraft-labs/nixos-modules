@@ -58,10 +58,15 @@ func NewWithConfig(cfg *config.Config) (*Provider, error) {
 	switch cfg.Backend {
 	case config.BackendLibvirt:
 		b = &backend.VirshBackend{
-			VirshPath:     cfg.VirshPath,
-			URI:           cfg.LibvirtURI,
-			VMHarnessPath: cfg.VMHarnessPath,
-			PoolDir:       cfg.PoolDir,
+			VirshPath:         cfg.VirshPath,
+			URI:               cfg.LibvirtURI,
+			VMHarnessPath:     cfg.VMHarnessPath,
+			PoolDir:           cfg.PoolDir,
+			QemuImgPath:       cfg.QemuImgPath,
+			UEFILoader:        cfg.UEFILoader,
+			UEFINVRAMTemplate: cfg.UEFINVRAMTemplate,
+			MemoryMB:          cfg.MemoryMB,
+			VCPUs:             cfg.VCPUs,
 		}
 	default:
 		return nil, fmt.Errorf("unsupported backend %q", cfg.Backend)

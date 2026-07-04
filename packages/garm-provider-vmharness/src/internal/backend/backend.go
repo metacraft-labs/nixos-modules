@@ -66,6 +66,21 @@ type CreateArgs struct {
 	// Bootstrap is the rendered runner bootstrap (PowerShell for Windows) that
 	// M3 injects into the guest via config-drive. Carried through the seam now.
 	Bootstrap []byte
+
+	// DiskSource is the resolved per-job boot disk the domain XML points at
+	// (the CoW overlay created from SourceImage). When empty, buildDomainXML
+	// falls back to SourceImage — the M1 hermetic/mock path that never boots a
+	// real guest.
+	DiskSource string
+	// UEFI firmware for the per-job domain (Windows 11 needs UEFI). When
+	// UEFILoader is set the domain boots via OVMF pflash with a per-job
+	// writable nvram copied from UEFINVRAMTemplate; otherwise SeaBIOS.
+	UEFILoader        string
+	UEFINVRAM         string
+	UEFINVRAMTemplate string
+	// MemoryMB / VCPUs size the domain. Zero => defaults (4096 MiB / 2 vCPU).
+	MemoryMB int
+	VCPUs    int
 }
 
 // Backend is the seam the provider shells to. Every method is a thin wrapper

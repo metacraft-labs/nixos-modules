@@ -70,6 +70,26 @@ type Config struct {
 	// milestones can wire it without changing the protocol surface.
 	VMHarnessPath string `toml:"vm_harness_path"`
 
+	// QemuImgPath is the path to the `qemu-img` binary used to create the
+	// per-job CoW overlay over the golden (M4 clone path). Defaults to
+	// "qemu-img" (resolved via PATH).
+	QemuImgPath string `toml:"qemu_img_path"`
+
+	// UEFILoader / UEFINVRAMTemplate configure OVMF firmware for the per-job
+	// domain (Windows 11 requires UEFI). UEFILoader is the read-only OVMF code
+	// firmware (eg /run/libvirt/nix-ovmf/edk2-x86_64-code.fd) and
+	// UEFINVRAMTemplate the OVMF vars template that is copied into a per-job
+	// writable nvram file. When UEFILoader is empty the domain boots via
+	// SeaBIOS (kept so the hermetic M1 mock gate, which never boots a real
+	// guest, is unchanged).
+	UEFILoader        string `toml:"uefi_loader"`
+	UEFINVRAMTemplate string `toml:"uefi_nvram_template"`
+
+	// MemoryMB / VCPUs size the per-job domain. Zero => conservative defaults
+	// (4096 MiB / 2 vCPU) applied in the domain-XML builder.
+	MemoryMB int `toml:"memory_mb"`
+	VCPUs    int `toml:"vcpus"`
+
 	// LibvirtURI is the libvirt connection URI (eg: "qemu:///system"). Passed
 	// to virsh as `-c`.
 	LibvirtURI string `toml:"libvirt_uri"`
@@ -101,6 +121,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.VMHarnessPath == "" {
 		c.VMHarnessPath = "vm-harness"
+	}
+	if c.QemuImgPath == "" {
+		c.QemuImgPath = "qemu-img"
 	}
 	if c.LibvirtURI == "" {
 		c.LibvirtURI = "qemu:///system"

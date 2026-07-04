@@ -38,6 +38,26 @@ import (
 func main() {
 	ctx := context.Background()
 
+	// GARM's scale-set mode does not populate GARM_POOL_ID for
+	// instance-scoped commands (DeleteInstance/GetInstance/Start/Stop): a
+	// scale-set runner is identified by its scale-set ID and the delete/get
+	// params carry an empty PoolInfo.ID. garm-provider-common's env
+	// validation nonetheless requires a non-empty pool ID for those commands.
+	// This provider is STATELESS and resolves the target libvirt domain by its
+	// instance name/UUID (never by pool ID), so an absent pool ID is harmless.
+	// Default it to a placeholder for the instance-scoped commands so
+	// scale-set teardown (and get/start/stop) works. Pool-based (webhook)
+	// operation is unaffected: GARM sets a real GARM_POOL_ID there.
+	switch commonExecution.ExecutionCommand(os.Getenv("GARM_COMMAND")) {
+	case commonExecution.DeleteInstanceCommand,
+		commonExecution.GetInstanceCommand,
+		commonExecution.StartInstanceCommand,
+		commonExecution.StopInstanceCommand:
+		if os.Getenv("GARM_POOL_ID") == "" {
+			_ = os.Setenv("GARM_POOL_ID", "scaleset")
+		}
+	}
+
 	env, err := execution.GetEnvironment()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to get environment: %s\n", err)
