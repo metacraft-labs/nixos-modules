@@ -429,9 +429,142 @@
             );
           };
         };
+
+        # Ephemeral-Windows-Runners-GARM M5 — autoscale tuning for scale sets.
+        #
+        # GARM scale sets are NOT part of garm's `config.toml`: GitHub owns the
+        # scheduling and each scale set carries GitHub-side state (a message
+        # queue subscription, a numeric id), so they are provisioned at runtime
+        # via `garm-cli scaleset add/update` against a live, App-authenticated
+        # org (see references/garm/doc/scale-sets.md). This option therefore
+        # captures the DECLARATIVE tuning shape — the M5 autoscale knobs — so a
+        # host config records its intended concurrency policy in one place; an
+        # operator (or a future reconcile activation) applies it with the CLI.
+        #
+        # The knobs map 1:1 onto GARM's reconcilers (validated against the
+        # libvirt provider by checks/t_ephemeral_runner_autoscale.sh):
+        #   * maxRunners        -> the hard CONCURRENCY CAP: GARM never runs more
+        #                          than this many VMs for the scale set at once;
+        #                          excess queued jobs wait for a slot.
+        #   * minIdleRunners    -> the WARM POOL size: GARM keeps this many
+        #                          pre-booted idle runners (ensureMinIdleRunners)
+        #                          to hide Windows cold-boot latency, and refills
+        #                          after each consumption. 0 == SCALE-TO-ZERO
+        #                          (on-demand only; nothing runs when idle).
+        #   * runnerBootstrapTimeout -> minutes before a runner that never joined
+        #                          GitHub is considered failed and replaced.
+        #   * labels            -> optional extra labels for `runs-on` matching
+        #                          (the scale-set NAME is the primary selector;
+        #                          labels are immutable after creation).
+        #
+        # RESOURCE GUARD: each Windows-11 VM is heavy (provider memory_mb + vcpus,
+        # see providers.vmharness). The worst-case committed guest RAM is
+        # `maxRunners * memory_mb`; set maxRunners to what the host's (RAM, vCPU)
+        # headroom allows so autoscale can never OOM the host. The autoscale gate
+        # enforces exactly this bound before booting anything.
+        scaleSets = mkOption {
+          default = { };
+          description = ''
+            Declarative autoscale tuning for GARM scale sets, keyed by scale-set
+            name (the workflow `runs-on:` selector). Records the intended
+            concurrency policy (concurrency cap, warm-pool size, bootstrap
+            timeout, labels); applied at runtime via `garm-cli scaleset` since
+            scale sets carry GitHub-side state and are not part of `config.toml`.
+          '';
+          type = types.attrsOf (
+            types.submodule (
+              { name, ... }:
+              {
+                options = {
+                  provider = mkOption {
+                    type = types.str;
+                    default = "vmharness";
+                    description = "GARM provider name that backs this scale set.";
+                  };
+                  image = mkOption {
+                    type = types.str;
+                    default = "golden";
+                    description = ''
+                      Image identifier resolved against `providers.vmharness.images`
+                      to pick the golden the per-job VMs clone from.
+                    '';
+                  };
+                  osType = mkOption {
+                    type = types.enum [
+                      "windows"
+                      "linux"
+                    ];
+                    default = "windows";
+                    description = "Runner OS type reported to GARM/GitHub.";
+                  };
+                  osArch = mkOption {
+                    type = types.str;
+                    default = "amd64";
+                    description = "Runner OS architecture.";
+                  };
+                  maxRunners = mkOption {
+                    type = types.ints.positive;
+                    default = 2;
+                    description = ''
+                      Concurrency CAP: the maximum number of ephemeral VMs GARM
+                      runs concurrently for this scale set. The primary host
+                      resource guard — keep `maxRunners * providers.vmharness
+                      memory_mb` within host RAM headroom. Modest by default so
+                      autoscale proves the mechanism without stressing the host.
+                    '';
+                  };
+                  minIdleRunners = mkOption {
+                    type = types.ints.unsigned;
+                    default = 0;
+                    description = ''
+                      Warm-pool size: pre-booted idle runners kept ready and
+                      refilled after consumption. 0 (default) == scale-to-zero
+                      (on-demand only). Must be <= maxRunners.
+                    '';
+                  };
+                  runnerBootstrapTimeout = mkOption {
+                    type = types.ints.positive;
+                    default = 20;
+                    description = ''
+                      Minutes before a runner that has not joined GitHub is
+                      considered failed and replaced (`--runner-bootstrap-timeout`).
+                      Cold Windows boot + cloudbase-init + register can take
+                      several minutes; keep this generous.
+                    '';
+                  };
+                  labels = mkOption {
+                    type = types.listOf types.str;
+                    default = [ ];
+                    description = ''
+                      Optional extra runner labels (immutable after creation).
+                      The scale-set NAME is the primary `runs-on` selector.
+                    '';
+                  };
+                  enabled = mkOption {
+                    type = types.bool;
+                    default = true;
+                    description = "Whether the scale set is enabled.";
+                  };
+                  scaleSetName = mkOption {
+                    type = types.str;
+                    default = name;
+                    defaultText = lib.literalMD "the attribute name";
+                    description = "The scale-set name (defaults to the attribute name).";
+                  };
+                };
+              }
+            )
+          );
+        };
       };
 
       config = mkIf cfg.enable {
+        # M5 invariant: a warm pool can never exceed the concurrency cap.
+        assertions = lib.mapAttrsToList (n: ss: {
+          assertion = ss.minIdleRunners <= ss.maxRunners;
+          message = "services.garm.scaleSets.${n}: minIdleRunners (${toString ss.minIdleRunners}) must be <= maxRunners (${toString ss.maxRunners}).";
+        }) cfg.scaleSets;
+
         environment.systemPackages = [ cfg.package ];
 
         networking.firewall = mkIf cfg.openFirewall {
