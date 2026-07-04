@@ -60,16 +60,29 @@
       vmh = cfg.providers.vmharness;
 
       # The provider's own config.toml (a DIFFERENT file from garm's config).
-      # It holds NO secrets — only the virsh/vm-harness binary paths, the
-      # libvirt URI/network, and the golden-image map — so it is safe in the
-      # Nix store. Passed to the provider verbatim via GARM_PROVIDER_CONFIG_FILE.
-      vmharnessConfigFile = pkgs.writeText "garm-provider-vmharness.toml" ''
+      # It holds NO secrets — only the virsh/qemu-img/vm-harness binary paths,
+      # the libvirt URI/network, the OVMF firmware paths, the per-VM sizing, and
+      # the golden-image map — so it is safe in the Nix store. Passed to the
+      # provider verbatim via GARM_PROVIDER_CONFIG_FILE. These keys match
+      # garm-provider-vmharness/internal/config.Config (M4): the provider CoW
+      # clones the golden with qemu-img and boots a Windows-11 UEFI/OVMF domain,
+      # so uefi_loader/uefi_nvram_template + memory_mb/vcpus are required for a
+      # real (non-mock) boot.
+      # (Same writeText-precedence caveat as configTemplate below: build the
+      # STRING first, then wrap — otherwise the [images.*] blocks would be
+      # appended to the derivation's store PATH instead of its content.)
+      vmharnessConfigText = ''
         backend = "${vmh.backend}"
         virsh_path = "${vmh.virshPath}"
+        qemu_img_path = "${vmh.qemuImgPath}"
         vm_harness_path = "${vmh.vmHarnessPath}"
         libvirt_uri = "${vmh.libvirtURI}"
         network = "${vmh.network}"
         pool_dir = "${vmh.poolDir}"
+        uefi_loader = "${vmh.uefiLoader}"
+        uefi_nvram_template = "${vmh.uefiNvramTemplate}"
+        memory_mb = ${toString vmh.memoryMb}
+        vcpus = ${toString vmh.vcpus}
       ''
       + lib.concatStrings (
         lib.mapAttrsToList (image: spec: ''
@@ -80,6 +93,7 @@
           os_version = "${spec.osVersion}"
         '') vmh.images
       );
+      vmharnessConfigFile = pkgs.writeText "garm-provider-vmharness.toml" vmharnessConfigText;
 
       # The `[[provider]]` block appended to garm's config when the vmharness
       # provider is enabled. External-provider keys per config/external.go:
@@ -95,7 +109,55 @@
           provider_executable = "${lib.getExe vmh.package}"
           config_file = "${vmharnessConfigFile}"
           interface_version = "v0.1.1"
+          # GARM does NOT propagate its own PATH to external providers; the
+          # provider shells to genisoimage (config-drive) via LookPath, so it
+          # must inherit PATH. virsh/qemu-img are absolute (config paths above),
+          # but genisoimage is resolved from PATH — the unit sets a PATH that
+          # includes cdrkit/genisoimage. Without this the M4 create path fails
+          # `genisoimage: executable file not found in $PATH`.
+          environment_variables = ["PATH"]
       '';
+
+      # M6 forge wiring: the GitHub App credentials, declared in config.toml as
+      # a `[[github]]` block. The App PEM never enters the store:
+      # private_key_path points at the render-time @APP_PEM_PATH@ sentinel, which
+      # the ExecStartPre hook rewrites to a stable 0600 copy under stateDir of
+      # the LoadCredential-staged secret.
+      #
+      # GARM CONSTRAINT: config `[[github]]` creds are imported into the DB only
+      # by the legacy one-shot migrateCredentialsToDB (cmd/garm/main.go:
+      # cfg.Database.MigrateCredentials = cfg.Github), and ONLY on the first DB
+      # open AND only if an admin user already exists then. GARM's first-run
+      # creates the admin via the API after boot, so on a FRESH deploy the import
+      # is skipped ("Admin user doesn't exist. This is a new deploy."). This
+      # block is thus effective for UPGRADING a pre-existing single-user GARM;
+      # for a greenfield install register the creds once via
+      # `garm-cli github credentials add --private-key-path <stateDir>/app-key.pem`
+      # using this module's appId/installationId + the module-staged PEM (see
+      # modules/garm/README.md §3). Every input stays declarative; only the final
+      # garm-cli call is a runtime step, like org/scale-set creation.
+      githubBlock = optionalString cfg.github.enable ''
+
+        [[github]]
+        name = "${cfg.github.credentialsName}"
+        description = "Metacraft Labs GitHub App (ephemeral runners)"
+        auth_type = "app"
+
+          [github.app]
+          app_id = ${toString cfg.github.appId}
+          installation_id = ${toString cfg.github.installationId}
+          private_key_path = "@APP_PEM_PATH@"
+      '';
+
+      # M6 controller URLs. GARM's guest-facing metadata/callback base URLs must
+      # be reachable BY THE GUEST — on the libvirt NAT network that is the host's
+      # bridge IP (virbr0 = 192.168.122.1), NOT localhost. cloudbase-init in the
+      # runner VM fetches its JIT config from metadataURL and the runner reports
+      # status to callbackURL. Empty ⇒ omitted (keeps the forge-less M0 boot,
+      # which the boot gate asserts stops at the urls_required middleware).
+      controllerURLLines =
+        optionalString (cfg.metadataURL != "") ''metadata_url = "${cfg.metadataURL}"''
+        + optionalString (cfg.callbackURL != "") "\ncallback_url = \"${cfg.callbackURL}\"";
 
       # The config template written to the Nix store. Secret fields carry
       # sentinel tokens that the ExecStartPre hook replaces with real secrets
@@ -103,10 +165,20 @@
       # resolved from the module options.
       #
       # Section order follows config/config.go: [default], [logging],
-      # [metrics], [jwt_auth], [apiserver], [database]. Providers/forges are
-      # intentionally absent (empty ⇒ forge-less M0 boot).
-      configTemplate = pkgs.writeText "garm-config.toml.tmpl" ''
+      # [metrics], [jwt_auth], [apiserver], [database], then optional
+      # [[provider]] (M1) and [[github]] (M6). With no provider/forge configured
+      # this reduces to the forge-less M0 boot.
+      #
+      # NOTE the parenthesisation: function application binds tighter than `+`,
+      # so `writeText "n" ''…'' + provider + github` would coerce the derivation
+      # to its store PATH and append the TOML blocks to that path string — the
+      # blocks would leak into any `"${configTemplate}"` interpolation. The
+      # concatenation must therefore happen on the STRING first, then be wrapped
+      # by writeText. (M0's provider/github blocks were always empty so the bug
+      # lay dormant until M6 turned them on.)
+      configTemplateText = ''
         [default]
+        ${controllerURLLines}
 
         [logging]
         log_level = "${cfg.logLevel}"
@@ -115,6 +187,7 @@
         [metrics]
         enable = ${lib.boolToString cfg.metrics.enable}
         disable_auth = ${lib.boolToString cfg.metrics.disableAuth}
+        period = "${cfg.metrics.period}"
 
         [jwt_auth]
         # Replaced at runtime with the real secret (never in the store).
@@ -136,7 +209,11 @@
       ''
       # M1: optionally append the vmharness external provider. Empty (the
       # default) keeps the forge-less/provider-less M0 boot intact.
-      + vmharnessProviderBlock;
+      + vmharnessProviderBlock
+      # M6: optionally append the GitHub App forge credentials.
+      + githubBlock;
+
+      configTemplate = pkgs.writeText "garm-config.toml.tmpl" configTemplateText;
 
       # First-run/refresh renderer. Resolves the two secrets, then substitutes
       # them into the template to produce the runtime config under $STATE_DIR.
@@ -184,11 +261,33 @@
           # JWT secret: 32 random bytes -> 64 hex (strong).
           jwt_secret="$(resolve_secret "${cfg.jwtSecretCredentialName}" jwt-secret.secret 32)"
 
+          # M6 App PEM. The GitHub App private key is a MULTI-LINE PEM, so it
+          # cannot be substituted inline into config.toml — instead config.toml's
+          # private_key_path must point at an on-disk file. LoadCredential mounts
+          # it read-only at $CREDENTIALS_DIRECTORY/<name> for the duration of the
+          # unit, but that tmpfs path is not guaranteed stable across the render
+          # → daemon boundary, and GARM re-reads the key when it re-authenticates.
+          # So copy it to a STABLE path under stateDir (mode 0600, owned by the
+          # service user, outside the world-readable store) and point GARM there.
+          app_pem_path=""
+          ${optionalString cfg.github.enable ''
+            if [ -n "$cred_dir" ] && [ -f "$cred_dir/${cfg.appKeyCredentialName}" ]; then
+              app_pem_path="$state_dir/app-key.pem"
+              umask 077
+              install -m 0600 /dev/null "$app_pem_path"
+              cat "$cred_dir/${cfg.appKeyCredentialName}" > "$app_pem_path"
+            else
+              echo "garm-render-config: services.garm.github.enable is set but the App key credential '${cfg.appKeyCredentialName}' was not staged (set services.garm.github.appKeyFile)" >&2
+              exit 1
+            fi
+          ''}
+
           umask 077
           tmp="$(mktemp "${renderedConfig}.XXXXXX")"
           sed \
             -e "s|@DB_PASSPHRASE@|$db_passphrase|" \
             -e "s|@JWT_SECRET@|$jwt_secret|" \
+            -e "s|@APP_PEM_PATH@|$app_pem_path|" \
             "${configTemplate}" > "$tmp"
           mv -f "$tmp" "${renderedConfig}"
         '';
@@ -279,7 +378,21 @@
             default = false;
             description = ''
               Serve `/metrics` without JWT auth (`[metrics].disable_auth`).
-              Only meaningful when `metrics.enable` is true.
+              Only meaningful when `metrics.enable` is true. GARM serves
+              `/metrics` on the SAME apiserver port; `disable_auth = true` makes
+              it scrapeable without a JWT metrics-token. Keep this endpoint on a
+              trusted/overlay interface (see `apiServer.bind`) — it exposes
+              operational telemetry, not secrets, but should not face the
+              public internet.
+            '';
+          };
+          period = mkOption {
+            type = types.str;
+            default = "60s";
+            description = ''
+              Snapshot-metrics refresh interval (`[metrics].period`, a Go
+              duration). GARM recomputes pool/instance/entity/job gauges on this
+              tick. 60s matches GARM's default.
             '';
           };
         };
@@ -317,6 +430,132 @@
           description = "Open the API server `port` in the host firewall.";
         };
 
+        # M6: the guest-facing controller URLs. GARM hands these to the runner
+        # VM via the config-drive; the guest fetches its JIT config from
+        # metadataURL and reports status to callbackURL. They MUST be reachable
+        # from the guest — on the libvirt NAT network that is the host bridge IP
+        # (virbr0 = 192.168.122.1), never localhost. Empty (default) keeps the
+        # forge-less M0 boot (the boot gate asserts the urls_required middleware
+        # fires when these are unset).
+        metadataURL = mkOption {
+          type = types.str;
+          default = "";
+          example = "http://192.168.122.1:9997/api/v1/metadata";
+          description = ''
+            `[default].metadata_url` — the base URL the runner VM fetches its
+            JIT/instance metadata from. Must be guest-reachable (the host bridge
+            IP on the libvirt network, not localhost).
+          '';
+        };
+        callbackURL = mkOption {
+          type = types.str;
+          default = "";
+          example = "http://192.168.122.1:9997/api/v1/callbacks";
+          description = ''
+            `[default].callback_url` — the base URL the runner VM posts status
+            reports back to. Must be guest-reachable (see `metadataURL`).
+          '';
+        };
+
+        # M6: run GARM as a dedicated system user (default) instead of a
+        # DynamicUser. The libvirt provider needs the `garm` user to be in the
+        # libvirtd/kvm groups and to own persistent VM-pool artifacts, which a
+        # DynamicUser (fresh uid each boot) cannot do — see the config block for
+        # the full rationale. Overridable for hosts with a different convention.
+        user = mkOption {
+          type = types.str;
+          default = "garm";
+          description = "System user the garm daemon runs as (created by the module).";
+        };
+        group = mkOption {
+          type = types.str;
+          default = "garm";
+          description = "Primary group for the garm daemon user (created by the module).";
+        };
+
+        # M6: extra supplementary groups for the service user. When the vmharness
+        # provider is enabled the daemon must reach the qemu:///system libvirt
+        # socket and /dev/kvm, which are group-gated (libvirtd/kvm). The config
+        # block adds these automatically when the provider is on; this option
+        # lets a host add more (e.g. a storage group for the pool dir).
+        extraGroups = mkOption {
+          type = types.listOf types.str;
+          default = [ ];
+          description = "Additional supplementary groups for the garm service user.";
+        };
+
+        # Ephemeral-Windows-Runners-GARM M6 — the GitHub App forge credentials,
+        # wired DECLARATIVELY. OPT-IN (enable default off) so M0/M5 boots are
+        # unaffected. When enabled a `[[github]]` block with auth_type=app is
+        # emitted; GARM imports it into its DB on first boot. The App PEM is
+        # supplied via LoadCredential (agenix at runtime) and NEVER enters the
+        # store. Orgs + scale sets remain runtime/DB state (provisioned via
+        # garm-cli or the reconcile activation), since they carry GitHub-side
+        # state — only the credentials are declarative here.
+        github = {
+          enable = mkEnableOption "declarative GitHub App forge credentials (imported into GARM's DB on boot)";
+
+          credentialsName = mkOption {
+            type = types.str;
+            default = "mcl-app";
+            description = ''
+              The `[[github]].name` — the credential name an org/scale set
+              references (`garm-cli organization add --credentials <name>`).
+            '';
+          };
+
+          appId = mkOption {
+            type = types.ints.positive;
+            example = 3115338;
+            description = "GitHub App ID (`[github.app].app_id`).";
+          };
+
+          installationId = mkOption {
+            type = types.ints.positive;
+            example = 117072647;
+            description = "GitHub App installation ID (`[github.app].installation_id`).";
+          };
+
+          appKeyFile = mkOption {
+            type = types.nullOr types.path;
+            default = null;
+            example = "/run/agenix/github-runners/mcl-app-key";
+            description = ''
+              Path to the GitHub App private-key PEM, staged via LoadCredential
+              (agenix-managed on the real host) so it is NOT world-readable and
+              NEVER enters the Nix store. At render time it is copied to a
+              stable 0600 path under `stateDir` and `private_key_path` points
+              there. Required when `github.enable` is true.
+            '';
+          };
+        };
+
+        # M6: declared HOST RESOURCE BUDGET for the eval-time autoscale guard.
+        # The M5 guard was harness-only (a runtime check in the gate script);
+        # M6 promotes it to a module assertion so a bad config fails to EVAL,
+        # long before anything boots. See the assertion in `config`.
+        hostBudget = {
+          memoryMb = mkOption {
+            type = types.ints.positive;
+            default = 65536;
+            description = ''
+              Total guest RAM (MiB) the host is willing to commit to ephemeral
+              runner VMs. The assertion requires
+              `maxRunners * providers.vmharness.memoryMb <= hostBudget.memoryMb`
+              across all scale sets so autoscale can never over-commit RAM.
+            '';
+          };
+          vcpus = mkOption {
+            type = types.ints.positive;
+            default = 32;
+            description = ''
+              Total guest vCPUs the host is willing to commit. The assertion
+              requires `maxRunners * providers.vmharness.vcpus <=
+              hostBudget.vcpus` across all scale sets.
+            '';
+          };
+        };
+
         # Internal: credential names used by LoadCredential. Not user-facing.
         jwtSecretCredentialName = mkOption {
           type = types.str;
@@ -331,6 +570,13 @@
           internal = true;
           visible = false;
           description = "LoadCredential name for the DB passphrase file.";
+        };
+        appKeyCredentialName = mkOption {
+          type = types.str;
+          default = "app-key";
+          internal = true;
+          visible = false;
+          description = "LoadCredential name for the GitHub App PEM file.";
         };
 
         # Ephemeral-Windows-Runners-GARM M1 — the vmharness external provider.
@@ -367,6 +613,55 @@
             description = "Path to the `virsh` binary the provider shells to.";
           };
 
+          qemuImgPath = mkOption {
+            type = types.str;
+            default = "${pkgs.qemu}/bin/qemu-img";
+            defaultText = lib.literalMD "`\${pkgs.qemu}/bin/qemu-img`";
+            description = ''
+              Path to the `qemu-img` binary the provider uses to create the
+              per-job CoW overlay over the golden (`qemu-img create -b`).
+            '';
+          };
+
+          uefiLoader = mkOption {
+            type = types.str;
+            default = "/run/libvirt/nix-ovmf/edk2-x86_64-code.fd";
+            description = ''
+              OVMF read-only code firmware for the per-job Windows-11 domain
+              (`uefi_loader`). Windows 11 requires UEFI+SMM; the provider boots
+              the proven OVMF domain (M4). On NixOS with libvirtd this is the
+              symlink farm under /run/libvirt/nix-ovmf.
+            '';
+          };
+
+          uefiNvramTemplate = mkOption {
+            type = types.str;
+            default = "/run/libvirt/nix-ovmf/edk2-i386-vars.fd";
+            description = ''
+              OVMF vars template copied into a per-job writable nvram file
+              (`uefi_nvram_template`).
+            '';
+          };
+
+          memoryMb = mkOption {
+            type = types.ints.positive;
+            default = 4096;
+            description = ''
+              Per-job guest RAM (MiB), emitted as `memory_mb`. Also an input to
+              the M6 eval-time resource-guard assertion
+              (`maxRunners * memoryMb <= hostBudget.memoryMb`).
+            '';
+          };
+
+          vcpus = mkOption {
+            type = types.ints.positive;
+            default = 4;
+            description = ''
+              Per-job guest vCPUs, emitted as `vcpus`. Also an input to the M6
+              resource-guard assertion.
+            '';
+          };
+
           vmHarnessPath = mkOption {
             type = types.str;
             default = "vm-harness";
@@ -391,12 +686,20 @@
 
           poolDir = mkOption {
             type = types.str;
-            default = "/var/lib/libvirt/images";
+            default = "/var/lib/garm/pool";
             description = ''
-              libvirt image-pool directory where the provider writes per-job
-              artifacts (the CoW overlay + the M3 cloudbase-init config-drive
-              ISO carrying the rendered runner bootstrap). When empty the
-              provider skips config-drive injection.
+              Directory where the provider writes per-job artifacts (the CoW
+              overlay + the M3 cloudbase-init config-drive ISO + the OVMF nvram).
+              When empty the provider skips config-drive injection.
+
+              M6 NOTE: the provider runs as the non-root `garm` user, so this dir
+              must be WRITABLE by that user. The module provisions it via
+              systemd-tmpfiles owned `garm:libvirtd` (0771). The default is a
+              garm-owned path rather than the shared `/var/lib/libvirt/images`
+              (which is root-only 0711) so the default works out of the box.
+              qemu runs the domains as root on a stock NixOS libvirtd host, so it
+              can still read the overlays regardless. If you override this to a
+              shared pool, grant the `garm` user write access there yourself.
             '';
           };
 
@@ -412,7 +715,20 @@
                 options = {
                   sourceImage = mkOption {
                     type = types.str;
-                    description = "Golden qcow2/volume the per-job domain is cloned from.";
+                    description = ''
+                      Golden qcow2/volume the per-job domain is cloned from.
+
+                      M6 NOTE: the provider (running as the non-root `garm` user)
+                      opens this as the qemu-img CoW backing file, so the golden
+                      AND every parent directory must be READABLE + TRAVERSABLE by
+                      the `garm` user. If the golden lives under a group-gated
+                      path (e.g. `/storage/...` owned `root:some-group 0770`),
+                      grant access with a POSIX ACL
+                      (`setfacl -m u:garm:--x /storage; setfacl -m u:garm:r-x
+                      <dir>; setfacl -m u:garm:r <golden>`) or add `garm` to the
+                      owning group via `services.garm.extraGroups`. The M4/M5
+                      harnesses masked this by running qemu-img as root.
+                    '';
                   };
                   osName = mkOption {
                     type = types.str;
@@ -558,101 +874,278 @@
         };
       };
 
-      config = mkIf cfg.enable {
-        # M5 invariant: a warm pool can never exceed the concurrency cap.
-        assertions = lib.mapAttrsToList (n: ss: {
-          assertion = ss.minIdleRunners <= ss.maxRunners;
-          message = "services.garm.scaleSets.${n}: minIdleRunners (${toString ss.minIdleRunners}) must be <= maxRunners (${toString ss.maxRunners}).";
-        }) cfg.scaleSets;
+      config = mkIf cfg.enable (
+        let
+          # THE M6 CENTERPIECE — provider-conditional sandbox posture.
+          #
+          # M0's forge-less boot ran GARM under a DynamicUser with a MAXIMAL
+          # sandbox (ProtectSystem=strict, PrivateDevices, DeviceAllow=[] via
+          # CapabilityBoundingSet, restricted syscalls). That is perfect for a
+          # pure-Go API daemon but FATAL for the libvirt provider: the provider
+          # (a child GARM execs) needs the qemu:///system libvirt socket, a real
+          # PATH to genisoimage, write access to the VM pool dir, and — because
+          # libvirt/qemu ultimately touch /dev/kvm through the socket, and the
+          # provider itself shells virsh/qemu-img — a NON-ephemeral uid that is a
+          # member of the libvirtd/kvm groups. A DynamicUser gets a fresh uid on
+          # every boot and cannot be a stable group member, and PrivateDevices +
+          # DeviceAllow=[] + the strict syscall filter block device/socket work.
+          #
+          # So the posture is CONDITIONAL:
+          #   * provider OFF (M0/boot-gate): unchanged — DynamicUser + full
+          #     sandbox. The M0 boot gate keeps passing byte-for-byte.
+          #   * provider ON: a dedicated `garm` system user in libvirtd+kvm,
+          #     with ONLY the minimum relaxations enumerated below. Everything
+          #     that does NOT block the provider stays on.
+          providerOn = cfg.providers.vmharness.enable;
 
-        environment.systemPackages = [ cfg.package ];
+          # LoadCredential list: the two M0 secrets (optional) + the M6 App PEM
+          # (required when github.enable). All staged read-only under
+          # $CREDENTIALS_DIRECTORY; never in the store.
+          loadCredential =
+            lib.optional (
+              cfg.jwtSecretFile != null
+            ) "${cfg.jwtSecretCredentialName}:${toString cfg.jwtSecretFile}"
+            ++ lib.optional (
+              cfg.dbPassphraseFile != null
+            ) "${cfg.dbPassphraseCredentialName}:${toString cfg.dbPassphraseFile}"
+            ++ lib.optional (
+              cfg.github.enable && cfg.github.appKeyFile != null
+            ) "${cfg.appKeyCredentialName}:${toString cfg.github.appKeyFile}";
 
-        networking.firewall = mkIf cfg.openFirewall {
-          allowedTCPPorts = [ cfg.apiServer.port ];
-        };
+          # The hardened-but-provider-capable serviceConfig fragment (provider ON).
+          providerServiceConfig = {
+            # Dedicated system user (created below), in libvirtd+kvm so it can
+            # reach qemu:///system + /dev/kvm.
+            User = cfg.user;
+            Group = cfg.group;
+            SupplementaryGroups = [
+              "libvirtd"
+              "kvm"
+            ]
+            ++ cfg.extraGroups;
 
-        systemd.services.garm = {
-          description = "GitHub Actions Runner Manager (garm)";
-          documentation = [ "https://github.com/cloudbase/garm" ];
-          after = [ "network.target" ];
-          wantedBy = [ "multi-user.target" ];
-
-          serviceConfig = {
-            Type = "simple";
-
-            # Render the runtime config (with secrets injected) before the
-            # daemon starts. Runs as the same DynamicUser with the
-            # StateDirectory + credentials already available.
-            ExecStartPre = lib.getExe renderScript;
-            ExecStart = lib.escapeShellArgs [
-              (lib.getExe cfg.package)
-              "-config"
-              renderedConfig
+            # RELAXATION 1: ProtectSystem=full (not strict). strict makes ALL of
+            # /usr,/boot,/etc read-only AND the whole rest of the FS read-only
+            # except explicit ReadWritePaths; the provider writes per-job overlay
+            # + nvram + config-drive into the pool dir (typically under /var or
+            # /storage) and talks to the libvirt runtime socket under /run. `full`
+            # keeps /usr,/boot,/etc read-only (the important protection) while
+            # letting the provider write its pool dir (granted explicitly below).
+            ProtectSystem = "full";
+            # RELAXATION 2: explicit ReadWritePaths for the VM pool dir + libvirt
+            # runtime. StateDirectory already grants stateDir rw.
+            ReadWritePaths = [
+              cfg.providers.vmharness.poolDir
+              "/var/lib/libvirt"
+              "/run/libvirt"
             ];
-            # GARM uses SIGHUP only to rotate its log file; a full reload still
-            # means a restart. Mirror contrib/garm.service's ExecReload intent.
-            ExecReload = "${pkgs.coreutils}/bin/kill -HUP $MAINPID";
-            Restart = "always";
-            RestartSec = "5s";
 
-            # Durable state: systemd creates + owns /var/lib/garm for the
-            # DynamicUser and exposes it as %S/garm. The SQLite db_file lives
-            # here; its parent must exist before the daemon validates config
-            # (StateDirectory guarantees this).
-            DynamicUser = true;
-            StateDirectory = "garm";
-            StateDirectoryMode = "0700";
-            WorkingDirectory = stateDir;
-
-            # Stage operator-supplied secrets (if any) into the per-service
-            # credentials store (%d = $CREDENTIALS_DIRECTORY), readable by the
-            # sandboxed DynamicUser under ProtectSystem=strict.
-            LoadCredential =
-              lib.optional (
-                cfg.jwtSecretFile != null
-              ) "${cfg.jwtSecretCredentialName}:${toString cfg.jwtSecretFile}"
-              ++ lib.optional (
-                cfg.dbPassphraseFile != null
-              ) "${cfg.dbPassphraseCredentialName}:${toString cfg.dbPassphraseFile}";
-
-            # Hardening — mirror the posture of the mcl-repro-binary-cache unit,
-            # a superset of the minimal upstream contrib/garm.service.
-            NoNewPrivileges = true;
-            ProtectSystem = "strict";
-            ProtectHome = true;
-            PrivateTmp = true;
-            PrivateDevices = true;
-            ProtectKernelTunables = true;
-            ProtectKernelModules = true;
-            ProtectKernelLogs = true;
-            ProtectControlGroups = true;
-            ProtectClock = true;
-            ProtectHostname = true;
-            ProtectProc = "invisible";
-            ProcSubset = "pid";
-            RestrictNamespaces = true;
-            RestrictRealtime = true;
-            RestrictSUIDSGID = true;
-            LockPersonality = true;
-            # GARM is a pure-Go/cgo-sqlite binary; W^X is fine.
-            MemoryDenyWriteExecute = true;
-            RemoveIPC = true;
-            RestrictAddressFamilies = [
-              "AF_INET"
-              "AF_INET6"
-              "AF_UNIX"
+            # RELAXATION 3: NO PrivateDevices — the provider/libvirt path needs
+            # device access. Instead scope it to exactly the devices needed via
+            # DeviceAllow (KVM + the standard tty/null/zero/random set).
+            # PrivateDevices=true would hide /dev/kvm and break qemu.
+            DeviceAllow = [
+              "/dev/kvm rw"
+              "/dev/null rw"
+              "/dev/zero rw"
+              "/dev/full rw"
+              "/dev/random r"
+              "/dev/urandom r"
+              "/dev/ptmx rw"
             ];
-            SystemCallArchitectures = "native";
-            SystemCallFilter = [
-              "@system-service"
-              "~@privileged"
-              "~@resources"
-            ];
-            CapabilityBoundingSet = [ "" ];
-            AmbientCapabilities = [ "" ];
-            UMask = "0077";
+
+            # RELAXATION 4: NO SystemCallFilter in the provider posture. The
+            # provider execs a chain of external VM tooling — qemu-img, virsh,
+            # and cdrkit's mkisofs (config-drive) — and mkisofs in particular is
+            # KILLED by SIGSYS under `@system-service` (verified on this host:
+            # `mkisofs ... status=31/SYS, core dumped`). Rather than chase the
+            # exact syscall a vendored tool needs (brittle across versions), the
+            # filter is dropped for the provider path. The remaining isolation is
+            # still strong: a dedicated non-root user, NoNewPrivileges (so no
+            # setuid escalation), an EMPTY CapabilityBoundingSet/AmbientCaps,
+            # device scoping to /dev/kvm, RestrictNamespaces/Realtime/SUIDSGID,
+            # ProtectSystem=full, and the kernel-protect knobs — all still on.
+            # (The M0 API-only posture KEEPS the strict @system-service filter.)
+
+            # RELAXATION 5: the provider execs child processes (virsh, qemu-img,
+            # mkisofs) — MemoryDenyWriteExecute breaks some of them (qemu JIT), so
+            # it is dropped ONLY in the provider posture. (kept in M0 below.)
           };
-        };
-      };
+
+          # The strict M0 posture fragment (provider OFF) — verbatim from M0.
+          m0ServiceConfig = {
+            DynamicUser = true;
+            ProtectSystem = "strict";
+            PrivateDevices = true;
+            MemoryDenyWriteExecute = true;
+          };
+        in
+        {
+          assertions =
+            # M5 invariant: a warm pool can never exceed the concurrency cap.
+            lib.mapAttrsToList (n: ss: {
+              assertion = ss.minIdleRunners <= ss.maxRunners;
+              message = "services.garm.scaleSets.${n}: minIdleRunners (${toString ss.minIdleRunners}) must be <= maxRunners (${toString ss.maxRunners}).";
+            }) cfg.scaleSets
+            # M6 resource-guard (promoted from the M5 harness to eval time): the
+            # sum over all scale sets of maxRunners * per-VM RAM must fit the
+            # declared host RAM budget, and likewise vCPUs. A bad config now
+            # FAILS TO EVAL instead of OOM-ing the host at runtime.
+            ++ [
+              {
+                assertion =
+                  let
+                    totalMb = lib.foldlAttrs (
+                      acc: _: ss: acc + ss.maxRunners * cfg.providers.vmharness.memoryMb
+                    ) 0 cfg.scaleSets;
+                  in
+                  totalMb <= cfg.hostBudget.memoryMb;
+                message =
+                  let
+                    totalMb = lib.foldlAttrs (
+                      acc: _: ss: acc + ss.maxRunners * cfg.providers.vmharness.memoryMb
+                    ) 0 cfg.scaleSets;
+                  in
+                  "services.garm: worst-case ephemeral guest RAM (sum of maxRunners * providers.vmharness.memoryMb = ${toString totalMb} MiB) exceeds hostBudget.memoryMb (${toString cfg.hostBudget.memoryMb} MiB). Lower maxRunners/memoryMb or raise hostBudget.memoryMb.";
+              }
+              {
+                assertion =
+                  let
+                    totalVcpu = lib.foldlAttrs (
+                      acc: _: ss: acc + ss.maxRunners * cfg.providers.vmharness.vcpus
+                    ) 0 cfg.scaleSets;
+                  in
+                  totalVcpu <= cfg.hostBudget.vcpus;
+                message =
+                  let
+                    totalVcpu = lib.foldlAttrs (
+                      acc: _: ss: acc + ss.maxRunners * cfg.providers.vmharness.vcpus
+                    ) 0 cfg.scaleSets;
+                  in
+                  "services.garm: worst-case ephemeral guest vCPUs (sum of maxRunners * providers.vmharness.vcpus = ${toString totalVcpu}) exceeds hostBudget.vcpus (${toString cfg.hostBudget.vcpus}). Lower maxRunners/vcpus or raise hostBudget.vcpus.";
+              }
+              # M6: the declarative App forge needs its PEM.
+              {
+                assertion = !cfg.github.enable || cfg.github.appKeyFile != null;
+                message = "services.garm.github.enable requires services.garm.github.appKeyFile (the App PEM, staged via LoadCredential).";
+              }
+              {
+                assertion = !cfg.github.enable || (cfg.github.appId != null && cfg.github.installationId != null);
+                message = "services.garm.github.enable requires github.appId and github.installationId.";
+              }
+            ];
+
+          environment.systemPackages = [ cfg.package ];
+
+          networking.firewall = mkIf cfg.openFirewall {
+            allowedTCPPorts = [ cfg.apiServer.port ];
+          };
+
+          # Dedicated system user for the provider posture. Created
+          # unconditionally-when-provider-on so libvirtd/kvm membership is stable
+          # across boots (a DynamicUser cannot be a persistent group member).
+          users.users = mkIf providerOn {
+            ${cfg.user} = {
+              isSystemUser = true;
+              group = cfg.group;
+              description = "GARM (GitHub Actions Runner Manager) service user";
+              home = stateDir;
+            };
+          };
+          users.groups = mkIf providerOn { ${cfg.group} = { }; };
+
+          # M6: the provider writes per-job artifacts (CoW overlay, config-drive
+          # ISO, OVMF nvram) into `poolDir`. Running as the non-root `garm` user
+          # (not root, as the M4/M5 harness did) means the pool dir must be
+          # WRITABLE by that user — the shared /var/lib/libvirt/images is
+          # root-only (0711). Provision the pool dir owned by garm:libvirtd (0771:
+          # garm writes; libvirtd traverses; qemu — which runs domains as root on
+          # this host — reads the overlays). If the operator points poolDir at the
+          # shared libvirt images dir, they must instead grant garm write access
+          # there themselves; this tmpfiles rule only manages a garm-owned dir.
+          systemd.tmpfiles.rules = lib.optionals providerOn [
+            "d ${cfg.providers.vmharness.poolDir} 0771 ${cfg.user} libvirtd - -"
+          ];
+
+          systemd.services.garm = {
+            description = "GitHub Actions Runner Manager (garm)";
+            documentation = [ "https://github.com/cloudbase/garm" ];
+            after = [ "network.target" ] ++ lib.optional providerOn "libvirtd.service";
+            wants = lib.optional providerOn "libvirtd.service";
+            wantedBy = [ "multi-user.target" ];
+
+            # The provider child resolves genisoimage from PATH (GARM forwards
+            # PATH via environment_variables=["PATH"]). `path` is merged by NixOS
+            # into the unit's PATH (no override conflict) and inherited by the
+            # provider child process GARM execs.
+            path = lib.optionals providerOn [
+              pkgs.cdrkit
+              pkgs.qemu
+              pkgs.libvirt
+            ];
+
+            serviceConfig = {
+              Type = "simple";
+
+              ExecStartPre = lib.getExe renderScript;
+              ExecStart = lib.escapeShellArgs [
+                (lib.getExe cfg.package)
+                "-config"
+                renderedConfig
+              ];
+              ExecReload = "${pkgs.coreutils}/bin/kill -HUP $MAINPID";
+              Restart = "always";
+              RestartSec = "5s";
+
+              StateDirectory = "garm";
+              StateDirectoryMode = "0700";
+              WorkingDirectory = stateDir;
+
+              LoadCredential = loadCredential;
+
+              # ---- Hardening COMMON to both postures --------------------------
+              # These do NOT interfere with the libvirt provider and stay on
+              # everywhere (a superset of upstream contrib/garm.service).
+              NoNewPrivileges = true;
+              ProtectHome = true;
+              PrivateTmp = true;
+              ProtectKernelTunables = true;
+              ProtectKernelModules = true;
+              ProtectKernelLogs = true;
+              ProtectControlGroups = true;
+              ProtectClock = true;
+              ProtectHostname = true;
+              ProtectProc = "invisible";
+              ProcSubset = "pid";
+              RestrictNamespaces = true;
+              RestrictRealtime = true;
+              RestrictSUIDSGID = true;
+              LockPersonality = true;
+              RemoveIPC = true;
+              RestrictAddressFamilies = [
+                "AF_INET"
+                "AF_INET6"
+                "AF_UNIX"
+              ];
+              SystemCallArchitectures = "native";
+              CapabilityBoundingSet = [ "" ];
+              AmbientCapabilities = [ "" ];
+              UMask = "0077";
+            }
+            # Posture-specific fragment: the strict M0 sandbox when the provider
+            # is off; the targeted relaxations when it is on.
+            // (if providerOn then providerServiceConfig else m0ServiceConfig)
+            # M0 posture also keeps these strict-only knobs (they'd block the
+            # provider so they're omitted in the provider posture).
+            // lib.optionalAttrs (!providerOn) {
+              SystemCallFilter = [
+                "@system-service"
+                "~@privileged"
+                "~@resources"
+              ];
+            };
+          };
+        }
+      );
     };
 }
