@@ -78,6 +78,12 @@ type Config struct {
 	// for the M2 clone; not required by the M1 protocol gate.
 	Network string `toml:"network"`
 
+	// PoolDir is the libvirt image pool directory where per-job artifacts (the
+	// CoW overlay + the M3 config-drive ISO) are written. When empty the
+	// provider skips config-drive injection (the hermetic M1 gate). On a real
+	// host this is typically "/var/lib/libvirt/images".
+	PoolDir string `toml:"pool_dir"`
+
 	// Images maps a pool image identifier (BootstrapInstance.Image, typically a
 	// label/flavor key) to a concrete golden source. If a pool's image is not
 	// present here, the raw image string is used as the source directly.

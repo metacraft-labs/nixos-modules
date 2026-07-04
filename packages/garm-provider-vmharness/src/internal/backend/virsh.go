@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 
@@ -54,6 +55,10 @@ type VirshBackend struct {
 	// VMHarnessPath is the vm-harness binary used for clone/inject (M2/M3).
 	// Recorded for the seam; unused by the M1 protocol path.
 	VMHarnessPath string
+	// PoolDir is the libvirt image pool directory where per-job artifacts
+	// (the config-drive ISO) are written. Empty => config-drive injection is
+	// skipped (the hermetic M1 gate uses a mock virsh and no real boot).
+	PoolDir string
 }
 
 // run executes virsh with the connection URI and the given args, returning
@@ -106,7 +111,22 @@ func (v *VirshBackend) Create(ctx context.Context, args CreateArgs) (Instance, e
 		return Instance{}, fmt.Errorf("marshaling metadata: %w", err)
 	}
 
-	domainXML := buildDomainXML(args, string(metaXML))
+	// M3: when a bootstrap is present AND we have a real pool directory,
+	// build a cloudbase-init config-drive ISO carrying the rendered bootstrap
+	// (openstack/latest/user_data) and attach it as a read-only CD-ROM so the
+	// guest's cloudbase-init runs the JIT bootstrap on first boot. Skipped for
+	// the hermetic M1 gate (mock virsh, no PoolDir), which exercises only the
+	// metadata round-trip.
+	configDriveISO := ""
+	if len(args.Bootstrap) > 0 && v.PoolDir != "" {
+		iso := configDriveISOPath(v.PoolDir, args.Name)
+		if _, err := buildConfigDriveISO(ctx, iso, args.Name, args.Bootstrap); err != nil {
+			return Instance{}, fmt.Errorf("building config-drive for %s: %w", args.Name, err)
+		}
+		configDriveISO = iso
+	}
+
+	domainXML := buildDomainXML(args, string(metaXML), configDriveISO)
 
 	// virsh define reads the domain XML from stdin when given "/dev/stdin".
 	cmd := exec.CommandContext(ctx, v.VirshPath, "-c", v.URI, "define", "/dev/stdin")
@@ -158,12 +178,25 @@ func (v *VirshBackend) Delete(ctx context.Context, idOrName string) error {
 		// treat not-found as success.
 		if _, uerr2 := v.run(ctx, "undefine", name); uerr2 != nil {
 			if isNotFound(uerr2) {
+				v.removeConfigDrive(name)
 				return nil
 			}
 			return uerr2
 		}
 	}
+	// M3: remove this job's config-drive ISO (per-job artifact; the golden is
+	// never touched). Best-effort — absence is fine.
+	v.removeConfigDrive(name)
 	return nil
+}
+
+// removeConfigDrive deletes the per-job config-drive ISO if present. Never
+// errors (teardown must be idempotent).
+func (v *VirshBackend) removeConfigDrive(name string) {
+	if v.PoolDir == "" {
+		return
+	}
+	_ = os.Remove(configDriveISOPath(v.PoolDir, name))
 }
 
 // resolveName maps a provider_id (UUID) or name to the domain name. If the

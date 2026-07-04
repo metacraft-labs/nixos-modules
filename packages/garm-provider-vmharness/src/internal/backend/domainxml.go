@@ -29,7 +29,7 @@ import (
 // are the seam those milestones consume. The disk source below points at the
 // resolved golden image so a real libvirt host has a bootable reference, while
 // the mock virsh used by the hermetic gate ignores the device model entirely.
-func buildDomainXML(args CreateArgs, metaInner string) string {
+func buildDomainXML(args CreateArgs, metaInner, configDriveISO string) string {
 	source := html.EscapeString(args.SourceImage)
 	name := html.EscapeString(args.Name)
 	network := args.Network
@@ -37,6 +37,19 @@ func buildDomainXML(args CreateArgs, metaInner string) string {
 		network = "default"
 	}
 	network = html.EscapeString(network)
+
+	// M3: attach the cloudbase-init config-drive as a read-only CD-ROM when
+	// present, so the guest fetches + runs the injected JIT bootstrap.
+	configDrive := ""
+	if configDriveISO != "" {
+		configDrive = fmt.Sprintf(`    <disk type='file' device='cdrom'>
+      <driver name='qemu' type='raw'/>
+      <source file='%s'/>
+      <target dev='sda' bus='sata'/>
+      <readonly/>
+    </disk>
+`, html.EscapeString(configDriveISO))
+	}
 
 	// A conservative q35/UEFI-capable shell. Memory/vCPU are placeholders; the
 	// pool flavor -> resource mapping is finalised alongside the M2 clone.
@@ -61,7 +74,7 @@ func buildDomainXML(args CreateArgs, metaInner string) string {
       <source file='%s'/>
       <target dev='vda' bus='virtio'/>
     </disk>
-    <interface type='network'>
+%s    <interface type='network'>
       <source network='%s'/>
       <model type='virtio'/>
     </interface>
@@ -69,5 +82,5 @@ func buildDomainXML(args CreateArgs, metaInner string) string {
     <console type='pty'/>
   </devices>
 </domain>
-`, name, metaInner, source, network)
+`, name, metaInner, source, configDrive, network)
 }

@@ -69,6 +69,7 @@
         vm_harness_path = "${vmh.vmHarnessPath}"
         libvirt_uri = "${vmh.libvirtURI}"
         network = "${vmh.network}"
+        pool_dir = "${vmh.poolDir}"
       ''
       + lib.concatStrings (
         lib.mapAttrsToList (image: spec: ''
@@ -386,6 +387,17 @@
             type = types.str;
             default = "default";
             description = "libvirt network the per-job domains attach to.";
+          };
+
+          poolDir = mkOption {
+            type = types.str;
+            default = "/var/lib/libvirt/images";
+            description = ''
+              libvirt image-pool directory where the provider writes per-job
+              artifacts (the CoW overlay + the M3 cloudbase-init config-drive
+              ISO carrying the rendered runner bootstrap). When empty the
+              provider skips config-drive injection.
+            '';
           };
 
           images = mkOption {

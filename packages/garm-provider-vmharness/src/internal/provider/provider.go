@@ -61,6 +61,7 @@ func NewWithConfig(cfg *config.Config) (*Provider, error) {
 			VirshPath:     cfg.VirshPath,
 			URI:           cfg.LibvirtURI,
 			VMHarnessPath: cfg.VMHarnessPath,
+			PoolDir:       cfg.PoolDir,
 		}
 	default:
 		return nil, fmt.Errorf("unsupported backend %q", cfg.Backend)
