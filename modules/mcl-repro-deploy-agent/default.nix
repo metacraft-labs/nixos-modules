@@ -232,7 +232,8 @@
           }
           {
             assertion = cfg.allowedSigners != [ ] || cfg.allowedSignersFile != null;
-            message = "services.mcl-repro-deploy-agent needs allowedSigners (inline) or " + "allowedSignersFile.";
+            message =
+              "services.mcl-repro-deploy-agent needs allowedSigners (inline) or " + "allowedSignersFile.";
           }
         ];
 

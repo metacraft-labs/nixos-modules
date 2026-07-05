@@ -373,7 +373,7 @@ sum over scaleSets (maxRunners * providers.vmharness.vcpus)    <= hostBudget.vcp
 
 An over-committed config aborts `nixos-rebuild`/`nix flake check` with, e.g.:
 
-> services.garm: worst-case ephemeral guest RAM (sum of maxRunners *
+> services.garm: worst-case ephemeral guest RAM (sum of maxRunners \*
 > providers.vmharness.memoryMb = 81920 MiB) exceeds hostBudget.memoryMb (16384
 > MiB). Lower maxRunners/memoryMb or raise hostBudget.memoryMb.
 
