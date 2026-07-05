@@ -38,17 +38,18 @@ type VMHarnessRunBackend struct {
 }
 
 type vmhState struct {
-	ProviderID   string   `json:"provider_id"`
-	Name         string   `json:"name"`
-	ControllerID string   `json:"controller_id"`
-	PoolID       string   `json:"pool_id"`
-	OSName       string   `json:"os_name"`
-	OSVersion    string   `json:"os_version"`
-	OSArch       string   `json:"os_arch"`
-	PID          int      `json:"pid"`
-	OutputDir    string   `json:"output_dir"`
-	Bootstrap    string   `json:"bootstrap"`
-	Addresses    []string `json:"addresses"`
+	ProviderID      string   `json:"provider_id"`
+	Name            string   `json:"name"`
+	ControllerID    string   `json:"controller_id"`
+	PoolID          string   `json:"pool_id"`
+	OSName          string   `json:"os_name"`
+	OSVersion       string   `json:"os_version"`
+	OSArch          string   `json:"os_arch"`
+	PID             int      `json:"pid"`
+	OutputDir       string   `json:"output_dir"`
+	Bootstrap       string   `json:"bootstrap"`
+	EphemeralPrefix string   `json:"ephemeral_prefix,omitempty"`
+	Addresses       []string `json:"addresses"`
 }
 
 func (b *VMHarnessRunBackend) instanceDir(name string) string {
@@ -57,6 +58,17 @@ func (b *VMHarnessRunBackend) instanceDir(name string) string {
 
 func (b *VMHarnessRunBackend) statePath(name string) string {
 	return filepath.Join(b.instanceDir(name), "state.json")
+}
+
+func (b *VMHarnessRunBackend) tartEphemeralPrefix(name string) string {
+	switch b.BackendID {
+	case "tart-macos":
+		return "repro-vm-tart-macos-" + name
+	case "tart-linux-arm":
+		return "repro-vm-tart-linux-" + name
+	default:
+		return ""
+	}
 }
 
 func (b *VMHarnessRunBackend) load(name string) (vmhState, error) {
@@ -96,6 +108,29 @@ func processRunning(pid int) bool {
 	return p.Signal(syscall.Signal(0)) == nil
 }
 
+func vmHarnessChildEnv() []string {
+	env := os.Environ()
+	out := make([]string, 0, len(env))
+	hasTartHome := false
+	tartStateDir := ""
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "XPC_SERVICE_NAME=") {
+			continue
+		}
+		if strings.HasPrefix(entry, "TART_HOME=") {
+			hasTartHome = true
+		}
+		if strings.HasPrefix(entry, "VM_HARNESS_TART_STATE_DIR=") {
+			tartStateDir = strings.TrimPrefix(entry, "VM_HARNESS_TART_STATE_DIR=")
+		}
+		out = append(out, entry)
+	}
+	if !hasTartHome && tartStateDir != "" {
+		out = append(out, "TART_HOME="+tartStateDir)
+	}
+	return out
+}
+
 func (b *VMHarnessRunBackend) toInstance(st vmhState) Instance {
 	status := "stopped"
 	if processRunning(st.PID) {
@@ -127,18 +162,33 @@ func (b *VMHarnessRunBackend) Create(ctx context.Context, args CreateArgs) (Inst
 	guestPath := "/tmp/garm-bootstrap.sh"
 	bootstrapPath := filepath.Join(dir, "garm-bootstrap.sh")
 	argv := []string{"run", "--backend", b.BackendID, "--guest", b.GuestOS, "--baseline", args.SourceImage, "--output-dir", outDir}
+	ephemeralPrefix := b.tartEphemeralPrefix(args.Name)
+	if ephemeralPrefix != "" {
+		argv = append(argv, "--ephemeral-prefix", ephemeralPrefix)
+	}
 	if strings.EqualFold(args.OSName, "windows") || b.GuestOS == "windows" {
 		guestPath = `C:\garm-bootstrap.ps1`
 		bootstrapPath = filepath.Join(dir, "garm-bootstrap.ps1")
 		argv = append(argv, "--copy-to", bootstrapPath+":"+guestPath, "--", "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", guestPath)
 	} else {
-		argv = append(argv, "--copy-to", bootstrapPath+":"+guestPath, "--", "sh", guestPath)
+		argv = append(argv, "--copy-to", bootstrapPath+":"+guestPath, "--", "/bin/sh", "-c", "chmod +x "+guestPath+" && exec "+guestPath)
 	}
 	if err := os.WriteFile(bootstrapPath, args.Bootstrap, 0o755); err != nil {
 		return Instance{}, err
 	}
 
-	cmd := exec.Command(b.VMHarnessPath, argv...)
+	cmdPath := b.VMHarnessPath
+	cmdArgs := argv
+	if uid := os.Getenv("VM_HARNESS_DARWIN_ASUSER_UID"); uid != "" {
+		launchctl := os.Getenv("VM_HARNESS_DARWIN_LAUNCHCTL")
+		if launchctl == "" {
+			launchctl = "/bin/launchctl"
+		}
+		cmdPath = launchctl
+		cmdArgs = append([]string{"asuser", uid, b.VMHarnessPath}, argv...)
+	}
+	cmd := exec.Command(cmdPath, cmdArgs...)
+	cmd.Env = vmHarnessChildEnv()
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	logFile, err := os.OpenFile(filepath.Join(dir, "vm-harness.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
@@ -153,16 +203,17 @@ func (b *VMHarnessRunBackend) Create(ctx context.Context, args CreateArgs) (Inst
 	_ = logFile.Close()
 
 	st := vmhState{
-		ProviderID:   args.Name,
-		Name:         args.Name,
-		ControllerID: args.ControllerID,
-		PoolID:       args.PoolID,
-		OSName:       args.OSName,
-		OSVersion:    args.OSVersion,
-		OSArch:       args.OSArch,
-		PID:          cmd.Process.Pid,
-		OutputDir:    outDir,
-		Bootstrap:    bootstrapPath,
+		ProviderID:      args.Name,
+		Name:            args.Name,
+		ControllerID:    args.ControllerID,
+		PoolID:          args.PoolID,
+		OSName:          args.OSName,
+		OSVersion:       args.OSVersion,
+		OSArch:          args.OSArch,
+		PID:             cmd.Process.Pid,
+		OutputDir:       outDir,
+		Bootstrap:       bootstrapPath,
+		EphemeralPrefix: ephemeralPrefix,
 	}
 	if err := b.save(st); err != nil {
 		return Instance{}, err
@@ -179,11 +230,39 @@ func (b *VMHarnessRunBackend) Delete(ctx context.Context, idOrName string) error
 		return nil
 	}
 	if processRunning(st.PID) {
+		_ = syscall.Kill(-st.PID, syscall.SIGTERM)
 		if p, err := os.FindProcess(st.PID); err == nil {
 			_ = p.Signal(syscall.SIGTERM)
 		}
 	}
+	if st.EphemeralPrefix != "" {
+		b.cleanupTartEphemerals(ctx, st.EphemeralPrefix)
+	}
 	return os.RemoveAll(b.instanceDir(st.Name))
+}
+
+func (b *VMHarnessRunBackend) cleanupTartEphemerals(ctx context.Context, prefix string) {
+	if prefix == "" {
+		return
+	}
+	cmd := exec.CommandContext(ctx, "tart", "list")
+	cmd.Env = vmHarnessChildEnv()
+	out, err := cmd.Output()
+	if err != nil {
+		return
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || !strings.EqualFold(fields[0], "local") || !strings.HasPrefix(fields[1], prefix) {
+			continue
+		}
+		stop := exec.CommandContext(ctx, "tart", "stop", fields[1])
+		stop.Env = vmHarnessChildEnv()
+		_ = stop.Run()
+		del := exec.CommandContext(ctx, "tart", "delete", fields[1])
+		del.Env = vmHarnessChildEnv()
+		_ = del.Run()
+	}
 }
 
 func (b *VMHarnessRunBackend) Get(ctx context.Context, idOrName string) (Instance, error) {
