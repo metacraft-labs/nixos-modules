@@ -43,9 +43,7 @@
 
       # Default to this flake's `garm` package (garm daemon + garm-cli) built
       # for the host system. Consumers/tests may override `package`.
-      defaultPackage = withSystem pkgs.stdenv.hostPlatform.system (
-        { config, ... }: config.packages.garm
-      );
+      defaultPackage = withSystem pkgs.stdenv.hostPlatform.system ({ config, ... }: config.packages.garm);
 
       # Default to this flake's `garm-provider-vmharness` package (M1). Consumers
       # may override `providers.vmharness.package`.
@@ -71,8 +69,10 @@
       # (Same writeText-precedence caveat as configTemplate below: build the
       # STRING first, then wrap — otherwise the [images.*] blocks would be
       # appended to the derivation's store PATH instead of its content.)
-      vmharnessConfigText = ''
-        backend = "${vmh.backend}"
+      vmhIsIncus = vmh.backend == "incus";
+      # Libvirt keys: virsh/qemu-img/OVMF/pool-dir/sizing. Emitted for the
+      # libvirt backend (the Windows VM path).
+      vmharnessLibvirtKeys = ''
         virsh_path = "${vmh.virshPath}"
         qemu_img_path = "${vmh.qemuImgPath}"
         vm_harness_path = "${vmh.vmHarnessPath}"
@@ -83,7 +83,23 @@
         uefi_nvram_template = "${vmh.uefiNvramTemplate}"
         memory_mb = ${toString vmh.memoryMb}
         vcpus = ${toString vmh.vcpus}
+      '';
+      # Incus keys: the incus binary + bridge + the static-IPv4 injection
+      # parameters (incusbr0 DHCP does not lease). Emitted for the incus
+      # backend (the Linux container path, IM3/IM4).
+      vmharnessIncusKeys = ''
+        incus_path = "${vmh.incusPath}"
+        incus_bridge = "${vmh.incusBridge}"
+        incus_ipv4_cidr = "${vmh.incusIPv4CIDR}"
+        incus_ipv4_gateway = "${vmh.incusIPv4Gateway}"
+        incus_ipv4_range_start = "${vmh.incusIPv4RangeStart}"
+        incus_ipv4_range_end = "${vmh.incusIPv4RangeEnd}"
+        incus_nameservers = [${lib.concatMapStringsSep ", " (s: "\"${s}\"") vmh.incusNameservers}]
+      '';
+      vmharnessConfigText = ''
+        backend = "${vmh.backend}"
       ''
+      + (if vmhIsIncus then vmharnessIncusKeys else vmharnessLibvirtKeys)
       + lib.concatStrings (
         lib.mapAttrsToList (image: spec: ''
 
@@ -103,19 +119,27 @@
         [[provider]]
         name = "${vmh.name}"
         provider_type = "external"
-        description = "libvirt/KVM Windows ephemeral runners via vm-harness"
+        description = "${
+          if vmhIsIncus then
+            "incus Linux container ephemeral runners via vm-harness"
+          else
+            "libvirt/KVM Windows ephemeral runners via vm-harness"
+        }"
 
           [provider.external]
           provider_executable = "${lib.getExe vmh.package}"
           config_file = "${vmharnessConfigFile}"
           interface_version = "v0.1.1"
-          # GARM does NOT propagate its own PATH to external providers; the
-          # provider shells to genisoimage (config-drive) via LookPath, so it
-          # must inherit PATH. virsh/qemu-img are absolute (config paths above),
-          # but genisoimage is resolved from PATH — the unit sets a PATH that
-          # includes cdrkit/genisoimage. Without this the M4 create path fails
-          # `genisoimage: executable file not found in $PATH`.
-          environment_variables = ["PATH"]
+          # GARM does NOT propagate its own environment to external providers,
+          # so the provider inherits only the vars listed here.
+          #   * PATH  — libvirt: the provider shells to genisoimage (config-drive)
+          #     via LookPath (virsh/qemu-img are absolute); incus: incus_path is
+          #     absolute but PATH still carries the incus client for robustness.
+          #   * HOME  — incus ONLY: the `incus` CLI reads $HOME/.config/incus/…;
+          #     without HOME (and with ProtectHome hiding /root) it errors
+          #     "Unable to read the configuration file … permission denied". The
+          #     unit's HOME is the garm StateDirectory (writable), so forward it.
+          environment_variables = [${if vmhIsIncus then "\"PATH\", \"HOME\"" else "\"PATH\""}]
       '';
 
       # M6 forge wiring: the GitHub App credentials, declared in config.toml as
@@ -430,6 +454,30 @@
           description = "Open the API server `port` in the host firewall.";
         };
 
+        # IM4 declarative egress/DHCP option. The IM3 gate opened the
+        # container->host GARM path with a runtime `nft insert` rule it removed
+        # on exit; this promotes that to a declarative host-firewall option.
+        openIncusBridgeFirewall = mkOption {
+          type = types.bool;
+          default = false;
+          description = ''
+            When the incus backend is used, trust the incus bridge
+            (`providers.vmharness.incusBridge`) for the GARM API/metadata/
+            callback port, so per-job CONTAINERS can reach the host GARM
+            endpoint. Wires
+            `networking.firewall.interfaces.<bridge>.allowedTCPPorts =
+            [ apiServer.port ]` — the declarative replacement for the runtime
+            `nft` rule the IM3 gate inserted.
+
+            This ONLY opens the container->host GARM path, and ONLY on the
+            bridge interface (never the public firewall). Container->internet
+            EGRESS needs NO host change: incus's own `inet incus` nftables table
+            already NATs + forwards `incusbr0`. incusbr0 DHCP does not lease on
+            this host, so the provider injects a static IPv4 per container (see
+            `providers.vmharness.incusIPv4*`); no declarative DHCP is required.
+          '';
+        };
+
         # M6: the guest-facing controller URLs. GARM hands these to the runner
         # VM via the config-drive; the guest fetches its JIT config from
         # metadataURL and reports status to callbackURL. They MUST be reachable
@@ -601,9 +649,22 @@
           };
 
           backend = mkOption {
-            type = types.enum [ "libvirt" ];
+            type = types.enum [
+              "libvirt"
+              "incus"
+            ];
             default = "libvirt";
-            description = "vm-harness backend the provider drives.";
+            description = ''
+              vm-harness backend the provider drives. `libvirt` boots per-job
+              Windows-11 VMs from a golden qcow2 (the Ephemeral-Windows-Runners
+              path); `incus` launches per-job Linux SYSTEM CONTAINERS from a
+              runner image (the Ephemeral-Linux-Runners path, IM3/IM4). The
+              backend also selects the systemd sandbox posture (see the config
+              block): `incus` needs only `incus-admin` socket-group access and
+              no /dev/kvm, so it keeps the STRICT M0 knobs (PrivateDevices,
+              MemoryDenyWriteExecute, the syscall filter, ProtectSystem=strict),
+              whereas `libvirt` relaxes them for qemu.
+            '';
           };
 
           virshPath = mkOption {
@@ -682,6 +743,87 @@
             type = types.str;
             default = "default";
             description = "libvirt network the per-job domains attach to.";
+          };
+
+          # ---- Incus backend (IM3/IM4) ------------------------------------
+          # Consumed only when backend = "incus". These populate the provider
+          # config.toml's incus_* keys (see garm-provider-vmharness config.go).
+          # For the incus path a golden image's sourceImage is an incus IMAGE
+          # ALIAS (eg "vmh-linux-runner"), not a qcow2 path.
+          incusPath = mkOption {
+            type = types.str;
+            default = "${pkgs.incus}/bin/incus";
+            defaultText = lib.literalMD "`\${pkgs.incus}/bin/incus`";
+            description = ''
+              Path to the `incus` client binary the provider shells to (the
+              incus backend). GARM runs as the `garm` user in the `incus-admin`
+              group (see the sandbox posture), which can reach the incus daemon
+              socket directly, so an absolute path is used.
+            '';
+          };
+
+          incusBridge = mkOption {
+            type = types.str;
+            default = "incusbr0";
+            description = ''
+              The managed incus bridge the per-job containers attach to (their
+              eth0). Also the interface trusted for the GARM callback/metadata
+              port when `services.garm.openIncusBridgeFirewall` is set.
+            '';
+          };
+
+          incusIPv4CIDR = mkOption {
+            type = types.str;
+            default = "";
+            example = "10.157.159.0/24";
+            description = ''
+              The incus bridge subnet in a.b.c.d/nn form. The provider injects a
+              STATIC IPv4 into each container via cloud-init.network-config
+              because incusbr0's DHCP does not lease on this host (nixos-fw drops
+              the DHCP path). Required when backend = "incus". Egress itself
+              works through incus's own NAT (no host firewall change); only the
+              lease is worked around.
+            '';
+          };
+          incusIPv4Gateway = mkOption {
+            type = types.str;
+            default = "";
+            example = "10.157.159.1";
+            description = ''
+              The default route for per-job containers (the incus bridge host
+              IP). This is ALSO the host IP the guest reaches GARM's
+              metadata/callback endpoint on. Required when backend = "incus".
+            '';
+          };
+          incusIPv4RangeStart = mkOption {
+            type = types.str;
+            default = "";
+            example = "10.157.159.200";
+            description = ''
+              Lower bound (inclusive, dotted) of the static-IPv4 pool the
+              provider allocates per container. Empty ⇒ the provider defaults to
+              the .200 host of the /24.
+            '';
+          };
+          incusIPv4RangeEnd = mkOption {
+            type = types.str;
+            default = "";
+            example = "10.157.159.250";
+            description = ''
+              Upper bound (inclusive, dotted) of the static-IPv4 pool. Empty ⇒
+              the provider defaults to the .250 host of the /24. The size of this
+              range is the true per-scale-set concurrency ceiling for the incus
+              backend (one free IP per concurrent container), so keep it >=
+              maxRunners across all incus scale sets.
+            '';
+          };
+          incusNameservers = mkOption {
+            type = types.listOf types.str;
+            default = [
+              "1.1.1.1"
+              "8.8.8.8"
+            ];
+            description = "Resolvers written into each container's netplan.";
           };
 
           poolDir = mkOption {
@@ -890,13 +1032,27 @@
           # every boot and cannot be a stable group member, and PrivateDevices +
           # DeviceAllow=[] + the strict syscall filter block device/socket work.
           #
-          # So the posture is CONDITIONAL:
+          # So the posture is CONDITIONAL on (provider on/off) AND (backend):
           #   * provider OFF (M0/boot-gate): unchanged — DynamicUser + full
           #     sandbox. The M0 boot gate keeps passing byte-for-byte.
-          #   * provider ON: a dedicated `garm` system user in libvirtd+kvm,
-          #     with ONLY the minimum relaxations enumerated below. Everything
-          #     that does NOT block the provider stays on.
+          #   * LIBVIRT provider ON: a dedicated `garm` system user in
+          #     libvirtd+kvm, with the qemu relaxations enumerated below
+          #     (ProtectSystem=full, DeviceAllow=/dev/kvm, no PrivateDevices/
+          #     MDWE/syscall-filter). Everything else stays on.
+          #   * INCUS provider ON (IM4): a dedicated `garm` system user in
+          #     `incus-admin` ONLY. Containers need no /dev/kvm, no writable host
+          #     pool dir, and no syscall relaxations — the `incus` CLI just talks
+          #     to the daemon over the incus-admin unix socket (connect() works
+          #     on a read-only FS). So the incus posture keeps the STRICT M0
+          #     knobs (PrivateDevices, MemoryDenyWriteExecute, ProtectSystem=
+          #     strict, the @system-service syscall filter) and relaxes ONLY the
+          #     user/group (a stable uid is required for persistent incus-admin
+          #     membership; a DynamicUser cannot be a stable group member).
           providerOn = cfg.providers.vmharness.enable;
+          # The libvirt (Windows VM) provider is the one that forces the qemu
+          # relaxations; the incus (Linux container) provider does not.
+          providerIsIncus = cfg.providers.vmharness.backend == "incus";
+          libvirtProviderOn = providerOn && !providerIsIncus;
 
           # LoadCredential list: the two M0 secrets (optional) + the M6 App PEM
           # (required when github.enable). All staged read-only under
@@ -912,8 +1068,9 @@
               cfg.github.enable && cfg.github.appKeyFile != null
             ) "${cfg.appKeyCredentialName}:${toString cfg.github.appKeyFile}";
 
-          # The hardened-but-provider-capable serviceConfig fragment (provider ON).
-          providerServiceConfig = {
+          # The hardened-but-libvirt-capable serviceConfig fragment (libvirt
+          # provider ON — the Windows VM path).
+          libvirtServiceConfig = {
             # Dedicated system user (created below), in libvirtd+kvm so it can
             # reach qemu:///system + /dev/kvm.
             User = cfg.user;
@@ -972,6 +1129,27 @@
             # it is dropped ONLY in the provider posture. (kept in M0 below.)
           };
 
+          # The IM4 incus posture (incus provider ON — the Linux container
+          # path). Relaxes ONLY the user/group vs M0: a dedicated `garm` user in
+          # `incus-admin` so it can reach the incus daemon socket. Containers
+          # need NO device access (no /dev/kvm), NO writable host FS beyond the
+          # StateDirectory (the incus daemon owns all container storage), and NO
+          # syscall relaxations — so PrivateDevices, MemoryDenyWriteExecute,
+          # ProtectSystem=strict and the @system-service filter (added below for
+          # every non-libvirt posture) ALL stay on. This is a strictly stronger
+          # sandbox than the libvirt posture. The incus CLI reads
+          # $HOME/.config/incus/…; HOME is the garm StateDirectory (writable), so
+          # ProtectHome hiding /root does not affect it (verified on this host:
+          # `incus list` runs green under exactly these knobs).
+          incusServiceConfig = {
+            User = cfg.user;
+            Group = cfg.group;
+            SupplementaryGroups = [ "incus-admin" ] ++ cfg.extraGroups;
+            ProtectSystem = "strict";
+            PrivateDevices = true;
+            MemoryDenyWriteExecute = true;
+          };
+
           # The strict M0 posture fragment (provider OFF) — verbatim from M0.
           m0ServiceConfig = {
             DynamicUser = true;
@@ -979,6 +1157,15 @@
             PrivateDevices = true;
             MemoryDenyWriteExecute = true;
           };
+
+          # Posture selector: M0 (off), incus (container), or libvirt (VM).
+          postureServiceConfig =
+            if !providerOn then
+              m0ServiceConfig
+            else if providerIsIncus then
+              incusServiceConfig
+            else
+              libvirtServiceConfig;
         in
         {
           assertions =
@@ -996,14 +1183,16 @@
                 assertion =
                   let
                     totalMb = lib.foldlAttrs (
-                      acc: _: ss: acc + ss.maxRunners * cfg.providers.vmharness.memoryMb
+                      acc: _: ss:
+                      acc + ss.maxRunners * cfg.providers.vmharness.memoryMb
                     ) 0 cfg.scaleSets;
                   in
                   totalMb <= cfg.hostBudget.memoryMb;
                 message =
                   let
                     totalMb = lib.foldlAttrs (
-                      acc: _: ss: acc + ss.maxRunners * cfg.providers.vmharness.memoryMb
+                      acc: _: ss:
+                      acc + ss.maxRunners * cfg.providers.vmharness.memoryMb
                     ) 0 cfg.scaleSets;
                   in
                   "services.garm: worst-case ephemeral guest RAM (sum of maxRunners * providers.vmharness.memoryMb = ${toString totalMb} MiB) exceeds hostBudget.memoryMb (${toString cfg.hostBudget.memoryMb} MiB). Lower maxRunners/memoryMb or raise hostBudget.memoryMb.";
@@ -1012,14 +1201,16 @@
                 assertion =
                   let
                     totalVcpu = lib.foldlAttrs (
-                      acc: _: ss: acc + ss.maxRunners * cfg.providers.vmharness.vcpus
+                      acc: _: ss:
+                      acc + ss.maxRunners * cfg.providers.vmharness.vcpus
                     ) 0 cfg.scaleSets;
                   in
                   totalVcpu <= cfg.hostBudget.vcpus;
                 message =
                   let
                     totalVcpu = lib.foldlAttrs (
-                      acc: _: ss: acc + ss.maxRunners * cfg.providers.vmharness.vcpus
+                      acc: _: ss:
+                      acc + ss.maxRunners * cfg.providers.vmharness.vcpus
                     ) 0 cfg.scaleSets;
                   in
                   "services.garm: worst-case ephemeral guest vCPUs (sum of maxRunners * providers.vmharness.vcpus = ${toString totalVcpu}) exceeds hostBudget.vcpus (${toString cfg.hostBudget.vcpus}). Lower maxRunners/vcpus or raise hostBudget.vcpus.";
@@ -1033,17 +1224,39 @@
                 assertion = !cfg.github.enable || (cfg.github.appId != null && cfg.github.installationId != null);
                 message = "services.garm.github.enable requires github.appId and github.installationId.";
               }
+              # IM4: the incus backend injects a static IPv4 per container
+              # (incusbr0 DHCP does not lease), so a subnet + gateway are
+              # required. This mirrors the provider's own Validate().
+              {
+                assertion =
+                  !(providerOn && providerIsIncus)
+                  || (cfg.providers.vmharness.incusIPv4CIDR != "" && cfg.providers.vmharness.incusIPv4Gateway != "");
+                message = "services.garm.providers.vmharness.backend = \"incus\" requires incusIPv4CIDR and incusIPv4Gateway (incusbr0 DHCP does not lease; the provider injects a static IPv4 per container).";
+              }
             ];
 
           environment.systemPackages = [ cfg.package ];
 
-          networking.firewall = mkIf cfg.openFirewall {
-            allowedTCPPorts = [ cfg.apiServer.port ];
+          networking.firewall = {
+            allowedTCPPorts = mkIf cfg.openFirewall [ cfg.apiServer.port ];
+            # IM4 declarative egress: trust the incus bridge for the GARM
+            # API/metadata/callback port so per-job CONTAINERS can reach the host
+            # GARM endpoint. This is the declarative replacement for the runtime
+            # `nft insert … iifname incusbr0 … dport <port> accept` rule the IM3
+            # gate added by hand. Container->internet egress needs NO host change
+            # (incus's own `inet incus` nft table already NATs the bridge); only
+            # this container->host GARM path needs opening, and only on the
+            # bridge interface (never the public firewall).
+            interfaces = mkIf (cfg.openIncusBridgeFirewall && providerIsIncus) {
+              ${cfg.providers.vmharness.incusBridge}.allowedTCPPorts = [ cfg.apiServer.port ];
+            };
           };
 
           # Dedicated system user for the provider posture. Created
-          # unconditionally-when-provider-on so libvirtd/kvm membership is stable
-          # across boots (a DynamicUser cannot be a persistent group member).
+          # unconditionally-when-provider-on so the socket-group membership
+          # (libvirtd+kvm for the VM path; incus-admin for the container path) is
+          # stable across boots (a DynamicUser cannot be a persistent group
+          # member).
           users.users = mkIf providerOn {
             ${cfg.user} = {
               isSystemUser = true;
@@ -1063,26 +1276,38 @@
           # this host — reads the overlays). If the operator points poolDir at the
           # shared libvirt images dir, they must instead grant garm write access
           # there themselves; this tmpfiles rule only manages a garm-owned dir.
-          systemd.tmpfiles.rules = lib.optionals providerOn [
+          # INCUS backend: the incus daemon owns all container storage, so the
+          # provider writes NO host pool dir — this rule is libvirt-only.
+          systemd.tmpfiles.rules = lib.optionals libvirtProviderOn [
             "d ${cfg.providers.vmharness.poolDir} 0771 ${cfg.user} libvirtd - -"
           ];
 
           systemd.services.garm = {
             description = "GitHub Actions Runner Manager (garm)";
             documentation = [ "https://github.com/cloudbase/garm" ];
-            after = [ "network.target" ] ++ lib.optional providerOn "libvirtd.service";
-            wants = lib.optional providerOn "libvirtd.service";
+            after = [
+              "network.target"
+            ]
+            ++ lib.optional libvirtProviderOn "libvirtd.service"
+            ++ lib.optional (providerOn && providerIsIncus) "incus.service";
+            wants =
+              lib.optional libvirtProviderOn "libvirtd.service"
+              ++ lib.optional (providerOn && providerIsIncus) "incus.service";
             wantedBy = [ "multi-user.target" ];
 
-            # The provider child resolves genisoimage from PATH (GARM forwards
-            # PATH via environment_variables=["PATH"]). `path` is merged by NixOS
-            # into the unit's PATH (no override conflict) and inherited by the
-            # provider child process GARM execs.
-            path = lib.optionals providerOn [
-              pkgs.cdrkit
-              pkgs.qemu
-              pkgs.libvirt
-            ];
+            # The provider child inherits the unit PATH (GARM forwards PATH via
+            # environment_variables). `path` is merged by NixOS into the unit's
+            # PATH (no override conflict) and inherited by the provider child
+            # GARM execs. libvirt: cdrkit(genisoimage)+qemu+libvirt for the
+            # config-drive/clone path. incus: the `incus` client (incus_path is
+            # absolute, but keep it on PATH for robustness).
+            path =
+              lib.optionals libvirtProviderOn [
+                pkgs.cdrkit
+                pkgs.qemu
+                pkgs.libvirt
+              ]
+              ++ lib.optional (providerOn && providerIsIncus) pkgs.incus;
 
             serviceConfig = {
               Type = "simple";
@@ -1132,12 +1357,15 @@
               AmbientCapabilities = [ "" ];
               UMask = "0077";
             }
-            # Posture-specific fragment: the strict M0 sandbox when the provider
-            # is off; the targeted relaxations when it is on.
-            // (if providerOn then providerServiceConfig else m0ServiceConfig)
-            # M0 posture also keeps these strict-only knobs (they'd block the
-            # provider so they're omitted in the provider posture).
-            // lib.optionalAttrs (!providerOn) {
+            # Posture-specific fragment: strict M0 sandbox (provider off), the
+            # strict-but-incus-admin sandbox (incus provider), or the qemu
+            # relaxations (libvirt provider).
+            // postureServiceConfig
+            # The strict @system-service syscall filter is kept for EVERY
+            # posture EXCEPT the libvirt one — the libvirt path execs cdrkit's
+            # mkisofs which is SIGSYS-killed under it. M0 (pure Go daemon) and
+            # the incus path (Go daemon + the `incus` Go CLI) both pass it.
+            // lib.optionalAttrs (!libvirtProviderOn) {
               SystemCallFilter = [
                 "@system-service"
                 "~@privileged"

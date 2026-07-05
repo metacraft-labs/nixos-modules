@@ -136,6 +136,87 @@ harnesses did) surfaces two real access requirements the root path masked:
 
 ---
 
+## 2a. IM4 — the incus (Linux container) posture
+
+Setting `providers.vmharness.backend = "incus"` drives the
+**Ephemeral-Linux-Runners** path: per-job Linux **system containers** launched
+from an incus runner image (`vmh-linux-runner`) instead of Windows VMs. Because
+containers share the host kernel and need **no `/dev/kvm`, no writable host pool
+dir, and no external-tool execs**, the incus posture is **strictly stronger**
+than the libvirt one — it keeps *all* the M0 strict knobs and relaxes **only**
+the user/group:
+
+| Change | M0 posture | **Incus posture** | Libvirt posture |
+|---|---|---|---|
+| **User** | `DynamicUser` | dedicated `garm` user | dedicated `garm` user |
+| **Groups** | none | **`incus-admin`** only (socket access) | `libvirtd`+`kvm` |
+| **ProtectSystem** | `strict` | **`strict`** (kept) | `full` |
+| **PrivateDevices** | `true` | **`true`** (kept — no `/dev/kvm`) | removed |
+| **DeviceAllow** | deny-all | **deny-all** (kept) | `/dev/kvm` + std |
+| **MemoryDenyWriteExecute** | `true` | **`true`** (kept) | removed |
+| **SystemCallFilter** | `@system-service ~@privileged ~@resources` | **kept** (the `incus` Go CLI passes it) | removed |
+| **PATH** | none | `incus` client | cdrkit+qemu+libvirt |
+| **HOME (env forwarded to provider)** | n/a | **`HOME`** (the `incus` CLI reads `$HOME/.config/incus/…`; HOME is the writable StateDirectory) | n/a |
+
+Why each incus relaxation is required (and *only* these):
+
+- **Dedicated `garm` user in `incus-admin`.** The provider shells to the `incus`
+  client, which reaches the incus daemon over the `incus-admin`-group-gated unix
+  socket (`/var/lib/incus/unix.socket`). A `DynamicUser` cannot be a stable group
+  member, so a persistent uid in `incus-admin` is needed. **No `libvirtd`/`kvm`,
+  no `/dev/kvm`** — containers don't touch the KVM device.
+- **`incus` on PATH + `HOME` forwarded.** `incus_path` is absolute, but the CLI
+  reads its client config from `$HOME/.config/incus/`; without `HOME` (and with
+  `ProtectHome` hiding `/root`) it fails *"Unable to read the configuration file …
+  permission denied"*. The unit's `HOME` is the garm StateDirectory (writable via
+  `StateDirectory=garm`), so forwarding `HOME` is sufficient. Verified on the
+  Incus host: `incus list` runs green under exactly these knobs (strict +
+  PrivateDevices + MDWE + the syscall filter).
+
+Everything a container needs on disk is owned by the **incus daemon** (running
+outside this sandbox); the provider itself writes nothing to the host FS, so
+`ProtectSystem=strict` needs **no extra `ReadWritePaths`** and there is **no
+tmpfiles pool dir** (libvirt-only).
+
+### Static IPv4 + declarative egress (IM4)
+
+- **DHCP.** `incusbr0`'s DHCP does not lease on this host (nixos-fw drops the DHCP
+  path). The provider therefore injects a **static IPv4 per container** via
+  `cloud-init.network-config`, allocated from
+  `providers.vmharness.incusIPv4RangeStart..incusIPv4RangeEnd` on
+  `incusIPv4CIDR`, routed via `incusIPv4Gateway`. This is the supported approach
+  (no declarative DHCP needed); the range size is the true per-scale-set
+  concurrency ceiling for the incus backend (one free IP per concurrent
+  container), so keep it `>= maxRunners`.
+- **Container → internet egress** needs **no host firewall change**: incus's own
+  `inet incus` nftables table already masquerades + forwards `incusbr0`.
+- **Container → host GARM** (metadata/callback on the apiserver port) is opened
+  **declaratively** with `services.garm.openIncusBridgeFirewall = true`, which
+  wires `networking.firewall.interfaces.<incusBridge>.allowedTCPPorts =
+  [ apiServer.port ]`. This replaces the runtime `nft insert … iifname incusbr0 …
+  dport <port> accept` rule the IM3 gate added by hand. It opens **only** the
+  bridge interface for **only** that port — never the public firewall.
+
+### Runner-image cache path (IM4)
+
+GARM's Linux install template treats `/home/<RunnerUsername>/actions-runner`
+(username defaults to `runner`) as the **cached** runner: when that directory
+exists the bootstrap skips the ~200 MB download+extract. The `vmh-linux-runner`
+image (built by `vm-harness/guest-recipes/linux-x64-runner/build-runner-image.sh`)
+therefore stages the runner at exactly `/home/runner/actions-runner` (owned
+`runner:runner`), so each job reuses the baked copy instead of re-downloading.
+
+### Metrics + declarative wiring
+
+Prometheus `/metrics` (§6), the App/org/scale-set wiring (§3–§4), and the
+eval-time resource guard (§7) work identically for the incus backend. The IM4
+gate `checks/t_incus_linux_autoscale_and_harden.sh` runs the whole autoscale
+suite (cap / scale-to-zero / warm-pool at a higher concurrency than the Windows
+path) **through the module-built hardened incus unit**, and asserts the posture
+above + `/metrics` served + the declarative egress option.
+
+---
+
 ## 3. Declarative App / provider wiring
 
 - **App credentials** are emitted as a `[[github]]` block with `auth_type = "app"`.
