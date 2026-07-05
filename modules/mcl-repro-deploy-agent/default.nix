@@ -63,7 +63,10 @@
           "--fetch-timeout-ms"
           (toString cfg.fetchTimeoutMs)
         ]
-        ++ lib.concatMap (s: [ "--manifest" s ]) cfg.manifestSources
+        ++ lib.concatMap (s: [
+          "--manifest"
+          s
+        ]) cfg.manifestSources
         ++ lib.optionals (cfg.cacheRoot != null) [
           "--cache-root"
           cfg.cacheRoot
@@ -229,9 +232,7 @@
           }
           {
             assertion = cfg.allowedSigners != [ ] || cfg.allowedSignersFile != null;
-            message =
-              "services.mcl-repro-deploy-agent needs allowedSigners (inline) or "
-              + "allowedSignersFile.";
+            message = "services.mcl-repro-deploy-agent needs allowedSigners (inline) or " + "allowedSignersFile.";
           }
         ];
 
@@ -257,9 +258,7 @@
             LoadCredential = lib.optional (cfg.caFile != null) "ca:${cfg.caFile}";
 
             Environment =
-              lib.optional (
-                cfg.binaryCacheUrl != null
-              ) "REPRO_BINARY_CACHE_URL=${cfg.binaryCacheUrl}"
+              lib.optional (cfg.binaryCacheUrl != null) "REPRO_BINARY_CACHE_URL=${cfg.binaryCacheUrl}"
               ++ lib.optional (cfg.caFile != null) "REPRO_BINARY_CACHE_CA_FILE=%d/ca"
               ++ lib.optional (cfg.tlsInsecure && cfg.caFile == null) "REPRO_BINARY_CACHE_TLS_INSECURE=1"
               # NOTE: the packaged `repro` dlopen()s libclingo.so + libzstd.so.1

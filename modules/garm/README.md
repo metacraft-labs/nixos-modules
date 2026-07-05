@@ -90,17 +90,17 @@ The module therefore uses a **provider-conditional posture**:
 
 ### Relaxations (provider posture) — each and why
 
-| Change | M0 posture | Provider posture | Why the relaxation is required |
-|---|---|---|---|
-| **User** | `DynamicUser=true` | dedicated `garm` system user | A DynamicUser gets a fresh uid every boot and **cannot be a stable group member**. The provider needs a persistent uid in `libvirtd`+`kvm` to reach `qemu:///system` and `/dev/kvm`. |
-| **Groups** | none | `SupplementaryGroups = [libvirtd kvm]` | Group-gated access to the libvirt socket (`/run/libvirt/libvirt-sock`, `libvirtd`) and `/dev/kvm` (`kvm`). |
-| **ProtectSystem** | `strict` | `full` | `strict` makes the whole FS read-only except explicit `ReadWritePaths`; the provider writes per-job overlay + nvram + config-drive into the pool dir and touches the libvirt runtime. `full` keeps `/usr`,`/boot`,`/etc` read-only (the important protection) while allowing the granted paths below. |
-| **ReadWritePaths** | (n/a) | pool dir, `/var/lib/libvirt`, `/run/libvirt` | Explicit write grants for the VM pool artifacts + libvirt runtime socket. `StateDirectory` already grants the GARM state dir. |
-| **PrivateDevices** | `true` | **removed** | `PrivateDevices=true` hides `/dev/kvm`; qemu cannot start a HW-accelerated guest without it. Scoped instead via `DeviceAllow` (below). |
-| **DeviceAllow** | (implicit deny-all) | `/dev/kvm rw` + null/zero/full/random/urandom/ptmx | Grant **exactly** the devices the provider/qemu path needs, nothing more. |
-| **MemoryDenyWriteExecute** | `true` | **removed** | qemu (and some tool child processes) JIT / map W+X pages; MDWE breaks them. Dropped **only** in the provider posture. |
-| **SystemCallFilter** | `@system-service ~@privileged ~@resources` | **removed** | The provider execs a chain of VM tooling (qemu-img, virsh, cdrkit `mkisofs`); `mkisofs` is **killed by SIGSYS** under `@system-service` (verified: `status=31/SYS, core dumped`). Rather than chase a vendored tool's exact syscall (brittle), the filter is dropped for the provider path. Isolation stays strong via the non-root user, `NoNewPrivileges`, empty caps, device scoping, and namespace/realtime restrictions. |
-| **PATH** | (none) | cdrkit(genisoimage)+qemu+libvirt via unit `path` | GARM does **not** forward its PATH to external providers; the provider resolves `genisoimage` via `LookPath`. The provider block sets `environment_variables = ["PATH"]` and the unit contributes a PATH containing `genisoimage`. `virsh`/`qemu-img` are absolute (from the provider config). |
+| Change                     | M0 posture                                 | Provider posture                                   | Why the relaxation is required                                                                                                                                                                                                                                                                                                                                                                                                |
+| -------------------------- | ------------------------------------------ | -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **User**                   | `DynamicUser=true`                         | dedicated `garm` system user                       | A DynamicUser gets a fresh uid every boot and **cannot be a stable group member**. The provider needs a persistent uid in `libvirtd`+`kvm` to reach `qemu:///system` and `/dev/kvm`.                                                                                                                                                                                                                                          |
+| **Groups**                 | none                                       | `SupplementaryGroups = [libvirtd kvm]`             | Group-gated access to the libvirt socket (`/run/libvirt/libvirt-sock`, `libvirtd`) and `/dev/kvm` (`kvm`).                                                                                                                                                                                                                                                                                                                    |
+| **ProtectSystem**          | `strict`                                   | `full`                                             | `strict` makes the whole FS read-only except explicit `ReadWritePaths`; the provider writes per-job overlay + nvram + config-drive into the pool dir and touches the libvirt runtime. `full` keeps `/usr`,`/boot`,`/etc` read-only (the important protection) while allowing the granted paths below.                                                                                                                         |
+| **ReadWritePaths**         | (n/a)                                      | pool dir, `/var/lib/libvirt`, `/run/libvirt`       | Explicit write grants for the VM pool artifacts + libvirt runtime socket. `StateDirectory` already grants the GARM state dir.                                                                                                                                                                                                                                                                                                 |
+| **PrivateDevices**         | `true`                                     | **removed**                                        | `PrivateDevices=true` hides `/dev/kvm`; qemu cannot start a HW-accelerated guest without it. Scoped instead via `DeviceAllow` (below).                                                                                                                                                                                                                                                                                        |
+| **DeviceAllow**            | (implicit deny-all)                        | `/dev/kvm rw` + null/zero/full/random/urandom/ptmx | Grant **exactly** the devices the provider/qemu path needs, nothing more.                                                                                                                                                                                                                                                                                                                                                     |
+| **MemoryDenyWriteExecute** | `true`                                     | **removed**                                        | qemu (and some tool child processes) JIT / map W+X pages; MDWE breaks them. Dropped **only** in the provider posture.                                                                                                                                                                                                                                                                                                         |
+| **SystemCallFilter**       | `@system-service ~@privileged ~@resources` | **removed**                                        | The provider execs a chain of VM tooling (qemu-img, virsh, cdrkit `mkisofs`); `mkisofs` is **killed by SIGSYS** under `@system-service` (verified: `status=31/SYS, core dumped`). Rather than chase a vendored tool's exact syscall (brittle), the filter is dropped for the provider path. Isolation stays strong via the non-root user, `NoNewPrivileges`, empty caps, device scoping, and namespace/realtime restrictions. |
+| **PATH**                   | (none)                                     | cdrkit(genisoimage)+qemu+libvirt via unit `path`   | GARM does **not** forward its PATH to external providers; the provider resolves `genisoimage` via `LookPath`. The provider block sets `environment_variables = ["PATH"]` and the unit contributes a PATH containing `genisoimage`. `virsh`/`qemu-img` are absolute (from the provider config).                                                                                                                                |
 
 ### Filesystem access for the non-root `garm` user (M6 integration notes)
 
@@ -143,22 +143,22 @@ Setting `providers.vmharness.backend = "incus"` drives the
 from an incus runner image (e.g. `runner-linux`) instead of Windows VMs. Because
 containers share the host kernel and need **no `/dev/kvm`, no writable host pool
 dir, and no external-tool execs**, the incus posture is **strictly stronger**
-than the libvirt one — it keeps *all* the M0 strict knobs and relaxes **only**
+than the libvirt one — it keeps _all_ the M0 strict knobs and relaxes **only**
 the user/group:
 
-| Change | M0 posture | **Incus posture** | Libvirt posture |
-|---|---|---|---|
-| **User** | `DynamicUser` | dedicated `garm` user | dedicated `garm` user |
-| **Groups** | none | **`incus-admin`** only (socket access) | `libvirtd`+`kvm` |
-| **ProtectSystem** | `strict` | **`strict`** (kept) | `full` |
-| **PrivateDevices** | `true` | **`true`** (kept — no `/dev/kvm`) | removed |
-| **DeviceAllow** | deny-all | **deny-all** (kept) | `/dev/kvm` + std |
-| **MemoryDenyWriteExecute** | `true` | **`true`** (kept) | removed |
-| **SystemCallFilter** | `@system-service ~@privileged ~@resources` | **kept** (the `incus` Go CLI passes it) | removed |
-| **PATH** | none | `incus` client | cdrkit+qemu+libvirt |
-| **HOME (env forwarded to provider)** | n/a | **`HOME`** (the `incus` CLI reads `$HOME/.config/incus/…`; HOME is the writable StateDirectory) | n/a |
+| Change                               | M0 posture                                 | **Incus posture**                                                                               | Libvirt posture       |
+| ------------------------------------ | ------------------------------------------ | ----------------------------------------------------------------------------------------------- | --------------------- |
+| **User**                             | `DynamicUser`                              | dedicated `garm` user                                                                           | dedicated `garm` user |
+| **Groups**                           | none                                       | **`incus-admin`** only (socket access)                                                          | `libvirtd`+`kvm`      |
+| **ProtectSystem**                    | `strict`                                   | **`strict`** (kept)                                                                             | `full`                |
+| **PrivateDevices**                   | `true`                                     | **`true`** (kept — no `/dev/kvm`)                                                               | removed               |
+| **DeviceAllow**                      | deny-all                                   | **deny-all** (kept)                                                                             | `/dev/kvm` + std      |
+| **MemoryDenyWriteExecute**           | `true`                                     | **`true`** (kept)                                                                               | removed               |
+| **SystemCallFilter**                 | `@system-service ~@privileged ~@resources` | **kept** (the `incus` Go CLI passes it)                                                         | removed               |
+| **PATH**                             | none                                       | `incus` client                                                                                  | cdrkit+qemu+libvirt   |
+| **HOME (env forwarded to provider)** | n/a                                        | **`HOME`** (the `incus` CLI reads `$HOME/.config/incus/…`; HOME is the writable StateDirectory) | n/a                   |
 
-Why each incus relaxation is required (and *only* these):
+Why each incus relaxation is required (and _only_ these):
 
 - **Dedicated `garm` user in `incus-admin`.** The provider shells to the `incus`
   client, which reaches the incus daemon over the `incus-admin`-group-gated unix
@@ -167,8 +167,8 @@ Why each incus relaxation is required (and *only* these):
   no `/dev/kvm`** — containers don't touch the KVM device.
 - **`incus` on PATH + `HOME` forwarded.** `incus_path` is absolute, but the CLI
   reads its client config from `$HOME/.config/incus/`; without `HOME` (and with
-  `ProtectHome` hiding `/root`) it fails *"Unable to read the configuration file …
-  permission denied"*. The unit's `HOME` is the garm StateDirectory (writable via
+  `ProtectHome` hiding `/root`) it fails _"Unable to read the configuration file …
+  permission denied"_. The unit's `HOME` is the garm StateDirectory (writable via
   `StateDirectory=garm`), so forwarding `HOME` is sufficient. Verified on the
   Incus host: `incus list` runs green under exactly these knobs (strict +
   PrivateDevices + MDWE + the syscall filter).
@@ -193,8 +193,8 @@ tmpfiles pool dir** (libvirt-only).
 - **Container → host GARM** (metadata/callback on the apiserver port) is opened
   **declaratively** with `services.garm.openIncusBridgeFirewall = true`, which
   wires `networking.firewall.interfaces.<incusBridge>.allowedTCPPorts =
-  [ apiServer.port ]`. This replaces the runtime `nft insert … iifname incusbr0 …
-  dport <port> accept` rule the IM3 gate added by hand. It opens **only** the
+[ apiServer.port ]`. This replaces the runtime `nft insert … iifname incusbr0 …
+dport <port> accept` rule the IM3 gate added by hand. It opens **only** the
   bridge interface for **only** that port — never the public firewall.
 
 ### Runner-image cache path (IM4)
@@ -229,16 +229,17 @@ above + `/metrics` served + the declarative egress option.
   > (`cmd/garm/main.go`: `cfg.Database.MigrateCredentials = cfg.Github`), and only
   > (a) on the **first** DB open (before the credentials table exists) **and** (b)
   > if an **admin user already exists** at that instant. GARM's first-run flow
-  > creates the admin via the API *after* boot, so on a **fresh deploy the import is
+  > creates the admin via the API _after_ boot, so on a **fresh deploy the import is
   > always skipped** ("Admin user doesn't exist. This is a new deploy."). The
   > `[[github]]` block is therefore effective only for **upgrading** a pre-existing
   > single-user GARM, not for greenfield installs. For a fresh deploy, register the
   > credentials once with `garm-cli github credentials add ... --private-key-path
-  > <stateDir>/app-key.pem` — using the App ID / installation ID from
+<stateDir>/app-key.pem` — using the App ID / installation ID from
   > `services.garm.github` and the **module-staged PEM**. Every input is still
   > declarative (module options + LoadCredential); only the final `garm-cli`
   > registration is a runtime step, exactly like org/scale-set creation. A future
   > reconcile activation can automate this idempotently.
+
 - **Controller URLs** (`metadata_url`, `callback_url`) go in `[default]` and must be
   guest-reachable (host bridge IP).
 - **Provider** is a `[[provider]]` external block pointing at the
@@ -284,8 +285,8 @@ of strength:
    dedicated org runner group and restrict it to **selected private repositories**.
    Fork PRs from public repos then cannot target these runners at all.
 2. **Require approval for outside collaborators / all outside contributors** in the
-   org → Actions → *Fork pull request workflows* settings (`Require approval for all
-   external contributors`). No workflow (hence no runner request) runs until a
+   org → Actions → _Fork pull request workflows_ settings (`Require approval for all
+external contributors`). No workflow (hence no runner request) runs until a
    maintainer approves.
 3. **Label discipline**: the `runs-on:` selector is the scale-set NAME. Do not put
    the ephemeral scale set on public repos whose workflows accept untrusted input.
@@ -323,7 +324,7 @@ All GARM secrets are runtime-rendered and **never** in the Nix store:
 - **GitHub App PEM**: staged via `LoadCredential` from the agenix path
   (`github.appKeyFile`) and copied to a `0600` file under `stateDir`; the store
   never sees it. Verify with `strings $(readlink /run/current-system) | grep -i
-  BEGIN.*PRIVATE` returning nothing garm-related, and the gate asserts no PEM in
+BEGIN.*PRIVATE` returning nothing garm-related, and the gate asserts no PEM in
   `/nix/store`.
 
 ---
@@ -339,10 +340,10 @@ Scrape config for the existing monitoring stack:
 
 ```yaml
 scrape_configs:
-  - job_name: "garm"
+  - job_name: 'garm'
     metrics_path: /metrics
     static_configs:
-      - targets: ["<garm-host>:9997"]
+      - targets: ['<garm-host>:9997']
     # if disable_auth = false:
     # authorization: { credentials: "<metrics-token>" }
 ```
@@ -376,7 +377,7 @@ An over-committed config aborts `nixos-rebuild`/`nix flake check` with, e.g.:
 > providers.vmharness.memoryMb = 81920 MiB) exceeds hostBudget.memoryMb (16384
 > MiB). Lower maxRunners/memoryMb or raise hostBudget.memoryMb.
 
-This is a *ceiling*, not a live free-RAM check — the autoscale gate's runtime guard
+This is a _ceiling_, not a live free-RAM check — the autoscale gate's runtime guard
 still applies on top for transient host load.
 
 ---
@@ -415,6 +416,7 @@ job-2 VM), `/metrics` is served, no secret material in `/nix/store`, and — via
 sibling eval — the resource-guard assertion fires on a bad config.
 
 **Prerequisites** (documented; the full run needs org+App+KVM+root):
+
 - Run as root on the KVM host (`/dev/kvm`, `qemu:///system`, libvirt `default` net).
 - The Windows golden (prefer the sysprepped variant) with cloudbase-init + the
   actions runner staged; UTC RTC. Path via env (`VMH_WIN_GOLDEN`).
