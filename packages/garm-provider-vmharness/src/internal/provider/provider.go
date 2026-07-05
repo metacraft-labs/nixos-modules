@@ -79,6 +79,27 @@ func NewWithConfig(cfg *config.Config) (*Provider, error) {
 			RangeEnd:    incusRangeEnd(cfg),
 			Nameservers: cfg.IncusNameservers,
 		}
+	case config.BackendTartLinuxArm:
+		b = &backend.VMHarnessRunBackend{
+			VMHarnessPath: cfg.VMHarnessPath,
+			BackendID:     string(config.BackendTartLinuxArm),
+			GuestOS:       "linux",
+			StateDir:      cfg.StateDir,
+		}
+	case config.BackendTartMacos:
+		b = &backend.VMHarnessRunBackend{
+			VMHarnessPath: cfg.VMHarnessPath,
+			BackendID:     string(config.BackendTartMacos),
+			GuestOS:       "macos",
+			StateDir:      cfg.StateDir,
+		}
+	case config.BackendUtmWindowsArm:
+		b = &backend.VMHarnessRunBackend{
+			VMHarnessPath: cfg.VMHarnessPath,
+			BackendID:     string(config.BackendUtmWindowsArm),
+			GuestOS:       "windows",
+			StateDir:      cfg.StateDir,
+		}
 	default:
 		return nil, fmt.Errorf("unsupported backend %q", cfg.Backend)
 	}
@@ -125,13 +146,17 @@ func toProviderInstance(inst backend.Instance) commonParams.ProviderInstance {
 	if strings.EqualFold(inst.OSName, "linux") {
 		osType = commonParams.Linux
 	}
+	osArch := commonParams.Amd64
+	if strings.EqualFold(inst.OSArch, "arm64") || strings.EqualFold(inst.OSArch, "aarch64") {
+		osArch = commonParams.Arm64
+	}
 	pi := commonParams.ProviderInstance{
 		ProviderID: inst.ProviderID,
 		Name:       inst.Name,
 		OSType:     osType,
 		OSName:     inst.OSName,
 		OSVersion:  inst.OSVersion,
-		OSArch:     commonParams.Amd64,
+		OSArch:     osArch,
 		Status:     commonParams.InstanceStatus(inst.Status),
 	}
 	for _, addr := range inst.Addresses {
@@ -204,6 +229,7 @@ func (p *Provider) CreateInstance(ctx context.Context, bootstrapParams commonPar
 		SourceImage:  golden.SourceImage,
 		OSName:       osName,
 		OSVersion:    golden.OSVersion,
+		OSArch:       string(bootstrapParams.OSArch),
 		Flavor:       bootstrapParams.Flavor,
 		Network:      p.cfg.Network,
 		Bootstrap:    bootstrap,

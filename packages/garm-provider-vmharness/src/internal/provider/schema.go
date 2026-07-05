@@ -24,8 +24,8 @@ const configJSONSchema = `{
   "properties": {
     "backend": {
       "type": "string",
-      "enum": ["libvirt", "incus"],
-      "description": "VM management backend: 'libvirt' (Windows/Linux VMs) or 'incus' (Linux system containers)."
+      "enum": ["libvirt", "incus", "tart-linux-arm", "tart-macos", "utm-windows-arm"],
+      "description": "VM management backend: 'libvirt' (Windows/Linux VMs), 'incus' (Linux system containers), or an Apple-silicon vm-harness backend."
     },
     "virsh_path": {
       "type": "string",
@@ -63,6 +63,10 @@ const configJSONSchema = `{
     "vm_harness_path": {
       "type": "string",
       "description": "Path to the vm-harness binary used for per-job clone (M2) and config-drive injection (M3)."
+    },
+    "state_dir": {
+      "type": "string",
+      "description": "State directory for pid/metadata files used by vm-harness-run backends."
     },
     "libvirt_uri": {
       "type": "string",

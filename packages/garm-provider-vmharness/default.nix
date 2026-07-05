@@ -48,6 +48,6 @@ buildGoModule {
     homepage = "https://github.com/metacraft-labs/infra";
     license = lib.licenses.asl20;
     mainProgram = "garm-provider-vmharness";
-    platforms = lib.platforms.linux;
+    platforms = lib.platforms.linux ++ lib.platforms.darwin;
   };
 }

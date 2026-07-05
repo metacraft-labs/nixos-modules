@@ -45,6 +45,7 @@ type Instance struct {
 	// the resolved golden image).
 	OSName    string
 	OSVersion string
+	OSArch    string
 	// Addresses are IP addresses reported for the domain, if any.
 	Addresses []string
 }
@@ -61,6 +62,7 @@ type CreateArgs struct {
 	SourceImage string
 	OSName      string
 	OSVersion   string
+	OSArch      string
 	Flavor      string
 	Network     string
 	// Bootstrap is the rendered runner bootstrap (PowerShell for Windows) that

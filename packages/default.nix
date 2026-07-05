@@ -93,7 +93,7 @@
       // optionalAttrs (system == "x86_64-linux" || system == "aarch64-darwin") {
         aztec = pkgs.callPackage ./aztec { };
       }
-      // optionalAttrs isLinux {
+      // optionalAttrs (isLinux || system == "aarch64-darwin") {
         # Ephemeral-Windows-Runners-GARM M0 — the GARM control-plane package
         # (garm daemon + garm-cli), consumed by `services.garm` and its VM gate.
         garm = pkgs.callPackage ./garm { };
@@ -101,6 +101,8 @@
         # `garm-provider-vmharness` (env+stdin/stdout JSON protocol; shells to
         # virsh/vm-harness). Wired into `services.garm` as an optional provider.
         garm-provider-vmharness = pkgs.callPackage ./garm-provider-vmharness { };
+      }
+      // optionalAttrs isLinux {
         deployment-event-metrics = pkgs.callPackage ./deployment-event-metrics { };
         folder-size-metrics = pkgs.callPackage ./folder-size-metrics { };
         ci-image = pkgs.callPackage ./ci-image {

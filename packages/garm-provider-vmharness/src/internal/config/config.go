@@ -41,6 +41,15 @@ const (
 	// /dev/kvm, so the ephemeral loop (fresh container per job → one job →
 	// destroy) is far cheaper than the VM path.
 	BackendIncus BackendKind = "incus"
+	// BackendTartLinuxArm shells to vm-harness's Tart Linux ARM backend on
+	// Apple-silicon macOS hosts.
+	BackendTartLinuxArm BackendKind = "tart-linux-arm"
+	// BackendTartMacos shells to vm-harness's Tart macOS backend on
+	// Apple-silicon macOS hosts.
+	BackendTartMacos BackendKind = "tart-macos"
+	// BackendUtmWindowsArm shells to vm-harness's UTM Windows ARM backend on
+	// Apple-silicon macOS hosts.
+	BackendUtmWindowsArm BackendKind = "utm-windows-arm"
 )
 
 // GoldenImage maps a pool label/flavor to a concrete libvirt source.
@@ -142,6 +151,10 @@ type Config struct {
 	IncusIPv4RangeStart string   `toml:"incus_ipv4_range_start"`
 	IncusIPv4RangeEnd   string   `toml:"incus_ipv4_range_end"`
 	IncusNameservers    []string `toml:"incus_nameservers"`
+
+	// StateDir stores pid/metadata files for vm-harness run based backends
+	// (Tart/UTM on m3). It contains no secrets.
+	StateDir string `toml:"state_dir"`
 }
 
 // Defaults returns a Config populated with sensible defaults for fields the
@@ -174,6 +187,9 @@ func (c *Config) applyDefaults() {
 	if len(c.IncusNameservers) == 0 {
 		c.IncusNameservers = []string{"1.1.1.1", "8.8.8.8"}
 	}
+	if c.StateDir == "" {
+		c.StateDir = "/var/lib/garm-provider-vmharness"
+	}
 }
 
 // Validate returns an error if the config is internally inconsistent.
@@ -187,8 +203,12 @@ func (c *Config) Validate() error {
 		if c.IncusIPv4CIDR == "" || c.IncusIPv4Gateway == "" {
 			return fmt.Errorf("backend %q requires incus_ipv4_cidr and incus_ipv4_gateway (incusbr0 DHCP does not lease on this host)", c.Backend)
 		}
+	case BackendTartLinuxArm, BackendTartMacos, BackendUtmWindowsArm:
+		if c.VMHarnessPath == "" {
+			return fmt.Errorf("backend %q requires vm_harness_path", c.Backend)
+		}
 	default:
-		return fmt.Errorf("unsupported backend %q (supported: %q, %q)", c.Backend, BackendLibvirt, BackendIncus)
+		return fmt.Errorf("unsupported backend %q (supported: %q, %q, %q, %q, %q)", c.Backend, BackendLibvirt, BackendIncus, BackendTartLinuxArm, BackendTartMacos, BackendUtmWindowsArm)
 	}
 	return nil
 }

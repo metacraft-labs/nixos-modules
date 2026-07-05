@@ -86,6 +86,12 @@
       # (Build the STRING first, then wrap with writeText — otherwise the
       # [images.*] blocks would be appended to the derivation's store PATH.)
       providerIsIncus = p: p.backend == "incus";
+      providerIsLibvirt = p: p.backend == "libvirt";
+      providerIsVMHarnessRun = p: builtins.elem p.backend [
+        "tart-linux-arm"
+        "tart-macos"
+        "utm-windows-arm"
+      ];
       mkLibvirtKeys = p: ''
         virsh_path = "${p.virshPath}"
         qemu_img_path = "${p.qemuImgPath}"
@@ -107,12 +113,23 @@
         incus_ipv4_range_end = "${p.incusIPv4RangeEnd}"
         incus_nameservers = [${lib.concatMapStringsSep ", " (s: "\"${s}\"") p.incusNameservers}]
       '';
+      mkVMHarnessRunKeys = p: ''
+        vm_harness_path = "${p.vmHarnessPath}"
+        state_dir = "${p.stateDir}"
+      '';
       mkProviderConfigText =
         p:
         ''
           backend = "${p.backend}"
         ''
-        + (if providerIsIncus p then mkIncusKeys p else mkLibvirtKeys p)
+        + (
+          if providerIsIncus p then
+            mkIncusKeys p
+          else if providerIsVMHarnessRun p then
+            mkVMHarnessRunKeys p
+          else
+            mkLibvirtKeys p
+        )
         + lib.concatStrings (
           lib.mapAttrsToList (image: spec: ''
 
@@ -352,13 +369,18 @@
               type = types.enum [
                 "libvirt"
                 "incus"
+                "tart-linux-arm"
+                "tart-macos"
+                "utm-windows-arm"
               ];
               default = "libvirt";
               description = ''
                 vm-harness backend the provider drives. `libvirt` boots per-job
                 Windows-11 VMs from a golden qcow2 (the Ephemeral-Windows-Runners
                 path); `incus` launches per-job Linux SYSTEM CONTAINERS from a
-                runner image (the Ephemeral-Linux-Runners path). The backend also
+                runner image (the Ephemeral-Linux-Runners path);
+                `tart-linux-arm`, `tart-macos`, and `utm-windows-arm` shell to
+                vm-harness's Apple-silicon backends for m3. The backend also
                 contributes to the systemd sandbox posture UNION: `incus` needs
                 only `incus-admin` socket-group access and no /dev/kvm (keeps the
                 STRICT knobs), whereas `libvirt` relaxes them for qemu
@@ -425,6 +447,16 @@
               type = types.str;
               default = "vm-harness";
               description = "Path to the `vm-harness` binary used for per-job clone + config-drive injection.";
+            };
+
+            stateDir = mkOption {
+              type = types.str;
+              default = "/var/lib/garm-provider-vmharness";
+              description = ''
+                State directory used by vm-harness-run providers
+                (`tart-linux-arm`, `tart-macos`, `utm-windows-arm`) for pid and
+                instance metadata files. Contains no secrets.
+              '';
             };
 
             libvirtURI = mkOption {
@@ -945,6 +977,7 @@
                     type = types.enum [
                       "windows"
                       "linux"
+                      "macos"
                     ];
                     default = "windows";
                     description = "Runner OS type reported to GARM/GitHub.";
@@ -1036,13 +1069,13 @@
           providerList = lib.attrValues enabledProviders;
           providerOn = enabledProviders != { };
           anyIncus = lib.any (p: providerIsIncus p) providerList;
-          anyLibvirt = lib.any (p: !providerIsIncus p) providerList;
+          anyLibvirt = lib.any (p: providerIsLibvirt p) providerList;
           # The libvirt (Windows VM) posture forces the qemu relaxations; the
           # incus (Linux container) posture does not.
           libvirtProviderOn = anyLibvirt;
 
           incusProviders = lib.filter (p: providerIsIncus p) providerList;
-          libvirtProviders = lib.filter (p: !providerIsIncus p) providerList;
+          libvirtProviders = lib.filter (p: providerIsLibvirt p) providerList;
           # Distinct pool dirs across the enabled libvirt providers.
           libvirtPoolDirs = lib.unique (map (p: p.poolDir) libvirtProviders);
 

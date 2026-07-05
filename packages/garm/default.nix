@@ -70,6 +70,6 @@ buildGo126Module rec {
     homepage = "https://github.com/cloudbase/garm";
     license = lib.licenses.asl20;
     mainProgram = "garm";
-    platforms = lib.platforms.linux;
+    platforms = lib.platforms.linux ++ lib.platforms.darwin;
   };
 }
