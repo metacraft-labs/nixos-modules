@@ -15,6 +15,76 @@ index 80e88ee..e25cc2d 100644
 @@ -896 +896 @@ func (c *CreateTemplateParams) Validate() error {
 -	case commonParams.Linux, commonParams.Windows:
 +	case commonParams.Linux, commonParams.Windows, commonParams.MacOS:
+diff --git a/internal/templates/templates.go b/internal/templates/templates.go
+index 01d0f07..84f5d59 100644
+--- a/internal/templates/templates.go
++++ b/internal/templates/templates.go
+@@ -40 +40 @@ func GetTemplateContent(osType commonParams.OSType, forge params.EndpointType) (
+-		case commonParams.Linux, commonParams.Windows:
++		case commonParams.Linux, commonParams.Windows, commonParams.MacOS:
+diff --git a/internal/templates/userdata/macos_wrapper.tmpl b/internal/templates/userdata/macos_wrapper.tmpl
+new file mode 100644
+index 0000000..3f81d1d
+--- /dev/null
++++ b/internal/templates/userdata/macos_wrapper.tmpl
+@@ -0,0 +1,12 @@
++#!/bin/sh
++
++set -eu
++
++METADATA_URL="{{ .MetadataURL }}"
++BEARER_TOKEN="{{ .CallbackToken }}"
++
++curl -H "Authorization: Bearer $BEARER_TOKEN" --retry 5 --retry-delay 5 --retry-connrefused --fail "$METADATA_URL/install-script/" -o /tmp/real-install.sh
++chmod +x /tmp/real-install.sh
++
++/tmp/real-install.sh
++rm -f /tmp/real-install.sh
+diff --git a/internal/templates/templates_test.go b/internal/templates/templates_test.go
+new file mode 100644
+index 0000000..28866e5
+--- /dev/null
++++ b/internal/templates/templates_test.go
+@@ -0,0 +1,39 @@
++package templates
++
++import (
++	"context"
++	"strings"
++	"testing"
++
++	commonParams "github.com/cloudbase/garm-provider-common/params"
++)
++
++func TestRenderMacOSRunnerInstallWrapper(t *testing.T) {
++	t.Parallel()
++
++	wrapper, err := RenderRunnerInstallWrapper(
++		context.Background(),
++		commonParams.MacOS,
++		"http://garm.example.test/api/v1/metadata",
++		"instance-token",
++	)
++	if err != nil {
++		t.Fatalf("RenderRunnerInstallWrapper(macos) returned error: %v", err)
++	}
++
++	body := string(wrapper)
++	for _, want := range []string{
++		"#!/bin/sh",
++		"BEARER_TOKEN=\"instance-token\"",
++		"http://garm.example.test/api/v1/metadata",
++		"$METADATA_URL/install-script/",
++		"/tmp/real-install.sh",
++	} {
++		if !strings.Contains(body, want) {
++			t.Fatalf("macOS wrapper missing %q:\n%s", want, body)
++		}
++	}
++	if strings.Contains(body, "linux_wrapper.tmpl") || strings.Contains(body, "powershell") {
++		t.Fatalf("macOS wrapper rendered unexpected non-macOS content:\n%s", body)
++	}
++}
 diff --git a/vendor/github.com/cloudbase/garm-provider-common/params/params.go b/vendor/github.com/cloudbase/garm-provider-common/params/params.go
 index e8bc7eb..0ea1721 100644
 --- a/vendor/github.com/cloudbase/garm-provider-common/params/params.go
