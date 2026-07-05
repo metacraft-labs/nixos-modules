@@ -29,7 +29,7 @@ import (
 func TestBuildDomainXMLAttachesConfigDrive(t *testing.T) {
 	args := CreateArgs{
 		Name:        "m3-inject",
-		SourceImage: "/storage/iso/golden-win11-cloudbase.qcow2",
+		SourceImage: "/var/lib/garm/golden/windows-runner.qcow2",
 		Network:     "default",
 	}
 

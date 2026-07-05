@@ -169,7 +169,7 @@
                            download_url:"https://github.com/actions/runner/releases/download/v2.317.0/actions-runner-win-x64-2.317.0.zip",
                            filename:"actions-runner-win-x64-2.317.0.zip",
                            sha256_checksum:"0000000000000000000000000000000000000000000000000000000000000000"} ],
-                  repo_url:"https://github.com/metacraft-labs/scratch",
+                  repo_url:"https://github.com/example-org/scratch",
                   "callback-url":"https://garm.example.com/api/v1/callbacks",
                   "metadata-url":"https://garm.example.com/api/v1/metadata",
                   "instance-token":"jwt-token",

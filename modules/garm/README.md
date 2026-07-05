@@ -35,9 +35,9 @@ services.garm = {
   # LoadCredential (agenix) and NEVER enters the Nix store.
   github = {
     enable = true;
-    appId = 3115338;
-    installationId = 117072647;
-    appKeyFile = "/run/agenix/github-runners/mcl-app-key";
+    appId = 123456;
+    installationId = 7654321;
+    appKeyFile = "/run/agenix/garm/github-app-key";
   };
 
   # The libvirt/KVM provider. Turning this on switches the unit to the
@@ -47,7 +47,7 @@ services.garm = {
     poolDir = "/var/lib/libvirt/images";
     memoryMb = 4096;
     vcpus = 4;
-    images.golden.sourceImage = "/storage/iso/golden-win11-cloudbase-sysprep.qcow2";
+    images.golden.sourceImage = "/var/lib/garm/golden/windows-runner.qcow2";
   };
 
   # Declarative autoscale policy (applied at runtime via garm-cli — see §4).
@@ -110,11 +110,11 @@ harnesses did) surfaces two real access requirements the root path masked:
 1. **Golden readability.** The provider opens the golden as the qemu-img CoW
    backing file. The golden **and every parent directory** must be readable +
    traversable by the `garm` user. If the golden lives under a group-gated path
-   (e.g. `/storage/... root:metacraft 0770`), grant a POSIX ACL:
+   (e.g. `/srv/goldens root:some-group 0770`), grant a POSIX ACL:
    ```
-   setfacl -m u:garm:--x /storage
-   setfacl -m u:garm:r-x /storage/iso
-   setfacl -m u:garm:r-- /storage/iso/<golden>.qcow2
+   setfacl -m u:garm:--x /srv
+   setfacl -m u:garm:r-x /srv/goldens
+   setfacl -m u:garm:r-- /srv/goldens/<golden>.qcow2
    ```
    or add `garm` to the owning group via `services.garm.extraGroups`.
 2. **Pool-dir writability.** The provider writes the per-job overlay +
@@ -140,7 +140,7 @@ harnesses did) surfaces two real access requirements the root path masked:
 
 Setting `providers.vmharness.backend = "incus"` drives the
 **Ephemeral-Linux-Runners** path: per-job Linux **system containers** launched
-from an incus runner image (`vmh-linux-runner`) instead of Windows VMs. Because
+from an incus runner image (e.g. `runner-linux`) instead of Windows VMs. Because
 containers share the host kernel and need **no `/dev/kvm`, no writable host pool
 dir, and no external-tool execs**, the incus posture is **strictly stronger**
 than the libvirt one — it keeps *all* the M0 strict knobs and relaxes **only**
@@ -201,8 +201,8 @@ tmpfiles pool dir** (libvirt-only).
 
 GARM's Linux install template treats `/home/<RunnerUsername>/actions-runner`
 (username defaults to `runner`) as the **cached** runner: when that directory
-exists the bootstrap skips the ~200 MB download+extract. The `vmh-linux-runner`
-image (built by `vm-harness/guest-recipes/linux-x64-runner/build-runner-image.sh`)
+exists the bootstrap skips the ~200 MB download+extract. The runner image
+(built by `vm-harness/guest-recipes/linux-x64-runner/build-runner-image.sh`)
 therefore stages the runner at exactly `/home/runner/actions-runner` (owned
 `runner:runner`), so each job reuses the baked copy instead of re-downloading.
 
@@ -254,7 +254,7 @@ Scale sets carry GitHub-side state, so after the daemon is up:
 
 ```bash
 # org (references the declarative App creds by name)
-garm-cli organization add --name metacraft-labs --credentials mcl-app \
+garm-cli organization add --name my-org --credentials my-app \
   --webhook-secret "$(openssl rand -hex 16)"   # scale sets ignore the webhook
 
 # scale set (the runs-on: selector is the scale-set NAME)
@@ -416,14 +416,13 @@ sibling eval — the resource-guard assertion fires on a bad config.
 
 **Prerequisites** (documented; the full run needs org+App+KVM+root):
 - Run as root on the KVM host (`/dev/kvm`, `qemu:///system`, libvirt `default` net).
-- The Windows golden (prefer the sysprepped
-  `/storage/iso/golden-win11-cloudbase-sysprep.qcow2`) with cloudbase-init + the
-  actions runner staged; UTC RTC.
+- The Windows golden (prefer the sysprepped variant) with cloudbase-init + the
+  actions runner staged; UTC RTC. Path via env (`VMH_WIN_GOLDEN`).
 - OVMF firmware under `/run/libvirt/nix-ovmf`.
-- The GitHub App PEM readable at `/run/agenix/github-runners/mcl-app-key` (App
-  3115338 / installation 117072647 on metacraft-labs, `Self-hosted runners: R/W`).
+- The GitHub App PEM readable at the App PEM path (`APP_PEM`), for the GitHub App
+  ID / installation / org supplied via env, with `Self-hosted runners: R/W`.
 - `gh` authenticated with `repo`+`admin:org`.
 
 The gate is ISOLATED + SELF-CLEANING: a unique scale-set name + a throwaway repo it
 creates and deletes; it uses ONLY `garm-*`/`m6-*` names and never touches
-production (`windows-runner-001`) or the concurrent `sysprep2-*` workstream.
+production runners or other concurrent workstreams.

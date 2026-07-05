@@ -24,42 +24,34 @@
 #   * DOCS/RUNBOOK present: modules/garm/README.md documents the posture.
 #
 # ============================ PREREQUISITES ============================
-# Run as root on the libvirt/KVM host (high-mem-server). Same as M4/M5 plus this
-# gate BUILDS the module toplevel and installs the module's garm.service unit:
+# Run as root on the libvirt/KVM host. Same as M4/M5 plus this gate BUILDS the
+# module toplevel and installs the module's garm.service unit:
 #   * /dev/kvm + qemu:///system libvirtd with the "default" NAT net up
 #     (virbr0 = 192.168.122.1, a trusted iface so guests reach the host).
-#   * The Windows golden (PREFER the sysprepped
-#     /storage/iso/golden-win11-cloudbase-sysprep.qcow2 if present, else the base
-#     golden-win11-cloudbase.qcow2), UTC RTC.
+#   * The Windows golden (PREFER a sysprepped golden — fresh SID per clone — if
+#     present, else the base golden), UTC RTC. Path(s) via env (VMH_WIN_GOLDEN).
 #   * OVMF firmware under /run/libvirt/nix-ovmf.
-#   * The GitHub App PEM readable (APP_PEM=/run/agenix/github-runners/mcl-app-key),
-#     App ID 3115338, installation 117072647 on metacraft-labs, org
-#     `Self-hosted runners: Read & write`.
+#   * The GitHub App PEM readable (APP_PEM = the App private-key PEM path), with
+#     the App ID / installation / org supplied via env (APP_ID, INSTALLATION_ID,
+#     ORG) and the org `Self-hosted runners: Read & write` permission.
 #   * `gh` CLI authenticated with repo+admin:org.
 #   * nix (to build the module toplevel), and this nixos-modules flake checkout.
 #
 # ISOLATED + SELF-CLEANING: a UNIQUE scale-set name + a THROWAWAY test repo it
-# creates and deletes; ONLY m6-*/garm-* names; NEVER touches production
-# (windows-runner-001) or the concurrent sysprep2-* workstream.
+# creates and deletes; ONLY m6-*/garm-* names; NEVER touches production runners
+# or other concurrent workstreams.
 #
 # ============================ CONFIG (env) ============================
 set -euo pipefail
 
-APP_ID="${APP_ID:-3115338}"
-INSTALLATION_ID="${INSTALLATION_ID:-117072647}"
-APP_PEM="${APP_PEM:-/run/agenix/github-runners/mcl-app-key}"
-ORG="${ORG:-metacraft-labs}"
+APP_ID="${APP_ID:?set APP_ID (the GitHub App ID)}"
+INSTALLATION_ID="${INSTALLATION_ID:?set INSTALLATION_ID (the GitHub App installation ID)}"
+APP_PEM="${APP_PEM:?set APP_PEM (path to the GitHub App private-key PEM)}"
+ORG="${ORG:?set ORG (the GitHub org)}"
 SCALESET_NAME="${SCALESET_NAME:-windows-ephemeral-m6}"
 
-# Prefer the sysprepped golden (fresh SID per clone) if the parallel workstream
-# produced it; else fall back to the base golden.
-if [ -z "${VMH_WIN_GOLDEN:-}" ]; then
-  if [ -f /storage/iso/golden-win11-cloudbase-sysprep.qcow2 ]; then
-    VMH_WIN_GOLDEN=/storage/iso/golden-win11-cloudbase-sysprep.qcow2
-  else
-    VMH_WIN_GOLDEN=/storage/iso/golden-win11-cloudbase.qcow2
-  fi
-fi
+# The Windows golden path (prefer a sysprepped golden — fresh SID per clone).
+VMH_WIN_GOLDEN="${VMH_WIN_GOLDEN:?set VMH_WIN_GOLDEN (path to the Windows golden qcow2)}"
 
 # A garm-owned pool dir (the module default) — the non-root garm user cannot
 # write the shared root-only /var/lib/libvirt/images. Provisioned below.

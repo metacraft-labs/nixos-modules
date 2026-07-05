@@ -22,24 +22,23 @@
 #     back to 0 and assert it scales to zero again.
 #
 # This gate is the autoscale analogue of the M4 gate: NOT hermetic (it talks to
-# the REAL metacraft-labs org via the existing GitHub App and boots real Windows
+# the REAL GitHub org (set via ORG) using a GitHub App and boots real Windows
 # VMs on /dev/kvm), so it lives as a scripted harness rather than a
 # `nix flake check`. It is ISOLATED + SELF-CLEANING: a UNIQUE scale-set name +
 # a THROWAWAY test repo it creates and deletes; it uses ONLY garm-* VM names and
-# NEVER touches production runners (windows-runner-001, domain 308) or the
-# concurrent sysprep2-* workstream.
+# NEVER touches production runners or other concurrent workstreams.
 #
 # ============================ PREREQUISITES ============================
 # Identical to t_ephemeral_runner_one_job_e2e (run as root on the KVM host):
 #   * /dev/kvm + qemu:///system libvirtd with the "default" NAT net up
 #     (virbr0 = 192.168.122.1, a trusted iface so guests reach the host).
 #   * The M3 Windows golden with cloudbase-init + the actions runner staged
-#     (VMH_WIN_GOLDEN, default /storage/iso/golden-win11-cloudbase.qcow2), UTC RTC.
+#     (set VMH_WIN_GOLDEN to the golden qcow2 path), UTC RTC.
 #   * OVMF firmware (VMH_OVMF_CODE / VMH_OVMF_VARS).
 #   * qemu-img, virsh, genisoimage on PATH.
-#   * The GitHub App PEM readable (APP_PEM=/run/agenix/github-runners/mcl-app-key),
-#     App ID 3115338, installation 117072647 on metacraft-labs, org
-#     `Self-hosted runners: Read & write`.
+#   * The GitHub App PEM readable (APP_PEM = the App private-key PEM path), with
+#     the App ID / installation / org supplied via env (APP_ID, INSTALLATION_ID,
+#     ORG) and the org `Self-hosted runners: Read & write` permission.
 #   * `gh` CLI authenticated with repo+admin:org.
 #   * GARM + garm-provider-vmharness binaries (GARM_BIN/GARM_CLI_BIN/PROVIDER_BIN).
 #
@@ -57,13 +56,13 @@
 # ============================ CONFIG (env) ============================
 set -euo pipefail
 
-APP_ID="${APP_ID:-3115338}"
-INSTALLATION_ID="${INSTALLATION_ID:-117072647}"
-APP_PEM="${APP_PEM:-/run/agenix/github-runners/mcl-app-key}"
-ORG="${ORG:-metacraft-labs}"
+APP_ID="${APP_ID:?set APP_ID (the GitHub App ID)}"
+INSTALLATION_ID="${INSTALLATION_ID:?set INSTALLATION_ID (the GitHub App installation ID)}"
+APP_PEM="${APP_PEM:?set APP_PEM (path to the GitHub App private-key PEM)}"
+ORG="${ORG:?set ORG (the GitHub org)}"
 SCALESET_NAME="${SCALESET_NAME:-windows-ephemeral-m5}"
 
-VMH_WIN_GOLDEN="${VMH_WIN_GOLDEN:-/storage/iso/golden-win11-cloudbase.qcow2}"
+VMH_WIN_GOLDEN="${VMH_WIN_GOLDEN:?set VMH_WIN_GOLDEN (path to the Windows golden qcow2)}"
 VMH_OVMF_CODE="${VMH_OVMF_CODE:-/run/libvirt/nix-ovmf/edk2-x86_64-code.fd}"
 VMH_OVMF_VARS="${VMH_OVMF_VARS:-/run/libvirt/nix-ovmf/edk2-i386-vars.fd}"
 POOL_DIR="${POOL_DIR:-/var/lib/libvirt/images}"

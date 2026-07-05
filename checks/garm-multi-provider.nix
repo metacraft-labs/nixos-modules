@@ -59,54 +59,54 @@ top@{ ... }:
       multiUnit = mkGarmUnit {
         enable = true;
         openIncusBridgeFirewall = true;
-        github.mcl-app = {
-          appId = 3115338;
-          installationId = 117072647;
-          appKeyFile = "/run/agenix/mcl-app-key";
+        github.app-primary = {
+          appId = 100001;
+          installationId = 200001;
+          appKeyFile = "/run/agenix/garm/app-primary-key";
         };
-        github.blocksense = {
-          appId = 3205470;
-          installationId = 119536190;
-          appKeyFile = "/run/agenix/blocksense-app-key";
+        github.app-secondary = {
+          appId = 100002;
+          installationId = 200002;
+          appKeyFile = "/run/agenix/garm/app-secondary-key";
         };
         providers.incus = {
           backend = "incus";
           incusBridge = "incusbr0";
-          incusIPv4CIDR = "10.157.159.0/24";
-          incusIPv4Gateway = "10.157.159.1";
-          images.linux-runner.sourceImage = "vmh-linux-runner";
+          incusIPv4CIDR = "10.0.100.0/24";
+          incusIPv4Gateway = "10.0.100.1";
+          images.linux-runner.sourceImage = "runner-linux";
         };
         providers.windows = {
           backend = "libvirt";
           poolDir = "/var/lib/garm/pool-win";
-          images.golden.sourceImage = "/storage/iso/golden.qcow2";
+          images.golden.sourceImage = "/var/lib/garm/golden/windows-runner.qcow2";
         };
         scaleSets.incus = {
           provider = "incus";
-          org = "metacraft-labs";
-          credentials = "mcl-app";
+          org = "org-a";
+          credentials = "app-primary";
           image = "linux-runner";
           osType = "linux";
           maxRunners = 4;
         };
         scaleSets.win = {
           provider = "windows";
-          org = "blocksense-network";
-          credentials = "blocksense";
+          org = "org-b";
+          credentials = "app-secondary";
           image = "golden";
           osType = "windows";
           maxRunners = 2;
         };
       };
 
-      # (2) incus provider ONLY (the current production shape).
+      # (2) incus provider ONLY (a single-backend shape).
       incusUnit = mkGarmUnit {
         enable = true;
         providers.vmharness = {
           backend = "incus";
-          incusIPv4CIDR = "10.157.159.0/24";
-          incusIPv4Gateway = "10.157.159.1";
-          images.linux-runner.sourceImage = "vmh-linux-runner";
+          incusIPv4CIDR = "10.0.100.0/24";
+          incusIPv4Gateway = "10.0.100.1";
+          images.linux-runner.sourceImage = "runner-linux";
         };
       };
 
@@ -161,8 +161,8 @@ top@{ ... }:
               [ "$ngh" = 2 ]   || fail "multi: expected 2 [[github]] blocks, got $ngh"
               grep -q 'name = "incus"'   "$tmpl" || fail "multi: [[provider]] 'incus' missing"
               grep -q 'name = "windows"' "$tmpl" || fail "multi: [[provider]] 'windows' missing"
-              grep -q 'name = "mcl-app"'    "$tmpl" || fail "multi: [[github]] 'mcl-app' missing"
-              grep -q 'name = "blocksense"' "$tmpl" || fail "multi: [[github]] 'blocksense' missing"
+              grep -q 'name = "app-primary"'   "$tmpl" || fail "multi: [[github]] 'app-primary' missing"
+              grep -q 'name = "app-secondary"' "$tmpl" || fail "multi: [[github]] 'app-secondary' missing"
               # both backends present across the two provider config files:
               provcfgs=$(grep -ohE '/nix/store/[a-z0-9]+-garm-provider-[a-z0-9_]+\.toml' "$tmpl" | sort -u)
               [ "$(echo "$provcfgs" | wc -l)" = 2 ] || fail "multi: expected 2 provider config files"

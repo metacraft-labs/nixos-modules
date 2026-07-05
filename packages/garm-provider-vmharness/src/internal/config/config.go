@@ -118,7 +118,7 @@ type Config struct {
 	// ---- Incus backend (IM3) -------------------------------------------
 	// These fields are consumed only when Backend == "incus". For the incus
 	// path a GoldenImage's SourceImage is an incus IMAGE ALIAS (eg
-	// "vmh-linux-runner") rather than a qcow2 path.
+	// "runner-linux") rather than a qcow2 path.
 
 	// IncusPath is the incus binary the provider shells to. Defaults to
 	// "incus" (resolved via PATH). GARM runs as root, which can reach the

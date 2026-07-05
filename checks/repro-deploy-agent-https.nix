@@ -16,7 +16,7 @@ top@{ ... }:
   #     `--allowed-signers` allowlist, PLUS an nginx TLS vhost serving the
   #     signed RDM1 manifest fixture at https://server/latest.rdm.
   #   * node `agent` runs `services.mcl-repro-deploy-agent` targeting
-  #     `windows-runner-001`, pointed at the HTTPS manifest source, trusting the
+  #     `deploy-target-001`, pointed at the HTTPS manifest source, trusting the
   #     server's self-signed CA (REPRO_BINARY_CACHE_CA_FILE) and the manifest
   #     signer's ECDSA-P256 pubkey.
   #
@@ -53,15 +53,15 @@ top@{ ... }:
       #   #    writeFile(anchor, pubHex(kp.publicKey)); writeFile(manifest, encodeManifest(m))
       #   NIM
       #   $ nim c -r sign.nim (in `nix develop` of reprobuild dev @ ed97ef56)
-      # for target=windows-runner-001 sequence=1. `untrusted.rdm` is signed by a
+      # for target=deploy-target-001 sequence=1. `untrusted.rdm` is signed by a
       # SECOND keypair whose pubkey is NOT in `trustedAnchorHex` — a
       # cryptographically-valid signature the allowlist must still reject.
       trustedAnchorHex =
-        "0466620ee548444fed3672958403643ed18cb9cc37482198f706618bf532a797dbb43c48cb4ec24a8bf92f52cdb602594ffb32a62ba1df9b9499a8678e788b9295";
+        "0483ae14da1ddec939b260d364f29232e97538f73589ffc184809dd1f232391f0195e6e685524225798957695cae979fef21b347e4bc7ecf9af969f3e5f832f8d8";
       trustedManifestB64 =
-        "UkRNMQEAAAASAAAAd2luZG93cy1ydW5uZXItMDAxAQAAAAAAAAAIAAAAZGVwbG95LTEAAAAAAAAAAARmYg7lSERP7TZylYQDZD7RjLnMN0ghmPcGYYv1MqeX27Q8SMtOwkqL+S9SzbYCWU/7MqYrod+blJmoZ454i5KVEG+R3gVV/LJtVIVDNlwonqj64ABg6yRHImyLrz/XdiBNdVOYnatIKIP5FZZVH6otwG8c++OnSwPZjevKGzgp6w==";
+        "UkRNMQEAAAARAAAAZGVwbG95LXRhcmdldC0wMDEBAAAAAAAAAAgAAABkZXBsb3ktMQAAAAAAAAAABIOuFNod3sk5smDTZPKSMul1OPc1if/BhICd0fIyOR8BlebmhVJCJXmJV2lcrpef7yGzR+S8fs+a+Wnz5fgy+NhjgA+dXsKdE3xIJfNINDGZtetIMvVa6gJWko94c+X35N7xmeugHXFpYsypx0+9t1ityzQUF51bCi6IKkFVnsV4";
       untrustedManifestB64 =
-        "UkRNMQEAAAASAAAAd2luZG93cy1ydW5uZXItMDAxAQAAAAAAAAAKAAAAZGVwbG95LWJhZAAAAAAAAAAABOISytywIoga1GjsuggooKrc3QA4uvX3ukTG1p5XUVSj4gY7wiDNEtoxwKW5gjiejnrQV55++rHJ3xv1Sbpc7bwigF5p8mYpisBMW2tvrWi20gX/Ne+Alj5/mu1GVSnZLjstJMqwThqM/sXPmt1a++LFV77HT1JghcWE5KFqGyoI";
+        "UkRNMQEAAAARAAAAZGVwbG95LXRhcmdldC0wMDEBAAAAAAAAAAoAAABkZXBsb3ktYmFkAAAAAAAAAAAEDGh4x8YZ23F/qXIe8WlwnwCKMNn1ZkirtG6Qr7aCKQxOLI81KmVtsTlKjXnHrruypyqOEE8Xohay7E1zmRoyPKQW5eW1SKDlG73f3u1oDgOQqIVRUcaYM7oBBxrnbcgpZ4bxnvkAIAAGyTUrUeFvqyRoFIt1cmvtgdAW7SEs0Xg=";
 
       # Real RDM1 manifest bytes on disk (base64-decoded at build time).
       manifestFixtures =
@@ -139,12 +139,12 @@ top@{ ... }:
               ];
 
               # The production reprobuild deploy-agent unit, opt-in, targeting
-              # windows-runner-001, pulling the signed manifest over HTTPS and
+              # deploy-target-001, pulling the signed manifest over HTTPS and
               # trusting the server's self-signed CA + the manifest signer.
               services.mcl-repro-deploy-agent = {
                 enable = true;
                 package = repro;
-                targetName = "windows-runner-001";
+                targetName = "deploy-target-001";
                 manifestSources = [ "https://server/latest.rdm" ];
                 allowedSigners = [ trustedAnchorHex ];
                 caFile = "${tlsCerts}/cert.pem";
@@ -253,7 +253,7 @@ top@{ ... }:
                 )
                 assert "deploy-agent" in execstart, execstart
                 assert "https://server/latest.rdm" in execstart, execstart
-                assert "windows-runner-001" in execstart, execstart
+                assert "deploy-target-001" in execstart, execstart
 
             with subtest("REAL signed-manifest fetch over HTTPS: the agent accepts the trusted manifest"):
                 # Trigger one tick. The agent fetches the RDM1 manifest over TLS
@@ -283,11 +283,11 @@ top@{ ... }:
                 # which only happens AFTER a successful apply of the fetched,
                 # verified, sequence-1 manifest.
                 agent.wait_until_succeeds(
-                    "test -f /var/lib/repro-deploy-agent/deploy-agent/windows-runner-001.seq",
+                    "test -f /var/lib/repro-deploy-agent/deploy-agent/deploy-target-001.seq",
                     timeout=30,
                 )
                 floor = agent.succeed(
-                    "cat /var/lib/repro-deploy-agent/deploy-agent/windows-runner-001.seq"
+                    "cat /var/lib/repro-deploy-agent/deploy-agent/deploy-target-001.seq"
                 ).strip()
                 assert floor == "1", f"last-applied floor did not advance to 1: {floor!r}"
 
@@ -300,7 +300,7 @@ top@{ ... }:
                 out = agent.execute(
                     "env REPRO_BINARY_CACHE_CA_FILE=" + ca + " "
                     "repro deploy-agent "
-                    "--target windows-runner-001 "
+                    "--target deploy-target-001 "
                     "--manifest https://server/untrusted.rdm "
                     "--allowed-signers ${manifestFixtures}/allowed-signers "
                     "--state-dir /tmp/agent-untrusted-state 2>&1"
@@ -312,7 +312,7 @@ top@{ ... }:
                     f"rejection reason not surfaced: {out[1]!r}"
                 # No floor file created for the untrusted attempt.
                 assert agent.execute(
-                    "test -f /tmp/agent-untrusted-state/deploy-agent/windows-runner-001.seq"
+                    "test -f /tmp/agent-untrusted-state/deploy-agent/deploy-target-001.seq"
                 )[0] != 0, "untrusted manifest wrongly advanced a floor"
           '';
         };

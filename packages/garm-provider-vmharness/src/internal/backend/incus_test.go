@@ -135,10 +135,10 @@ func newTestIncusBackend(cmd []string) *IncusBackend {
 	return &IncusBackend{
 		IncusCmd:    cmd,
 		Bridge:      "incusbr0",
-		IPv4CIDR:    "10.157.159.0/24",
-		IPv4Gateway: "10.157.159.1",
-		RangeStart:  "10.157.159.200",
-		RangeEnd:    "10.157.159.250",
+		IPv4CIDR:    "10.0.100.0/24",
+		IPv4Gateway: "10.0.100.1",
+		RangeStart:  "10.0.100.200",
+		RangeEnd:    "10.0.100.250",
 		Nameservers: []string{"1.1.1.1", "8.8.8.8"},
 	}
 }
@@ -152,7 +152,7 @@ func TestIncusCreateGetDeleteLifecycle(t *testing.T) {
 		Name:         "garm-linux-1",
 		ControllerID: "ctrl-A",
 		PoolID:       "pool-1",
-		SourceImage:  "vmh-linux-runner",
+		SourceImage:  "runner-linux",
 		OSName:       "linux",
 		OSVersion:    "debian12",
 		Bootstrap:    []byte("#!/bin/bash\necho hi\n"),
@@ -169,8 +169,8 @@ func TestIncusCreateGetDeleteLifecycle(t *testing.T) {
 	if inst.Status != "running" {
 		t.Fatalf("expected running, got %q", inst.Status)
 	}
-	if len(inst.Addresses) != 1 || inst.Addresses[0] != "10.157.159.200" {
-		t.Fatalf("expected static IP 10.157.159.200, got %v", inst.Addresses)
+	if len(inst.Addresses) != 1 || inst.Addresses[0] != "10.0.100.200" {
+		t.Fatalf("expected static IP 10.0.100.200, got %v", inst.Addresses)
 	}
 
 	got, err := b.Get(ctx, "garm-linux-1")
@@ -201,7 +201,7 @@ func TestIncusDistinctIPAllocationAndListFilter(t *testing.T) {
 	for _, n := range []string{"garm-a", "garm-b"} {
 		if _, err := b.Create(ctx, CreateArgs{
 			Name: n, ControllerID: "ctrl-A", PoolID: "pool-1",
-			SourceImage: "vmh-linux-runner", OSName: "linux",
+			SourceImage: "runner-linux", OSName: "linux",
 		}); err != nil {
 			t.Fatalf("Create %s: %v", n, err)
 		}
@@ -209,7 +209,7 @@ func TestIncusDistinctIPAllocationAndListFilter(t *testing.T) {
 	// A container in a different pool + controller must not leak into pool-1.
 	if _, err := b.Create(ctx, CreateArgs{
 		Name: "garm-c", ControllerID: "ctrl-B", PoolID: "pool-2",
-		SourceImage: "vmh-linux-runner", OSName: "linux",
+		SourceImage: "runner-linux", OSName: "linux",
 	}); err != nil {
 		t.Fatalf("Create garm-c: %v", err)
 	}
@@ -219,7 +219,7 @@ func TestIncusDistinctIPAllocationAndListFilter(t *testing.T) {
 	if len(a.Addresses) == 0 || len(bb.Addresses) == 0 || a.Addresses[0] == bb.Addresses[0] {
 		t.Fatalf("expected distinct static IPs, got %v and %v", a.Addresses, bb.Addresses)
 	}
-	if a.Addresses[0] != "10.157.159.200" || bb.Addresses[0] != "10.157.159.201" {
+	if a.Addresses[0] != "10.0.100.200" || bb.Addresses[0] != "10.0.100.201" {
 		t.Fatalf("expected sequential lowest-free IPs, got %v %v", a.Addresses, bb.Addresses)
 	}
 
@@ -241,12 +241,12 @@ func TestIncusDistinctIPAllocationAndListFilter(t *testing.T) {
 
 func TestIncusNetworkConfigRendersStaticIP(t *testing.T) {
 	b := newTestIncusBackend([]string{"incus"})
-	nc := b.networkConfig("10.157.159.207")
+	nc := b.networkConfig("10.0.100.207")
 	for _, want := range []string{
 		"dhcp4: false",
-		"addresses: [10.157.159.207/24]",
+		"addresses: [10.0.100.207/24]",
 		"to: 0.0.0.0/0",
-		"via: 10.157.159.1",
+		"via: 10.0.100.1",
 		"addresses: [1.1.1.1, 8.8.8.8]",
 	} {
 		if !strings.Contains(nc, want) {

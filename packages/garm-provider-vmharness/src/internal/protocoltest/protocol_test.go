@@ -221,7 +221,7 @@ func bootstrapJSON(name string) string {
 				"sha256_checksum": "0000000000000000000000000000000000000000000000000000000000000000",
 			},
 		},
-		"repo_url":           "https://github.com/metacraft-labs/scratch",
+		"repo_url":           "https://github.com/example-org/scratch",
 		"callback-url":       "https://garm.example.com/api/v1/callbacks",
 		"metadata-url":       "https://garm.example.com/api/v1/metadata",
 		"instance-token":     "jwt-token",

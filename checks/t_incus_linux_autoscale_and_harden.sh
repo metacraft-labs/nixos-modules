@@ -6,7 +6,7 @@
 # run at a HIGHER concurrency than the Windows path (containers are cheap: no
 # /dev/kvm, sub-second launch).
 #
-# It proves, end to end and against the REAL metacraft-labs org:
+# It proves, end to end and against the REAL GitHub org (set via ORG):
 #
 #   PART 1 — HARDENED DECLARATIVE MODULE runs the INCUS provider.
 #     Build the `services.garm` module toplevel with
@@ -34,11 +34,11 @@
 #              kept; a job consumes it; the pool REFILLS to 1; then min-idle=0
 #              drains to zero again.
 #
-# NOT hermetic: talks to the real org via the existing GitHub App and launches
+# NOT hermetic: talks to the real org (set via ORG) via a GitHub App and launches
 # real Incus containers. ISOLATED + SELF-CLEANING: a UNIQUE scale-set name + a
 # THROWAWAY repo it creates and deletes; ONLY `garm-*` container names + an
-# `im4-*` transient GARM unit; NEVER touches windows-runner-001 (libvirt dom
-# 308) or the production k3s-control-plane/nomad-*/sc15-* Incus containers.
+# `im4-*` transient GARM unit; NEVER touches production runners or other
+# production Incus containers on the host.
 #
 # ============================ NETWORKING ==============================
 # Container -> internet (github.com): works through incus's EXISTING NAT (table
@@ -58,24 +58,24 @@
 # ============================ PREREQUISITES ============================
 # Run as root on the Incus host (installs the module unit + creates the garm
 # service account + drives incus/nft). Needs:
-#   * incus daemon reachable (this host: server 6.0.6) with the `incusbr0`
-#     bridge up (ipv4.address 10.157.159.1/24) and the `vmh-linux-runner` image
-#     present (build with vm-harness/guest-recipes/linux-x64-runner).
-#   * The GitHub App PEM readable (APP_PEM=/run/agenix/github-runners/mcl-app-key),
-#     App ID 3115338 / installation 117072647 on metacraft-labs
-#     (`Self-hosted runners: Read & write`).
+#   * incus daemon reachable with the `incusbr0` bridge up (the bridge subnet is
+#     read at runtime) and the runner image present, its alias set via
+#     VMH_RUNNER_ALIAS (build with vm-harness/guest-recipes/linux-x64-runner).
+#   * The GitHub App PEM readable (APP_PEM = the App private-key PEM path), with
+#     the App ID / installation / org supplied via env (APP_ID, INSTALLATION_ID,
+#     ORG) and the org `Self-hosted runners: Read & write` permission.
 #   * `gh` authenticated with repo+admin:org; `nix` (to build the module).
 #
 # ============================ CONFIG (env) ============================
 set -uo pipefail
 
-APP_ID="${APP_ID:-3115338}"
-INSTALLATION_ID="${INSTALLATION_ID:-117072647}"
-APP_PEM="${APP_PEM:-/run/agenix/github-runners/mcl-app-key}"
-ORG="${ORG:-metacraft-labs}"
+APP_ID="${APP_ID:?set APP_ID (the GitHub App ID)}"
+INSTALLATION_ID="${INSTALLATION_ID:?set INSTALLATION_ID (the GitHub App installation ID)}"
+APP_PEM="${APP_PEM:?set APP_PEM (path to the GitHub App private-key PEM)}"
+ORG="${ORG:?set ORG (the GitHub org)}"
 SCALESET_NAME="${SCALESET_NAME:-linux-ephemeral-im4}"
 
-RUNNER_IMAGE="${VMH_RUNNER_ALIAS:-vmh-linux-runner}"
+RUNNER_IMAGE="${VMH_RUNNER_ALIAS:?set VMH_RUNNER_ALIAS (the incus runner image alias)}"
 INCUS_BRIDGE="${VMH_INCUS_BRIDGE:-incusbr0}"
 # Use the HOST incus binary (matches the running daemon version) rather than the
 # module default pkgs.incus, to avoid client/server version skew on this host.
@@ -123,7 +123,7 @@ fi
 command -v garm-cli >/dev/null || fail "garm-cli not on PATH after resolution"
 
 # Derive incusbr0 /24 + host IP (GARM metadata/callback base + container gateway).
-BRIDGE_CIDR="$("$INCUS_BIN" network get "$INCUS_BRIDGE" ipv4.address 2>/dev/null)"  # 10.157.159.1/24
+BRIDGE_CIDR="$("$INCUS_BIN" network get "$INCUS_BRIDGE" ipv4.address 2>/dev/null)"  # e.g. 10.0.100.1/24
 [ -n "$BRIDGE_CIDR" ] || fail "cannot read $INCUS_BRIDGE ipv4.address (incus reachable?)"
 BRIDGE_IP="${BRIDGE_CIDR%/*}"
 PREFIX="${BRIDGE_CIDR##*/}"
@@ -194,9 +194,9 @@ gh_purge_garm_runners() {
   done
 }
 
-# On this host NO other garm-* Incus containers exist (production uses libvirt
-# for windows-runner-001 and k3s/nomad/sc15 names for its Incus containers), so
-# matching ^garm- is safe + scoped to instances THIS gate creates.
+# No other garm-* Incus containers are expected on the host (production runners
+# use libvirt and non-garm-* names for their Incus containers), so matching
+# ^garm- is safe + scoped to instances THIS gate creates.
 list_gate_containers() {
   "$INCUS_BIN" list --format csv -c n 2>/dev/null | grep '^garm-' || true
 }

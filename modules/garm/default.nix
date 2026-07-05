@@ -464,7 +464,7 @@
             incusIPv4CIDR = mkOption {
               type = types.str;
               default = "";
-              example = "10.157.159.0/24";
+              example = "10.0.100.0/24";
               description = ''
                 The incus bridge subnet in a.b.c.d/nn form. The provider injects
                 a STATIC IPv4 into each container via cloud-init.network-config
@@ -475,7 +475,7 @@
             incusIPv4Gateway = mkOption {
               type = types.str;
               default = "";
-              example = "10.157.159.1";
+              example = "10.0.100.1";
               description = ''
                 The default route for per-job containers (the incus bridge host
                 IP). Also the host IP the guest reaches GARM's metadata/callback
@@ -485,7 +485,7 @@
             incusIPv4RangeStart = mkOption {
               type = types.str;
               default = "";
-              example = "10.157.159.200";
+              example = "10.0.100.200";
               description = ''
                 Lower bound (inclusive, dotted) of the static-IPv4 pool the
                 provider allocates per container. Empty ⇒ the provider defaults
@@ -495,7 +495,7 @@
             incusIPv4RangeEnd = mkOption {
               type = types.str;
               default = "";
-              example = "10.157.159.250";
+              example = "10.0.100.250";
               description = ''
                 Upper bound (inclusive, dotted) of the static-IPv4 pool. Empty ⇒
                 the provider defaults to the .250 host of the /24.
@@ -594,20 +594,20 @@
 
             appId = mkOption {
               type = types.ints.positive;
-              example = 3115338;
+              example = 123456;
               description = "GitHub App ID (`[github.app].app_id`).";
             };
 
             installationId = mkOption {
               type = types.ints.positive;
-              example = 117072647;
+              example = 7654321;
               description = "GitHub App installation ID (`[github.app].installation_id`).";
             };
 
             appKeyFile = mkOption {
               type = types.nullOr types.path;
               default = null;
-              example = "/run/agenix/github-runners/mcl-app-key";
+              example = "/run/agenix/garm/github-app-key";
               description = ''
                 Path to the GitHub App private-key PEM, staged via LoadCredential
                 (agenix-managed on the real host) so it is NOT world-readable and
@@ -915,7 +915,7 @@
                   org = mkOption {
                     type = types.str;
                     default = "";
-                    example = "metacraft-labs";
+                    example = "my-org";
                     description = ''
                       The GitHub organization the scale set belongs to (the
                       `garm-cli organization add --name <org>` target). Recorded
@@ -925,7 +925,7 @@
                   credentials = mkOption {
                     type = types.str;
                     default = "";
-                    example = "mcl-app";
+                    example = "my-app";
                     description = ''
                       The `services.garm.github.<name>.credentialsName` the
                       scale set's org authenticates with. Ties the scale set to

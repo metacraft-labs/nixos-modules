@@ -6,7 +6,7 @@
 #
 #   GARM (scale-set message queue) sees the queued job
 #     -> CreateInstance -> garm-provider-vmharness (backend = "incus")
-#        `incus init` a FRESH vmh-linux-runner container, injects GARM's Linux
+#        `incus init` a FRESH runner container, injects GARM's Linux
 #        JIT bootstrap as cloud-init.user-data + a static IPv4 as
 #        cloud-init.network-config, then `incus start`
 #     -> the container's cloud-init consumes the user-data, pulls the JIT
@@ -17,11 +17,11 @@
 #        destroys the container (+ its storage volume) — no residue — and the
 #        runner is deregistered.
 #
-# NOT hermetic: talks to the REAL metacraft-labs org via the existing GitHub
-# App and launches a real Incus container. ISOLATED + SELF-CLEANING: a UNIQUE
-# scale-set name/label + a THROWAWAY repo it creates and deletes; only
-# `garm-lin-*` container names; never touches windows-runner-001 or the
-# production k3s/nomad/sc15 Incus containers.
+# NOT hermetic: talks to the REAL GitHub org (set via ORG) via a GitHub App and
+# launches a real Incus container. ISOLATED + SELF-CLEANING: a UNIQUE scale-set
+# name/label + a THROWAWAY repo it creates and deletes; only `garm-lin-*`
+# container names; never touches production runners or other production Incus
+# containers on the host.
 #
 # ============================ NETWORKING ==============================
 # Container -> internet (github.com): works through incus's EXISTING NAT
@@ -38,23 +38,25 @@
 # ============================ PREREQUISITES ============================
 # Run as a user with: sudo nft (firewall rule), incus (via VMH_INCUS_CMD or
 # incus-admin group), the App PEM readable (sudo), and gh authenticated with
-# repo+admin:org. The vmh-linux-runner incus image must be present. Pass the
-# GARM + provider binaries via GARM_BIN / GARM_CLI_BIN / PROVIDER_BIN.
+# repo+admin:org. The runner incus image (alias via VMH_RUNNER_ALIAS) must be
+# present. Pass the GARM + provider binaries via GARM_BIN / GARM_CLI_BIN /
+# PROVIDER_BIN. Supply the App ID / installation / org / PEM path via env
+# (APP_ID, INSTALLATION_ID, ORG, APP_PEM).
 #
 # ============================ CONFIG (env) ============================
 set -uo pipefail
 
-APP_ID="${APP_ID:-3115338}"
-INSTALLATION_ID="${INSTALLATION_ID:-117072647}"
-APP_PEM="${APP_PEM:-/run/agenix/github-runners/mcl-app-key}"
-ORG="${ORG:-metacraft-labs}"
+APP_ID="${APP_ID:?set APP_ID (the GitHub App ID)}"
+INSTALLATION_ID="${INSTALLATION_ID:?set INSTALLATION_ID (the GitHub App installation ID)}"
+APP_PEM="${APP_PEM:?set APP_PEM (path to the GitHub App private-key PEM)}"
+ORG="${ORG:?set ORG (the GitHub org)}"
 SCALESET_NAME="${SCALESET_NAME:-linux-ephemeral-e2e}"
 
 INCUS_CMD="${VMH_INCUS_CMD:-sudo -n incus}"
 # The provider runs as ROOT under GARM and reaches the incus socket directly
 # (no sudo-to-user needed); it uses the absolute incus binary.
 INCUS_BIN="${VMH_INCUS_BIN:-$(command -v incus || echo /run/current-system/sw/bin/incus)}"
-RUNNER_IMAGE="${VMH_RUNNER_ALIAS:-vmh-linux-runner}"
+RUNNER_IMAGE="${VMH_RUNNER_ALIAS:?set VMH_RUNNER_ALIAS (the incus runner image alias)}"
 INCUS_BRIDGE="${VMH_INCUS_BRIDGE:-incusbr0}"
 
 GARM_BIN="${GARM_BIN:-$(command -v garm || true)}"
@@ -72,12 +74,12 @@ fail() { echo "[e2e][FAIL] $*" >&2; exit 1; }
 info() { echo "[e2e] $*"; }
 
 # Derive the incusbr0 /24 + host IP (GARM metadata/callback base).
-BRIDGE_CIDR="$($INCUS_CMD network get "$INCUS_BRIDGE" ipv4.address 2>/dev/null)"  # 10.157.159.1/24
+BRIDGE_CIDR="$($INCUS_CMD network get "$INCUS_BRIDGE" ipv4.address 2>/dev/null)"  # e.g. 10.0.100.1/24
 [ -n "$BRIDGE_CIDR" ] || fail "cannot read $INCUS_BRIDGE ipv4.address (incus reachable?)"
-BRIDGE_IP="${BRIDGE_CIDR%/*}"                 # 10.157.159.1
+BRIDGE_IP="${BRIDGE_CIDR%/*}"                 # e.g. 10.0.100.1
 PREFIX="${BRIDGE_CIDR##*/}"                   # 24
-SUBNET_BASE="$(echo "$BRIDGE_IP" | cut -d. -f1-3)"   # 10.157.159
-SUBNET="${SUBNET_BASE}.0/${PREFIX}"          # 10.157.159.0/24
+SUBNET_BASE="$(echo "$BRIDGE_IP" | cut -d. -f1-3)"   # e.g. 10.0.100
+SUBNET="${SUBNET_BASE}.0/${PREFIX}"          # e.g. 10.0.100.0/24
 STATE_URL="http://${BRIDGE_IP}:${GARM_PORT}"
 
 for b in "$GARM_BIN" "$GARM_CLI_BIN" "$PROVIDER_BIN"; do
@@ -159,9 +161,9 @@ PY
 }
 
 # GARM names its ephemeral instances garm-<id>; the container name mirrors it.
-# On this host NO other garm-* Incus containers exist (production uses libvirt
-# for windows-runner-001 and k3s/nomad/sc15 names for its Incus containers), so
-# matching ^garm- is safe + scoped to instances THIS gate creates.
+# No other garm-* Incus containers are expected on the host (production runners
+# use libvirt and non-garm-* names for their Incus containers), so matching
+# ^garm- is safe + scoped to instances THIS gate creates.
 list_gate_containers() {
   $INCUS_CMD list --format csv -c n 2>/dev/null | grep '^garm-' || true
 }
