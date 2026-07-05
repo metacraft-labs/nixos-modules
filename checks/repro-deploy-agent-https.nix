@@ -56,12 +56,9 @@ top@{ ... }:
       # for target=deploy-target-001 sequence=1. `untrusted.rdm` is signed by a
       # SECOND keypair whose pubkey is NOT in `trustedAnchorHex` — a
       # cryptographically-valid signature the allowlist must still reject.
-      trustedAnchorHex =
-        "0483ae14da1ddec939b260d364f29232e97538f73589ffc184809dd1f232391f0195e6e685524225798957695cae979fef21b347e4bc7ecf9af969f3e5f832f8d8";
-      trustedManifestB64 =
-        "UkRNMQEAAAARAAAAZGVwbG95LXRhcmdldC0wMDEBAAAAAAAAAAgAAABkZXBsb3ktMQAAAAAAAAAABIOuFNod3sk5smDTZPKSMul1OPc1if/BhICd0fIyOR8BlebmhVJCJXmJV2lcrpef7yGzR+S8fs+a+Wnz5fgy+NhjgA+dXsKdE3xIJfNINDGZtetIMvVa6gJWko94c+X35N7xmeugHXFpYsypx0+9t1ityzQUF51bCi6IKkFVnsV4";
-      untrustedManifestB64 =
-        "UkRNMQEAAAARAAAAZGVwbG95LXRhcmdldC0wMDEBAAAAAAAAAAoAAABkZXBsb3ktYmFkAAAAAAAAAAAEDGh4x8YZ23F/qXIe8WlwnwCKMNn1ZkirtG6Qr7aCKQxOLI81KmVtsTlKjXnHrruypyqOEE8Xohay7E1zmRoyPKQW5eW1SKDlG73f3u1oDgOQqIVRUcaYM7oBBxrnbcgpZ4bxnvkAIAAGyTUrUeFvqyRoFIt1cmvtgdAW7SEs0Xg=";
+      trustedAnchorHex = "0483ae14da1ddec939b260d364f29232e97538f73589ffc184809dd1f232391f0195e6e685524225798957695cae979fef21b347e4bc7ecf9af969f3e5f832f8d8";
+      trustedManifestB64 = "UkRNMQEAAAARAAAAZGVwbG95LXRhcmdldC0wMDEBAAAAAAAAAAgAAABkZXBsb3ktMQAAAAAAAAAABIOuFNod3sk5smDTZPKSMul1OPc1if/BhICd0fIyOR8BlebmhVJCJXmJV2lcrpef7yGzR+S8fs+a+Wnz5fgy+NhjgA+dXsKdE3xIJfNINDGZtetIMvVa6gJWko94c+X35N7xmeugHXFpYsypx0+9t1ityzQUF51bCi6IKkFVnsV4";
+      untrustedManifestB64 = "UkRNMQEAAAARAAAAZGVwbG95LXRhcmdldC0wMDEBAAAAAAAAAAoAAABkZXBsb3ktYmFkAAAAAAAAAAAEDGh4x8YZ23F/qXIe8WlwnwCKMNn1ZkirtG6Qr7aCKQxOLI81KmVtsTlKjXnHrruypyqOEE8Xohay7E1zmRoyPKQW5eW1SKDlG73f3u1oDgOQqIVRUcaYM7oBBxrnbcgpZ4bxnvkAIAAGyTUrUeFvqyRoFIt1cmvtgdAW7SEs0Xg=";
 
       # Real RDM1 manifest bytes on disk (base64-decoded at build time).
       manifestFixtures =
@@ -77,16 +74,14 @@ top@{ ... }:
       # client reaches the server (hostname `server`, loopback, IP). Used both
       # for the cache HTTPS listener and the nginx manifest vhost, and as the CA
       # the agent + curl pin.
-      tlsCerts =
-        pkgs.runCommand "repro-deploy-agent-tls" { nativeBuildInputs = [ pkgs.openssl ]; }
-          ''
-            mkdir -p "$out"
-            openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
-              -keyout "$out/key.pem" -out "$out/cert.pem" -days 3650 -nodes \
-              -subj "/CN=server" \
-              -addext "subjectAltName=DNS:server,DNS:localhost,IP:127.0.0.1" 2>/dev/null
-            chmod 0644 "$out/key.pem" "$out/cert.pem"
-          '';
+      tlsCerts = pkgs.runCommand "repro-deploy-agent-tls" { nativeBuildInputs = [ pkgs.openssl ]; } ''
+        mkdir -p "$out"
+        openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+          -keyout "$out/key.pem" -out "$out/cert.pem" -days 3650 -nodes \
+          -subj "/CN=server" \
+          -addext "subjectAltName=DNS:server,DNS:localhost,IP:127.0.0.1" 2>/dev/null
+        chmod 0644 "$out/key.pem" "$out/cert.pem"
+      '';
     in
     {
       checks = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {

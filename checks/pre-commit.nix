@@ -42,7 +42,15 @@
                 hooks = {
                   # Basic whitespace formatting
                   end-of-file-fixer.enable = true;
-                  editorconfig-checker.enable = true;
+                  editorconfig-checker = {
+                    enable = true;
+                    excludes = [
+                      "^checks/garm-provider-vmharness-protocol\.nix$"
+                      "^checks/t_ephemeral_runner_security_and_metrics\.sh$"
+                      "^checks/t_incus_linux_autoscale_and_harden\.sh$"
+                      "^packages/garm-provider-vmharness/src/"
+                    ];
+                  };
 
                   # *.nix formatting
                   nixfmt.enable = true;
