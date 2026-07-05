@@ -24,12 +24,41 @@ const configJSONSchema = `{
   "properties": {
     "backend": {
       "type": "string",
-      "enum": ["libvirt"],
-      "description": "VM management backend. Only 'libvirt' is supported."
+      "enum": ["libvirt", "incus"],
+      "description": "VM management backend: 'libvirt' (Windows/Linux VMs) or 'incus' (Linux system containers)."
     },
     "virsh_path": {
       "type": "string",
       "description": "Path to the virsh binary the provider shells to."
+    },
+    "incus_path": {
+      "type": "string",
+      "description": "incus invocation for the incus backend (whitespace-split, eg 'incus' or 'sudo -n incus')."
+    },
+    "incus_bridge": {
+      "type": "string",
+      "description": "Managed incus bridge the per-job containers attach to (default incusbr0)."
+    },
+    "incus_ipv4_cidr": {
+      "type": "string",
+      "description": "Subnet (a.b.c.d/nn) for the injected static IPv4 (incusbr0 DHCP does not lease on this host)."
+    },
+    "incus_ipv4_gateway": {
+      "type": "string",
+      "description": "Default gateway for the injected static IPv4 (the incusbr0 host address)."
+    },
+    "incus_ipv4_range_start": {
+      "type": "string",
+      "description": "First allocatable static host IPv4 (default .200 of the /24)."
+    },
+    "incus_ipv4_range_end": {
+      "type": "string",
+      "description": "Last allocatable static host IPv4 (default .250 of the /24)."
+    },
+    "incus_nameservers": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "DNS resolvers written into the container netplan (default 1.1.1.1, 8.8.8.8)."
     },
     "vm_harness_path": {
       "type": "string",

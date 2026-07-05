@@ -35,6 +35,12 @@ const (
 	// BackendLibvirt shells to `virsh` (and, in M2+, `vm-harness`) to manage
 	// per-job Windows domains cloned from a golden image.
 	BackendLibvirt BackendKind = "libvirt"
+	// BackendIncus shells to `incus` to manage per-job Linux SYSTEM
+	// CONTAINERS launched from a runner image (the container-based analog of
+	// the libvirt path — IM3). Container launch is sub-second and needs no
+	// /dev/kvm, so the ephemeral loop (fresh container per job → one job →
+	// destroy) is far cheaper than the VM path.
+	BackendIncus BackendKind = "incus"
 )
 
 // GoldenImage maps a pool label/flavor to a concrete libvirt source.
@@ -108,6 +114,34 @@ type Config struct {
 	// label/flavor key) to a concrete golden source. If a pool's image is not
 	// present here, the raw image string is used as the source directly.
 	Images map[string]GoldenImage `toml:"images"`
+
+	// ---- Incus backend (IM3) -------------------------------------------
+	// These fields are consumed only when Backend == "incus". For the incus
+	// path a GoldenImage's SourceImage is an incus IMAGE ALIAS (eg
+	// "vmh-linux-runner") rather than a qcow2 path.
+
+	// IncusPath is the incus binary the provider shells to. Defaults to
+	// "incus" (resolved via PATH). GARM runs as root, which can reach the
+	// incus-admin socket directly.
+	IncusPath string `toml:"incus_path"`
+
+	// IncusBridge is the managed incus bridge the per-job containers attach
+	// to (their eth0). Defaults to "incusbr0". Informational — the container
+	// inherits it from the default profile — but recorded for clarity.
+	IncusBridge string `toml:"incus_bridge"`
+
+	// The incus DHCP server on incusbr0 does not lease on this host (nixos-fw
+	// drops the DHCP path), so the provider injects a STATIC IPv4 via
+	// cloud-init.network-config. It allocates the lowest free host address in
+	// [IncusIPv4RangeStart, IncusIPv4RangeEnd] (full dotted IPs) on the
+	// IncusIPv4CIDR subnet, routing default via IncusIPv4Gateway and resolving
+	// through IncusNameservers. Egress itself works through incus's existing
+	// NAT (no host firewall change); only the lease is worked around here.
+	IncusIPv4CIDR       string   `toml:"incus_ipv4_cidr"`
+	IncusIPv4Gateway    string   `toml:"incus_ipv4_gateway"`
+	IncusIPv4RangeStart string   `toml:"incus_ipv4_range_start"`
+	IncusIPv4RangeEnd   string   `toml:"incus_ipv4_range_end"`
+	IncusNameservers    []string `toml:"incus_nameservers"`
 }
 
 // Defaults returns a Config populated with sensible defaults for fields the
@@ -131,14 +165,30 @@ func (c *Config) applyDefaults() {
 	if c.Images == nil {
 		c.Images = map[string]GoldenImage{}
 	}
+	if c.IncusPath == "" {
+		c.IncusPath = "incus"
+	}
+	if c.IncusBridge == "" {
+		c.IncusBridge = "incusbr0"
+	}
+	if len(c.IncusNameservers) == 0 {
+		c.IncusNameservers = []string{"1.1.1.1", "8.8.8.8"}
+	}
 }
 
 // Validate returns an error if the config is internally inconsistent.
 func (c *Config) Validate() error {
 	switch c.Backend {
 	case BackendLibvirt:
+	case BackendIncus:
+		// Static-IP injection needs a subnet + gateway (DHCP is broken on
+		// incusbr0). The range is optional: it defaults to the whole subnet
+		// minus the gateway when unset, but a subnet + gateway are required.
+		if c.IncusIPv4CIDR == "" || c.IncusIPv4Gateway == "" {
+			return fmt.Errorf("backend %q requires incus_ipv4_cidr and incus_ipv4_gateway (incusbr0 DHCP does not lease on this host)", c.Backend)
+		}
 	default:
-		return fmt.Errorf("unsupported backend %q (supported: %q)", c.Backend, BackendLibvirt)
+		return fmt.Errorf("unsupported backend %q (supported: %q, %q)", c.Backend, BackendLibvirt, BackendIncus)
 	}
 	return nil
 }

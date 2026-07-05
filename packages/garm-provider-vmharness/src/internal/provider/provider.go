@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/cloudbase/garm-provider-common/cloudconfig"
 	garmErrors "github.com/cloudbase/garm-provider-common/errors"
@@ -68,18 +69,66 @@ func NewWithConfig(cfg *config.Config) (*Provider, error) {
 			MemoryMB:          cfg.MemoryMB,
 			VCPUs:             cfg.VCPUs,
 		}
+	case config.BackendIncus:
+		b = &backend.IncusBackend{
+			IncusCmd:    strings.Fields(cfg.IncusPath),
+			Bridge:      cfg.IncusBridge,
+			IPv4CIDR:    cfg.IncusIPv4CIDR,
+			IPv4Gateway: cfg.IncusIPv4Gateway,
+			RangeStart:  incusRangeStart(cfg),
+			RangeEnd:    incusRangeEnd(cfg),
+			Nameservers: cfg.IncusNameservers,
+		}
 	default:
 		return nil, fmt.Errorf("unsupported backend %q", cfg.Backend)
 	}
 	return &Provider{cfg: cfg, backend: b}, nil
 }
 
+// incusRangeStart/End default the static-IP allocation range to the .200-.250
+// host block of the configured /24 when the operator did not set explicit
+// bounds (keeps single-image pools configuration-light while staying clear of
+// the low DHCP block and the gateway).
+func incusRangeStart(cfg *config.Config) string {
+	if cfg.IncusIPv4RangeStart != "" {
+		return cfg.IncusIPv4RangeStart
+	}
+	return subnetHost(cfg.IncusIPv4CIDR, 200)
+}
+
+func incusRangeEnd(cfg *config.Config) string {
+	if cfg.IncusIPv4RangeEnd != "" {
+		return cfg.IncusIPv4RangeEnd
+	}
+	return subnetHost(cfg.IncusIPv4CIDR, 250)
+}
+
+// subnetHost returns the a.b.c.<host> address for the /24 the CIDR names.
+func subnetHost(cidr string, host int) string {
+	base := cidr
+	if i := strings.LastIndex(base, "/"); i >= 0 {
+		base = base[:i]
+	}
+	parts := strings.Split(base, ".")
+	if len(parts) != 4 {
+		return ""
+	}
+	return fmt.Sprintf("%s.%s.%s.%d", parts[0], parts[1], parts[2], host)
+}
+
 // osTypeToParams maps a backend Instance to a commonParams.ProviderInstance.
 func toProviderInstance(inst backend.Instance) commonParams.ProviderInstance {
+	osType := commonParams.Windows
+	// The incus/Linux path tags os_name "linux"; the libvirt/Windows path
+	// tags "windows". Default to Windows (the original path) for any other
+	// value so the Windows behaviour is unchanged.
+	if strings.EqualFold(inst.OSName, "linux") {
+		osType = commonParams.Linux
+	}
 	pi := commonParams.ProviderInstance{
 		ProviderID: inst.ProviderID,
 		Name:       inst.Name,
-		OSType:     commonParams.Windows,
+		OSType:     osType,
 		OSName:     inst.OSName,
 		OSVersion:  inst.OSVersion,
 		OSArch:     commonParams.Amd64,
