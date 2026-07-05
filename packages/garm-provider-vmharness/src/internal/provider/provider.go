@@ -215,60 +215,60 @@ BEARER_TOKEN={{ shell .CallbackToken }}
 RUN_HOME="$HOME/actions-runner"
 
 call_status() {
-  payload="$1"
-  case "$CALLBACK_URL" in
-    */status|*/status/) status_url="$CALLBACK_URL" ;;
-    *) status_url="${CALLBACK_URL}/status" ;;
-  esac
-  curl --retry 5 --retry-delay 5 --retry-connrefused --fail -s \
-    -X POST -d "$payload" \
-    -H 'Accept: application/json' \
-    -H "Authorization: Bearer ${BEARER_TOKEN}" \
-    "$status_url" >/dev/null || true
+	payload="$1"
+	case "$CALLBACK_URL" in
+		*/status|*/status/) status_url="$CALLBACK_URL" ;;
+		*) status_url="${CALLBACK_URL}/status" ;;
+	esac
+	curl --retry 5 --retry-delay 5 --retry-connrefused --fail -s \
+		-X POST -d "$payload" \
+		-H 'Accept: application/json' \
+		-H "Authorization: Bearer ${BEARER_TOKEN}" \
+		"$status_url" >/dev/null || true
 }
 
 status() {
-  msg=$(printf '%s' "$1" | sed 's/"/\\"/g')
-  call_status "{\"status\":\"installing\",\"message\":\"$msg\"}"
+	msg=$(printf '%s' "$1" | sed 's/"/\\"/g')
+	call_status "{\"status\":\"installing\",\"message\":\"$msg\"}"
 }
 
 fail() {
-  msg=$(printf '%s' "$1" | sed 's/"/\\"/g')
-  call_status "{\"status\":\"failed\",\"message\":\"$msg\"}"
-  exit 1
+	msg=$(printf '%s' "$1" | sed 's/"/\\"/g')
+	call_status "{\"status\":\"failed\",\"message\":\"$msg\"}"
+	exit 1
 }
 
 get_metadata_file() {
-  path="$1"
-  dest="$2"
-  curl --retry 5 --retry-delay 5 --retry-connrefused --fail -s \
-    -X GET -H 'Accept: application/json' \
-    -H "Authorization: Bearer ${BEARER_TOKEN}" \
-    "${METADATA_URL}/${path}" -o "$dest"
+	path="$1"
+	dest="$2"
+	curl --retry 5 --retry-delay 5 --retry-connrefused --fail -s \
+		-X GET -H 'Accept: application/json' \
+		-H "Authorization: Bearer ${BEARER_TOKEN}" \
+		"${METADATA_URL}/${path}" -o "$dest"
 }
 
 if [ -z "$METADATA_URL" ]; then
-  fail "missing metadata URL"
+	fail "missing metadata URL"
 fi
 
 mkdir -p "$RUN_HOME"
 cd "$RUN_HOME"
 
 if [ ! -x ./run.sh ]; then
-  status "downloading tools from {{ .DownloadURL }}"
-  tmp_archive="$(mktemp "${TMPDIR:-/tmp}/actions-runner.XXXXXX")"
-  temp_header=""
-  if [ -n {{ shell .TempDownloadToken }} ]; then
-    temp_header="Authorization: Bearer {{ .TempDownloadToken }}"
-  fi
-  curl --retry 5 --retry-delay 5 --retry-connrefused --fail -L \
-    -H "$temp_header" -o "$tmp_archive" {{ shell .DownloadURL }} || fail "failed to download tools"
-  {{- if .SHA256Checksum }}
-  printf '%s  %s\n' {{ shell .SHA256Checksum }} "$tmp_archive" | shasum -a 256 -c - || fail "runner checksum mismatch"
-  {{- end }}
-  status "extracting runner"
-  tar xzf "$tmp_archive" -C "$RUN_HOME" || fail "failed to extract runner"
-  rm -f "$tmp_archive"
+	status "downloading tools from {{ .DownloadURL }}"
+	tmp_archive="$(mktemp "${TMPDIR:-/tmp}/actions-runner.XXXXXX")"
+	temp_header=""
+	if [ -n {{ shell .TempDownloadToken }} ]; then
+		temp_header="Authorization: Bearer {{ .TempDownloadToken }}"
+	fi
+	curl --retry 5 --retry-delay 5 --retry-connrefused --fail -L \
+		-H "$temp_header" -o "$tmp_archive" {{ shell .DownloadURL }} || fail "failed to download tools"
+	{{- if .SHA256Checksum }}
+	printf '%s  %s\n' {{ shell .SHA256Checksum }} "$tmp_archive" | shasum -a 256 -c - || fail "runner checksum mismatch"
+	{{- end }}
+	status "extracting runner"
+	tar xzf "$tmp_archive" -C "$RUN_HOME" || fail "failed to extract runner"
+	rm -f "$tmp_archive"
 fi
 
 status "configuring runner"
@@ -279,27 +279,27 @@ get_metadata_file "credentials/credentials" "$RUN_HOME/.credentials" || fail "fa
 get_metadata_file "credentials/credentials_rsaparams" "$RUN_HOME/.credentials_rsaparams" || fail "failed to get credentials_rsaparams file"
 {{- else }}
 GITHUB_TOKEN=$(curl --retry 5 --retry-delay 5 --retry-connrefused --fail -s \
-  -X GET -H 'Accept: application/json' \
-  -H "Authorization: Bearer ${BEARER_TOKEN}" \
-  "${METADATA_URL}/runner-registration-token/") || fail "failed to get registration token"
+	-X GET -H 'Accept: application/json' \
+	-H "Authorization: Bearer ${BEARER_TOKEN}" \
+	"${METADATA_URL}/runner-registration-token/") || fail "failed to get registration token"
 attempt=1
 while :; do
-  errout="$(mktemp "${TMPDIR:-/tmp}/runner-config.XXXXXX")"
-  if ./config.sh --unattended --url {{ shell .RepoURL }} --token "$GITHUB_TOKEN" \
-    {{- if .GitHubRunnerGroup }} --runnergroup {{ shell .GitHubRunnerGroup }}{{- end }} \
-    --name {{ shell .RunnerName }} --labels {{ shell .RunnerLabels }} --no-default-labels --ephemeral 2>"$errout"; then
-    rm -f "$errout"
-    break
-  fi
-  last_err="$(cat "$errout")"
-  rm -f "$errout"
-  ./config.sh remove --token "$GITHUB_TOKEN" >/dev/null 2>&1 || true
-  if [ "$attempt" -ge 5 ]; then
-    fail "failed to configure runner: $last_err"
-  fi
-  status "failed to configure runner, retrying"
-  attempt=$((attempt + 1))
-  sleep 5
+	errout="$(mktemp "${TMPDIR:-/tmp}/runner-config.XXXXXX")"
+	if ./config.sh --unattended --url {{ shell .RepoURL }} --token "$GITHUB_TOKEN" \
+		{{- if .GitHubRunnerGroup }} --runnergroup {{ shell .GitHubRunnerGroup }}{{- end }} \
+		--name {{ shell .RunnerName }} --labels {{ shell .RunnerLabels }} --no-default-labels --ephemeral 2>"$errout"; then
+		rm -f "$errout"
+		break
+	fi
+	last_err="$(cat "$errout")"
+	rm -f "$errout"
+	./config.sh remove --token "$GITHUB_TOKEN" >/dev/null 2>&1 || true
+	if [ "$attempt" -ge 5 ]; then
+		fail "failed to configure runner: $last_err"
+	fi
+	status "failed to configure runner, retrying"
+	attempt=$((attempt + 1))
+	sleep 5
 done
 {{- end }}
 
@@ -307,27 +307,181 @@ call_status '{"status":"idle","message":"runner configured"}'
 exec ./run.sh
 `
 
-func renderMacOSRunnerInstallScript(bootstrapParams commonParams.BootstrapInstance, tools commonParams.RunnerApplicationDownload, runnerName string) ([]byte, error) {
-	if tools.GetFilename() == "" {
-		return nil, fmt.Errorf("missing tools filename")
-	}
-	if tools.GetDownloadURL() == "" {
-		return nil, fmt.Errorf("missing tools download URL")
-	}
-	data := struct {
-		FileName          string
-		DownloadURL       string
-		TempDownloadToken string
-		SHA256Checksum    string
-		MetadataURL       string
-		RepoURL           string
-		RunnerName        string
-		RunnerLabels      string
-		CallbackURL       string
-		CallbackToken     string
-		GitHubRunnerGroup string
-		UseJITConfig      bool
-	}{
+const linuxForegroundRunnerInstallTemplate = `#!/bin/bash
+set -e
+set -o pipefail
+{{- if .EnableBootDebug }}
+set -x
+{{- end }}
+
+CALLBACK_URL={{ shell .CallbackURL }}
+METADATA_URL={{ shell .MetadataURL }}
+BEARER_TOKEN={{ shell .CallbackToken }}
+RUNNER_USER="runner"
+RUNNER_GROUP="runner"
+RUNNER_HOME="/home/${RUNNER_USER}"
+RUN_HOME="${RUNNER_HOME}/actions-runner"
+
+call_status() {
+	payload="$1"
+	case "$CALLBACK_URL" in
+		*/status|*/status/) status_url="$CALLBACK_URL" ;;
+		*) status_url="${CALLBACK_URL}/status" ;;
+	esac
+	curl --retry 5 --retry-delay 5 --retry-connrefused --fail -s \
+		-X POST -d "$payload" \
+		-H 'Accept: application/json' \
+		-H "Authorization: Bearer ${BEARER_TOKEN}" \
+		"$status_url" >/dev/null || true
+}
+
+status() {
+	msg=$(printf '%s' "$1" | sed 's/"/\\"/g')
+	call_status "{\"status\":\"installing\",\"message\":\"$msg\"}"
+}
+
+fail() {
+	msg=$(printf '%s' "$1" | sed 's/"/\\"/g')
+	call_status "{\"status\":\"failed\",\"message\":\"$msg\"}"
+	exit 1
+}
+
+get_metadata_file() {
+	path="$1"
+	dest="$2"
+	curl --retry 5 --retry-delay 5 --retry-connrefused --fail -s \
+		-X GET -H 'Accept: application/json' \
+		-H "Authorization: Bearer ${BEARER_TOKEN}" \
+		"${METADATA_URL}/${path}" -o "$dest"
+}
+
+send_system_info() {
+	os_name=""
+	os_version=""
+	if [ -f /etc/os-release ]; then
+		. /etc/os-release
+		os_name="${NAME:-}"
+		os_version="${VERSION_ID:-}"
+	fi
+	base_url="$CALLBACK_URL"
+	case "$base_url" in
+		*/status) base_url="${base_url%/status}" ;;
+		*/status/) base_url="${base_url%/status/}" ;;
+	esac
+	curl --retry 5 --retry-delay 5 --retry-connrefused --fail -s \
+		-X POST -d "{\"os_name\":\"${os_name}\",\"os_version\":\"${os_version}\",\"agent_id\":null}" \
+		-H 'Accept: application/json' \
+		-H "Authorization: Bearer ${BEARER_TOKEN}" \
+		"${base_url}/system-info/" >/dev/null || true
+}
+
+if [ "$(id -u)" -ne 0 ]; then
+	exec sudo -E bash "$0" "$@"
+fi
+if [ -z "$METADATA_URL" ]; then
+	fail "missing metadata URL"
+fi
+if ! getent group "$RUNNER_GROUP" >/dev/null 2>&1; then
+	groupadd "$RUNNER_GROUP"
+fi
+if ! id -u "$RUNNER_USER" >/dev/null 2>&1; then
+	useradd -m -s /bin/bash -g "$RUNNER_GROUP" "$RUNNER_USER"
+fi
+mkdir -p "$RUN_HOME"
+
+if [ ! -x "$RUN_HOME/run.sh" ]; then
+	status "downloading tools from {{ .DownloadURL }}"
+	tmp_archive="$(mktemp /tmp/actions-runner.XXXXXX)"
+	temp_header=""
+	if [ -n {{ shell .TempDownloadToken }} ]; then
+		temp_header="Authorization: Bearer {{ .TempDownloadToken }}"
+	fi
+	curl --retry 5 --retry-delay 5 --retry-connrefused --fail -L \
+		-H "$temp_header" -o "$tmp_archive" {{ shell .DownloadURL }} || fail "failed to download tools"
+	{{- if .SHA256Checksum }}
+	printf '%s  %s\n' {{ shell .SHA256Checksum }} "$tmp_archive" | sha256sum -c - || fail "runner checksum mismatch"
+	{{- end }}
+	status "extracting runner"
+	tar xf "$tmp_archive" -C "$RUN_HOME"/ || fail "failed to extract runner"
+	rm -f "$tmp_archive"
+fi
+
+chown "$RUNNER_USER:$RUNNER_GROUP" -R "$RUNNER_HOME" || fail "failed to change runner home owner"
+status "installing dependencies"
+cd "$RUN_HOME"
+attempt=1
+while :; do
+	if ./bin/installdependencies.sh; then
+		break
+	fi
+	if [ "$attempt" -ge 5 ]; then
+		fail "failed to install dependencies after $attempt attempts"
+	fi
+	status "failed to install dependencies, retrying"
+	attempt=$((attempt + 1))
+	sleep 15
+done
+
+status "configuring runner"
+{{- if .UseJITConfig }}
+status "downloading JIT credentials"
+get_metadata_file "credentials/runner" "$RUN_HOME/.runner" || fail "failed to get runner file"
+get_metadata_file "credentials/credentials" "$RUN_HOME/.credentials" || fail "failed to get credentials file"
+get_metadata_file "credentials/credentials_rsaparams" "$RUN_HOME/.credentials_rsaparams" || fail "failed to get credentials_rsaparams file"
+{{- else }}
+GITHUB_TOKEN=$(curl --retry 5 --retry-delay 5 --retry-connrefused --fail -s \
+	-X GET -H 'Accept: application/json' \
+	-H "Authorization: Bearer ${BEARER_TOKEN}" \
+	"${METADATA_URL}/runner-registration-token/") || fail "failed to get registration token"
+set +e
+attempt=1
+while :; do
+	errout="$(mktemp /tmp/runner-config.XXXXXX)"
+	if sudo -u "$RUNNER_USER" -H "$RUN_HOME/config.sh" --unattended --url {{ shell .RepoURL }} --token "$GITHUB_TOKEN" \
+		{{- if .GitHubRunnerGroup }} --runnergroup {{ shell .GitHubRunnerGroup }}{{- end }} \
+		--name {{ shell .RunnerName }} --labels {{ shell .RunnerLabels }} --no-default-labels --ephemeral 2>"$errout"; then
+		rm -f "$errout"
+		break
+	fi
+	last_err="$(cat "$errout")"
+	rm -f "$errout"
+	sudo -u "$RUNNER_USER" -H "$RUN_HOME/config.sh" remove --token "$GITHUB_TOKEN" >/dev/null 2>&1 || true
+	if [ "$attempt" -ge 5 ]; then
+		set -e
+		fail "failed to configure runner: $last_err"
+	fi
+	status "failed to configure runner, retrying"
+	attempt=$((attempt + 1))
+	sleep 5
+done
+set -e
+{{- end }}
+
+chown "$RUNNER_USER:$RUNNER_GROUP" -R "$RUNNER_HOME" || fail "failed to change runner home owner"
+send_system_info
+call_status '{"status":"idle","message":"runner configured"}'
+cd "$RUN_HOME"
+exec sudo -u "$RUNNER_USER" -H ./run.sh
+`
+
+type runnerInstallTemplateData struct {
+	FileName          string
+	DownloadURL       string
+	TempDownloadToken string
+	SHA256Checksum    string
+	MetadataURL       string
+	RepoURL           string
+	RunnerName        string
+	RunnerLabels      string
+	CallbackURL       string
+	CallbackToken     string
+	GitHubRunnerGroup string
+	UseJITConfig      bool
+	EnableBootDebug   bool
+}
+
+func runnerInstallTemplateDataFrom(bootstrapParams commonParams.BootstrapInstance, tools commonParams.RunnerApplicationDownload, runnerName string) runnerInstallTemplateData {
+	return runnerInstallTemplateData{
 		FileName:          tools.GetFilename(),
 		DownloadURL:       tools.GetDownloadURL(),
 		TempDownloadToken: tools.GetTempDownloadToken(),
@@ -340,10 +494,14 @@ func renderMacOSRunnerInstallScript(bootstrapParams commonParams.BootstrapInstan
 		CallbackToken:     bootstrapParams.InstanceToken,
 		GitHubRunnerGroup: bootstrapParams.GitHubRunnerGroup,
 		UseJITConfig:      bootstrapParams.JitConfigEnabled,
+		EnableBootDebug:   bootstrapParams.UserDataOptions.EnableBootDebug,
 	}
-	tpl, err := template.New("macos-runner-install").Funcs(template.FuncMap{
+}
+
+func renderRunnerInstallTemplate(name, text string, data runnerInstallTemplateData) ([]byte, error) {
+	tpl, err := template.New(name).Funcs(template.FuncMap{
 		"shell": shellQuote,
-	}).Parse(macosRunnerInstallTemplate)
+	}).Parse(text)
 	if err != nil {
 		return nil, err
 	}
@@ -354,11 +512,38 @@ func renderMacOSRunnerInstallScript(bootstrapParams commonParams.BootstrapInstan
 	return buf.Bytes(), nil
 }
 
-func renderRunnerBootstrap(bootstrapParams commonParams.BootstrapInstance, tools commonParams.RunnerApplicationDownload, runnerName string) ([]byte, error) {
+func renderMacOSRunnerInstallScript(bootstrapParams commonParams.BootstrapInstance, tools commonParams.RunnerApplicationDownload, runnerName string) ([]byte, error) {
+	if tools.GetFilename() == "" {
+		return nil, fmt.Errorf("missing tools filename")
+	}
+	if tools.GetDownloadURL() == "" {
+		return nil, fmt.Errorf("missing tools download URL")
+	}
+	return renderRunnerInstallTemplate("macos-runner-install", macosRunnerInstallTemplate, runnerInstallTemplateDataFrom(bootstrapParams, tools, runnerName))
+}
+
+func renderLinuxRunnerInstallScript(bootstrapParams commonParams.BootstrapInstance, tools commonParams.RunnerApplicationDownload, runnerName string) ([]byte, error) {
+	if tools.GetFilename() == "" {
+		return nil, fmt.Errorf("missing tools filename")
+	}
+	if tools.GetDownloadURL() == "" {
+		return nil, fmt.Errorf("missing tools download URL")
+	}
+	return renderRunnerInstallTemplate("linux-foreground-runner-install", linuxForegroundRunnerInstallTemplate, runnerInstallTemplateDataFrom(bootstrapParams, tools, runnerName))
+}
+
+func renderRunnerBootstrapForBackend(backendKind config.BackendKind, bootstrapParams commonParams.BootstrapInstance, tools commonParams.RunnerApplicationDownload, runnerName string) ([]byte, error) {
 	if bootstrapParams.OSType == commonParams.OSType("macos") {
 		return renderMacOSRunnerInstallScript(bootstrapParams, tools, runnerName)
 	}
-	return cloudconfig.GetRunnerInstallScript(bootstrapParams, tools, runnerName)
+	if backendKind == config.BackendTartLinuxArm && bootstrapParams.OSType == commonParams.Linux {
+		return renderLinuxRunnerInstallScript(bootstrapParams, tools, runnerName)
+	}
+	script, err := cloudconfig.GetRunnerInstallScript(bootstrapParams, tools, runnerName)
+	if err != nil {
+		return nil, err
+	}
+	return script, nil
 }
 
 // CreateInstance renders the runner bootstrap and asks the backend to
@@ -378,7 +563,7 @@ func (p *Provider) CreateInstance(ctx context.Context, bootstrapParams commonPar
 	// here and carry it through the backend seam.
 	var bootstrap []byte
 	if tools, err := pickTools(bootstrapParams); err == nil {
-		script, serr := renderRunnerBootstrap(bootstrapParams, tools, bootstrapParams.Name)
+		script, serr := renderRunnerBootstrapForBackend(p.cfg.Backend, bootstrapParams, tools, bootstrapParams.Name)
 		if serr != nil {
 			return commonParams.ProviderInstance{}, fmt.Errorf("rendering runner bootstrap: %w", serr)
 		}
