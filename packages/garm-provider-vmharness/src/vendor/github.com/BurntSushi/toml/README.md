@@ -19,6 +19,7 @@ It also comes with a TOML validator CLI tool:
     % tomlv some-toml-file.toml
 
 ### Examples
+
 For the simplest example, consider some TOML file as just a list of keys and
 values:
 
@@ -62,6 +63,7 @@ Beware that like other decoders **only exported fields** are considered when
 encoding and decoding; private fields are silently ignored.
 
 ### Using the `Marshaler` and `encoding.TextUnmarshaler` interfaces
+
 Here's an example that automatically parses values in a `mail.Address`:
 
 ```toml
@@ -117,4 +119,5 @@ To target TOML specifically you can implement `UnmarshalTOML` TOML interface in
 a similar way.
 
 ### More complex usage
+
 See the [`_example/`](/_example) directory for a more complex example.

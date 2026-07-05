@@ -87,11 +87,13 @@
       # [images.*] blocks would be appended to the derivation's store PATH.)
       providerIsIncus = p: p.backend == "incus";
       providerIsLibvirt = p: p.backend == "libvirt";
-      providerIsVMHarnessRun = p: builtins.elem p.backend [
-        "tart-linux-arm"
-        "tart-macos"
-        "utm-windows-arm"
-      ];
+      providerIsVMHarnessRun =
+        p:
+        builtins.elem p.backend [
+          "tart-linux-arm"
+          "tart-macos"
+          "utm-windows-arm"
+        ];
       mkLibvirtKeys = p: ''
         virsh_path = "${p.virshPath}"
         qemu_img_path = "${p.qemuImgPath}"
