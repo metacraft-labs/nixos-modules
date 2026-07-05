@@ -102,6 +102,13 @@ func NewWithConfig(cfg *config.Config) (*Provider, error) {
 			GuestOS:       "windows",
 			StateDir:      cfg.StateDir,
 		}
+	case config.BackendQemuWindowsArm:
+		b = &backend.VMHarnessRunBackend{
+			VMHarnessPath: cfg.VMHarnessPath,
+			BackendID:     string(config.BackendQemuWindowsArm),
+			GuestOS:       "windows",
+			StateDir:      cfg.StateDir,
+		}
 	default:
 		return nil, fmt.Errorf("unsupported backend %q", cfg.Backend)
 	}

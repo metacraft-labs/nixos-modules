@@ -50,6 +50,9 @@ const (
 	// BackendUtmWindowsArm shells to vm-harness's UTM Windows ARM backend on
 	// Apple-silicon macOS hosts.
 	BackendUtmWindowsArm BackendKind = "utm-windows-arm"
+	// BackendQemuWindowsArm shells to vm-harness's qemu Windows ARM backend on
+	// Apple-silicon macOS hosts.
+	BackendQemuWindowsArm BackendKind = "qemu-windows-arm"
 )
 
 // GoldenImage maps a pool label/flavor to a concrete libvirt source.
@@ -203,12 +206,12 @@ func (c *Config) Validate() error {
 		if c.IncusIPv4CIDR == "" || c.IncusIPv4Gateway == "" {
 			return fmt.Errorf("backend %q requires incus_ipv4_cidr and incus_ipv4_gateway (incusbr0 DHCP does not lease on this host)", c.Backend)
 		}
-	case BackendTartLinuxArm, BackendTartMacos, BackendUtmWindowsArm:
+	case BackendTartLinuxArm, BackendTartMacos, BackendUtmWindowsArm, BackendQemuWindowsArm:
 		if c.VMHarnessPath == "" {
 			return fmt.Errorf("backend %q requires vm_harness_path", c.Backend)
 		}
 	default:
-		return fmt.Errorf("unsupported backend %q (supported: %q, %q, %q, %q, %q)", c.Backend, BackendLibvirt, BackendIncus, BackendTartLinuxArm, BackendTartMacos, BackendUtmWindowsArm)
+		return fmt.Errorf("unsupported backend %q (supported: %q, %q, %q, %q, %q, %q)", c.Backend, BackendLibvirt, BackendIncus, BackendTartLinuxArm, BackendTartMacos, BackendUtmWindowsArm, BackendQemuWindowsArm)
 	}
 	return nil
 }

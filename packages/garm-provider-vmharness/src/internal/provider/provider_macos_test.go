@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -11,6 +12,106 @@ import (
 )
 
 func strptr(v string) *string { return &v }
+
+func TestConfigSchemaIncludesQemuWindowsArm(t *testing.T) {
+	var schema struct {
+		Properties map[string]struct {
+			Enum []string `json:"enum"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal([]byte(configJSONSchema), &schema); err != nil {
+		t.Fatal(err)
+	}
+	for _, got := range schema.Properties["backend"].Enum {
+		if got == string(config.BackendQemuWindowsArm) {
+			return
+		}
+	}
+	t.Fatalf("backend enum missing %q: %#v", config.BackendQemuWindowsArm, schema.Properties["backend"].Enum)
+}
+
+func TestQemuWindowsArmProviderFactoryDispatch(t *testing.T) {
+	p, err := NewWithConfig(&config.Config{
+		Backend:       config.BackendQemuWindowsArm,
+		VMHarnessPath: "/nix/store/test/bin/vm-harness",
+		StateDir:      "/tmp/garm-provider-vmharness/qemu-windows-arm",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, ok := p.backend.(*backend.VMHarnessRunBackend)
+	if !ok {
+		t.Fatalf("backend type=%T want *backend.VMHarnessRunBackend", p.backend)
+	}
+	if b.BackendID != string(config.BackendQemuWindowsArm) {
+		t.Fatalf("BackendID=%q want %q", b.BackendID, config.BackendQemuWindowsArm)
+	}
+	if b.GuestOS != "windows" {
+		t.Fatalf("GuestOS=%q want windows", b.GuestOS)
+	}
+	if b.VMHarnessPath != "/nix/store/test/bin/vm-harness" {
+		t.Fatalf("VMHarnessPath=%q", b.VMHarnessPath)
+	}
+	if b.StateDir != "/tmp/garm-provider-vmharness/qemu-windows-arm" {
+		t.Fatalf("StateDir=%q", b.StateDir)
+	}
+}
+
+func TestQemuWindowsArmBootstrapUsesWindowsPath(t *testing.T) {
+	params := commonParams.BootstrapInstance{
+		Name:             "garm-win-arm-1",
+		RepoURL:          "https://github.com/example-org/example-repo",
+		CallbackURL:      "https://garm.example.test/api/v1/callbacks",
+		MetadataURL:      "https://garm.example.test/api/v1/metadata",
+		InstanceToken:    "instance-token",
+		OSType:           commonParams.Windows,
+		OSArch:           commonParams.Arm64,
+		Labels:           []string{"self-hosted", "windows", "arm64", "win-arm"},
+		JitConfigEnabled: true,
+		Tools: []commonParams.RunnerApplicationDownload{
+			{
+				OS:             strptr("win"),
+				Architecture:   strptr("arm64"),
+				DownloadURL:    strptr("https://example.invalid/actions-runner-win-arm64.zip"),
+				Filename:       strptr("actions-runner-win-arm64.zip"),
+				SHA256Checksum: strptr(""),
+			},
+		},
+	}
+
+	tools, err := pickTools(params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tools.GetOS() != "win" || tools.GetArchitecture() != "arm64" {
+		t.Fatalf("picked %s/%s, want win/arm64", tools.GetOS(), tools.GetArchitecture())
+	}
+	script, err := renderRunnerBootstrapForBackend(config.BackendQemuWindowsArm, params, tools, params.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(script)
+	for _, want := range []string{
+		"https://example.invalid/actions-runner-win-arm64.zip",
+		"#ps1_sysnative",
+		"New-Service",
+		"RunnerService.exe",
+		"runner successfully installed",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("qemu Windows ARM bootstrap missing %q:\n%s", want, text)
+		}
+	}
+	for _, unwanted := range []string{
+		"exec ./run.sh",
+		"systemctl",
+		"get_metadata_file \"credentials/runner\"",
+	} {
+		if strings.Contains(text, unwanted) {
+			t.Fatalf("qemu Windows ARM bootstrap used non-Windows path %q:\n%s", unwanted, text)
+		}
+	}
+}
 
 func TestMacOSProviderInstanceMapping(t *testing.T) {
 	got := toProviderInstance(backend.Instance{

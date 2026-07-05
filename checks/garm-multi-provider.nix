@@ -25,7 +25,9 @@ top@{ ... }:
   #       libvirtd/kvm), and the STRICT knobs stay (ProtectSystem=strict,
   #       PrivateDevices, MemoryDenyWriteExecute, SystemCallFilter present) —
   #       proving the union picks the strict incus posture when no libvirt.
-  #   (3) OFF: the M0 strict DynamicUser sandbox — DynamicUser, ProtectSystem=
+  #   (3) QEMU-WINDOWS-ARM: a vm-harness-run provider renders the qemu Windows
+  #       ARM backend config with state_dir/source_image and no libvirt keys.
+  #   (4) OFF: the M0 strict DynamicUser sandbox — DynamicUser, ProtectSystem=
   #       strict, PrivateDevices, MemoryDenyWriteExecute, SystemCallFilter
   #       present, and NO dedicated user / supplementary groups.
   perSystem =
@@ -110,7 +112,22 @@ top@{ ... }:
         };
       };
 
-      # (3) provider OFF (the M0 forge-less boot).
+      # (3) qemu Windows ARM vm-harness-run provider.
+      qemuWindowsArmUnit = mkGarmUnit {
+        enable = true;
+        providers.win-arm = {
+          backend = "qemu-windows-arm";
+          vmHarnessPath = "/nix/store/test-vm-harness/bin/vm-harness";
+          stateDir = "/var/lib/garm-provider-vmharness/win-arm";
+          images.win-arm-runner = {
+            sourceImage = "/private/var/lib/vm-harness/qemu-windows-arm/golden/win-arm-runner";
+            osName = "windows";
+            osVersion = "11-arm64";
+          };
+        };
+      };
+
+      # (4) provider OFF (the M0 forge-less boot).
       offUnit = mkGarmUnit {
         enable = true;
       };
@@ -120,13 +137,19 @@ top@{ ... }:
         t_garm_multi_provider =
           pkgs.runCommand "t_garm_multi_provider"
             {
-              inherit multiUnit incusUnit offUnit;
+              inherit
+                multiUnit
+                incusUnit
+                qemuWindowsArmUnit
+                offUnit
+                ;
             }
             ''
               set -euo pipefail
               fail() { echo "[t_garm_multi_provider][FAIL] $1" >&2; exit 1; }
               multi="$multiUnit/garm.service"
               incus="$incusUnit/garm.service"
+              qemuWindowsArm="$qemuWindowsArmUnit/garm.service"
               off="$offUnit/garm.service"
 
               # --- (1) MULTI: union sandbox --------------------------------------
@@ -182,7 +205,21 @@ top@{ ... }:
               grep -q  '^SystemCallFilter=@system-service' "$incus" || fail "incus: SystemCallFilter must stay on"
               ! grep -q '^DeviceAllow=/dev/kvm' "$incus" || fail "incus: /dev/kvm must NOT be allowed"
 
-              # --- (3) OFF: M0 strict DynamicUser sandbox ------------------------
+              # --- (3) QEMU-WINDOWS-ARM: vm-harness-run config -------------------
+              qpre=$(grep '^ExecStartPre=' "$qemuWindowsArm" | head -1 | cut -d= -f2-)
+              [ -f "$qpre" ] || fail "qemu-windows-arm: render script not found at $qpre"
+              qtmpl=$(grep -ohE '/nix/store/[a-z0-9]+-garm-config.toml.tmpl' "$qpre" | head -1)
+              [ -f "$qtmpl" ] || fail "qemu-windows-arm: config template not found (from $qpre)"
+              qprovcfg=$(grep -ohE '/nix/store/[a-z0-9]+-garm-provider-win_arm\.toml' "$qtmpl" | head -1)
+              [ -f "$qprovcfg" ] || fail "qemu-windows-arm: provider config not found"
+              grep -q 'backend = "qemu-windows-arm"' "$qprovcfg" || fail "qemu-windows-arm: backend missing"
+              grep -q 'vm_harness_path = "/nix/store/test-vm-harness/bin/vm-harness"' "$qprovcfg" || fail "qemu-windows-arm: vm_harness_path missing"
+              grep -q 'state_dir = "/var/lib/garm-provider-vmharness/win-arm"' "$qprovcfg" || fail "qemu-windows-arm: state_dir missing"
+              grep -q 'source_image = "/private/var/lib/vm-harness/qemu-windows-arm/golden/win-arm-runner"' "$qprovcfg" || fail "qemu-windows-arm: source_image missing"
+              grep -q 'os_name = "windows"' "$qprovcfg" || fail "qemu-windows-arm: Windows OS mapping missing"
+              ! grep -q 'virsh_path' "$qprovcfg" || fail "qemu-windows-arm: must not render libvirt keys"
+
+              # --- (4) OFF: M0 strict DynamicUser sandbox ------------------------
               grep -qx 'DynamicUser=true' "$off" || fail "off: DynamicUser must be true"
               grep -qx 'ProtectSystem=strict' "$off" || fail "off: ProtectSystem must be strict"
               grep -qx 'PrivateDevices=true' "$off" || fail "off: PrivateDevices must be on"
@@ -192,7 +229,7 @@ top@{ ... }:
               ! grep -q '^SupplementaryGroups=' "$off" || fail "off: must have NO supplementary groups"
               ! grep -q '^DeviceAllow=' "$off" || fail "off: must have NO DeviceAllow"
 
-              echo "[t_garm_multi_provider][PASS] union sandbox (2 providers + 2 creds), incus-only strict posture, and provider-off M0 posture all verified"
+              echo "[t_garm_multi_provider][PASS] union sandbox, incus-only strict posture, qemu-windows-arm provider config, and provider-off M0 posture all verified"
               touch $out
             '';
       };

@@ -18,101 +18,101 @@ package provider
 // the GetConfigJSONSchema command). It describes the vm-harness/libvirt backend
 // selection, the golden-image map, the libvirt URI, and the network.
 const configJSONSchema = `{
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "garm-provider-vmharness config",
-  "type": "object",
-  "properties": {
-    "backend": {
-      "type": "string",
-      "enum": ["libvirt", "incus", "tart-linux-arm", "tart-macos", "utm-windows-arm"],
-      "description": "VM management backend: 'libvirt' (Windows/Linux VMs), 'incus' (Linux system containers), or an Apple-silicon vm-harness backend."
-    },
-    "virsh_path": {
-      "type": "string",
-      "description": "Path to the virsh binary the provider shells to."
-    },
-    "incus_path": {
-      "type": "string",
-      "description": "incus invocation for the incus backend (whitespace-split, eg 'incus' or 'sudo -n incus')."
-    },
-    "incus_bridge": {
-      "type": "string",
-      "description": "Managed incus bridge the per-job containers attach to (default incusbr0)."
-    },
-    "incus_ipv4_cidr": {
-      "type": "string",
-      "description": "Subnet (a.b.c.d/nn) for the injected static IPv4 (incusbr0 DHCP does not lease on this host)."
-    },
-    "incus_ipv4_gateway": {
-      "type": "string",
-      "description": "Default gateway for the injected static IPv4 (the incusbr0 host address)."
-    },
-    "incus_ipv4_range_start": {
-      "type": "string",
-      "description": "First allocatable static host IPv4 (default .200 of the /24)."
-    },
-    "incus_ipv4_range_end": {
-      "type": "string",
-      "description": "Last allocatable static host IPv4 (default .250 of the /24)."
-    },
-    "incus_nameservers": {
-      "type": "array",
-      "items": { "type": "string" },
-      "description": "DNS resolvers written into the container netplan (default 1.1.1.1, 8.8.8.8)."
-    },
-    "vm_harness_path": {
-      "type": "string",
-      "description": "Path to the vm-harness binary used for per-job clone (M2) and config-drive injection (M3)."
-    },
-    "state_dir": {
-      "type": "string",
-      "description": "State directory for pid/metadata files used by vm-harness-run backends."
-    },
-    "libvirt_uri": {
-      "type": "string",
-      "description": "libvirt connection URI, e.g. qemu:///system."
-    },
-    "network": {
-      "type": "string",
-      "description": "libvirt network the per-job domains attach to."
-    },
-    "images": {
-      "type": "object",
-      "description": "Map of pool image identifier to a golden source.",
-      "additionalProperties": {
-        "type": "object",
-        "properties": {
-          "source_image": {
-            "type": "string",
-            "description": "Golden qcow2/volume the per-job domain is cloned from."
-          },
-          "os_name": {
-            "type": "string",
-            "description": "Reported OS name (e.g. windows)."
-          },
-          "os_version": {
-            "type": "string",
-            "description": "Reported OS version (e.g. 2022)."
-          }
-        }
-      }
-    }
-  },
-  "additionalProperties": false
+	"$schema": "http://json-schema.org/draft-07/schema#",
+	"title": "garm-provider-vmharness config",
+	"type": "object",
+	"properties": {
+		"backend": {
+			"type": "string",
+			"enum": ["libvirt", "incus", "tart-linux-arm", "tart-macos", "utm-windows-arm", "qemu-windows-arm"],
+			"description": "VM management backend: 'libvirt' (Windows/Linux VMs), 'incus' (Linux system containers), or an Apple-silicon vm-harness backend."
+		},
+		"virsh_path": {
+			"type": "string",
+			"description": "Path to the virsh binary the provider shells to."
+		},
+		"incus_path": {
+			"type": "string",
+			"description": "incus invocation for the incus backend (whitespace-split, eg 'incus' or 'sudo -n incus')."
+		},
+		"incus_bridge": {
+			"type": "string",
+			"description": "Managed incus bridge the per-job containers attach to (default incusbr0)."
+		},
+		"incus_ipv4_cidr": {
+			"type": "string",
+			"description": "Subnet (a.b.c.d/nn) for the injected static IPv4 (incusbr0 DHCP does not lease on this host)."
+		},
+		"incus_ipv4_gateway": {
+			"type": "string",
+			"description": "Default gateway for the injected static IPv4 (the incusbr0 host address)."
+		},
+		"incus_ipv4_range_start": {
+			"type": "string",
+			"description": "First allocatable static host IPv4 (default .200 of the /24)."
+		},
+		"incus_ipv4_range_end": {
+			"type": "string",
+			"description": "Last allocatable static host IPv4 (default .250 of the /24)."
+		},
+		"incus_nameservers": {
+			"type": "array",
+			"items": { "type": "string" },
+			"description": "DNS resolvers written into the container netplan (default 1.1.1.1, 8.8.8.8)."
+		},
+		"vm_harness_path": {
+			"type": "string",
+			"description": "Path to the vm-harness binary used for per-job clone (M2) and config-drive injection (M3)."
+		},
+		"state_dir": {
+			"type": "string",
+			"description": "State directory for pid/metadata files used by vm-harness-run backends."
+		},
+		"libvirt_uri": {
+			"type": "string",
+			"description": "libvirt connection URI, e.g. qemu:///system."
+		},
+		"network": {
+			"type": "string",
+			"description": "libvirt network the per-job domains attach to."
+		},
+		"images": {
+			"type": "object",
+			"description": "Map of pool image identifier to a golden source.",
+			"additionalProperties": {
+				"type": "object",
+				"properties": {
+					"source_image": {
+						"type": "string",
+						"description": "Golden qcow2/volume the per-job domain is cloned from."
+					},
+					"os_name": {
+						"type": "string",
+						"description": "Reported OS name (e.g. windows)."
+					},
+					"os_version": {
+						"type": "string",
+						"description": "Reported OS version (e.g. 2022)."
+					}
+				}
+			}
+		}
+	},
+	"additionalProperties": false
 }`
 
 // extraSpecsJSONSchema is the JSON schema for per-pool extra_specs. M1 keeps
 // this permissive (an open object); pool-level overrides (flavor sizing,
 // per-pool golden overrides) are formalised in later milestones.
 const extraSpecsJSONSchema = `{
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "garm-provider-vmharness extra_specs",
-  "type": "object",
-  "properties": {
-    "source_image": {
-      "type": "string",
-      "description": "Override the golden source for this pool."
-    }
-  },
-  "additionalProperties": true
+	"$schema": "http://json-schema.org/draft-07/schema#",
+	"title": "garm-provider-vmharness extra_specs",
+	"type": "object",
+	"properties": {
+		"source_image": {
+			"type": "string",
+			"description": "Override the golden source for this pool."
+		}
+	},
+	"additionalProperties": true
 }`

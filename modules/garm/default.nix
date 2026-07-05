@@ -87,11 +87,14 @@
       # [images.*] blocks would be appended to the derivation's store PATH.)
       providerIsIncus = p: p.backend == "incus";
       providerIsLibvirt = p: p.backend == "libvirt";
-      providerIsVMHarnessRun = p: builtins.elem p.backend [
-        "tart-linux-arm"
-        "tart-macos"
-        "utm-windows-arm"
-      ];
+      providerIsVMHarnessRun =
+        p:
+        builtins.elem p.backend [
+          "tart-linux-arm"
+          "tart-macos"
+          "utm-windows-arm"
+          "qemu-windows-arm"
+        ];
       mkLibvirtKeys = p: ''
         virsh_path = "${p.virshPath}"
         qemu_img_path = "${p.qemuImgPath}"
@@ -372,6 +375,7 @@
                 "tart-linux-arm"
                 "tart-macos"
                 "utm-windows-arm"
+                "qemu-windows-arm"
               ];
               default = "libvirt";
               description = ''
@@ -379,8 +383,9 @@
                 Windows-11 VMs from a golden qcow2 (the Ephemeral-Windows-Runners
                 path); `incus` launches per-job Linux SYSTEM CONTAINERS from a
                 runner image (the Ephemeral-Linux-Runners path);
-                `tart-linux-arm`, `tart-macos`, and `utm-windows-arm` shell to
-                vm-harness's Apple-silicon backends for m3. The backend also
+                `tart-linux-arm`, `tart-macos`, `utm-windows-arm`, and
+                `qemu-windows-arm` shell to vm-harness's Apple-silicon backends
+                for m3. The backend also
                 contributes to the systemd sandbox posture UNION: `incus` needs
                 only `incus-admin` socket-group access and no /dev/kvm (keeps the
                 STRICT knobs), whereas `libvirt` relaxes them for qemu
@@ -454,8 +459,9 @@
               default = "/var/lib/garm-provider-vmharness";
               description = ''
                 State directory used by vm-harness-run providers
-                (`tart-linux-arm`, `tart-macos`, `utm-windows-arm`) for pid and
-                instance metadata files. Contains no secrets.
+                (`tart-linux-arm`, `tart-macos`, `utm-windows-arm`,
+                `qemu-windows-arm`) for pid and instance metadata files.
+                Contains no secrets.
               '';
             };
 
