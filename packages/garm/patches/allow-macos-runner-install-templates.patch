@@ -1,0 +1,23 @@
+diff --git a/cmd/garm-cli/cmd/templates.go b/cmd/garm-cli/cmd/templates.go
+index 32f6e4a..3e8c4d1 100644
+--- a/cmd/garm-cli/cmd/templates.go
++++ b/cmd/garm-cli/cmd/templates.go
+@@ -77 +77 @@ var templateCreateCmd = &cobra.Command{
+-		case commonParams.Linux, commonParams.Windows:
++		case commonParams.Linux, commonParams.Windows, commonParams.MacOS:
+@@ -79 +79 @@ var templateCreateCmd = &cobra.Command{
+-			return fmt.Errorf("invalid OS type: %q (supported: %s)", osType, strings.Join([]string{string(params.GithubEndpointType), string(params.GiteaEndpointType)}, ", "))
++			return fmt.Errorf("invalid OS type: %q (supported: %s)", osType, strings.Join([]string{string(commonParams.Linux), string(commonParams.Windows), string(commonParams.MacOS)}, ", "))
+diff --git a/params/requests.go b/params/requests.go
+index 80e88ee..e25cc2d 100644
+--- a/params/requests.go
++++ b/params/requests.go
+@@ -896 +896 @@ func (c *CreateTemplateParams) Validate() error {
+-	case commonParams.Linux, commonParams.Windows:
++	case commonParams.Linux, commonParams.Windows, commonParams.MacOS:
+diff --git a/vendor/github.com/cloudbase/garm-provider-common/params/params.go b/vendor/github.com/cloudbase/garm-provider-common/params/params.go
+index e8bc7eb..0ea1721 100644
+--- a/vendor/github.com/cloudbase/garm-provider-common/params/params.go
++++ b/vendor/github.com/cloudbase/garm-provider-common/params/params.go
+@@ -30,0 +31 @@ const (
++	MacOS   OSType = "macos"

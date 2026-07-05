@@ -32,6 +32,10 @@ buildGo126Module rec {
   # Deps are vendored in-tree → build offline against `vendor/`.
   vendorHash = null;
 
+  patches = [
+    ./patches/allow-macos-runner-install-templates.patch
+  ];
+
   # go-sqlite3 is a cgo module; the daemon needs cgo to link SQLite.
   # (The upstream Makefile builds with sqlite_omit_load_extension; we keep
   # cgo on so the SQLite driver links.)
