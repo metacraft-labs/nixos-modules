@@ -205,7 +205,7 @@ let flake = builtins.getFlake (toString $FLAKE); system = \"x86_64-linux\"; nixp
       metadataURL = \"$STATE_URL/api/v1/metadata\";
       callbackURL = \"$STATE_URL/api/v1/callbacks\";
       metrics = { enable = true; disableAuth = true; };
-      github = { enable = true; appId = $APP_ID; installationId = $INSTALLATION_ID; appKeyFile = \"$APP_PEM\"; };
+      github.mcl-app = { appId = $APP_ID; installationId = $INSTALLATION_ID; appKeyFile = \"$APP_PEM\"; };
       providers.vmharness = {
         enable = true;
         package = flake.packages.\${system}.garm-provider-vmharness;
