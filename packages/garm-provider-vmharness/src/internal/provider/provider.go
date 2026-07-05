@@ -19,12 +19,14 @@
 package provider
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"strings"
+	"text/template"
 
 	"github.com/cloudbase/garm-provider-common/cloudconfig"
 	garmErrors "github.com/cloudbase/garm-provider-common/errors"
@@ -141,10 +143,13 @@ func subnetHost(cidr string, host int) string {
 func toProviderInstance(inst backend.Instance) commonParams.ProviderInstance {
 	osType := commonParams.Windows
 	// The incus/Linux path tags os_name "linux"; the libvirt/Windows path
-	// tags "windows". Default to Windows (the original path) for any other
-	// value so the Windows behaviour is unchanged.
+	// tags "windows". The Tart macOS path reports "macos"; garm-provider-common
+	// carries OSType as a string alias, so preserve that value even though this
+	// vendored version only declares Linux/Windows constants.
 	if strings.EqualFold(inst.OSName, "linux") {
 		osType = commonParams.Linux
+	} else if strings.EqualFold(inst.OSName, "macos") || strings.EqualFold(inst.OSName, "darwin") {
+		osType = commonParams.OSType("macos")
 	}
 	osArch := commonParams.Amd64
 	if strings.EqualFold(inst.OSArch, "arm64") || strings.EqualFold(inst.OSArch, "aarch64") {
@@ -179,6 +184,8 @@ func pickTools(bootstrapParams commonParams.BootstrapInstance) (commonParams.Run
 		wantOS = "linux"
 	case commonParams.Windows:
 		wantOS = "win"
+	case commonParams.OSType("macos"):
+		wantOS = "osx"
 	}
 	wantArch := "x64"
 	switch bootstrapParams.OSArch {
@@ -193,6 +200,165 @@ func pickTools(bootstrapParams commonParams.BootstrapInstance) (commonParams.Run
 		}
 	}
 	return commonParams.RunnerApplicationDownload{}, fmt.Errorf("no tools for os=%s arch=%s", wantOS, wantArch)
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
+}
+
+const macosRunnerInstallTemplate = `#!/bin/sh
+set -eu
+
+CALLBACK_URL={{ shell .CallbackURL }}
+METADATA_URL={{ shell .MetadataURL }}
+BEARER_TOKEN={{ shell .CallbackToken }}
+RUN_HOME="$HOME/actions-runner"
+
+call_status() {
+  payload="$1"
+  case "$CALLBACK_URL" in
+    */status|*/status/) status_url="$CALLBACK_URL" ;;
+    *) status_url="${CALLBACK_URL}/status" ;;
+  esac
+  curl --retry 5 --retry-delay 5 --retry-connrefused --fail -s \
+    -X POST -d "$payload" \
+    -H 'Accept: application/json' \
+    -H "Authorization: Bearer ${BEARER_TOKEN}" \
+    "$status_url" >/dev/null || true
+}
+
+status() {
+  msg=$(printf '%s' "$1" | sed 's/"/\\"/g')
+  call_status "{\"status\":\"installing\",\"message\":\"$msg\"}"
+}
+
+fail() {
+  msg=$(printf '%s' "$1" | sed 's/"/\\"/g')
+  call_status "{\"status\":\"failed\",\"message\":\"$msg\"}"
+  exit 1
+}
+
+get_metadata_file() {
+  path="$1"
+  dest="$2"
+  curl --retry 5 --retry-delay 5 --retry-connrefused --fail -s \
+    -X GET -H 'Accept: application/json' \
+    -H "Authorization: Bearer ${BEARER_TOKEN}" \
+    "${METADATA_URL}/${path}" -o "$dest"
+}
+
+if [ -z "$METADATA_URL" ]; then
+  fail "missing metadata URL"
+fi
+
+mkdir -p "$RUN_HOME"
+cd "$RUN_HOME"
+
+if [ ! -x ./run.sh ]; then
+  status "downloading tools from {{ .DownloadURL }}"
+  tmp_archive="$(mktemp "${TMPDIR:-/tmp}/actions-runner.XXXXXX")"
+  temp_header=""
+  if [ -n {{ shell .TempDownloadToken }} ]; then
+    temp_header="Authorization: Bearer {{ .TempDownloadToken }}"
+  fi
+  curl --retry 5 --retry-delay 5 --retry-connrefused --fail -L \
+    -H "$temp_header" -o "$tmp_archive" {{ shell .DownloadURL }} || fail "failed to download tools"
+  {{- if .SHA256Checksum }}
+  printf '%s  %s\n' {{ shell .SHA256Checksum }} "$tmp_archive" | shasum -a 256 -c - || fail "runner checksum mismatch"
+  {{- end }}
+  status "extracting runner"
+  tar xzf "$tmp_archive" -C "$RUN_HOME" || fail "failed to extract runner"
+  rm -f "$tmp_archive"
+fi
+
+status "configuring runner"
+{{- if .UseJITConfig }}
+status "downloading JIT credentials"
+get_metadata_file "credentials/runner" "$RUN_HOME/.runner" || fail "failed to get runner file"
+get_metadata_file "credentials/credentials" "$RUN_HOME/.credentials" || fail "failed to get credentials file"
+get_metadata_file "credentials/credentials_rsaparams" "$RUN_HOME/.credentials_rsaparams" || fail "failed to get credentials_rsaparams file"
+{{- else }}
+GITHUB_TOKEN=$(curl --retry 5 --retry-delay 5 --retry-connrefused --fail -s \
+  -X GET -H 'Accept: application/json' \
+  -H "Authorization: Bearer ${BEARER_TOKEN}" \
+  "${METADATA_URL}/runner-registration-token/") || fail "failed to get registration token"
+attempt=1
+while :; do
+  errout="$(mktemp "${TMPDIR:-/tmp}/runner-config.XXXXXX")"
+  if ./config.sh --unattended --url {{ shell .RepoURL }} --token "$GITHUB_TOKEN" \
+    {{- if .GitHubRunnerGroup }} --runnergroup {{ shell .GitHubRunnerGroup }}{{- end }} \
+    --name {{ shell .RunnerName }} --labels {{ shell .RunnerLabels }} --no-default-labels --ephemeral 2>"$errout"; then
+    rm -f "$errout"
+    break
+  fi
+  last_err="$(cat "$errout")"
+  rm -f "$errout"
+  ./config.sh remove --token "$GITHUB_TOKEN" >/dev/null 2>&1 || true
+  if [ "$attempt" -ge 5 ]; then
+    fail "failed to configure runner: $last_err"
+  fi
+  status "failed to configure runner, retrying"
+  attempt=$((attempt + 1))
+  sleep 5
+done
+{{- end }}
+
+call_status '{"status":"idle","message":"runner configured"}'
+exec ./run.sh
+`
+
+func renderMacOSRunnerInstallScript(bootstrapParams commonParams.BootstrapInstance, tools commonParams.RunnerApplicationDownload, runnerName string) ([]byte, error) {
+	if tools.GetFilename() == "" {
+		return nil, fmt.Errorf("missing tools filename")
+	}
+	if tools.GetDownloadURL() == "" {
+		return nil, fmt.Errorf("missing tools download URL")
+	}
+	data := struct {
+		FileName          string
+		DownloadURL       string
+		TempDownloadToken string
+		SHA256Checksum    string
+		MetadataURL       string
+		RepoURL           string
+		RunnerName        string
+		RunnerLabels      string
+		CallbackURL       string
+		CallbackToken     string
+		GitHubRunnerGroup string
+		UseJITConfig      bool
+	}{
+		FileName:          tools.GetFilename(),
+		DownloadURL:       tools.GetDownloadURL(),
+		TempDownloadToken: tools.GetTempDownloadToken(),
+		SHA256Checksum:    tools.GetSHA256Checksum(),
+		MetadataURL:       bootstrapParams.MetadataURL,
+		RepoURL:           bootstrapParams.RepoURL,
+		RunnerName:        runnerName,
+		RunnerLabels:      strings.Join(bootstrapParams.Labels, ","),
+		CallbackURL:       bootstrapParams.CallbackURL,
+		CallbackToken:     bootstrapParams.InstanceToken,
+		GitHubRunnerGroup: bootstrapParams.GitHubRunnerGroup,
+		UseJITConfig:      bootstrapParams.JitConfigEnabled,
+	}
+	tpl, err := template.New("macos-runner-install").Funcs(template.FuncMap{
+		"shell": shellQuote,
+	}).Parse(macosRunnerInstallTemplate)
+	if err != nil {
+		return nil, err
+	}
+	var buf bytes.Buffer
+	if err := tpl.Execute(&buf, data); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func renderRunnerBootstrap(bootstrapParams commonParams.BootstrapInstance, tools commonParams.RunnerApplicationDownload, runnerName string) ([]byte, error) {
+	if bootstrapParams.OSType == commonParams.OSType("macos") {
+		return renderMacOSRunnerInstallScript(bootstrapParams, tools, runnerName)
+	}
+	return cloudconfig.GetRunnerInstallScript(bootstrapParams, tools, runnerName)
 }
 
 // CreateInstance renders the runner bootstrap and asks the backend to
@@ -212,7 +378,7 @@ func (p *Provider) CreateInstance(ctx context.Context, bootstrapParams commonPar
 	// here and carry it through the backend seam.
 	var bootstrap []byte
 	if tools, err := pickTools(bootstrapParams); err == nil {
-		script, serr := cloudconfig.GetRunnerInstallScript(bootstrapParams, tools, bootstrapParams.Name)
+		script, serr := renderRunnerBootstrap(bootstrapParams, tools, bootstrapParams.Name)
 		if serr != nil {
 			return commonParams.ProviderInstance{}, fmt.Errorf("rendering runner bootstrap: %w", serr)
 		}
