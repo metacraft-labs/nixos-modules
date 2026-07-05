@@ -138,7 +138,8 @@ func (b *VMHarnessRunBackend) Create(ctx context.Context, args CreateArgs) (Inst
 		return Instance{}, err
 	}
 
-	cmd := exec.CommandContext(ctx, b.VMHarnessPath, argv...)
+	cmd := exec.Command(b.VMHarnessPath, argv...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	logFile, err := os.OpenFile(filepath.Join(dir, "vm-harness.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return Instance{}, err
@@ -164,6 +165,9 @@ func (b *VMHarnessRunBackend) Create(ctx context.Context, args CreateArgs) (Inst
 		Bootstrap:    bootstrapPath,
 	}
 	if err := b.save(st); err != nil {
+		return Instance{}, err
+	}
+	if err := cmd.Process.Release(); err != nil {
 		return Instance{}, err
 	}
 	return b.toInstance(st), nil
