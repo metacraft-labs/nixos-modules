@@ -602,10 +602,14 @@ Fail-Install 'non-JIT Windows vm-harness runners are not supported'
 Send-SystemInfo
 Send-Status -Status 'idle' -Message 'runner configured'
 
-$runner = Start-Process -FilePath "$env:ComSpec" -ArgumentList @('/d', '/c', 'cd /d C:\actions-runner && run.cmd') -WorkingDirectory $RunHome -PassThru
-
-if (-not $runner -or $runner.HasExited) {
-	Fail-Install 'runner process exited during startup'
+Set-Location $RunHome
+& "$env:ComSpec" /d /c run.cmd
+$runnerExitCode = $LASTEXITCODE
+if ($null -eq $runnerExitCode) {
+	$runnerExitCode = 0
+}
+if ($runnerExitCode -ne 0) {
+	Fail-Install "runner exited with code $runnerExitCode"
 }
 `
 

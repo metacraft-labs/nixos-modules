@@ -125,8 +125,9 @@ func TestQemuWindowsArmBootstrapUsesWindowsPath(t *testing.T) {
 		"[System.IO.File]::WriteAllBytes((Join-Path $RunHome '.credentials_rsaparams'), $protectedBytes)",
 		"Send-SystemInfo",
 		"Send-Status -Status 'idle' -Message 'runner configured'",
-		"Start-Process -FilePath \"$env:ComSpec\"",
-		"cd /d C:\\actions-runner && run.cmd",
+		"Set-Location $RunHome",
+		"& \"$env:ComSpec\" /d /c run.cmd",
+		"Fail-Install \"runner exited with code $runnerExitCode\"",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("qemu Windows ARM bootstrap missing %q:\n%s", want, text)
@@ -139,6 +140,7 @@ func TestQemuWindowsArmBootstrapUsesWindowsPath(t *testing.T) {
 		"New-Service",
 		"RunnerService.exe",
 		"Get-MetadataFile -Path 'credentials/credentials_rsaparams'",
+		"Start-Process",
 	} {
 		if strings.Contains(text, unwanted) {
 			t.Fatalf("qemu Windows ARM bootstrap used non-Windows path %q:\n%s", unwanted, text)
@@ -192,11 +194,17 @@ func TestQemuWindowsArmBootstrapUsesGuestURLOverrides(t *testing.T) {
 		`[System.IO.File]::WriteAllBytes((Join-Path $RunHome '.credentials_rsaparams'), $protectedBytes)`,
 		`Invoke-GarmCallback -Path 'system-info/'`,
 		`Send-Status -Status 'idle' -Message 'runner configured'`,
-		`Start-Process -FilePath "$env:ComSpec"`,
+		`Set-Location $RunHome`,
+		`& "$env:ComSpec" /d /c run.cmd`,
+		`$runnerExitCode = $LASTEXITCODE`,
+		`Fail-Install "runner exited with code $runnerExitCode"`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("qemu Windows ARM bootstrap missing override %q:\n%s", want, text)
 		}
+	}
+	if strings.Contains(text, "Start-Process") {
+		t.Fatalf("qemu Windows ARM bootstrap detaches runner instead of running it in foreground:\n%s", text)
 	}
 	if strings.Contains(text, "/metadata/install-script/") {
 		t.Fatalf("qemu Windows ARM bootstrap still relies on GARM second-stage install script:\n%s", text)
@@ -335,12 +343,17 @@ powershell.exe -Sta -NonInteractive -ExecutionPolicy RemoteSigned -File $install
 		`[System.IO.File]::WriteAllBytes((Join-Path $RunHome '.credentials_rsaparams'), $protectedBytes)`,
 		`Invoke-GarmCallback -Path 'system-info/'`,
 		`Send-Status -Status 'idle' -Message 'runner configured'`,
-		`Start-Process -FilePath "$env:ComSpec"`,
-		`cd /d C:\actions-runner && run.cmd`,
+		`Set-Location $RunHome`,
+		`& "$env:ComSpec" /d /c run.cmd`,
+		`$runnerExitCode = $LASTEXITCODE`,
+		`Fail-Install "runner exited with code $runnerExitCode"`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("CreateInstance bootstrap missing override %q:\n%s", want, text)
 		}
+	}
+	if strings.Contains(text, "Start-Process") {
+		t.Fatalf("CreateInstance bootstrap detaches runner instead of running it in foreground:\n%s", text)
 	}
 	if strings.Contains(text, "/metadata/install-script/") {
 		t.Fatalf("CreateInstance bootstrap still relies on GARM second-stage install script:\n%s", text)
