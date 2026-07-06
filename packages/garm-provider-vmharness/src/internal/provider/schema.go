@@ -84,6 +84,14 @@ const configJSONSchema = `{
 			"type": "string",
 			"description": "State directory for pid/metadata files used by vm-harness-run backends."
 		},
+		"guest_metadata_url": {
+			"type": "string",
+			"description": "Optional guest-facing metadata URL override used when a backend needs a different host alias than GARM's global metadata_url."
+		},
+		"guest_callback_url": {
+			"type": "string",
+			"description": "Optional guest-facing callback URL override used when a backend needs a different host alias than GARM's global callback_url."
+		},
 		"libvirt_uri": {
 			"type": "string",
 			"description": "libvirt connection URI, e.g. qemu:///system."

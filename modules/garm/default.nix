@@ -137,10 +137,18 @@
         incus_reprobuild_store = "${p.incusReprobuildStore}"
         incus_reprobuild_store_guest_path = "${p.incusReprobuildStoreGuestPath}"
       '';
-      mkVMHarnessRunKeys = p: ''
-        vm_harness_path = "${p.vmHarnessPath}"
-        state_dir = "${p.stateDir}"
-      '';
+      mkVMHarnessRunKeys =
+        p:
+        ''
+          vm_harness_path = "${p.vmHarnessPath}"
+          state_dir = "${p.stateDir}"
+        ''
+        + optionalString (p.guestMetadataURL != null) ''
+          guest_metadata_url = "${p.guestMetadataURL}"
+        ''
+        + optionalString (p.guestCallbackURL != null) ''
+          guest_callback_url = "${p.guestCallbackURL}"
+        '';
       mkProviderConfigText =
         p:
         ''
@@ -483,6 +491,28 @@
                 (`tart-linux-arm`, `tart-macos`, `utm-windows-arm`,
                 `qemu-windows-arm`) for pid and instance metadata files.
                 Contains no secrets.
+              '';
+            };
+
+            guestMetadataURL = mkOption {
+              type = types.nullOr types.str;
+              default = null;
+              example = "http://10.0.2.2:9997/api/v1/metadata";
+              description = ''
+                Optional provider-local override for the GARM metadata URL
+                rendered into guest bootstrap scripts for vm-harness-run
+                backends. Leave null to use `services.garm.metadataURL`.
+              '';
+            };
+
+            guestCallbackURL = mkOption {
+              type = types.nullOr types.str;
+              default = null;
+              example = "http://10.0.2.2:9997/api/v1/callbacks";
+              description = ''
+                Optional provider-local override for the GARM callback URL
+                rendered into guest bootstrap scripts for vm-harness-run
+                backends. Leave null to use `services.garm.callbackURL`.
               '';
             };
 

@@ -207,6 +207,13 @@ type Config struct {
 	// StateDir stores pid/metadata files for vm-harness run based backends
 	// (Tart/UTM on m3). It contains no secrets.
 	StateDir string `toml:"state_dir"`
+
+	// GuestMetadataURL / GuestCallbackURL optionally override the GARM-provided
+	// guest-facing metadata/callback URLs before rendering the bootstrap script.
+	// This is useful when one backend needs a different host alias than the
+	// service-wide default (for example QEMU user networking's 10.0.2.2 host).
+	GuestMetadataURL string `toml:"guest_metadata_url"`
+	GuestCallbackURL string `toml:"guest_callback_url"`
 }
 
 // Defaults returns a Config populated with sensible defaults for fields the

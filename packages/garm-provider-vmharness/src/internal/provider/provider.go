@@ -558,10 +558,24 @@ func renderRunnerBootstrapForBackend(backendKind config.BackendKind, bootstrapPa
 	return script, nil
 }
 
+func applyGuestURLOverrides(bootstrapParams commonParams.BootstrapInstance, cfg *config.Config) commonParams.BootstrapInstance {
+	if cfg == nil {
+		return bootstrapParams
+	}
+	if cfg.GuestMetadataURL != "" {
+		bootstrapParams.MetadataURL = cfg.GuestMetadataURL
+	}
+	if cfg.GuestCallbackURL != "" {
+		bootstrapParams.CallbackURL = cfg.GuestCallbackURL
+	}
+	return bootstrapParams
+}
+
 // CreateInstance renders the runner bootstrap and asks the backend to
 // materialise a per-job domain tagged with the controller/pool identity.
 func (p *Provider) CreateInstance(ctx context.Context, bootstrapParams commonParams.BootstrapInstance) (commonParams.ProviderInstance, error) {
 	controllerID := os.Getenv("GARM_CONTROLLER_ID")
+	bootstrapParams = applyGuestURLOverrides(bootstrapParams, p.cfg)
 
 	golden := p.cfg.ResolveImage(bootstrapParams.Image)
 	osName := golden.OSName

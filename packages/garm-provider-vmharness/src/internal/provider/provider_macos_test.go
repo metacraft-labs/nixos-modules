@@ -1,9 +1,13 @@
 package provider
 
 import (
+	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	commonParams "github.com/cloudbase/garm-provider-common/params"
 
@@ -12,6 +16,10 @@ import (
 )
 
 func strptr(v string) *string { return &v }
+
+func shellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
+}
 
 func TestConfigSchemaIncludesQemuWindowsArm(t *testing.T) {
 	var schema struct {
@@ -28,6 +36,20 @@ func TestConfigSchemaIncludesQemuWindowsArm(t *testing.T) {
 		}
 	}
 	t.Fatalf("backend enum missing %q: %#v", config.BackendQemuWindowsArm, schema.Properties["backend"].Enum)
+}
+
+func TestConfigSchemaIncludesGuestURLOverrides(t *testing.T) {
+	var schema struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal([]byte(configJSONSchema), &schema); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"guest_metadata_url", "guest_callback_url"} {
+		if _, ok := schema.Properties[key]; !ok {
+			t.Fatalf("schema missing %q", key)
+		}
+	}
 }
 
 func TestQemuWindowsArmProviderFactoryDispatch(t *testing.T) {
@@ -110,6 +132,155 @@ func TestQemuWindowsArmBootstrapUsesWindowsPath(t *testing.T) {
 		if strings.Contains(text, unwanted) {
 			t.Fatalf("qemu Windows ARM bootstrap used non-Windows path %q:\n%s", unwanted, text)
 		}
+	}
+}
+
+func TestQemuWindowsArmBootstrapUsesGuestURLOverrides(t *testing.T) {
+	params := commonParams.BootstrapInstance{
+		Name:             "garm-win-arm-1",
+		RepoURL:          "https://github.com/example-org/example-repo",
+		CallbackURL:      "http://192.168.64.1:9997/api/v1/callbacks",
+		MetadataURL:      "http://192.168.64.1:9997/api/v1/metadata",
+		InstanceToken:    "instance-token",
+		OSType:           commonParams.Windows,
+		OSArch:           commonParams.Arm64,
+		Labels:           []string{"self-hosted", "windows", "arm64", "win-arm"},
+		JitConfigEnabled: true,
+		Tools: []commonParams.RunnerApplicationDownload{
+			{
+				OS:             strptr("win"),
+				Architecture:   strptr("arm64"),
+				DownloadURL:    strptr("https://example.invalid/actions-runner-win-arm64.zip"),
+				Filename:       strptr("actions-runner-win-arm64.zip"),
+				SHA256Checksum: strptr(""),
+			},
+		},
+	}
+	overridden := applyGuestURLOverrides(params, &config.Config{
+		Backend:          config.BackendQemuWindowsArm,
+		GuestMetadataURL: "http://10.0.2.2:9997/api/v1/metadata",
+		GuestCallbackURL: "http://10.0.2.2:9997/api/v1/callbacks",
+	})
+
+	tools, err := pickTools(overridden)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script, err := renderRunnerBootstrapForBackend(config.BackendQemuWindowsArm, overridden, tools, overridden.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(script)
+	for _, want := range []string{
+		`$CallbackURL="http://10.0.2.2:9997/api/v1/callbacks"`,
+		`$MetadataURL="http://10.0.2.2:9997/api/v1/metadata"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("qemu Windows ARM bootstrap missing override %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "http://192.168.64.1:9997") {
+		t.Fatalf("qemu Windows ARM bootstrap retained global guest URL:\n%s", text)
+	}
+}
+
+func TestQemuWindowsArmCreateInstanceWritesBootstrapWithGuestURLOverrides(t *testing.T) {
+	tmp := t.TempDir()
+	logPath := filepath.Join(tmp, "vm-harness.argv")
+	mock := filepath.Join(tmp, "vm-harness")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$@\" > " + shellSingleQuote(logPath) + "\n" +
+		"sleep 30\n"
+	if err := os.WriteFile(mock, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	p, err := NewWithConfig(&config.Config{
+		Backend:          config.BackendQemuWindowsArm,
+		VMHarnessPath:    mock,
+		StateDir:         filepath.Join(tmp, "state"),
+		GuestMetadataURL: "http://10.0.2.2:9997/api/v1/metadata",
+		GuestCallbackURL: "http://10.0.2.2:9997/api/v1/callbacks",
+		Images: map[string]config.GoldenImage{
+			"win-arm-runner": {
+				SourceImage: filepath.Join(tmp, "golden"),
+				OSName:      "windows",
+				OSVersion:   "11-arm64",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	params := commonParams.BootstrapInstance{
+		Name:             "garm-win-arm-1",
+		Image:            "win-arm-runner",
+		RepoURL:          "https://github.com/example-org/example-repo",
+		CallbackURL:      "http://192.168.64.1:9997/api/v1/callbacks",
+		MetadataURL:      "http://192.168.64.1:9997/api/v1/metadata",
+		InstanceToken:    "instance-token",
+		OSType:           commonParams.Windows,
+		OSArch:           commonParams.Arm64,
+		Labels:           []string{"self-hosted", "windows", "arm64", "win-arm"},
+		JitConfigEnabled: true,
+		Tools: []commonParams.RunnerApplicationDownload{
+			{
+				OS:             strptr("win"),
+				Architecture:   strptr("arm64"),
+				DownloadURL:    strptr("https://example.invalid/actions-runner-win-arm64.zip"),
+				Filename:       strptr("actions-runner-win-arm64.zip"),
+				SHA256Checksum: strptr(""),
+			},
+		},
+	}
+	inst, err := p.CreateInstance(context.Background(), params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = p.DeleteInstance(context.Background(), inst.Name) }()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if _, err := os.Stat(logPath); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("mock vm-harness did not run: %v", os.ErrNotExist)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	bootstrapPath := filepath.Join(tmp, "state", "instances", params.Name, "garm-bootstrap.ps1")
+	data, err := os.ReadFile(bootstrapPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		`$CallbackURL="http://10.0.2.2:9997/api/v1/callbacks"`,
+		`$MetadataURL="http://10.0.2.2:9997/api/v1/metadata"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("CreateInstance bootstrap missing override %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "http://192.168.64.1:9997") {
+		t.Fatalf("CreateInstance bootstrap retained global guest URL:\n%s", text)
+	}
+}
+
+func TestGuestURLOverridesDefaultToGARMParams(t *testing.T) {
+	params := commonParams.BootstrapInstance{
+		CallbackURL: "http://192.168.64.1:9997/api/v1/callbacks",
+		MetadataURL: "http://192.168.64.1:9997/api/v1/metadata",
+	}
+	got := applyGuestURLOverrides(params, &config.Config{Backend: config.BackendTartLinuxArm})
+	if got.MetadataURL != params.MetadataURL {
+		t.Fatalf("MetadataURL=%q want %q", got.MetadataURL, params.MetadataURL)
+	}
+	if got.CallbackURL != params.CallbackURL {
+		t.Fatalf("CallbackURL=%q want %q", got.CallbackURL, params.CallbackURL)
 	}
 }
 
