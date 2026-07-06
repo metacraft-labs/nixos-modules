@@ -60,6 +60,10 @@ const configJSONSchema = `{
 			"items": { "type": "string" },
 			"description": "DNS resolvers written into the container netplan (default 1.1.1.1, 8.8.8.8)."
 		},
+		"incus_gpu_passthrough": {
+			"type": "boolean",
+			"description": "Attach an NVIDIA GPU to each per-job container (incus config device add gpu + nvidia.runtime=true). Requires the host nvidia-container-toolkit. Backs the incus-gpu runner class."
+		},
 		"vm_harness_path": {
 			"type": "string",
 			"description": "Path to the vm-harness binary used for per-job clone (M2) and config-drive injection (M3)."

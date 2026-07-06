@@ -52,17 +52,31 @@ case "$cmd" in
     ;;
   config)
     sub="$1"; shift
-    # config set <name> <key> <value|->
-    name="$1"; key="$2"; val="$3"
-    d="$STATE/$name"
-    [ -d "$d" ] || { echo "Error: Instance '$name' not found" >&2; exit 1; }
-    if [ "$val" = "-" ]; then
-      cat > "$d/cfgfile.$(echo "$key" | tr '/.' '__')"
+    if [ "$sub" = "device" ]; then
+      # config device add <name> <devname> <devtype> [k=v ...]
+      action="$1"; name="$2"; devname="$3"; devtype="$4"
+      d="$STATE/$name"
+      [ -d "$d" ] || { echo "Error: Instance '$name' not found" >&2; exit 1; }
+      if [ "$action" = "add" ]; then
+        printf '%s\t%s\n' "$devname" "$devtype" >> "$d/devices"
+      fi
     else
-      # keep only the newest value per key
-      grep -v "^$key	" "$d/config" > "$d/config.tmp" 2>/dev/null || true
-      mv "$d/config.tmp" "$d/config" 2>/dev/null || true
-      printf '%s\t%s\n' "$key" "$val" >> "$d/config"
+      # config set <name> <key> <value|->   OR   config set <name> <key=val>
+      name="$1"; key="$2"; val="${3:-}"
+      d="$STATE/$name"
+      [ -d "$d" ] || { echo "Error: Instance '$name' not found" >&2; exit 1; }
+      if [ "$val" = "-" ]; then
+        cat > "$d/cfgfile.$(echo "$key" | tr '/.' '__')"
+      else
+        case "$key" in
+          *=*) v="${key#*=}"; k="${key%%=*}" ;;
+          *)   k="$key"; v="$val" ;;
+        esac
+        # keep only the newest value per key
+        grep -v "^$k	" "$d/config" > "$d/config.tmp" 2>/dev/null || true
+        mv "$d/config.tmp" "$d/config" 2>/dev/null || true
+        printf '%s\t%s\n' "$k" "$v" >> "$d/config"
+      fi
     fi
     ;;
   start)
@@ -190,6 +204,56 @@ func TestIncusCreateGetDeleteLifecycle(t *testing.T) {
 	// idempotent: deleting a missing container is success.
 	if err := b.Delete(ctx, "garm-linux-1"); err != nil {
 		t.Fatalf("second Delete not idempotent: %v", err)
+	}
+}
+
+// TestIncusGpuPassthroughAttachesGpuDevice proves the `incus-gpu` class path:
+// with GpuPassthrough set, Create attaches a `gpu` device and sets
+// nvidia.runtime=true on the container BEFORE start. Without it, neither is
+// present (the plain `incus` class must not touch the GPU).
+func TestIncusGpuPassthroughAttachesGpuDevice(t *testing.T) {
+	cmd, stateDir := writeMockIncus(t)
+	b := newTestIncusBackend(cmd)
+	b.GpuPassthrough = true
+	ctx := context.Background()
+
+	if _, err := b.Create(ctx, CreateArgs{
+		Name:        "garm-gpu-1",
+		SourceImage: "runner-linux",
+		OSName:      "linux",
+		OSVersion:   "debian12",
+	}); err != nil {
+		t.Fatalf("Create (gpu): %v", err)
+	}
+
+	devices, err := os.ReadFile(filepath.Join(stateDir, "garm-gpu-1", "devices"))
+	if err != nil {
+		t.Fatalf("expected a gpu device to be added, but no devices file: %v", err)
+	}
+	if !strings.Contains(string(devices), "gpu\tgpu") {
+		t.Fatalf("expected a `gpu` device of type `gpu`, got: %q", string(devices))
+	}
+
+	config, err := os.ReadFile(filepath.Join(stateDir, "garm-gpu-1", "config"))
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if !strings.Contains(string(config), "nvidia.runtime\ttrue") {
+		t.Fatalf("expected nvidia.runtime=true, got config: %q", string(config))
+	}
+
+	// The plain (non-GPU) backend must NOT attach a GPU or set nvidia.runtime.
+	plain := newTestIncusBackend(cmd)
+	if _, err := plain.Create(ctx, CreateArgs{
+		Name:        "garm-plain-1",
+		SourceImage: "runner-linux",
+		OSName:      "linux",
+		OSVersion:   "debian12",
+	}); err != nil {
+		t.Fatalf("Create (plain): %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(stateDir, "garm-plain-1", "devices")); err == nil {
+		t.Fatalf("plain incus class must not attach any device")
 	}
 }
 

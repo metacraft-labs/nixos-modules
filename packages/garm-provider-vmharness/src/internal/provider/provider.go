@@ -73,13 +73,14 @@ func NewWithConfig(cfg *config.Config) (*Provider, error) {
 		}
 	case config.BackendIncus:
 		b = &backend.IncusBackend{
-			IncusCmd:    strings.Fields(cfg.IncusPath),
-			Bridge:      cfg.IncusBridge,
-			IPv4CIDR:    cfg.IncusIPv4CIDR,
-			IPv4Gateway: cfg.IncusIPv4Gateway,
-			RangeStart:  incusRangeStart(cfg),
-			RangeEnd:    incusRangeEnd(cfg),
-			Nameservers: cfg.IncusNameservers,
+			IncusCmd:       strings.Fields(cfg.IncusPath),
+			Bridge:         cfg.IncusBridge,
+			IPv4CIDR:       cfg.IncusIPv4CIDR,
+			IPv4Gateway:    cfg.IncusIPv4Gateway,
+			RangeStart:     incusRangeStart(cfg),
+			RangeEnd:       incusRangeEnd(cfg),
+			Nameservers:    cfg.IncusNameservers,
+			GpuPassthrough: cfg.IncusGpuPassthrough,
 		}
 	case config.BackendTartLinuxArm:
 		b = &backend.VMHarnessRunBackend{

@@ -65,6 +65,11 @@ type IncusBackend struct {
 	RangeStart  string
 	RangeEnd    string
 	Nameservers []string
+	// GpuPassthrough, when true, attaches an NVIDIA GPU to each per-job
+	// container before start (`incus config device add <name> gpu gpu` +
+	// `incus config set <name> nvidia.runtime=true`). Requires the host's
+	// nvidia-container-toolkit (CDI runtime). Backs the `incus-gpu` class.
+	GpuPassthrough bool
 }
 
 // incusMetaPrefix namespaces the provider's stateless identity config keys.
@@ -302,6 +307,23 @@ func (b *IncusBackend) Create(ctx context.Context, args CreateArgs) (Instance, e
 		if out, err := b.run(ctx, string(args.Bootstrap), "config", "set", args.Name, "cloud-init.user-data", "-"); err != nil {
 			_ = b.forceDelete(ctx, args.Name)
 			return Instance{}, fmt.Errorf("incus config set cloud-init.user-data: %w: %s", err, strings.TrimSpace(out))
+		}
+	}
+
+	// 4b. GPU passthrough (the `incus-gpu` class). Attach an NVIDIA GPU device
+	//     and enable the nvidia container runtime so the host's
+	//     nvidia-container-toolkit (CDI) exposes the GPU + userspace driver into
+	//     the container. Done pre-start (a stopped container) so the device is
+	//     present on first boot. `gputype: physical` is Incus's default for a
+	//     `gpu` device and covers the whole-GPU passthrough this class needs.
+	if b.GpuPassthrough {
+		if out, err := b.run(ctx, "", "config", "set", args.Name, "nvidia.runtime=true"); err != nil {
+			_ = b.forceDelete(ctx, args.Name)
+			return Instance{}, fmt.Errorf("incus config set nvidia.runtime: %w: %s", err, strings.TrimSpace(out))
+		}
+		if out, err := b.run(ctx, "", "config", "device", "add", args.Name, "gpu", "gpu"); err != nil {
+			_ = b.forceDelete(ctx, args.Name)
+			return Instance{}, fmt.Errorf("incus config device add gpu: %w: %s", err, strings.TrimSpace(out))
 		}
 	}
 

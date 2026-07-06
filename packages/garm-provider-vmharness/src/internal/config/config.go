@@ -155,6 +155,13 @@ type Config struct {
 	IncusIPv4RangeEnd   string   `toml:"incus_ipv4_range_end"`
 	IncusNameservers    []string `toml:"incus_nameservers"`
 
+	// IncusGpuPassthrough, when true, makes the incus backend attach an NVIDIA
+	// GPU to every per-job container before start (`incus config device add
+	// <name> gpu gpu` + `incus config set <name> nvidia.runtime=true`). Requires
+	// the host's nvidia-container-toolkit (CDI runtime) so the GPU + userspace
+	// driver are exposed into the container. Backs the `incus-gpu` runner class.
+	IncusGpuPassthrough bool `toml:"incus_gpu_passthrough"`
+
 	// StateDir stores pid/metadata files for vm-harness run based backends
 	// (Tart/UTM on m3). It contains no secrets.
 	StateDir string `toml:"state_dir"`

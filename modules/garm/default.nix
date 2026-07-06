@@ -115,6 +115,7 @@
         incus_ipv4_range_start = "${p.incusIPv4RangeStart}"
         incus_ipv4_range_end = "${p.incusIPv4RangeEnd}"
         incus_nameservers = [${lib.concatMapStringsSep ", " (s: "\"${s}\"") p.incusNameservers}]
+        incus_gpu_passthrough = ${lib.boolToString p.incusGpuPassthrough}
       '';
       mkVMHarnessRunKeys = p: ''
         vm_harness_path = "${p.vmHarnessPath}"
@@ -546,6 +547,22 @@
                 "8.8.8.8"
               ];
               description = "Resolvers written into each container's netplan.";
+            };
+
+            incusGpuPassthrough = mkOption {
+              type = types.bool;
+              default = false;
+              description = ''
+                When true (incus backend only), the provider attaches an NVIDIA
+                GPU to every per-job container before start:
+                `incus config device add <name> gpu gpu` plus
+                `incus config set <name> nvidia.runtime=true`. The host must have
+                `hardware.nvidia-container-toolkit.enable = true` (the CDI/runtime
+                toolkit Incus uses to expose the GPU + userspace driver into the
+                container). Backs a GPU runner class (`runs-on: incus-gpu`): a
+                fresh container gets a GPU, runs one job, is destroyed. Ignored by
+                non-incus providers.
+              '';
             };
 
             poolDir = mkOption {
