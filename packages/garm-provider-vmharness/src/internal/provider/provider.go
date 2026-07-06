@@ -590,9 +590,16 @@ Send-Status -Status 'installing' -Message 'configuring runner'
 Send-Status -Status 'installing' -Message 'downloading JIT credentials'
 Get-MetadataFile -Path 'credentials/runner' -Destination (Join-Path $RunHome '.runner')
 Get-MetadataFile -Path 'credentials/credentials' -Destination (Join-Path $RunHome '.credentials')
-$rsaResponse = Invoke-WebRequest -UseBasicParsing -Method Get -Uri "$MetadataURL/credentials/credentials_rsaparams" -Headers @{Accept='application/json'; Authorization="Bearer $BearerToken"}
 $rsaParamsPath = Join-Path $RunHome '.credentials_rsaparams'
-[System.IO.File]::WriteAllText($rsaParamsPath, $rsaResponse.Content, [System.Text.UTF8Encoding]::new($false))
+$rsaParamsTmp = [System.IO.Path]::GetTempFileName()
+try {
+	Invoke-WebRequest -UseBasicParsing -Method Get -Uri "$MetadataURL/credentials/credentials_rsaparams" -Headers @{Accept='application/json'; Authorization="Bearer $BearerToken"} -OutFile $rsaParamsTmp
+	$rsaBytes = [System.IO.File]::ReadAllBytes($rsaParamsTmp)
+	$protectedBytes = [System.Security.Cryptography.ProtectedData]::Protect($rsaBytes, $null, [System.Security.Cryptography.DataProtectionScope]::LocalMachine)
+	[System.IO.File]::WriteAllBytes($rsaParamsPath, $protectedBytes)
+} finally {
+	Remove-Item -Force $rsaParamsTmp -ErrorAction SilentlyContinue
+}
 {{- else }}
 Fail-Install 'non-JIT Windows vm-harness runners are not supported'
 {{- end }}

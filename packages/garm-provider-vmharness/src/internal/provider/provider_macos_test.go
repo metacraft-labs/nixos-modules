@@ -121,7 +121,12 @@ func TestQemuWindowsArmBootstrapUsesWindowsPath(t *testing.T) {
 		"Get-MetadataFile -Path 'credentials/credentials'",
 		`"$MetadataURL/credentials/credentials_rsaparams"`,
 		`$rsaParamsPath = Join-Path $RunHome '.credentials_rsaparams'`,
-		`[System.IO.File]::WriteAllText($rsaParamsPath, $rsaResponse.Content, [System.Text.UTF8Encoding]::new($false))`,
+		`$rsaParamsTmp = [System.IO.Path]::GetTempFileName()`,
+		`-OutFile $rsaParamsTmp`,
+		`$rsaBytes = [System.IO.File]::ReadAllBytes($rsaParamsTmp)`,
+		`$protectedBytes = [System.Security.Cryptography.ProtectedData]::Protect($rsaBytes, $null, [System.Security.Cryptography.DataProtectionScope]::LocalMachine)`,
+		`[System.IO.File]::WriteAllBytes($rsaParamsPath, $protectedBytes)`,
+		`Remove-Item -Force $rsaParamsTmp -ErrorAction SilentlyContinue`,
 		"Send-SystemInfo",
 		"Send-Status -Status 'idle' -Message 'runner configured'",
 		"Set-Location $RunHome",
@@ -140,11 +145,11 @@ func TestQemuWindowsArmBootstrapUsesWindowsPath(t *testing.T) {
 		"RunnerService.exe",
 		"Get-MetadataFile -Path 'credentials/credentials_rsaparams'",
 		"Start-Process",
-		"[Security.Cryptography.ProtectedData]::Protect",
-		"[Security.Cryptography.DataProtectionScope]::LocalMachine",
-		"[System.IO.File]::WriteAllBytes",
 		"$encodedBytes",
-		"$protectedBytes",
+		"[Text.Encoding]::UTF8.GetBytes($rsaResponse.Content)",
+		"[System.Text.Encoding]::UTF8.GetBytes($rsaResponse.Content)",
+		"$rsaResponse.Content",
+		"[System.IO.File]::WriteAllText",
 	} {
 		if strings.Contains(text, unwanted) {
 			t.Fatalf("qemu Windows ARM bootstrap used non-Windows path %q:\n%s", unwanted, text)
@@ -195,7 +200,12 @@ func TestQemuWindowsArmBootstrapUsesGuestURLOverrides(t *testing.T) {
 		`Get-MetadataFile -Path 'credentials/credentials' -Destination (Join-Path $RunHome '.credentials')`,
 		`Invoke-WebRequest -UseBasicParsing -Method Get -Uri "$MetadataURL/credentials/credentials_rsaparams"`,
 		`$rsaParamsPath = Join-Path $RunHome '.credentials_rsaparams'`,
-		`[System.IO.File]::WriteAllText($rsaParamsPath, $rsaResponse.Content, [System.Text.UTF8Encoding]::new($false))`,
+		`$rsaParamsTmp = [System.IO.Path]::GetTempFileName()`,
+		`-OutFile $rsaParamsTmp`,
+		`$rsaBytes = [System.IO.File]::ReadAllBytes($rsaParamsTmp)`,
+		`$protectedBytes = [System.Security.Cryptography.ProtectedData]::Protect($rsaBytes, $null, [System.Security.Cryptography.DataProtectionScope]::LocalMachine)`,
+		`[System.IO.File]::WriteAllBytes($rsaParamsPath, $protectedBytes)`,
+		`Remove-Item -Force $rsaParamsTmp -ErrorAction SilentlyContinue`,
 		`Invoke-GarmCallback -Path 'system-info/'`,
 		`Send-Status -Status 'idle' -Message 'runner configured'`,
 		`Set-Location $RunHome`,
@@ -217,14 +227,14 @@ func TestQemuWindowsArmBootstrapUsesGuestURLOverrides(t *testing.T) {
 		t.Fatalf("qemu Windows ARM bootstrap uses generic metadata file handling for credentials_rsaparams:\n%s", text)
 	}
 	for _, forbidden := range []string{
-		"[Security.Cryptography.ProtectedData]::Protect",
-		"[Security.Cryptography.DataProtectionScope]::LocalMachine",
-		"[System.IO.File]::WriteAllBytes",
 		"$encodedBytes",
-		"$protectedBytes",
+		"[Text.Encoding]::UTF8.GetBytes($rsaResponse.Content)",
+		"[System.Text.Encoding]::UTF8.GetBytes($rsaResponse.Content)",
+		"$rsaResponse.Content",
+		"[System.IO.File]::WriteAllText",
 	} {
 		if strings.Contains(text, forbidden) {
-			t.Fatalf("qemu Windows ARM bootstrap writes credentials_rsaparams as protected/raw bytes via %q:\n%s", forbidden, text)
+			t.Fatalf("qemu Windows ARM bootstrap uses unsafe credentials_rsaparams handling via %q:\n%s", forbidden, text)
 		}
 	}
 	if strings.Contains(text, "http://192.168.64.1:9997") {
@@ -355,7 +365,12 @@ powershell.exe -Sta -NonInteractive -ExecutionPolicy RemoteSigned -File $install
 		`Get-MetadataFile -Path 'credentials/credentials' -Destination (Join-Path $RunHome '.credentials')`,
 		`Invoke-WebRequest -UseBasicParsing -Method Get -Uri "$MetadataURL/credentials/credentials_rsaparams"`,
 		`$rsaParamsPath = Join-Path $RunHome '.credentials_rsaparams'`,
-		`[System.IO.File]::WriteAllText($rsaParamsPath, $rsaResponse.Content, [System.Text.UTF8Encoding]::new($false))`,
+		`$rsaParamsTmp = [System.IO.Path]::GetTempFileName()`,
+		`-OutFile $rsaParamsTmp`,
+		`$rsaBytes = [System.IO.File]::ReadAllBytes($rsaParamsTmp)`,
+		`$protectedBytes = [System.Security.Cryptography.ProtectedData]::Protect($rsaBytes, $null, [System.Security.Cryptography.DataProtectionScope]::LocalMachine)`,
+		`[System.IO.File]::WriteAllBytes($rsaParamsPath, $protectedBytes)`,
+		`Remove-Item -Force $rsaParamsTmp -ErrorAction SilentlyContinue`,
 		`Invoke-GarmCallback -Path 'system-info/'`,
 		`Send-Status -Status 'idle' -Message 'runner configured'`,
 		`Set-Location $RunHome`,
@@ -377,14 +392,14 @@ powershell.exe -Sta -NonInteractive -ExecutionPolicy RemoteSigned -File $install
 		t.Fatalf("CreateInstance bootstrap uses generic metadata file handling for credentials_rsaparams:\n%s", text)
 	}
 	for _, forbidden := range []string{
-		"[Security.Cryptography.ProtectedData]::Protect",
-		"[Security.Cryptography.DataProtectionScope]::LocalMachine",
-		"[System.IO.File]::WriteAllBytes",
 		"$encodedBytes",
-		"$protectedBytes",
+		"[Text.Encoding]::UTF8.GetBytes($rsaResponse.Content)",
+		"[System.Text.Encoding]::UTF8.GetBytes($rsaResponse.Content)",
+		"$rsaResponse.Content",
+		"[System.IO.File]::WriteAllText",
 	} {
 		if strings.Contains(text, forbidden) {
-			t.Fatalf("CreateInstance bootstrap writes credentials_rsaparams as protected/raw bytes via %q:\n%s", forbidden, text)
+			t.Fatalf("CreateInstance bootstrap uses unsafe credentials_rsaparams handling via %q:\n%s", forbidden, text)
 		}
 	}
 	if strings.Contains(text, "http://192.168.64.1:9997") {
