@@ -117,9 +117,16 @@ func TestQemuWindowsArmBootstrapUsesWindowsPath(t *testing.T) {
 	for _, want := range []string{
 		"https://example.invalid/actions-runner-win-arm64.zip",
 		"#ps1_sysnative",
-		"New-Service",
-		"RunnerService.exe",
-		"runner successfully installed",
+		"Get-MetadataFile -Path 'credentials/runner'",
+		"Get-MetadataFile -Path 'credentials/credentials'",
+		`"$MetadataURL/credentials/credentials_rsaparams"`,
+		"[Security.Cryptography.ProtectedData]::Protect",
+		"[Security.Cryptography.DataProtectionScope]::LocalMachine",
+		"[System.IO.File]::WriteAllBytes((Join-Path $RunHome '.credentials_rsaparams'), $protectedBytes)",
+		"Send-SystemInfo",
+		"Send-Status -Status 'idle' -Message 'runner configured'",
+		"Start-Process -FilePath \"$env:ComSpec\"",
+		"cd /d C:\\actions-runner && run.cmd",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("qemu Windows ARM bootstrap missing %q:\n%s", want, text)
@@ -128,7 +135,10 @@ func TestQemuWindowsArmBootstrapUsesWindowsPath(t *testing.T) {
 	for _, unwanted := range []string{
 		"exec ./run.sh",
 		"systemctl",
-		"get_metadata_file \"credentials/runner\"",
+		"/metadata/install-script/",
+		"New-Service",
+		"RunnerService.exe",
+		"Get-MetadataFile -Path 'credentials/credentials_rsaparams'",
 	} {
 		if strings.Contains(text, unwanted) {
 			t.Fatalf("qemu Windows ARM bootstrap used non-Windows path %q:\n%s", unwanted, text)
@@ -173,15 +183,57 @@ func TestQemuWindowsArmBootstrapUsesGuestURLOverrides(t *testing.T) {
 	}
 	text := string(script)
 	for _, want := range []string{
-		`$CallbackURL="http://10.0.2.2:9997/api/v1/callbacks"`,
-		`$MetadataURL="http://10.0.2.2:9997/api/v1/metadata"`,
+		`$CallbackURL='http://10.0.2.2:9997/api/v1/callbacks'`,
+		`$MetadataURL='http://10.0.2.2:9997/api/v1/metadata'`,
+		`Get-MetadataFile -Path 'credentials/runner' -Destination (Join-Path $RunHome '.runner')`,
+		`Get-MetadataFile -Path 'credentials/credentials' -Destination (Join-Path $RunHome '.credentials')`,
+		`Invoke-WebRequest -UseBasicParsing -Method Get -Uri "$MetadataURL/credentials/credentials_rsaparams"`,
+		`[Security.Cryptography.ProtectedData]::Protect($encodedBytes, $null, [Security.Cryptography.DataProtectionScope]::LocalMachine)`,
+		`[System.IO.File]::WriteAllBytes((Join-Path $RunHome '.credentials_rsaparams'), $protectedBytes)`,
+		`Invoke-GarmCallback -Path 'system-info/'`,
+		`Send-Status -Status 'idle' -Message 'runner configured'`,
+		`Start-Process -FilePath "$env:ComSpec"`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("qemu Windows ARM bootstrap missing override %q:\n%s", want, text)
 		}
 	}
+	if strings.Contains(text, "/metadata/install-script/") {
+		t.Fatalf("qemu Windows ARM bootstrap still relies on GARM second-stage install script:\n%s", text)
+	}
+	if strings.Contains(text, "Get-MetadataFile -Path 'credentials/credentials_rsaparams'") {
+		t.Fatalf("qemu Windows ARM bootstrap writes credentials_rsaparams without Windows DPAPI protection:\n%s", text)
+	}
 	if strings.Contains(text, "http://192.168.64.1:9997") {
 		t.Fatalf("qemu Windows ARM bootstrap retained global guest URL:\n%s", text)
+	}
+}
+
+func TestQemuWindowsArmBootstrapRejectsNonJIT(t *testing.T) {
+	params := commonParams.BootstrapInstance{
+		Name:          "garm-win-arm-1",
+		RepoURL:       "https://github.com/example-org/example-repo",
+		CallbackURL:   "http://10.0.2.2:9997/api/v1/callbacks",
+		MetadataURL:   "http://10.0.2.2:9997/api/v1/metadata",
+		InstanceToken: "instance-token",
+		OSType:        commonParams.Windows,
+		OSArch:        commonParams.Arm64,
+		Tools: []commonParams.RunnerApplicationDownload{
+			{
+				OS:           strptr("win"),
+				Architecture: strptr("arm64"),
+				DownloadURL:  strptr("https://example.invalid/actions-runner-win-arm64.zip"),
+				Filename:     strptr("actions-runner-win-arm64.zip"),
+			},
+		},
+	}
+	tools, err := pickTools(params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = renderRunnerBootstrapForBackend(config.BackendQemuWindowsArm, params, tools, params.Name)
+	if err == nil || !strings.Contains(err.Error(), "non-JIT Windows vm-harness runners are not supported") {
+		t.Fatalf("renderRunnerBootstrapForBackend error=%v, want non-JIT unsupported", err)
 	}
 }
 
@@ -274,14 +326,27 @@ powershell.exe -Sta -NonInteractive -ExecutionPolicy RemoteSigned -File $install
 	}
 	text := string(data)
 	for _, want := range []string{
-		`$CallbackURL="http://10.0.2.2:9997/api/v1/callbacks"`,
-		`$MetadataURL="http://10.0.2.2:9997/api/v1/metadata"`,
-		`http://10.0.2.2:9997/api/v1/metadata/install-script/`,
-		`http://10.0.2.2:9997/api/v1/callbacks/status`,
+		`$CallbackURL='http://10.0.2.2:9997/api/v1/callbacks'`,
+		`$MetadataURL='http://10.0.2.2:9997/api/v1/metadata'`,
+		`Get-MetadataFile -Path 'credentials/runner' -Destination (Join-Path $RunHome '.runner')`,
+		`Get-MetadataFile -Path 'credentials/credentials' -Destination (Join-Path $RunHome '.credentials')`,
+		`Invoke-WebRequest -UseBasicParsing -Method Get -Uri "$MetadataURL/credentials/credentials_rsaparams"`,
+		`[Security.Cryptography.ProtectedData]::Protect($encodedBytes, $null, [Security.Cryptography.DataProtectionScope]::LocalMachine)`,
+		`[System.IO.File]::WriteAllBytes((Join-Path $RunHome '.credentials_rsaparams'), $protectedBytes)`,
+		`Invoke-GarmCallback -Path 'system-info/'`,
+		`Send-Status -Status 'idle' -Message 'runner configured'`,
+		`Start-Process -FilePath "$env:ComSpec"`,
+		`cd /d C:\actions-runner && run.cmd`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("CreateInstance bootstrap missing override %q:\n%s", want, text)
 		}
+	}
+	if strings.Contains(text, "/metadata/install-script/") {
+		t.Fatalf("CreateInstance bootstrap still relies on GARM second-stage install script:\n%s", text)
+	}
+	if strings.Contains(text, "Get-MetadataFile -Path 'credentials/credentials_rsaparams'") {
+		t.Fatalf("CreateInstance bootstrap writes credentials_rsaparams without Windows DPAPI protection:\n%s", text)
 	}
 	if strings.Contains(text, "http://192.168.64.1:9997") {
 		t.Fatalf("CreateInstance bootstrap retained global guest URL:\n%s", text)

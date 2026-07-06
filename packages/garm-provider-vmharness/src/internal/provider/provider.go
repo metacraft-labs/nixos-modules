@@ -218,6 +218,10 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
 }
 
+func powershellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+}
+
 const macosRunnerInstallTemplate = `#!/bin/sh
 set -eu
 
@@ -476,6 +480,135 @@ cd "$RUN_HOME"
 exec sudo -u "$RUNNER_USER" -H ./run.sh
 `
 
+const windowsForegroundRunnerInstallTemplate = `#ps1_sysnative
+$ErrorActionPreference = 'Stop'
+
+$CallbackURL={{ ps .CallbackURL }}
+$MetadataURL={{ ps .MetadataURL }}
+$BearerToken={{ ps .CallbackToken }}
+$RunHome='C:\actions-runner'
+$DownloadURL={{ ps .DownloadURL }}
+$TempDownloadToken={{ ps .TempDownloadToken }}
+$SHA256Checksum={{ ps .SHA256Checksum }}
+
+function Get-CallbackStatusURL {
+	if ($CallbackURL.EndsWith('/status') -or $CallbackURL.EndsWith('/status/')) {
+		return $CallbackURL
+	}
+	return "$CallbackURL/status"
+}
+
+function Get-CallbackBaseURL {
+	if ($CallbackURL.EndsWith('/status/')) {
+		return $CallbackURL.Substring(0, $CallbackURL.Length - 8)
+	}
+	if ($CallbackURL.EndsWith('/status')) {
+		return $CallbackURL.Substring(0, $CallbackURL.Length - 7)
+	}
+	return $CallbackURL.TrimEnd('/')
+}
+
+function Invoke-GarmCallback {
+	param([string]$Path, [string]$Body)
+	$baseURL = Get-CallbackBaseURL
+	$uri = "$baseURL/$Path"
+	Invoke-WebRequest -UseBasicParsing -Method Post -Uri $uri -Headers @{Accept='application/json'; Authorization="Bearer $BearerToken"} -ContentType 'application/json' -Body $Body | Out-Null
+}
+
+function Send-Status {
+	param([string]$Status, [string]$Message)
+	$body = @{
+		status = $Status
+		message = $Message
+	} | ConvertTo-Json -Compress
+	Invoke-WebRequest -UseBasicParsing -Method Post -Uri (Get-CallbackStatusURL) -Headers @{Accept='application/json'; Authorization="Bearer $BearerToken"} -ContentType 'application/json' -Body $body | Out-Null
+}
+
+function Fail-Install {
+	param([string]$Message)
+	try {
+		Send-Status -Status 'failed' -Message $Message
+	} catch {
+		Write-Host "failed to report install failure: $($_.Exception.Message)"
+	}
+	Write-Host $Message
+	exit 1
+}
+
+function Get-MetadataFile {
+	param([string]$Path, [string]$Destination)
+	Invoke-WebRequest -UseBasicParsing -Method Get -Uri "$MetadataURL/$Path" -Headers @{Accept='application/json'; Authorization="Bearer $BearerToken"} -OutFile $Destination
+}
+
+function Send-SystemInfo {
+	try {
+		$os = Get-CimInstance -ClassName Win32_OperatingSystem
+		$osName = if ($os.Caption) { $os.Caption } else { 'windows' }
+		$osVersion = if ($os.Version) { $os.Version } else { '' }
+		$body = @{
+			os_name = $osName
+			os_version = $osVersion
+			agent_id = $null
+		} | ConvertTo-Json -Compress
+		Invoke-GarmCallback -Path 'system-info/' -Body $body
+	} catch {
+		Write-Host "failed to send system info: $($_.Exception.Message)"
+	}
+}
+
+if ([string]::IsNullOrWhiteSpace($MetadataURL)) {
+	Fail-Install 'missing metadata URL'
+}
+if ([string]::IsNullOrWhiteSpace($CallbackURL)) {
+	Fail-Install 'missing callback URL'
+}
+
+New-Item -ItemType Directory -Force -Path $RunHome | Out-Null
+Set-Location $RunHome
+
+if (-not (Test-Path (Join-Path $RunHome 'run.cmd'))) {
+	Send-Status -Status 'installing' -Message "downloading tools from {{ .DownloadURL }}"
+	$archive = Join-Path $env:TEMP {{ ps .FileName }}
+	$headers = @{}
+	if (-not [string]::IsNullOrWhiteSpace($TempDownloadToken)) {
+		$headers['Authorization'] = "Bearer $TempDownloadToken"
+	}
+	Invoke-WebRequest -UseBasicParsing -Uri $DownloadURL -Headers $headers -OutFile $archive
+	{{- if .SHA256Checksum }}
+	$actualHash = (Get-FileHash -Algorithm SHA256 -Path $archive).Hash.ToLowerInvariant()
+	if ($actualHash -ne $SHA256Checksum.ToLowerInvariant()) {
+		Fail-Install "runner checksum mismatch: $actualHash"
+	}
+	{{- end }}
+	Send-Status -Status 'installing' -Message 'extracting runner'
+	Expand-Archive -Path $archive -DestinationPath $RunHome -Force
+	Remove-Item -Force $archive
+}
+
+Send-Status -Status 'installing' -Message 'configuring runner'
+{{- if .UseJITConfig }}
+Send-Status -Status 'installing' -Message 'downloading JIT credentials'
+Get-MetadataFile -Path 'credentials/runner' -Destination (Join-Path $RunHome '.runner')
+Get-MetadataFile -Path 'credentials/credentials' -Destination (Join-Path $RunHome '.credentials')
+Add-Type -AssemblyName System.Security
+$rsaResponse = Invoke-WebRequest -UseBasicParsing -Method Get -Uri "$MetadataURL/credentials/credentials_rsaparams" -Headers @{Accept='application/json'; Authorization="Bearer $BearerToken"}
+$encodedBytes = [System.Text.Encoding]::UTF8.GetBytes($rsaResponse.Content)
+$protectedBytes = [Security.Cryptography.ProtectedData]::Protect($encodedBytes, $null, [Security.Cryptography.DataProtectionScope]::LocalMachine)
+[System.IO.File]::WriteAllBytes((Join-Path $RunHome '.credentials_rsaparams'), $protectedBytes)
+{{- else }}
+Fail-Install 'non-JIT Windows vm-harness runners are not supported'
+{{- end }}
+
+Send-SystemInfo
+Send-Status -Status 'idle' -Message 'runner configured'
+
+$runner = Start-Process -FilePath "$env:ComSpec" -ArgumentList @('/d', '/c', 'cd /d C:\actions-runner && run.cmd') -WorkingDirectory $RunHome -PassThru
+
+if (-not $runner -or $runner.HasExited) {
+	Fail-Install 'runner process exited during startup'
+}
+`
+
 type runnerInstallTemplateData struct {
 	FileName          string
 	DownloadURL       string
@@ -513,6 +646,7 @@ func runnerInstallTemplateDataFrom(bootstrapParams commonParams.BootstrapInstanc
 func renderRunnerInstallTemplate(name, text string, data runnerInstallTemplateData) ([]byte, error) {
 	tpl, err := template.New(name).Funcs(template.FuncMap{
 		"shell": shellQuote,
+		"ps":    powershellQuote,
 	}).Parse(text)
 	if err != nil {
 		return nil, err
@@ -544,12 +678,32 @@ func renderLinuxRunnerInstallScript(bootstrapParams commonParams.BootstrapInstan
 	return renderRunnerInstallTemplate("linux-foreground-runner-install", linuxForegroundRunnerInstallTemplate, runnerInstallTemplateDataFrom(bootstrapParams, tools, runnerName))
 }
 
+func renderWindowsRunnerInstallScript(bootstrapParams commonParams.BootstrapInstance, tools commonParams.RunnerApplicationDownload, runnerName string) ([]byte, error) {
+	if !bootstrapParams.JitConfigEnabled {
+		return nil, fmt.Errorf("non-JIT Windows vm-harness runners are not supported")
+	}
+	if tools.GetFilename() == "" {
+		return nil, fmt.Errorf("missing tools filename")
+	}
+	if tools.GetDownloadURL() == "" {
+		return nil, fmt.Errorf("missing tools download URL")
+	}
+	return renderRunnerInstallTemplate("windows-foreground-runner-install", windowsForegroundRunnerInstallTemplate, runnerInstallTemplateDataFrom(bootstrapParams, tools, runnerName))
+}
+
+func isVMHarnessWindowsBackend(backendKind config.BackendKind) bool {
+	return backendKind == config.BackendQemuWindowsArm || backendKind == config.BackendUtmWindowsArm
+}
+
 func renderRunnerBootstrapForBackend(backendKind config.BackendKind, bootstrapParams commonParams.BootstrapInstance, tools commonParams.RunnerApplicationDownload, runnerName string) ([]byte, error) {
 	if bootstrapParams.OSType == commonParams.OSType("macos") {
 		return renderMacOSRunnerInstallScript(bootstrapParams, tools, runnerName)
 	}
 	if backendKind == config.BackendTartLinuxArm && bootstrapParams.OSType == commonParams.Linux {
 		return renderLinuxRunnerInstallScript(bootstrapParams, tools, runnerName)
+	}
+	if isVMHarnessWindowsBackend(backendKind) && bootstrapParams.OSType == commonParams.Windows {
+		return renderWindowsRunnerInstallScript(bootstrapParams, tools, runnerName)
 	}
 	script, err := cloudconfig.GetRunnerInstallScript(bootstrapParams, tools, runnerName)
 	if err != nil {
