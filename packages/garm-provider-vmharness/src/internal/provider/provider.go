@@ -81,6 +81,10 @@ func NewWithConfig(cfg *config.Config) (*Provider, error) {
 			RangeEnd:       incusRangeEnd(cfg),
 			Nameservers:    cfg.IncusNameservers,
 			GpuPassthrough: cfg.IncusGpuPassthrough,
+
+			ShareHostNixStore:        cfg.IncusShareHostNixStore,
+			ReprobuildStore:          cfg.IncusReprobuildStore,
+			ReprobuildStoreGuestPath: cfg.IncusReprobuildStoreGuestPath,
 		}
 	case config.BackendTartLinuxArm:
 		b = &backend.VMHarnessRunBackend{

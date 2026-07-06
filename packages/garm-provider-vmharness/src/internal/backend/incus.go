@@ -70,7 +70,54 @@ type IncusBackend struct {
 	// `incus config set <name> nvidia.runtime=true`). Requires the host's
 	// nvidia-container-toolkit (CDI runtime). Backs the `incus-gpu` class.
 	GpuPassthrough bool
+	// ShareHostNixStore, when true, wires each per-job container into the
+	// HOST's shared `/nix/store` as a build-farm participant (the multi-user
+	// Nix model — build once, cache-hit for every later guest/host). The share
+	// is WRITABLE-BY-DESIGN but SAFE:
+	//
+	//   * /nix/store is mounted READ-ONLY (the guest sees every prebuilt path
+	//     directly — instant cache hits — but its raw filesystem bytes are
+	//     immutable from the guest).
+	//   * the host nix-daemon socket dir (/nix/var/nix/daemon-socket) is
+	//     mounted so the guest can reach the host daemon; all guest WRITES and
+	//     BUILDS go THROUGH that daemon (NIX_REMOTE=daemon), which runs on the
+	//     host with write access, content-addresses/validates every added path,
+	//     and builds derivations in its own sandbox. A guest-built novel path
+	//     lands in the shared host store and is a cache hit for later guests.
+	//   * the guest's daemon user is UNTRUSTED: incus's default idmap shifts
+	//     container root to an unprivileged host uid (base 1_000_000) that is
+	//     NOT in nix `trusted-users`, so the daemon reports Trusted: 0. The
+	//     guest can build + add content-addressed paths but CANNOT set
+	//     substituters/trusted-keys or import unsigned NARs as trusted, and a
+	//     malicious path content-addresses to a different hash than anything
+	//     production resolves — no cache poisoning.
+	//
+	// The nix DB itself is served by the daemon (over the socket) — the guest
+	// never touches /nix/var/nix/db directly. Residual risk is disk-DoS (a
+	// guest filling the store), contained by ephemeral one-job guests + store
+	// quotas. Backs PM2 (shared nix store). Default false ⇒ byte-unchanged.
+	ShareHostNixStore bool
+	// ReprobuildStore, when non-empty, is the HOST reprobuild content-addressed
+	// store path mounted READ-WRITE into each per-job container. The CAS is
+	// BLAKE3-content-addressed, so writes are self-verifying: a guest ADDS
+	// content-addressed entries (which persist to the shared store for later
+	// guests) but CANNOT corrupt an existing entry (a tampered blob hashes to a
+	// different digest). Backs PM3 (shared reprobuild store).
+	ReprobuildStore string
+	// ReprobuildStoreGuestPath is the in-guest mount point for ReprobuildStore.
+	// Empty ⇒ mirrors the host path.
+	ReprobuildStoreGuestPath string
 }
+
+// Host paths shared into the per-job container when ShareHostNixStore is set:
+// the content-addressed store (READ-ONLY — the guest reads prebuilt paths
+// directly) and the nix-daemon socket directory (so the guest routes all
+// WRITES/builds through the host daemon, which validates + content-addresses
+// every add). The guest never touches the nix DB directly — the daemon owns it.
+const (
+	hostNixStorePath        = "/nix/store"
+	hostNixDaemonSocketPath = "/nix/var/nix/daemon-socket"
+)
 
 // incusMetaPrefix namespaces the provider's stateless identity config keys.
 const incusMetaPrefix = "user.garm."
@@ -327,6 +374,43 @@ func (b *IncusBackend) Create(ctx context.Context, args CreateArgs) (Instance, e
 		}
 	}
 
+	// 4c. Shared host build stores (PM2/PM3). Wire the per-job container into
+	//     the host's shared content-addressed stores so it resolves prebuilt
+	//     artifacts INSTANTLY (cache hit) AND persists its own novel builds
+	//     back for later guests — the build-farm / multi-user-Nix model. Done
+	//     pre-start so the mounts are present on first boot.
+	if b.ShareHostNixStore {
+		// /nix/store READ-ONLY: the guest sees every prebuilt path directly
+		// (instant cache hits) but cannot mutate the store bytes.
+		if err := b.addDisk(ctx, args.Name, "nixstore", hostNixStorePath, hostNixStorePath, true); err != nil {
+			_ = b.forceDelete(ctx, args.Name)
+			return Instance{}, err
+		}
+		// The nix-daemon socket dir READ-WRITE: the guest routes all WRITES +
+		// BUILDS through the HOST daemon (NIX_REMOTE=daemon), which validates +
+		// content-addresses every add and owns the nix DB. incus's default
+		// idmap shifts guest root to an unprivileged, UNTRUSTED host uid, so
+		// the daemon reports Trusted: 0 (build/add-CA allowed; set-trust
+		// refused). The socket dir must be writable so the guest can connect().
+		if err := b.addDisk(ctx, args.Name, "nixdaemon", hostNixDaemonSocketPath, hostNixDaemonSocketPath, false); err != nil {
+			_ = b.forceDelete(ctx, args.Name)
+			return Instance{}, err
+		}
+	}
+	if b.ReprobuildStore != "" {
+		guestPath := b.ReprobuildStoreGuestPath
+		if guestPath == "" {
+			guestPath = b.ReprobuildStore
+		}
+		// READ-WRITE: the CAS is BLAKE3-content-addressed, so guest-added
+		// entries persist to the shared store for later guests and cannot
+		// corrupt existing entries (a tampered blob hashes to a new digest).
+		if err := b.addDisk(ctx, args.Name, "reprostore", b.ReprobuildStore, guestPath, false); err != nil {
+			_ = b.forceDelete(ctx, args.Name)
+			return Instance{}, err
+		}
+	}
+
 	// 5. start — cloud-init consumes the injected user-data on first boot.
 	if out, err := b.run(ctx, "", "start", args.Name); err != nil {
 		_ = b.forceDelete(ctx, args.Name)
@@ -334,6 +418,26 @@ func (b *IncusBackend) Create(ctx context.Context, args CreateArgs) (Instance, e
 	}
 
 	return b.Get(ctx, args.Name)
+}
+
+// addDisk attaches a host directory to the container as a `disk` device before
+// start (PM2/PM3 shared stores). The device name must be unique per container;
+// source is the host path, path the in-guest mount point. When readonly is
+// true the mount is immutable from the guest (used for /nix/store, which the
+// guest reads directly); when false the guest can write (the nix-daemon socket
+// dir, and the content-addressed reprobuild CAS — both self-validating so a
+// write cannot corrupt existing data).
+func (b *IncusBackend) addDisk(ctx context.Context, container, device, source, guestPath string, readonly bool) error {
+	dargs := []string{"config", "device", "add", container, device, "disk",
+		"source=" + source, "path=" + guestPath}
+	if readonly {
+		dargs = append(dargs, "readonly=true")
+	}
+	if out, err := b.run(ctx, "", dargs...); err != nil {
+		return fmt.Errorf("incus config device add %s (disk %s->%s ro=%t): %w: %s",
+			device, source, guestPath, readonly, err, strings.TrimSpace(out))
+	}
+	return nil
 }
 
 // forceDelete is the idempotent teardown primitive.

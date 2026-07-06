@@ -54,11 +54,11 @@ case "$cmd" in
     sub="$1"; shift
     if [ "$sub" = "device" ]; then
       # config device add <name> <devname> <devtype> [k=v ...]
-      action="$1"; name="$2"; devname="$3"; devtype="$4"
+      action="$1"; name="$2"; devname="$3"; devtype="$4"; shift 4 || true
       d="$STATE/$name"
       [ -d "$d" ] || { echo "Error: Instance '$name' not found" >&2; exit 1; }
       if [ "$action" = "add" ]; then
-        printf '%s\t%s\n' "$devname" "$devtype" >> "$d/devices"
+        printf '%s\t%s\t%s\n' "$devname" "$devtype" "$*" >> "$d/devices"
       fi
     else
       # config set <name> <key> <value|->   OR   config set <name> <key=val>
@@ -254,6 +254,87 @@ func TestIncusGpuPassthroughAttachesGpuDevice(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(stateDir, "garm-plain-1", "devices")); err == nil {
 		t.Fatalf("plain incus class must not attach any device")
+	}
+}
+
+// TestIncusSharedStoresAttachStoreDisks proves the PM2/PM3 shared-store path
+// (writable-by-design, safe): with ShareHostNixStore + ReprobuildStore set,
+// Create attaches, before start, the host `/nix/store` READ-ONLY (the guest
+// reads prebuilt paths directly), the host nix-daemon socket dir READ-WRITE
+// (so guest builds/writes route through the host daemon and persist to the
+// shared store), and the reprobuild CAS READ-WRITE (self-verifying content-
+// addressed writes). Without the toggles, no store device is attached (the
+// plain `incus` class is byte-unchanged).
+func TestIncusSharedStoresAttachStoreDisks(t *testing.T) {
+	cmd, stateDir := writeMockIncus(t)
+	b := newTestIncusBackend(cmd)
+	b.ShareHostNixStore = true
+	b.ReprobuildStore = "/var/lib/reprobuild/shared-store"
+	b.ReprobuildStoreGuestPath = "/srv/repro-store"
+	ctx := context.Background()
+
+	if _, err := b.Create(ctx, CreateArgs{
+		Name:        "garm-store-1",
+		SourceImage: "runner-linux",
+		OSName:      "linux",
+		OSVersion:   "debian12",
+	}); err != nil {
+		t.Fatalf("Create (shared stores): %v", err)
+	}
+
+	devices, err := os.ReadFile(filepath.Join(stateDir, "garm-store-1", "devices"))
+	if err != nil {
+		t.Fatalf("expected store disk devices to be added, but no devices file: %v", err)
+	}
+	dev := string(devices)
+	// /nix/store READ-ONLY; the nix-daemon socket dir READ-WRITE (no
+	// readonly=true — the guest must connect() through it); reprobuild CAS
+	// READ-WRITE (self-verifying content-addressed writes persist).
+	for _, want := range []string{
+		"nixstore\tdisk\tsource=/nix/store path=/nix/store readonly=true",
+		"nixdaemon\tdisk\tsource=/nix/var/nix/daemon-socket path=/nix/var/nix/daemon-socket",
+		"reprostore\tdisk\tsource=/var/lib/reprobuild/shared-store path=/srv/repro-store",
+	} {
+		if !strings.Contains(dev, want) {
+			t.Fatalf("expected device line %q, got devices:\n%s", want, dev)
+		}
+	}
+	// /nix/store MUST be read-only (raw store bytes immutable from the guest —
+	// all mutation goes through the validating daemon).
+	for _, line := range strings.Split(strings.TrimSpace(dev), "\n") {
+		if strings.HasPrefix(line, "nixstore\tdisk\t") && !strings.Contains(line, "readonly=true") {
+			t.Fatalf("nixstore share must be read-only, got: %q", line)
+		}
+	}
+	// The nix-daemon socket + reprobuild CAS MUST be writable (NOT readonly) so
+	// guest builds/adds can flow through the daemon / persist to the CAS.
+	for _, dname := range []string{"nixdaemon", "reprostore"} {
+		for _, line := range strings.Split(strings.TrimSpace(dev), "\n") {
+			if strings.HasPrefix(line, dname+"\tdisk\t") && strings.Contains(line, "readonly=true") {
+				t.Fatalf("%s share must be read-write (writable-by-design), got: %q", dname, line)
+			}
+		}
+	}
+
+	// Reprobuild guest path defaults to the host path when unset.
+	b2 := newTestIncusBackend(cmd)
+	b2.ReprobuildStore = "/host/repro"
+	if _, err := b2.Create(ctx, CreateArgs{Name: "garm-store-2", SourceImage: "runner-linux"}); err != nil {
+		t.Fatalf("Create (repro default guest path): %v", err)
+	}
+	d2, _ := os.ReadFile(filepath.Join(stateDir, "garm-store-2", "devices"))
+	if !strings.Contains(string(d2), "reprostore\tdisk\tsource=/host/repro path=/host/repro") {
+		t.Fatalf("expected reprostore to mirror host path when guest path unset, got:\n%s", string(d2))
+	}
+
+	// The plain (default-OFF) backend must NOT attach any store device: the
+	// existing live runners stay byte-unchanged until the toggle is enabled.
+	plain := newTestIncusBackend(cmd)
+	if _, err := plain.Create(ctx, CreateArgs{Name: "garm-plain-store", SourceImage: "runner-linux"}); err != nil {
+		t.Fatalf("Create (plain): %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(stateDir, "garm-plain-store", "devices")); err == nil {
+		t.Fatalf("plain incus class must not attach any store device (default OFF)")
 	}
 }
 

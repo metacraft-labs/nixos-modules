@@ -64,6 +64,18 @@ const configJSONSchema = `{
 			"type": "boolean",
 			"description": "Attach an NVIDIA GPU to each per-job container (incus config device add gpu + nvidia.runtime=true). Requires the host nvidia-container-toolkit. Backs the incus-gpu runner class."
 		},
+		"incus_share_host_nix_store": {
+			"type": "boolean",
+			"description": "Wire each per-job container into the host's shared /nix/store (build-farm model): /nix/store mounted read-only (instant cache hits) + the nix-daemon socket mounted so guest builds/writes go through the host daemon (NIX_REMOTE=daemon) and persist to the shared store for later guests. Safe: the guest maps to an untrusted host uid (daemon Trusted:0, cannot escalate); content-addressing prevents poisoning. Backs PM2."
+		},
+		"incus_reprobuild_store": {
+			"type": "string",
+			"description": "Host reprobuild content-addressed store path mounted read-write into each per-job container. The BLAKE3 CAS is self-verifying: guest-added entries persist to the shared store for later guests and cannot corrupt existing ones. Empty disables. Backs PM3."
+		},
+		"incus_reprobuild_store_guest_path": {
+			"type": "string",
+			"description": "In-guest mount point for the reprobuild store share. Empty mirrors the host path."
+		},
 		"vm_harness_path": {
 			"type": "string",
 			"description": "Path to the vm-harness binary used for per-job clone (M2) and config-drive injection (M3)."

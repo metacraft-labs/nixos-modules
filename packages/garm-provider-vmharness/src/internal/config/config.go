@@ -162,6 +162,48 @@ type Config struct {
 	// driver are exposed into the container. Backs the `incus-gpu` runner class.
 	IncusGpuPassthrough bool `toml:"incus_gpu_passthrough"`
 
+	// IncusShareHostNixStore, when true, wires every per-job container into the
+	// HOST's shared /nix/store as a build-farm participant (multi-user-Nix
+	// model — build once, cache-hit for every later guest/host):
+	//   incus config device add <name> nixstore  disk \
+	//     source=/nix/store path=/nix/store readonly=true
+	//   incus config device add <name> nixdaemon disk \
+	//     source=/nix/var/nix/daemon-socket path=/nix/var/nix/daemon-socket
+	// /nix/store is mounted READ-ONLY (the guest reads prebuilt paths directly —
+	// instant cache hits — but cannot mutate store bytes). All guest WRITES and
+	// BUILDS go through the HOST nix-daemon over the shared socket
+	// (NIX_REMOTE=daemon), so a guest-built NOVEL path lands in the shared host
+	// store (validated + content-addressed by the daemon) and is a cache hit for
+	// later guests. The share is WRITABLE-BY-DESIGN yet SAFE: incus's default
+	// idmap shifts guest root to an unprivileged, UNTRUSTED host uid (NOT in nix
+	// trusted-users), so the daemon reports Trusted: 0 — the guest can build +
+	// add content-addressed paths but CANNOT set substituters/trusted-keys or
+	// import unsigned NARs as trusted, and content-addressing means a malicious
+	// path hashes differently than anything production resolves (no cache
+	// poisoning). Residual risk: disk-DoS, contained by ephemeral guests +
+	// store quotas. Backs PM2. Default false ⇒ the container is byte-unchanged.
+	// Ignored by non-incus backends.
+	IncusShareHostNixStore bool `toml:"incus_share_host_nix_store"`
+
+	// IncusReprobuildStore, when non-empty, is the HOST path of the reprobuild
+	// content-addressed store (`repro_local_store`) mounted READ-WRITE into
+	// every per-job container before start:
+	//   incus config device add <name> reprostore disk \
+	//     source=<IncusReprobuildStore> path=<IncusReprobuildStoreGuestPath>
+	// The CAS is BLAKE3-content-addressed (hash-on-read), so writes are
+	// self-verifying: a guest ADDS content-addressed entries that PERSIST to
+	// the shared store for later guests, and CANNOT corrupt an existing entry
+	// (a tampered blob hashes to a different digest). A job resolves prebuilt
+	// artifacts locally (no HTTP round-trip) by pointing reprobuild at the mount
+	// (REPRO_STORE_ROOT=<guest path>). Backs PM3. Empty ⇒ no reprobuild share.
+	// Ignored by non-incus backends.
+	IncusReprobuildStore string `toml:"incus_reprobuild_store"`
+
+	// IncusReprobuildStoreGuestPath is the in-guest mount point for the
+	// reprobuild store share. Empty ⇒ mirrors the host path. Only consulted
+	// when IncusReprobuildStore is set.
+	IncusReprobuildStoreGuestPath string `toml:"incus_reprobuild_store_guest_path"`
+
 	// StateDir stores pid/metadata files for vm-harness run based backends
 	// (Tart/UTM on m3). It contains no secrets.
 	StateDir string `toml:"state_dir"`

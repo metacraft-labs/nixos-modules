@@ -116,6 +116,9 @@
         incus_ipv4_range_end = "${p.incusIPv4RangeEnd}"
         incus_nameservers = [${lib.concatMapStringsSep ", " (s: "\"${s}\"") p.incusNameservers}]
         incus_gpu_passthrough = ${lib.boolToString p.incusGpuPassthrough}
+        incus_share_host_nix_store = ${lib.boolToString p.incusShareHostNixStore}
+        incus_reprobuild_store = "${p.incusReprobuildStore}"
+        incus_reprobuild_store_guest_path = "${p.incusReprobuildStoreGuestPath}"
       '';
       mkVMHarnessRunKeys = p: ''
         vm_harness_path = "${p.vmHarnessPath}"
@@ -562,6 +565,67 @@
                 container). Backs a GPU runner class (`runs-on: incus-gpu`): a
                 fresh container gets a GPU, runs one job, is destroyed. Ignored by
                 non-incus providers.
+              '';
+            };
+
+            incusShareHostNixStore = mkOption {
+              type = types.bool;
+              default = false;
+              description = ''
+                When true (incus backend only), the provider wires every per-job
+                container into the HOST's shared `/nix/store` as a build-farm
+                participant (the multi-user-Nix model: build once, cache-hit for
+                every later guest/host). Before start it mounts `/nix/store`
+                READ-ONLY (the guest reads prebuilt paths directly — instant
+                cache hits) and the host nix-daemon socket directory
+                (`/nix/var/nix/daemon-socket`) so all guest WRITES/builds go
+                through the HOST daemon (`NIX_REMOTE=daemon`): a novel derivation
+                built in a guest lands in the shared host store (validated +
+                content-addressed by the daemon) and is a cache hit for later
+                guests.
+
+                SECURITY POSTURE (writable-by-design and SAFE): incus's default
+                idmap shifts guest root to an unprivileged host uid that is NOT
+                in nix `trusted-users`, so the daemon treats the guest as
+                UNTRUSTED (`Trusted: 0`). An untrusted client can build + add
+                CONTENT-ADDRESSED paths but CANNOT set substituters/trusted-keys
+                or import unsigned NARs as trusted (those settings are ignored
+                with a warning); a malicious path content-addresses to a
+                different hash than anything production resolves, so it cannot
+                poison the cache; and the raw store bytes are read-only from the
+                guest. The residual risk is disk-DoS (a guest filling the store),
+                contained by ephemeral one-job guests + store quotas. Default
+                false ⇒ the container is byte-unchanged. Ignored by non-incus
+                providers. Backs PM2 (Production-Runners shared nix store).
+              '';
+            };
+
+            incusReprobuildStore = mkOption {
+              type = types.str;
+              default = "";
+              example = "/var/lib/reprobuild/shared-store";
+              description = ''
+                When set (incus backend only), the HOST path of the reprobuild
+                content-addressed store (`repro_local_store`) mounted READ-WRITE
+                into every per-job container before start. The CAS is
+                BLAKE3-content-addressed (hash-on-read), so writes are
+                self-verifying: a guest ADDS content-addressed entries that
+                PERSIST to the shared store for later guests, and CANNOT corrupt
+                an existing entry (a tampered blob hashes to a different digest).
+                A job resolves prebuilt artifacts locally (no HTTP round-trip) by
+                pointing reprobuild at the mount (`REPRO_STORE_ROOT`). Empty ⇒ no
+                reprobuild share. Ignored by non-incus providers. Backs PM3.
+              '';
+            };
+
+            incusReprobuildStoreGuestPath = mkOption {
+              type = types.str;
+              default = "";
+              example = "/srv/repro-store";
+              description = ''
+                In-guest mount point for the `incusReprobuildStore` share. Empty
+                ⇒ mirrors the host path. Only consulted when
+                `incusReprobuildStore` is set.
               '';
             };
 
