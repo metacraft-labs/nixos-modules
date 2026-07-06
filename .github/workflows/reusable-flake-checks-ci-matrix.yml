@@ -266,6 +266,20 @@ jobs:
           nix-gitlab-token: ${{ secrets.NIX_GITLAB_TOKEN }}
           nix-gitlab-domain: ${{ vars.NIX_GITLAB_DOMAIN }}
 
+      - name: Authenticate nix to the private Attic cache
+        shell: bash
+        env:
+          ATTIC_SUBSTITUTER: ${{ vars.ATTIC_SUBSTITUTER }}
+          ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
+        run: |
+          [ -n "$ATTIC_SUBSTITUTER" ] && [ -n "$ATTIC_TOKEN" ] || exit 0
+          h="${ATTIC_SUBSTITUTER#http://}"; h="${h#https://}"; h="${h%%/*}"
+          mkdir -p "$HOME/.config/nix"
+          touch "$HOME/.config/nix/netrc"
+          chmod 0600 "$HOME/.config/nix/netrc"
+          grep -q "^machine $h " "$HOME/.config/nix/netrc" 2>/dev/null || \
+            printf 'machine %s password %s\n' "$h" "$ATTIC_TOKEN" >> "$HOME/.config/nix/netrc"
+
       - name: Download CI matrix shards
         uses: actions/download-artifact@v8
         if: needs.eval-matrix.result == 'success'
@@ -279,6 +293,10 @@ jobs:
           MCL_FLAKE_CMD: ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }}
           EXTRA_CACHE_URLS: ${{ vars.SUBSTITUTERS }}
           SYSTEM_TO_GITHUB_RUNNER_LABELS: ${{ inputs.runners }}
+          # Authenticate mcl's cache-status (narinfo) probe (same reason as the
+          # Merge matrices step below).
+          ATTIC_SUBSTITUTER: ${{ vars.ATTIC_SUBSTITUTER }}
+          ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -325,6 +343,14 @@ jobs:
       - name: Merge matrices
         if: needs.eval-matrix.result == 'success'
         id: merge
+        env:
+          # Authenticate mcl's cache-status (narinfo) probe to the private
+          # Attic cache; scoped to the Attic host inside mcl. Without this the
+          # per-derivation probe HEADs a token-gated cache unauthenticated and
+          # crashes with HTTP 401, silently skipping Publish Deployment
+          # Manifests and blocking deploys fleet-wide.
+          ATTIC_SUBSTITUTER: ${{ vars.ATTIC_SUBSTITUTER }}
+          ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
         run: ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} merge-ci-matrices
 
       - name: Generate CI matrix comment
