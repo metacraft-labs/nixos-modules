@@ -95,6 +95,23 @@
           "utm-windows-arm"
           "qemu-windows-arm"
         ];
+      providerIsQemuWindowsArm = p: p.backend == "qemu-windows-arm";
+      providerEnvVars =
+        p:
+        [
+          "PATH"
+        ]
+        ++ lib.optional (providerIsIncus p) "HOME"
+        ++ lib.optionals (providerIsVMHarnessRun p) [
+          "MCL_RUNNER_SHARED_NIX_STORE"
+          "MCL_RUNNER_SHARED_REPRO_STORE"
+          "VM_HARNESS_TART_STATE_DIR"
+          "TART_HOME"
+          "VM_HARNESS_UTM_STATE_DIR"
+          "VM_HARNESS_QEMU_WINDOWS_ARM_STATE_DIR"
+          "VMH_QEMU_WINDOWS_ARM_SWTPM_CMD"
+          "VM_HARNESS_DARWIN_ASUSER_UID"
+        ];
       mkLibvirtKeys = p: ''
         virsh_path = "${p.virshPath}"
         qemu_img_path = "${p.qemuImgPath}"
@@ -176,7 +193,7 @@
           #     without HOME (and with ProtectHome hiding /root) it errors
           #     "Unable to read the configuration file … permission denied". The
           #     unit's HOME is the garm StateDirectory (writable), so forward it.
-          environment_variables = [${if providerIsIncus p then "\"PATH\", \"HOME\"" else "\"PATH\""}]
+          environment_variables = [${lib.concatMapStringsSep ", " (v: "\"${v}\"") (providerEnvVars p)}]
       '';
       providersBlock = lib.concatStrings (lib.mapAttrsToList mkProviderBlock enabledProviders);
 
@@ -1157,6 +1174,7 @@
           providerOn = enabledProviders != { };
           anyIncus = lib.any (p: providerIsIncus p) providerList;
           anyLibvirt = lib.any (p: providerIsLibvirt p) providerList;
+          anyQemuWindowsArm = lib.any (p: providerIsQemuWindowsArm p) providerList;
           # The libvirt (Windows VM) posture forces the qemu relaxations; the
           # incus (Linux container) posture does not.
           libvirtProviderOn = anyLibvirt;
@@ -1372,13 +1390,15 @@
             # The provider child inherits the unit PATH (GARM forwards PATH via
             # environment_variables). libvirt: cdrkit(genisoimage)+qemu+libvirt
             # for the config-drive/clone path. incus: the `incus` client.
+            # qemu-windows-arm: swtpm for the Windows ARM TPM emulator.
             path =
               lib.optionals anyLibvirt [
                 pkgs.cdrkit
                 pkgs.qemu
                 pkgs.libvirt
               ]
-              ++ lib.optional anyIncus pkgs.incus;
+              ++ lib.optional anyIncus pkgs.incus
+              ++ lib.optional anyQemuWindowsArm pkgs.swtpm;
 
             serviceConfig = {
               Type = "simple";
