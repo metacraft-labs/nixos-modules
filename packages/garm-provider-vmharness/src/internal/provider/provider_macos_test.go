@@ -120,9 +120,8 @@ func TestQemuWindowsArmBootstrapUsesWindowsPath(t *testing.T) {
 		"Get-MetadataFile -Path 'credentials/runner'",
 		"Get-MetadataFile -Path 'credentials/credentials'",
 		`"$MetadataURL/credentials/credentials_rsaparams"`,
-		"[Security.Cryptography.ProtectedData]::Protect",
-		"[Security.Cryptography.DataProtectionScope]::LocalMachine",
-		"[System.IO.File]::WriteAllBytes((Join-Path $RunHome '.credentials_rsaparams'), $protectedBytes)",
+		`$rsaParamsPath = Join-Path $RunHome '.credentials_rsaparams'`,
+		`[System.IO.File]::WriteAllText($rsaParamsPath, $rsaResponse.Content, [System.Text.UTF8Encoding]::new($false))`,
 		"Send-SystemInfo",
 		"Send-Status -Status 'idle' -Message 'runner configured'",
 		"Set-Location $RunHome",
@@ -141,6 +140,11 @@ func TestQemuWindowsArmBootstrapUsesWindowsPath(t *testing.T) {
 		"RunnerService.exe",
 		"Get-MetadataFile -Path 'credentials/credentials_rsaparams'",
 		"Start-Process",
+		"[Security.Cryptography.ProtectedData]::Protect",
+		"[Security.Cryptography.DataProtectionScope]::LocalMachine",
+		"[System.IO.File]::WriteAllBytes",
+		"$encodedBytes",
+		"$protectedBytes",
 	} {
 		if strings.Contains(text, unwanted) {
 			t.Fatalf("qemu Windows ARM bootstrap used non-Windows path %q:\n%s", unwanted, text)
@@ -190,8 +194,8 @@ func TestQemuWindowsArmBootstrapUsesGuestURLOverrides(t *testing.T) {
 		`Get-MetadataFile -Path 'credentials/runner' -Destination (Join-Path $RunHome '.runner')`,
 		`Get-MetadataFile -Path 'credentials/credentials' -Destination (Join-Path $RunHome '.credentials')`,
 		`Invoke-WebRequest -UseBasicParsing -Method Get -Uri "$MetadataURL/credentials/credentials_rsaparams"`,
-		`[Security.Cryptography.ProtectedData]::Protect($encodedBytes, $null, [Security.Cryptography.DataProtectionScope]::LocalMachine)`,
-		`[System.IO.File]::WriteAllBytes((Join-Path $RunHome '.credentials_rsaparams'), $protectedBytes)`,
+		`$rsaParamsPath = Join-Path $RunHome '.credentials_rsaparams'`,
+		`[System.IO.File]::WriteAllText($rsaParamsPath, $rsaResponse.Content, [System.Text.UTF8Encoding]::new($false))`,
 		`Invoke-GarmCallback -Path 'system-info/'`,
 		`Send-Status -Status 'idle' -Message 'runner configured'`,
 		`Set-Location $RunHome`,
@@ -210,7 +214,18 @@ func TestQemuWindowsArmBootstrapUsesGuestURLOverrides(t *testing.T) {
 		t.Fatalf("qemu Windows ARM bootstrap still relies on GARM second-stage install script:\n%s", text)
 	}
 	if strings.Contains(text, "Get-MetadataFile -Path 'credentials/credentials_rsaparams'") {
-		t.Fatalf("qemu Windows ARM bootstrap writes credentials_rsaparams without Windows DPAPI protection:\n%s", text)
+		t.Fatalf("qemu Windows ARM bootstrap uses generic metadata file handling for credentials_rsaparams:\n%s", text)
+	}
+	for _, forbidden := range []string{
+		"[Security.Cryptography.ProtectedData]::Protect",
+		"[Security.Cryptography.DataProtectionScope]::LocalMachine",
+		"[System.IO.File]::WriteAllBytes",
+		"$encodedBytes",
+		"$protectedBytes",
+	} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("qemu Windows ARM bootstrap writes credentials_rsaparams as protected/raw bytes via %q:\n%s", forbidden, text)
+		}
 	}
 	if strings.Contains(text, "http://192.168.64.1:9997") {
 		t.Fatalf("qemu Windows ARM bootstrap retained global guest URL:\n%s", text)
@@ -339,8 +354,8 @@ powershell.exe -Sta -NonInteractive -ExecutionPolicy RemoteSigned -File $install
 		`Get-MetadataFile -Path 'credentials/runner' -Destination (Join-Path $RunHome '.runner')`,
 		`Get-MetadataFile -Path 'credentials/credentials' -Destination (Join-Path $RunHome '.credentials')`,
 		`Invoke-WebRequest -UseBasicParsing -Method Get -Uri "$MetadataURL/credentials/credentials_rsaparams"`,
-		`[Security.Cryptography.ProtectedData]::Protect($encodedBytes, $null, [Security.Cryptography.DataProtectionScope]::LocalMachine)`,
-		`[System.IO.File]::WriteAllBytes((Join-Path $RunHome '.credentials_rsaparams'), $protectedBytes)`,
+		`$rsaParamsPath = Join-Path $RunHome '.credentials_rsaparams'`,
+		`[System.IO.File]::WriteAllText($rsaParamsPath, $rsaResponse.Content, [System.Text.UTF8Encoding]::new($false))`,
 		`Invoke-GarmCallback -Path 'system-info/'`,
 		`Send-Status -Status 'idle' -Message 'runner configured'`,
 		`Set-Location $RunHome`,
@@ -359,7 +374,18 @@ powershell.exe -Sta -NonInteractive -ExecutionPolicy RemoteSigned -File $install
 		t.Fatalf("CreateInstance bootstrap still relies on GARM second-stage install script:\n%s", text)
 	}
 	if strings.Contains(text, "Get-MetadataFile -Path 'credentials/credentials_rsaparams'") {
-		t.Fatalf("CreateInstance bootstrap writes credentials_rsaparams without Windows DPAPI protection:\n%s", text)
+		t.Fatalf("CreateInstance bootstrap uses generic metadata file handling for credentials_rsaparams:\n%s", text)
+	}
+	for _, forbidden := range []string{
+		"[Security.Cryptography.ProtectedData]::Protect",
+		"[Security.Cryptography.DataProtectionScope]::LocalMachine",
+		"[System.IO.File]::WriteAllBytes",
+		"$encodedBytes",
+		"$protectedBytes",
+	} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("CreateInstance bootstrap writes credentials_rsaparams as protected/raw bytes via %q:\n%s", forbidden, text)
+		}
 	}
 	if strings.Contains(text, "http://192.168.64.1:9997") {
 		t.Fatalf("CreateInstance bootstrap retained global guest URL:\n%s", text)
