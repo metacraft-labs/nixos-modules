@@ -137,9 +137,15 @@ func powerShellSingleQuote(s string) string {
 
 func windowsBootstrapCommand(guestPath string) []string {
 	script := strings.Join([]string{
-		"$ErrorActionPreference = 'Stop'",
-		"& " + powerShellSingleQuote(guestPath),
-		"if ($LASTEXITCODE -ne $null -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+		"$bootstrapExitCode = $null",
+		"try {",
+		"  & " + powerShellSingleQuote(guestPath),
+		"  $bootstrapExitCode = $LASTEXITCODE",
+		"} catch {",
+		"  Write-Host ('GitHub Actions runner bootstrap failed: ' + $_.Exception.Message)",
+		"  exit 1",
+		"}",
+		"if ($bootstrapExitCode -ne $null -and $bootstrapExitCode -ne 0) { exit $bootstrapExitCode }",
 		"$deadline = (Get-Date).AddMinutes(10)",
 		"$runnerService = $null",
 		"$runnerProcess = $null",

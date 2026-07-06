@@ -234,8 +234,12 @@ func TestVMHarnessRunBackendWindowsCreateCommandWaitsAfterBootstrap(t *testing.T
 		"-ExecutionPolicy\n",
 		"Bypass\n",
 		"-Command\n",
+		"$bootstrapExitCode = $null",
+		"try {",
 		"& 'C:\\garm-bootstrap.ps1'",
-		"exit $LASTEXITCODE",
+		"$bootstrapExitCode = $LASTEXITCODE",
+		"GitHub Actions runner bootstrap failed:",
+		"exit $bootstrapExitCode",
 		"Get-Service -Name 'actions.runner.*'",
 		"Get-Process -Name 'Runner.Listener'",
 		"GitHub Actions runner service/process did not start after bootstrap",
@@ -247,6 +251,9 @@ func TestVMHarnessRunBackendWindowsCreateCommandWaitsAfterBootstrap(t *testing.T
 	}
 	if strings.Contains(argv, "-File\nC:\\garm-bootstrap.ps1\n") {
 		t.Fatalf("windows argv still exits immediately after bootstrap:\n%s", argv)
+	}
+	if strings.Contains(argv, "$ErrorActionPreference = 'Stop'") {
+		t.Fatalf("windows argv makes non-terminating bootstrap warnings fatal:\n%s", argv)
 	}
 }
 
