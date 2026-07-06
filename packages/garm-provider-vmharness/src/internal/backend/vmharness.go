@@ -131,6 +131,38 @@ func vmHarnessChildEnv() []string {
 	return out
 }
 
+func powerShellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+}
+
+func windowsBootstrapCommand(guestPath string) []string {
+	script := strings.Join([]string{
+		"$ErrorActionPreference = 'Stop'",
+		"& " + powerShellSingleQuote(guestPath),
+		"if ($LASTEXITCODE -ne $null -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+		"$deadline = (Get-Date).AddMinutes(10)",
+		"$runnerService = $null",
+		"$runnerProcess = $null",
+		"while ((Get-Date) -lt $deadline) {",
+		"  $runnerService = Get-Service -Name 'actions.runner.*' -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq 'Running' } | Select-Object -First 1",
+		"  $runnerProcess = Get-Process -Name 'Runner.Listener' -ErrorAction SilentlyContinue | Select-Object -First 1",
+		"  if ($runnerService -or $runnerProcess) { break }",
+		"  Start-Sleep -Seconds 5",
+		"}",
+		"if (-not $runnerService -and -not $runnerProcess) {",
+		"  Write-Host 'GitHub Actions runner service/process did not start after bootstrap'",
+		"  exit 1",
+		"}",
+		"while ($true) {",
+		"  $runnerService = Get-Service -Name 'actions.runner.*' -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq 'Running' } | Select-Object -First 1",
+		"  $runnerProcess = Get-Process -Name 'Runner.Listener' -ErrorAction SilentlyContinue | Select-Object -First 1",
+		"  if (-not $runnerService -and -not $runnerProcess) { break }",
+		"  Start-Sleep -Seconds 30",
+		"}",
+	}, "; ")
+	return []string{"powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script}
+}
+
 func (b *VMHarnessRunBackend) toInstance(st vmhState) Instance {
 	status := "stopped"
 	if processRunning(st.PID) {
@@ -169,7 +201,8 @@ func (b *VMHarnessRunBackend) Create(ctx context.Context, args CreateArgs) (Inst
 	if strings.EqualFold(args.OSName, "windows") || b.GuestOS == "windows" {
 		guestPath = `C:\garm-bootstrap.ps1`
 		bootstrapPath = filepath.Join(dir, "garm-bootstrap.ps1")
-		argv = append(argv, "--copy-to", bootstrapPath+":"+guestPath, "--", "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", guestPath)
+		argv = append(argv, "--copy-to", bootstrapPath+":"+guestPath, "--")
+		argv = append(argv, windowsBootstrapCommand(guestPath)...)
 	} else {
 		argv = append(argv, "--copy-to", bootstrapPath+":"+guestPath, "--", "/bin/sh", "-c", "chmod +x "+guestPath+" && exec "+guestPath)
 	}

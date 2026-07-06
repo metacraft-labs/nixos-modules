@@ -173,6 +173,83 @@ func TestVMHarnessRunBackendDarwinAsUserWrapper(t *testing.T) {
 	}
 }
 
+func TestVMHarnessRunBackendWindowsCreateCommandWaitsAfterBootstrap(t *testing.T) {
+	tmp := t.TempDir()
+	logPath := filepath.Join(tmp, "argv.log")
+	mock := filepath.Join(tmp, "vm-harness")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$@\" > " + shellSingleQuote(logPath) + "\n" +
+		"sleep 30\n"
+	if err := os.WriteFile(mock, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	b := &VMHarnessRunBackend{
+		VMHarnessPath: mock,
+		BackendID:     "qemu-windows-arm",
+		GuestOS:       "windows",
+		StateDir:      filepath.Join(tmp, "state"),
+	}
+	inst, err := b.Create(context.Background(), CreateArgs{
+		Name:         "garm-windows-test",
+		ControllerID: "controller",
+		PoolID:       "pool",
+		SourceImage:  filepath.Join(tmp, "golden"),
+		OSName:       "windows",
+		OSVersion:    "11-arm64",
+		OSArch:       "arm64",
+		Bootstrap:    []byte("Write-Output 'bootstrap'\n"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = b.Delete(context.Background(), inst.Name)
+	}()
+
+	deadline := time.Now().Add(3 * time.Second)
+	var argv string
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(logPath)
+		if err == nil {
+			argv = string(data)
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if argv == "" {
+		t.Fatal("mock vm-harness did not record argv")
+	}
+	for _, want := range []string{
+		"run\n",
+		"--backend\n",
+		"qemu-windows-arm\n",
+		"--guest\n",
+		"windows\n",
+		"--copy-to\n",
+		"garm-bootstrap.ps1:C:\\garm-bootstrap.ps1\n",
+		"--\n",
+		"powershell.exe\n",
+		"-NoProfile\n",
+		"-ExecutionPolicy\n",
+		"Bypass\n",
+		"-Command\n",
+		"& 'C:\\garm-bootstrap.ps1'",
+		"exit $LASTEXITCODE",
+		"Get-Service -Name 'actions.runner.*'",
+		"Get-Process -Name 'Runner.Listener'",
+		"GitHub Actions runner service/process did not start after bootstrap",
+		"Start-Sleep -Seconds 30",
+	} {
+		if !strings.Contains(argv, want) {
+			t.Fatalf("windows argv missing %q:\n%s", want, argv)
+		}
+	}
+	if strings.Contains(argv, "-File\nC:\\garm-bootstrap.ps1\n") {
+		t.Fatalf("windows argv still exits immediately after bootstrap:\n%s", argv)
+	}
+}
+
 func TestVMHarnessRunBackendDeleteCleansTartEphemeralsByPrefix(t *testing.T) {
 	tmp := t.TempDir()
 	tartLog := filepath.Join(tmp, "tart.log")
