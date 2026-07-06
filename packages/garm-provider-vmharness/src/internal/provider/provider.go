@@ -593,6 +593,7 @@ Get-MetadataFile -Path 'credentials/credentials' -Destination (Join-Path $RunHom
 $rsaParamsPath = Join-Path $RunHome '.credentials_rsaparams'
 $rsaParamsTmp = [System.IO.Path]::GetTempFileName()
 try {
+	Add-Type -AssemblyName System.Security
 	Invoke-WebRequest -UseBasicParsing -Method Get -Uri "$MetadataURL/credentials/credentials_rsaparams" -Headers @{Accept='application/json'; Authorization="Bearer $BearerToken"} -OutFile $rsaParamsTmp
 	$rsaBytes = [System.IO.File]::ReadAllBytes($rsaParamsTmp)
 	$protectedBytes = [System.Security.Cryptography.ProtectedData]::Protect($rsaBytes, $null, [System.Security.Cryptography.DataProtectionScope]::LocalMachine)
