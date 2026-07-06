@@ -558,16 +558,92 @@ func renderRunnerBootstrapForBackend(backendKind config.BackendKind, bootstrapPa
 	return script, nil
 }
 
+func replaceURLInBytes(data []byte, oldURL, newURL string) []byte {
+	if oldURL == "" || newURL == "" || oldURL == newURL {
+		return data
+	}
+	return bytes.ReplaceAll(data, []byte(oldURL), []byte(newURL))
+}
+
+func replaceURLInString(data, oldURL, newURL string) string {
+	if oldURL == "" || newURL == "" || oldURL == newURL {
+		return data
+	}
+	return strings.ReplaceAll(data, oldURL, newURL)
+}
+
+func rewriteCloudConfigSpecURLs(raw json.RawMessage, oldMetadataURL, newMetadataURL, oldCallbackURL, newCallbackURL string) json.RawMessage {
+	if len(raw) == 0 {
+		return raw
+	}
+	var spec map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &spec); err != nil {
+		return raw
+	}
+
+	if value, ok := spec["runner_install_template"]; ok {
+		var script []byte
+		if err := json.Unmarshal(value, &script); err == nil {
+			script = replaceURLInBytes(script, oldMetadataURL, newMetadataURL)
+			script = replaceURLInBytes(script, oldCallbackURL, newCallbackURL)
+			if encoded, err := json.Marshal(script); err == nil {
+				spec["runner_install_template"] = encoded
+			}
+		}
+	}
+	if value, ok := spec["pre_install_scripts"]; ok {
+		var scripts map[string][]byte
+		if err := json.Unmarshal(value, &scripts); err == nil {
+			for name, script := range scripts {
+				script = replaceURLInBytes(script, oldMetadataURL, newMetadataURL)
+				script = replaceURLInBytes(script, oldCallbackURL, newCallbackURL)
+				scripts[name] = script
+			}
+			if encoded, err := json.Marshal(scripts); err == nil {
+				spec["pre_install_scripts"] = encoded
+			}
+		}
+	}
+	if value, ok := spec["extra_context"]; ok {
+		var extraContext map[string]string
+		if err := json.Unmarshal(value, &extraContext); err == nil {
+			for key, value := range extraContext {
+				value = replaceURLInString(value, oldMetadataURL, newMetadataURL)
+				value = replaceURLInString(value, oldCallbackURL, newCallbackURL)
+				extraContext[key] = value
+			}
+			if encoded, err := json.Marshal(extraContext); err == nil {
+				spec["extra_context"] = encoded
+			}
+		}
+	}
+
+	rewritten, err := json.Marshal(spec)
+	if err != nil {
+		return raw
+	}
+	return rewritten
+}
+
 func applyGuestURLOverrides(bootstrapParams commonParams.BootstrapInstance, cfg *config.Config) commonParams.BootstrapInstance {
 	if cfg == nil {
 		return bootstrapParams
 	}
+	originalMetadataURL := bootstrapParams.MetadataURL
+	originalCallbackURL := bootstrapParams.CallbackURL
 	if cfg.GuestMetadataURL != "" {
 		bootstrapParams.MetadataURL = cfg.GuestMetadataURL
 	}
 	if cfg.GuestCallbackURL != "" {
 		bootstrapParams.CallbackURL = cfg.GuestCallbackURL
 	}
+	bootstrapParams.ExtraSpecs = rewriteCloudConfigSpecURLs(
+		bootstrapParams.ExtraSpecs,
+		originalMetadataURL,
+		bootstrapParams.MetadataURL,
+		originalCallbackURL,
+		bootstrapParams.CallbackURL,
+	)
 	return bootstrapParams
 }
 

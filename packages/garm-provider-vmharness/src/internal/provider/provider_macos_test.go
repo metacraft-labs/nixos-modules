@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cloudbase/garm-provider-common/cloudconfig"
 	commonParams "github.com/cloudbase/garm-provider-common/params"
 
 	"github.com/metacraft-labs/garm-provider-vmharness/internal/backend"
@@ -213,6 +214,20 @@ func TestQemuWindowsArmCreateInstanceWritesBootstrapWithGuestURLOverrides(t *tes
 		t.Fatal(err)
 	}
 
+	extraSpecs, err := json.Marshal(cloudconfig.CloudConfigSpec{
+		RunnerInstallTemplate: []byte(`#ps1_sysnative
+$CallbackURL="{{.CallbackURL}}"
+$MetadataURL="{{.MetadataURL}}"
+$installScript = "$env:TEMP\install-runner.ps1"
+wget -UseBasicParsing -Headers @{"Accept"="application/json"; "Authorization"="Bearer {{.CallbackToken}}"} -Uri http://192.168.64.1:9997/api/v1/metadata/install-script/ -OutFile $installScript
+Invoke-WebRequest -UseBasicParsing -Method Post -Uri http://192.168.64.1:9997/api/v1/callbacks/status -Body "{}"
+powershell.exe -Sta -NonInteractive -ExecutionPolicy RemoteSigned -File $installScript
+`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	params := commonParams.BootstrapInstance{
 		Name:             "garm-win-arm-1",
 		Image:            "win-arm-runner",
@@ -224,6 +239,7 @@ func TestQemuWindowsArmCreateInstanceWritesBootstrapWithGuestURLOverrides(t *tes
 		OSArch:           commonParams.Arm64,
 		Labels:           []string{"self-hosted", "windows", "arm64", "win-arm"},
 		JitConfigEnabled: true,
+		ExtraSpecs:       extraSpecs,
 		Tools: []commonParams.RunnerApplicationDownload{
 			{
 				OS:             strptr("win"),
@@ -260,6 +276,8 @@ func TestQemuWindowsArmCreateInstanceWritesBootstrapWithGuestURLOverrides(t *tes
 	for _, want := range []string{
 		`$CallbackURL="http://10.0.2.2:9997/api/v1/callbacks"`,
 		`$MetadataURL="http://10.0.2.2:9997/api/v1/metadata"`,
+		`http://10.0.2.2:9997/api/v1/metadata/install-script/`,
+		`http://10.0.2.2:9997/api/v1/callbacks/status`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("CreateInstance bootstrap missing override %q:\n%s", want, text)
