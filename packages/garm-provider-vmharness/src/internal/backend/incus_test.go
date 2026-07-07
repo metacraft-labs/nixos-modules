@@ -311,6 +311,67 @@ func TestIncusSecurityNestingEnablesNesting(t *testing.T) {
 	}
 }
 
+// TestIncusNestedKvmAttachesKvmDevice proves the HR2 nested-VM path: with
+// NestedKvm set, Create adds a `/dev/kvm` unix-char device AND sets
+// `security.nesting=true` on the container BEFORE start (so an in-guest
+// `qemu-system-* -enable-kvm` gets hardware-accelerated virtualisation).
+// Without it, neither the kvm device nor security.nesting is present (the
+// plain `incus` class stays byte-unchanged — the live runners are untouched).
+func TestIncusNestedKvmAttachesKvmDevice(t *testing.T) {
+	cmd, stateDir := writeMockIncus(t)
+	b := newTestIncusBackend(cmd)
+	b.NestedKvm = true
+	ctx := context.Background()
+
+	if _, err := b.Create(ctx, CreateArgs{
+		Name:        "garm-kvm-1",
+		SourceImage: "runner-linux",
+		OSName:      "linux",
+		OSVersion:   "debian12",
+	}); err != nil {
+		t.Fatalf("Create (nested-kvm): %v", err)
+	}
+
+	devices, err := os.ReadFile(filepath.Join(stateDir, "garm-kvm-1", "devices"))
+	if err != nil {
+		t.Fatalf("expected a kvm device to be added, but no devices file: %v", err)
+	}
+	// devices file rows are: <devname>\t<devtype>\t<k=v ...>
+	if !strings.Contains(string(devices), "kvm\tunix-char") ||
+		!strings.Contains(string(devices), "source=/dev/kvm") ||
+		!strings.Contains(string(devices), "path=/dev/kvm") {
+		t.Fatalf("expected a `kvm` unix-char device sourcing /dev/kvm, got: %q", string(devices))
+	}
+
+	config, err := os.ReadFile(filepath.Join(stateDir, "garm-kvm-1", "config"))
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if !strings.Contains(string(config), "security.nesting\ttrue") {
+		t.Fatalf("expected security.nesting=true with nested-kvm on, got config:\n%s", string(config))
+	}
+
+	// The plain (default-OFF) backend must NOT add a kvm device or set
+	// security.nesting: the existing live runners stay byte-unchanged.
+	plain := newTestIncusBackend(cmd)
+	if _, err := plain.Create(ctx, CreateArgs{
+		Name:        "garm-kvm-plain",
+		SourceImage: "runner-linux",
+	}); err != nil {
+		t.Fatalf("Create (plain): %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(stateDir, "garm-kvm-plain", "devices")); err == nil {
+		t.Fatalf("plain incus class must not attach any device (default OFF)")
+	}
+	pcfg, err := os.ReadFile(filepath.Join(stateDir, "garm-kvm-plain", "config"))
+	if err != nil {
+		t.Fatalf("read plain config: %v", err)
+	}
+	if strings.Contains(string(pcfg), "security.nesting") {
+		t.Fatalf("plain incus class must not set security.nesting (default OFF), got:\n%s", string(pcfg))
+	}
+}
+
 // TestIncusSharedStoresAttachStoreDisks proves the PM2/PM3 shared-store path
 // (writable-by-design, safe): with ShareHostNixStore + ReprobuildStore set,
 // Create attaches, before start, the host `/nix/store` READ-ONLY (the guest

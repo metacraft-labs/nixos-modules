@@ -118,6 +118,19 @@ type IncusBackend struct {
 	// (overlayfs writes trusted.overlay.* xattrs). Default false ⇒ the
 	// container is byte-unchanged (the live runners are untouched).
 	SecurityNesting bool
+	// NestedKvm, when true, enables NESTED HARDWARE VIRTUALISATION (KVM)
+	// inside each per-job container so an in-guest `qemu-system-* -enable-kvm`
+	// can boot an accelerated VM (the `runs-on: incus` nested-KVM path — HR2).
+	// Before start it adds the host `/dev/kvm` character device to the
+	// container (`incus config device add <name> kvm unix-char
+	// source=/dev/kvm path=/dev/kvm`, so the guest sees `/dev/kvm` and can
+	// open it) AND ensures `security.nesting=true` (an unprivileged nested
+	// container needs the nesting seam to let the in-guest hypervisor create
+	// its own namespaces/mounts around the accelerated guest). The host must
+	// itself expose `/dev/kvm` with nested virtualisation enabled
+	// (`kvm_intel.nested=Y` / `kvm_amd.nested=Y`). Default false ⇒ the
+	// container is byte-unchanged (the live runners are untouched).
+	NestedKvm bool
 }
 
 // Host paths shared into the per-job container when ShareHostNixStore is set:
@@ -440,6 +453,27 @@ func (b *IncusBackend) Create(ctx context.Context, args CreateArgs) (Instance, e
 				_ = b.forceDelete(ctx, args.Name)
 				return Instance{}, fmt.Errorf("incus config set %s=%s: %w: %s", kv[0], kv[1], err, strings.TrimSpace(out))
 			}
+		}
+	}
+
+	// 4e. Nested KVM (the `runs-on: incus` nested-VM path — HR2). Expose the
+	//     host `/dev/kvm` character device into the container so an in-guest
+	//     `qemu-system-* -enable-kvm` gets hardware-accelerated virtualisation,
+	//     and ensure `security.nesting=true` (an unprivileged nested container
+	//     needs the nesting seam for the in-guest hypervisor's namespaces/mounts
+	//     — it reuses the same seam SecurityNesting sets; setting it here is
+	//     idempotent when both toggles are on). Done pre-start so the device is
+	//     present on first boot. Default OFF ⇒ this block is skipped and the
+	//     container is byte-unchanged (the live runners are untouched).
+	if b.NestedKvm {
+		if out, err := b.run(ctx, "", "config", "set", args.Name, "security.nesting", "true"); err != nil {
+			_ = b.forceDelete(ctx, args.Name)
+			return Instance{}, fmt.Errorf("incus config set security.nesting=true: %w: %s", err, strings.TrimSpace(out))
+		}
+		if out, err := b.run(ctx, "", "config", "device", "add", args.Name, "kvm", "unix-char",
+			"source=/dev/kvm", "path=/dev/kvm"); err != nil {
+			_ = b.forceDelete(ctx, args.Name)
+			return Instance{}, fmt.Errorf("incus config device add kvm: %w: %s", err, strings.TrimSpace(out))
 		}
 	}
 

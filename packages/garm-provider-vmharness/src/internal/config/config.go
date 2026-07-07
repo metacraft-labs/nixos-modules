@@ -219,6 +219,18 @@ type Config struct {
 	// backends. Backs HR1.
 	IncusSecurityNesting bool `toml:"incus_security_nesting"`
 
+	// IncusNestedKvm, when true, makes the incus backend expose the host
+	// `/dev/kvm` into every per-job container and ensure security.nesting=true
+	// so an in-guest `qemu-system-* -enable-kvm` gets hardware-accelerated
+	// virtualisation (the `runs-on: incus` nested-VM path — HR2):
+	//   incus config set <name> security.nesting true
+	//   incus config device add <name> kvm unix-char source=/dev/kvm path=/dev/kvm
+	// The host must expose /dev/kvm with nested virtualisation enabled
+	// (kvm_intel.nested=Y / kvm_amd.nested=Y). Default false ⇒ the container is
+	// byte-unchanged (the live runners are untouched). Ignored by non-incus
+	// backends. Backs HR2.
+	IncusNestedKvm bool `toml:"incus_nested_kvm"`
+
 	// StateDir stores pid/metadata files for vm-harness run based backends
 	// (Tart/UTM on m3). It contains no secrets.
 	StateDir string `toml:"state_dir"`

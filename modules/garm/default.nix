@@ -141,6 +141,7 @@
         incus_reprobuild_store = "${p.incusReprobuildStore}"
         incus_reprobuild_store_guest_path = "${p.incusReprobuildStoreGuestPath}"
         incus_security_nesting = ${lib.boolToString p.incusSecurityNesting}
+        incus_nested_kvm = ${lib.boolToString p.incusNestedKvm}
       '';
       mkVMHarnessRunKeys =
         p:
@@ -1055,6 +1056,26 @@
                 driver). Default false ⇒ the container is byte-unchanged (the
                 live runners are untouched). Ignored by non-incus providers.
                 Backs HR1 (Production-Runners nested Docker).
+              '';
+            };
+
+            incusNestedKvm = mkOption {
+              type = types.bool;
+              default = false;
+              description = ''
+                When true (incus backend only), the provider exposes the host
+                `/dev/kvm` into every per-job container and ensures
+                `security.nesting=true` before start so an in-guest
+                `qemu-system-* -enable-kvm` gets HARDWARE-ACCELERATED nested
+                virtualisation (the `runs-on: incus` nested-VM path):
+                `incus config set <name> security.nesting true` plus
+                `incus config device add <name> kvm unix-char
+                source=/dev/kvm path=/dev/kvm`. The host must itself expose
+                `/dev/kvm` with nested virtualisation enabled
+                (`kvm_intel.nested=Y` / `kvm_amd.nested=Y`), and the runner
+                image must ship qemu/kvm. Default false ⇒ the container is
+                byte-unchanged (the live runners are untouched). Ignored by
+                non-incus providers. Backs HR2 (Production-Runners nested KVM).
               '';
             };
 

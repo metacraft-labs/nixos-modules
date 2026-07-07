@@ -80,6 +80,10 @@ const configJSONSchema = `{
 			"type": "boolean",
 			"description": "Enable nested containerisation on each per-job container (security.nesting=true + the syscalls.intercept.mknod/.setxattr intercepts fuse-overlayfs needs) so an in-guest Docker/Podman daemon can run and build images unprivileged. Backs the runs-on:incus nested-Docker path (HR1). Default false leaves the container byte-unchanged."
 		},
+		"incus_nested_kvm": {
+			"type": "boolean",
+			"description": "Expose the host /dev/kvm into each per-job container and set security.nesting=true so an in-guest qemu-system-* -enable-kvm gets hardware-accelerated virtualisation. Backs the runs-on:incus nested-VM path (HR2). Default false leaves the container byte-unchanged."
+		},
 		"vm_harness_path": {
 			"type": "string",
 			"description": "Path to the vm-harness binary used for per-job clone (M2) and config-drive injection (M3)."
@@ -144,6 +148,10 @@ const extraSpecsJSONSchema = `{
 		"incus_security_nesting": {
 			"type": "boolean",
 			"description": "Enable nested containerisation (security.nesting + fuse-overlayfs syscall intercepts) for this pool's per-job incus containers so an in-guest Docker/Podman daemon can run. Backs the runs-on:incus nested-Docker path (HR1)."
+		},
+		"incus_nested_kvm": {
+			"type": "boolean",
+			"description": "Expose the host /dev/kvm into this pool's per-job incus containers and set security.nesting=true so an in-guest qemu-system-* -enable-kvm gets hardware-accelerated virtualisation. Backs the runs-on:incus nested-VM path (HR2)."
 		}
 	},
 	"additionalProperties": true
