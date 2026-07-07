@@ -12,6 +12,8 @@
     ./deployment-reconciler.nix
     ./garm-service-boot.nix
     ./garm-multi-provider.nix
+    ./garm-reconcile.nix
+    ./garm-incus-runner-host.nix
     ./garm-macos-runner-install-wrapper.nix
     ./garm-provider-vmharness-protocol.nix
     ./repro-binary-cache-systemd.nix

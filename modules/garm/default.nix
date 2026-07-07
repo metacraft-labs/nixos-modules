@@ -1,5 +1,9 @@
 { withSystem, ... }:
 {
+  imports = [
+    ./incus-runner-host.nix
+  ];
+
   # Ephemeral-Windows-Runners-GARM M0 — host cloudbase/garm (the GitHub Actions
   # Runner Manager control plane) as an opt-in NixOS systemd service, mirroring
   # the shape of `services.mcl-repro-binary-cache`: a package option, a
@@ -369,6 +373,357 @@
             -e "s|@JWT_SECRET@|$jwt_secret|" \
             "${configTemplate}" > "$tmp"
           mv -f "$tmp" "${renderedConfig}"
+        '';
+      };
+
+      # ----- Declarative reconcile (PM5, pulled forward) ----------------------
+      # The reconcile reads a Nix-rendered DESIRED-STATE manifest (JSON, no
+      # secrets: credential NAMES + app ids + PEM paths + org/scale-set tuning)
+      # and drives `garm-cli` to converge GARM's DB onto it. The manifest is a
+      # store file (safe: no secret material — the PEM PATH is not the PEM), so
+      # the reconcile logic is a pure function of `garm-cli list --format json`
+      # vs this manifest. Idempotent by construction (every mutation is guarded
+      # by a "does it already match?" check).
+      rcfg = cfg.reconcile;
+
+      # DESIRED credentials — one per ENABLED github.<name>. `credentialsName`
+      # is the GARM `[[github]].name`; `pemPath` is the module-staged 0600 copy.
+      desiredCreds = lib.mapAttrsToList (name: g: {
+        name = g.credentialsName;
+        description = g.description;
+        appId = g.appId;
+        installationId = g.installationId;
+        pemPath = stagedPemPath name;
+      }) enabledGithub;
+
+      # DESIRED scale sets — one per scaleSets.<name> (the GARM-side NAME is
+      # `scaleSetName`, decoupled from the attr key). Each carries its org +
+      # credential + provider + tuning.
+      desiredScaleSets = lib.mapAttrsToList (_: ss: {
+        name = ss.scaleSetName;
+        org = ss.org;
+        credentials = ss.credentials;
+        provider = ss.provider;
+        image = ss.image;
+        osType = ss.osType;
+        osArch = ss.osArch;
+        maxRunners = ss.maxRunners;
+        minIdleRunners = ss.minIdleRunners;
+        runnerBootstrapTimeout = ss.runnerBootstrapTimeout;
+        enabled = ss.enabled;
+      }) cfg.scaleSets;
+
+      # DESIRED orgs — the DISTINCT (org, credentials) pairs referenced by the
+      # declared scale sets. Each managed org is created against its credential.
+      desiredOrgs =
+        let
+          pairs = lib.filter (o: o.name != "") (
+            map (ss: {
+              name = ss.org;
+              credentials = ss.credentials;
+            }) desiredScaleSets
+          );
+        in
+        lib.unique pairs;
+
+      # Controller URLs the reconcile must set BEFORE any org/scale-set op:
+      # GARM guards the `/api/v1` router with `urlsRequired` (409 until
+      # metadata + callback + agent URLs are all set). Derive them from the
+      # module's guest-facing URLs, falling back to the local API base so the
+      # reconcile can converge even when no guest-facing URL is configured
+      # (the hermetic test) — the URLs need only be non-empty to pass the gate.
+      localApiBase = "http://127.0.0.1:${toString cfg.apiServer.port}";
+      ctrlMetadataURL = if cfg.metadataURL != "" then cfg.metadataURL else "${localApiBase}/api/v1/metadata";
+      ctrlCallbackURL = if cfg.callbackURL != "" then cfg.callbackURL else "${localApiBase}/api/v1/callbacks";
+      ctrlAgentURL = "${localApiBase}/agent";
+
+      reconcileManifest = pkgs.writeText "garm-reconcile-manifest.json" (
+        builtins.toJSON {
+          endpoint = {
+            name = rcfg.forgeEndpoint;
+            apiBaseURL = rcfg.apiBaseURL;
+            baseURL = rcfg.baseURL;
+            uploadURL = rcfg.uploadURL;
+          };
+          controllerURLs = {
+            metadata = ctrlMetadataURL;
+            callback = ctrlCallbackURL;
+            agent = ctrlAgentURL;
+          };
+          credentials = desiredCreds;
+          orgs = desiredOrgs;
+          scaleSets = desiredScaleSets;
+          pruneUnmanaged = rcfg.pruneUnmanaged;
+        }
+      );
+
+      reconcileScript = pkgs.writeShellApplication {
+        name = "garm-reconcile";
+        runtimeInputs = [
+          cfg.package
+          pkgs.coreutils
+          pkgs.jq
+          pkgs.curl
+          pkgs.openssl
+        ];
+        text = ''
+          set -euo pipefail
+
+          state_dir="${stateDir}"
+          manifest="${reconcileManifest}"
+          api_url="http://127.0.0.1:${toString cfg.apiServer.port}"
+          endpoint_name="${rcfg.forgeEndpoint}"
+          admin_user="${rcfg.adminUsername}"
+          admin_email="${rcfg.adminEmail}"
+          cred_dir="''${CREDENTIALS_DIRECTORY:-}"
+          export HOME="$state_dir"
+
+          log() { echo "garm-reconcile: $*"; }
+
+          # ---- Admin password: operator-supplied (LoadCredential) or persisted.
+          pw_persist="$state_dir/reconcile-admin-password.secret"
+          # The operator-supplied password only lands in cred_dir when
+          # adminPasswordFile is set (via LoadCredential), so the -f test below
+          # already covers the null case — no Nix-level guard needed (a
+          # `[ -n "1" ]` literal here trips shellcheck SC2157).
+          if [ -n "$cred_dir" ] && [ -f "$cred_dir/reconcile-admin-password" ]; then
+            admin_pw="$(head -n1 "$cred_dir/reconcile-admin-password" | tr -d '\n')"
+          else
+            if [ ! -f "$pw_persist" ]; then
+              umask 077
+              # zxcvbn score 4: long, mixed. Persisted 0600 under stateDir.
+              openssl rand -base64 24 | tr -d '\n' | sed 's/$/-Grm9!/' > "$pw_persist"
+            fi
+            admin_pw="$(head -n1 "$pw_persist" | tr -d '\n')"
+          fi
+
+          gcli() { garm-cli --format json "$@"; }
+
+          # ---- (0) Wait for the API + ensure first-run admin exists -----------
+          for _ in $(seq 1 60); do
+            if curl -fsS -o /dev/null "$api_url/api/v1/controller-info" 2>/dev/null; then break; fi
+            # 409 (init/urls required) also means the server is UP.
+            code="$(curl -s -o /dev/null -w '%{http_code}' "$api_url/api/v1/controller-info" || true)"
+            [ "$code" = "409" ] && break
+            sleep 1
+          done
+
+          # first-run is idempotent enough: 200 on fresh, 409 if already done.
+          fr_code="$(curl -s -o /tmp/garm-fr.json -w '%{http_code}' \
+            -X POST "$api_url/api/v1/first-run" \
+            -H 'Content-Type: application/json' \
+            -d "$(jq -cn --arg u "$admin_user" --arg e "$admin_email" --arg p "$admin_pw" \
+                  '{username:$u,email:$e,password:$p}')" || true)"
+          case "$fr_code" in
+            200) log "controller first-run complete (admin '$admin_user' created)";;
+            409) log "controller already initialised";;
+            *)   log "WARNING: first-run returned HTTP $fr_code (continuing; assuming pre-initialised)";;
+          esac
+
+          # Log the local garm-cli profile in (needed for every garm-cli call).
+          # `init` writes the profile + logs in; if a profile already exists we
+          # refresh the token via `profile login`.
+          if ! garm-cli profile list --format json 2>/dev/null | jq -e '.[]?|select(.name=="reconcile")' >/dev/null 2>&1; then
+            garm-cli init --name reconcile --url "$api_url" \
+              --username "$admin_user" --email "$admin_email" --password "$admin_pw" \
+              >/dev/null 2>&1 || \
+              garm-cli profile add --name reconcile --url "$api_url" \
+                --username "$admin_user" --password "$admin_pw" >/dev/null 2>&1 || true
+          fi
+          garm-cli profile switch reconcile >/dev/null 2>&1 || true
+          garm-cli profile login reconcile --password "$admin_pw" >/dev/null 2>&1 || true
+
+          # ---- (0.5) Controller URLs — REQUIRED before any /api/v1 op --------
+          # GARM's apiRouter is guarded by `urlsRequired` (409 until metadata +
+          # callback + agent URLs are all set). Set them idempotently (only if
+          # any is currently empty) so org/credential/scale-set ops are allowed.
+          md_url="$(jq -r '.controllerURLs.metadata' "$manifest")"
+          cb_url="$(jq -r '.controllerURLs.callback' "$manifest")"
+          ag_url="$(jq -r '.controllerURLs.agent' "$manifest")"
+          ctrl="$(garm-cli controller show --format json 2>/dev/null || echo '{}')"
+          have_md="$(echo "$ctrl" | jq -r '.metadata_url // ""')"
+          have_cb="$(echo "$ctrl" | jq -r '.callback_url // ""')"
+          have_ag="$(echo "$ctrl" | jq -r '.agent_url // ""')"
+          if [ -z "$have_md" ] || [ -z "$have_cb" ] || [ -z "$have_ag" ]; then
+            garm-cli controller update \
+              --metadata-url "$md_url" --callback-url "$cb_url" --agent-url "$ag_url" \
+              >/dev/null 2>&1 || true
+            log "controller URLs set (metadata/callback/agent)"
+          else
+            log "controller URLs already set"
+          fi
+
+          # ---- (1) Forge endpoint (only for a NON-github.com endpoint) --------
+          if [ "$endpoint_name" != "github.com" ]; then
+            api_base="$(jq -r '.endpoint.apiBaseURL' "$manifest")"
+            base_url="$(jq -r '.endpoint.baseURL' "$manifest")"
+            upload_url="$(jq -r '.endpoint.uploadURL' "$manifest")"
+            [ -n "$upload_url" ] || upload_url="$api_base"
+            if gcli github endpoint list | jq -e --arg n "$endpoint_name" '.[]?|select(.name==$n)' >/dev/null; then
+              garm-cli github endpoint update "$endpoint_name" \
+                --api-base-url "$api_base" --base-url "$base_url" --upload-url "$upload_url" \
+                >/dev/null 2>&1 || true
+              log "endpoint '$endpoint_name' present (updated)"
+            else
+              garm-cli github endpoint create --name "$endpoint_name" \
+                --api-base-url "$api_base" --base-url "$base_url" --upload-url "$upload_url" \
+                >/dev/null
+              log "endpoint '$endpoint_name' created"
+            fi
+          fi
+
+          # ---- (2) Credentials: create-missing / update-drifted ---------------
+          existing_creds="$(gcli github credentials list --long 2>/dev/null || echo '[]')"
+          declared_cred_names="$(jq -r '.credentials[].name' "$manifest")"
+          jq -c '.credentials[]' "$manifest" | while read -r c; do
+            cname="$(echo "$c" | jq -r '.name')"
+            cdesc="$(echo "$c" | jq -r '.description')"
+            capp="$(echo "$c" | jq -r '.appId')"
+            cinst="$(echo "$c" | jq -r '.installationId')"
+            cpem="$(echo "$c" | jq -r '.pemPath')"
+            if echo "$existing_creds" | jq -e --arg n "$cname" '.[]?|select(.name==$n)' >/dev/null; then
+              # Present — reconcile app/installation ids + description + key.
+              garm-cli github credentials update --name "$cname" \
+                --description "$cdesc" --app-id "$capp" \
+                --app-installation-id "$cinst" --private-key-path "$cpem" \
+                >/dev/null 2>&1 || true
+              log "credential '$cname' present (updated app-id=$capp inst=$cinst)"
+            else
+              garm-cli github credentials add --name "$cname" \
+                --endpoint "$endpoint_name" --auth-type app --description "$cdesc" \
+                --app-id "$capp" --app-installation-id "$cinst" \
+                --private-key-path "$cpem" >/dev/null
+              log "credential '$cname' created (app-id=$capp inst=$cinst)"
+            fi
+          done
+
+          # ---- (3) Orgs: create-missing (idempotent) --------------------------
+          # org-add does NOT call GitHub; it stores the org + starts a pool mgr.
+          declared_org_names="$(jq -r '.orgs[].name' "$manifest" | sort -u)"
+          jq -c '.orgs[]' "$manifest" | while read -r o; do
+            oname="$(echo "$o" | jq -r '.name')"
+            ocreds="$(echo "$o" | jq -r '.credentials')"
+            if gcli organization list --name "$oname" 2>/dev/null | jq -e --arg n "$oname" '.[]?|select(.name==$n)' >/dev/null; then
+              log "org '$oname' present"
+            else
+              garm-cli organization add --name "$oname" --credentials "$ocreds" \
+                --random-webhook-secret >/dev/null 2>&1 || \
+                garm-cli organization add --name "$oname" --credentials "$ocreds" \
+                  --webhook-secret "$(openssl rand -hex 16)" >/dev/null
+              log "org '$oname' created (credentials=$ocreds)"
+            fi
+          done
+
+          # Map org NAME -> id for scale-set operations.
+          org_id_for() {
+            gcli organization list --name "$1" 2>/dev/null \
+              | jq -r --arg n "$1" '.[]?|select(.name==$n)|.id' | head -n1
+          }
+
+          # ---- (4) Scale sets: create-missing / update-drifted ----------------
+          jq -c '.scaleSets[]' "$manifest" | while read -r s; do
+            sname="$(echo "$s" | jq -r '.name')"
+            sorg="$(echo "$s" | jq -r '.org')"
+            sprov="$(echo "$s" | jq -r '.provider')"
+            simage="$(echo "$s" | jq -r '.image')"
+            sos="$(echo "$s" | jq -r '.osType')"
+            sarch="$(echo "$s" | jq -r '.osArch')"
+            smax="$(echo "$s" | jq -r '.maxRunners')"
+            smin="$(echo "$s" | jq -r '.minIdleRunners')"
+            sboot="$(echo "$s" | jq -r '.runnerBootstrapTimeout')"
+            senabled="$(echo "$s" | jq -r '.enabled')"
+            oid="$(org_id_for "$sorg")"
+            if [ -z "$oid" ]; then
+              log "WARNING: scale set '$sname' org '$sorg' has no id; skipping"
+              continue
+            fi
+            cur="$(gcli scaleset list --org "$oid" 2>/dev/null \
+              | jq -c --arg n "$sname" '.[]?|select(.name==$n)' | head -n1 || true)"
+            # `--enabled` is a cobra BOOL flag: pass `--enabled=true` /
+            # `--enabled=false` explicitly so a declared `enabled=false` scale
+            # set actually gets DISABLED (a bare "" flag could never emit the
+            # disable side, so a declared-disabled set stayed enabled forever).
+            if [ "$senabled" = "true" ]; then
+              enabled_flag="--enabled=true"
+            else
+              enabled_flag="--enabled=false"
+            fi
+            if [ -z "$cur" ]; then
+              # shellcheck disable=SC2086
+              garm-cli scaleset add --org "$oid" --provider-name "$sprov" \
+                --image "$simage" --name "$sname" --flavor default $enabled_flag \
+                --min-idle-runners "$smin" --max-runners "$smax" \
+                --os-type "$sos" --os-arch "$sarch" \
+                --runner-bootstrap-timeout "$sboot" >/dev/null
+              log "scale set '$sname' created in org '$sorg' (max=$smax min=$smin)"
+            else
+              sid="$(echo "$cur" | jq -r '.id')"
+              # Drift check: max/min/image/bootstrap/enabled.
+              drift=0
+              [ "$(echo "$cur" | jq -r '.max_runners // 0')" = "$smax" ] || drift=1
+              [ "$(echo "$cur" | jq -r '.min_idle_runners // 0')" = "$smin" ] || drift=1
+              [ "$(echo "$cur" | jq -r '.image // ""')" = "$simage" ] || drift=1
+              [ "$(echo "$cur" | jq -r '.runner_bootstrap_timeout // 0')" = "$sboot" ] || drift=1
+              [ "$(echo "$cur" | jq -r '.enabled // false')" = "$senabled" ] || drift=1
+              if [ "$drift" = 1 ]; then
+                # shellcheck disable=SC2086
+                garm-cli scaleset update "$sid" --name "$sname" --image "$simage" \
+                  $enabled_flag --min-idle-runners "$smin" --max-runners "$smax" \
+                  --os-type "$sos" --os-arch "$sarch" \
+                  --runner-bootstrap-timeout "$sboot" >/dev/null
+                log "scale set '$sname' (id=$sid) drift-corrected (max=$smax min=$smin)"
+              else
+                log "scale set '$sname' (id=$sid) already converged"
+              fi
+            fi
+          done
+
+          # ---- (5) Prune (GUARDED, opt-in) ------------------------------------
+          prune="$(jq -r '.pruneUnmanaged' "$manifest")"
+          if [ "$prune" = "true" ]; then
+            log "prune enabled — removing undeclared scale sets in MANAGED orgs"
+            # Only prune within the DECLARED org set (the reconcile-managed
+            # boundary). Orgs GARM knows about but that this config never
+            # declares are left entirely alone.
+            for oname in $declared_org_names; do
+              oid="$(org_id_for "$oname")"
+              [ -n "$oid" ] || continue
+              # Scale sets that DO exist in this managed org but are not declared.
+              declared_in_org="$(jq -r --arg o "$oname" '.scaleSets[]|select(.org==$o)|.name' "$manifest")"
+              gcli scaleset list --org "$oid" 2>/dev/null | jq -c '.[]?' | while read -r ex; do
+                exname="$(echo "$ex" | jq -r '.name')"
+                exid="$(echo "$ex" | jq -r '.id')"
+                if ! echo "$declared_in_org" | grep -qxF "$exname"; then
+                  # GARM refuses to delete an ENABLED scale set
+                  # (`400: scale set is enabled; disable it first`). Disable it
+                  # first (best-effort — a set already disabled makes this a
+                  # no-op), THEN delete. Do NOT swallow a real delete failure:
+                  # surface it and fail the reconcile so a stuck prune is loud
+                  # rather than being falsely logged as "pruned".
+                  garm-cli scaleset update "$exid" --enabled=false >/dev/null 2>&1 || true
+                  if garm-cli scaleset delete "$exid" >/dev/null; then
+                    log "pruned undeclared scale set '$exname' (id=$exid) from org '$oname'"
+                  else
+                    log "ERROR: failed to delete undeclared scale set '$exname' (id=$exid) in org '$oname'"
+                    exit 1
+                  fi
+                fi
+              done
+            done
+            # Prune undeclared credentials (only those we recognise as managed —
+            # here: any credential not in the declared set is pruned ONLY when
+            # prune is on, and never the built-in ones GARM seeds).
+            gcli github credentials list 2>/dev/null | jq -r '.[]?.name' | while read -r exc; do
+              if ! echo "$declared_cred_names" | grep -qxF "$exc"; then
+                garm-cli github credentials delete "$exc" >/dev/null 2>&1 \
+                  && log "pruned undeclared credential '$exc'" || true
+              fi
+            done
+          else
+            log "prune disabled (default) — undeclared entries left untouched"
+          fi
+
+          log "reconcile complete"
         '';
       };
 
@@ -913,6 +1268,121 @@
           description = "Open the API server `port` in the host firewall.";
         };
 
+        # ---- Declarative reconcile (PM5 "declarative reconcile", pulled fwd) --
+        # A post-boot systemd oneshot that makes GARM's DB-resident state (forge
+        # endpoints, credentials, orgs, scale sets) track the module's declared
+        # `github` + `scaleSets` shape. Scale sets, orgs, and credentials are DB
+        # state (a scale set registers a GitHub runner-scale-set and gets an id),
+        # so `config.toml` alone cannot converge them — the reconcile drives
+        # `garm-cli` idempotently to create-missing / update-drifted, and
+        # (GUARDED) prune-undeclared. See `reconcile.enable`.
+        reconcile = {
+          enable = mkOption {
+            type = types.bool;
+            default = false;
+            description = ''
+              Enable the `garm-reconcile` systemd oneshot: after `garm.service`
+              is up, idempotently sync GARM's DB (forge endpoint + credentials +
+              orgs + scale sets) to the declared `services.garm.github` +
+              `services.garm.scaleSets`. A second run with unchanged config is a
+              no-op. Unrelated runtime state (runners, other controllers) is
+              never touched. Default false — declaring the shape does NOT enable
+              the reconcile, so enabling it on a host with a live DB is a
+              deliberate step. Prove it hermetically (the `t_garm_reconcile` VM
+              test) before enabling against a live GARM DB.
+            '';
+          };
+
+          pruneUnmanaged = mkOption {
+            type = types.bool;
+            default = false;
+            description = ''
+              CONSERVATIVE, OPT-IN pruning. When true, the reconcile DELETES
+              scale sets it manages (those whose org is one of the declared
+              `scaleSets.*.org` values) that are no longer declared, and
+              likewise undeclared orgs/credentials it recognises as managed.
+              Default false so the reconcile can NEVER accidentally delete the
+              live mcl/blocksense/agent-harbor scale sets: with pruning off, a
+              scale set dropped from the Nix config is simply left in the DB
+              (logged as "unmanaged, kept"). Only the reconcile-managed set is
+              ever eligible for pruning — a scale set in an org GARM knows about
+              but that this config never declares an org for is left alone even
+              with pruning on.
+            '';
+          };
+
+          adminUsername = mkOption {
+            type = types.str;
+            default = "admin";
+            description = ''
+              Administrative username the reconcile uses (creating it via
+              first-run if the controller is un-initialised, then logging the
+              local garm-cli profile in as it). Only meaningful for the
+              reconcile's own garm-cli session.
+            '';
+          };
+
+          adminEmail = mkOption {
+            type = types.str;
+            default = "garm-reconcile@localhost";
+            description = "Email used when the reconcile performs the first-run admin init.";
+          };
+
+          adminPasswordFile = mkOption {
+            type = types.nullOr types.path;
+            default = null;
+            description = ''
+              Optional path to a file holding the admin password the reconcile
+              uses for first-run + garm-cli login (staged via LoadCredential).
+              Null (default) ⇒ a strong password is generated once and persisted
+              under stateDir (mode 0600). Changing an already-initialised
+              controller's admin password is NOT attempted.
+            '';
+          };
+
+          forgeEndpoint = mkOption {
+            type = types.str;
+            default = "github.com";
+            description = ''
+              The GARM forge endpoint name the reconcile associates credentials
+              + orgs with. Defaults to GARM's built-in `github.com`. Set to a
+              custom name (with `apiBaseURL`/`baseURL`) to point GARM at a
+              non-github.com GitHub (GitHub Enterprise) — or, in the hermetic
+              test, at an in-VM mock GitHub API.
+            '';
+          };
+
+          apiBaseURL = mkOption {
+            type = types.str;
+            default = "";
+            example = "http://127.0.0.1:8081";
+            description = ''
+              When `forgeEndpoint` is NOT `github.com`, the API base URL of that
+              endpoint (created/updated via `garm-cli github endpoint`). Empty
+              for the built-in github.com endpoint (GARM already knows it).
+            '';
+          };
+
+          baseURL = mkOption {
+            type = types.str;
+            default = "";
+            example = "http://127.0.0.1:8081";
+            description = ''
+              When `forgeEndpoint` is NOT `github.com`, the (web) base URL of the
+              custom endpoint. Empty for the built-in github.com endpoint.
+            '';
+          };
+
+          uploadURL = mkOption {
+            type = types.str;
+            default = "";
+            description = ''
+              Optional upload URL for a custom `forgeEndpoint`. Empty ⇒ reuse
+              `apiBaseURL`.
+            '';
+          };
+        };
+
         openIncusBridgeFirewall = mkOption {
           type = types.bool;
           default = false;
@@ -1292,12 +1762,30 @@
             MemoryDenyWriteExecute = true;
           };
 
-          # Posture selector: M0 (off), libvirt relaxations (any libvirt), or the
-          # strict incus posture (incus only). libvirt "wins" the relaxations;
-          # its group set is unioned with incus-admin when both are on.
+          # The reconcile needs a STABLE uid it can share with garm (both read
+          # the same stateDir + garm-cli HOME). A DynamicUser gets a fresh uid
+          # per boot, so when the reconcile is enabled WITHOUT any provider we
+          # keep the strict M0 sandbox but pin garm to the dedicated `garm`
+          # system user instead of DynamicUser. (With a provider on, garm ALREADY
+          # runs as the dedicated user, so no change.)
+          staticStrictServiceConfig = userBaseServiceConfig // {
+            ProtectSystem = "strict";
+            PrivateDevices = true;
+            MemoryDenyWriteExecute = true;
+          };
+
+          # A dedicated static `garm` user is required whenever a provider is on
+          # OR the reconcile is enabled.
+          needsDedicatedUser = providerOn || rcfg.enable;
+
+          # Posture selector: strict M0 DynamicUser (nothing on), the strict
+          # static-user posture (reconcile on, no provider), libvirt relaxations
+          # (any libvirt), or the strict incus posture (incus only). libvirt
+          # "wins" the relaxations; its group set is unioned with incus-admin
+          # when both are on.
           postureServiceConfig =
             if !providerOn then
-              m0ServiceConfig
+              (if rcfg.enable then staticStrictServiceConfig else m0ServiceConfig)
             else if anyLibvirt then
               libvirtRelaxServiceConfig
             else
@@ -1391,7 +1879,7 @@
           # unconditionally-when-any-provider-on so the socket-group membership
           # (libvirtd+kvm for the VM path; incus-admin for the container path) is
           # stable across boots (a DynamicUser cannot be a persistent member).
-          users.users = mkIf providerOn {
+          users.users = mkIf needsDedicatedUser {
             ${cfg.user} = {
               isSystemUser = true;
               group = cfg.group;
@@ -1399,7 +1887,7 @@
               home = stateDir;
             };
           };
-          users.groups = mkIf providerOn { ${cfg.group} = { }; };
+          users.groups = mkIf needsDedicatedUser { ${cfg.group} = { }; };
 
           # Each enabled libvirt provider writes per-job artifacts into its
           # poolDir; provision each owned garm:libvirtd (0771). The incus daemon
@@ -1492,6 +1980,43 @@
                 "~@privileged"
                 "~@resources"
               ];
+            };
+          };
+
+          # ---- The declarative reconcile oneshot ----------------------------
+          # Runs AFTER garm.service is up, converges GARM's DB onto the declared
+          # github creds + orgs + scale sets, then exits (RemainAfterExit so a
+          # re-switch re-runs it). Idempotent: a second run with unchanged config
+          # makes no changes. It runs as the SAME user as garm (so it reads the
+          # module-staged PEM copies under stateDir + shares the garm-cli HOME)
+          # and, like garm, may stage an operator admin password via
+          # LoadCredential. Enabling it is OPT-IN (`reconcile.enable`).
+          systemd.services.garm-reconcile = mkIf rcfg.enable {
+            description = "Reconcile GARM DB state (orgs/credentials/scale sets) to the declared config";
+            documentation = [ "https://github.com/cloudbase/garm" ];
+            after = [ "garm.service" ];
+            requires = [ "garm.service" ];
+            wantedBy = [ "multi-user.target" ];
+
+            serviceConfig = {
+              Type = "oneshot";
+              RemainAfterExit = true;
+              ExecStart = lib.getExe reconcileScript;
+              # Run as the garm user so it reads the staged PEMs + shares HOME.
+              User = cfg.user;
+              Group = cfg.group;
+              StateDirectory = "garm";
+              WorkingDirectory = stateDir;
+              LoadCredential = lib.optional (
+                rcfg.adminPasswordFile != null
+              ) "reconcile-admin-password:${toString rcfg.adminPasswordFile}";
+              # Retry a few times if garm is still coming up.
+              Restart = "on-failure";
+              RestartSec = "5s";
+            };
+            unitConfig = {
+              StartLimitIntervalSec = "120";
+              StartLimitBurst = 6;
             };
           };
         }
