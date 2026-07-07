@@ -107,6 +107,17 @@ type IncusBackend struct {
 	// ReprobuildStoreGuestPath is the in-guest mount point for ReprobuildStore.
 	// Empty ⇒ mirrors the host path.
 	ReprobuildStoreGuestPath string
+	// SecurityNesting, when true, enables NESTED containerisation inside each
+	// per-job container so an in-guest Docker/Podman daemon can run (the
+	// `runs-on: incus` docker path — HR1). Before start it sets
+	// `security.nesting=true` (lets the guest create its own
+	// namespaces/cgroups + mount an overlay) plus the two syscall intercepts
+	// fuse-overlayfs needs to build images UNPRIVILEGED —
+	// `security.syscalls.intercept.mknod=true` (the daemon can mknod device
+	// nodes the image layers carry) and `security.syscalls.intercept.setxattr=true`
+	// (overlayfs writes trusted.overlay.* xattrs). Default false ⇒ the
+	// container is byte-unchanged (the live runners are untouched).
+	SecurityNesting bool
 }
 
 // Host paths shared into the per-job container when ShareHostNixStore is set:
@@ -408,6 +419,27 @@ func (b *IncusBackend) Create(ctx context.Context, args CreateArgs) (Instance, e
 		if err := b.addDisk(ctx, args.Name, "reprostore", b.ReprobuildStore, guestPath, false); err != nil {
 			_ = b.forceDelete(ctx, args.Name)
 			return Instance{}, err
+		}
+	}
+
+	// 4d. Security nesting (the `runs-on: incus` nested-Docker path — HR1). Turn
+	//     on nested containerisation so an in-guest Docker/Podman daemon can
+	//     create its own namespaces/cgroups + overlay mount, and add the two
+	//     syscall intercepts fuse-overlayfs needs to build images UNPRIVILEGED
+	//     (mknod for device-node image layers, setxattr for overlayfs's
+	//     trusted.overlay.* xattrs). Done pre-start so the flags apply on first
+	//     boot. Default OFF ⇒ this block is skipped and the container is
+	//     byte-unchanged (the live runners are untouched).
+	if b.SecurityNesting {
+		for _, kv := range [][2]string{
+			{"security.nesting", "true"},
+			{"security.syscalls.intercept.mknod", "true"},
+			{"security.syscalls.intercept.setxattr", "true"},
+		} {
+			if out, err := b.run(ctx, "", "config", "set", args.Name, kv[0], kv[1]); err != nil {
+				_ = b.forceDelete(ctx, args.Name)
+				return Instance{}, fmt.Errorf("incus config set %s=%s: %w: %s", kv[0], kv[1], err, strings.TrimSpace(out))
+			}
 		}
 	}
 

@@ -257,6 +257,60 @@ func TestIncusGpuPassthroughAttachesGpuDevice(t *testing.T) {
 	}
 }
 
+// TestIncusSecurityNestingEnablesNesting proves the HR1 nested-Docker path:
+// with SecurityNesting set, Create sets `security.nesting=true` plus the two
+// fuse-overlayfs syscall intercepts (mknod + setxattr) on the container BEFORE
+// start. Without it, none are present (the plain `incus` class stays
+// byte-unchanged — the live runners are untouched).
+func TestIncusSecurityNestingEnablesNesting(t *testing.T) {
+	cmd, stateDir := writeMockIncus(t)
+	b := newTestIncusBackend(cmd)
+	b.SecurityNesting = true
+	ctx := context.Background()
+
+	if _, err := b.Create(ctx, CreateArgs{
+		Name:        "garm-nest-1",
+		SourceImage: "runner-linux",
+		OSName:      "linux",
+		OSVersion:   "debian12",
+	}); err != nil {
+		t.Fatalf("Create (nesting): %v", err)
+	}
+
+	config, err := os.ReadFile(filepath.Join(stateDir, "garm-nest-1", "config"))
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	cfg := string(config)
+	for _, want := range []string{
+		"security.nesting\ttrue",
+		"security.syscalls.intercept.mknod\ttrue",
+		"security.syscalls.intercept.setxattr\ttrue",
+	} {
+		if !strings.Contains(cfg, want) {
+			t.Fatalf("expected config %q with nesting on, got config:\n%s", want, cfg)
+		}
+	}
+
+	// The plain (default-OFF) backend must NOT set any nesting/intercept key:
+	// the existing live runners stay byte-unchanged until the toggle is enabled.
+	plain := newTestIncusBackend(cmd)
+	if _, err := plain.Create(ctx, CreateArgs{
+		Name:        "garm-nest-plain",
+		SourceImage: "runner-linux",
+	}); err != nil {
+		t.Fatalf("Create (plain): %v", err)
+	}
+	pcfg, err := os.ReadFile(filepath.Join(stateDir, "garm-nest-plain", "config"))
+	if err != nil {
+		t.Fatalf("read plain config: %v", err)
+	}
+	if strings.Contains(string(pcfg), "security.nesting") ||
+		strings.Contains(string(pcfg), "security.syscalls.intercept") {
+		t.Fatalf("plain incus class must not set any nesting/intercept key (default OFF), got:\n%s", string(pcfg))
+	}
+}
+
 // TestIncusSharedStoresAttachStoreDisks proves the PM2/PM3 shared-store path
 // (writable-by-design, safe): with ShareHostNixStore + ReprobuildStore set,
 // Create attaches, before start, the host `/nix/store` READ-ONLY (the guest

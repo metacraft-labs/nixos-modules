@@ -140,6 +140,7 @@
         incus_share_host_nix_store = ${lib.boolToString p.incusShareHostNixStore}
         incus_reprobuild_store = "${p.incusReprobuildStore}"
         incus_reprobuild_store_guest_path = "${p.incusReprobuildStoreGuestPath}"
+        incus_security_nesting = ${lib.boolToString p.incusSecurityNesting}
       '';
       mkVMHarnessRunKeys =
         p:
@@ -433,8 +434,10 @@
       # reconcile can converge even when no guest-facing URL is configured
       # (the hermetic test) — the URLs need only be non-empty to pass the gate.
       localApiBase = "http://127.0.0.1:${toString cfg.apiServer.port}";
-      ctrlMetadataURL = if cfg.metadataURL != "" then cfg.metadataURL else "${localApiBase}/api/v1/metadata";
-      ctrlCallbackURL = if cfg.callbackURL != "" then cfg.callbackURL else "${localApiBase}/api/v1/callbacks";
+      ctrlMetadataURL =
+        if cfg.metadataURL != "" then cfg.metadataURL else "${localApiBase}/api/v1/metadata";
+      ctrlCallbackURL =
+        if cfg.callbackURL != "" then cfg.callbackURL else "${localApiBase}/api/v1/callbacks";
       ctrlAgentURL = "${localApiBase}/agent";
 
       reconcileManifest = pkgs.writeText "garm-reconcile-manifest.json" (
@@ -1028,6 +1031,30 @@
                 In-guest mount point for the `incusReprobuildStore` share. Empty
                 ⇒ mirrors the host path. Only consulted when
                 `incusReprobuildStore` is set.
+              '';
+            };
+
+            incusSecurityNesting = mkOption {
+              type = types.bool;
+              default = false;
+              description = ''
+                When true (incus backend only), the provider enables NESTED
+                containerisation on every per-job container before start so an
+                in-guest Docker/Podman daemon can run (the `runs-on: incus`
+                nested-Docker path):
+                `incus config set <name> security.nesting true` plus the two
+                syscall intercepts fuse-overlayfs needs to build images
+                UNPRIVILEGED —
+                `security.syscalls.intercept.mknod true` (mknod device-node
+                image layers) and `security.syscalls.intercept.setxattr true`
+                (overlayfs `trusted.overlay.*` xattrs). `security.nesting` lets
+                the guest create its own namespaces/cgroups + mount an overlay.
+                The runner image must ship docker/moby + fuse-overlayfs and be
+                configured for the fuse-overlayfs storage driver (an
+                unprivileged nested container cannot use the kernel overlay2
+                driver). Default false ⇒ the container is byte-unchanged (the
+                live runners are untouched). Ignored by non-incus providers.
+                Backs HR1 (Production-Runners nested Docker).
               '';
             };
 

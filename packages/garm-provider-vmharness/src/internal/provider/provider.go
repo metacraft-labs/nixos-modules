@@ -85,6 +85,7 @@ func NewWithConfig(cfg *config.Config) (*Provider, error) {
 			ShareHostNixStore:        cfg.IncusShareHostNixStore,
 			ReprobuildStore:          cfg.IncusReprobuildStore,
 			ReprobuildStoreGuestPath: cfg.IncusReprobuildStoreGuestPath,
+			SecurityNesting:          cfg.IncusSecurityNesting,
 		}
 	case config.BackendTartLinuxArm:
 		b = &backend.VMHarnessRunBackend{

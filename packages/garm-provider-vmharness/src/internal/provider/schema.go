@@ -76,6 +76,10 @@ const configJSONSchema = `{
 			"type": "string",
 			"description": "In-guest mount point for the reprobuild store share. Empty mirrors the host path."
 		},
+		"incus_security_nesting": {
+			"type": "boolean",
+			"description": "Enable nested containerisation on each per-job container (security.nesting=true + the syscalls.intercept.mknod/.setxattr intercepts fuse-overlayfs needs) so an in-guest Docker/Podman daemon can run and build images unprivileged. Backs the runs-on:incus nested-Docker path (HR1). Default false leaves the container byte-unchanged."
+		},
 		"vm_harness_path": {
 			"type": "string",
 			"description": "Path to the vm-harness binary used for per-job clone (M2) and config-drive injection (M3)."
@@ -136,6 +140,10 @@ const extraSpecsJSONSchema = `{
 		"source_image": {
 			"type": "string",
 			"description": "Override the golden source for this pool."
+		},
+		"incus_security_nesting": {
+			"type": "boolean",
+			"description": "Enable nested containerisation (security.nesting + fuse-overlayfs syscall intercepts) for this pool's per-job incus containers so an in-guest Docker/Podman daemon can run. Backs the runs-on:incus nested-Docker path (HR1)."
 		}
 	},
 	"additionalProperties": true

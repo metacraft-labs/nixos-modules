@@ -204,6 +204,21 @@ type Config struct {
 	// when IncusReprobuildStore is set.
 	IncusReprobuildStoreGuestPath string `toml:"incus_reprobuild_store_guest_path"`
 
+	// IncusSecurityNesting, when true, makes the incus backend enable NESTED
+	// containerisation on every per-job container before start so an in-guest
+	// Docker/Podman daemon can run (the `runs-on: incus` nested-Docker path —
+	// HR1):
+	//   incus config set <name> security.nesting true
+	//   incus config set <name> security.syscalls.intercept.mknod true
+	//   incus config set <name> security.syscalls.intercept.setxattr true
+	// security.nesting lets the guest create its own namespaces/cgroups + mount
+	// an overlay; the two syscall intercepts let fuse-overlayfs build images
+	// UNPRIVILEGED (mknod for device-node image layers, setxattr for
+	// overlayfs's trusted.overlay.* xattrs). Default false ⇒ the container is
+	// byte-unchanged (the live runners are untouched). Ignored by non-incus
+	// backends. Backs HR1.
+	IncusSecurityNesting bool `toml:"incus_security_nesting"`
+
 	// StateDir stores pid/metadata files for vm-harness run based backends
 	// (Tart/UTM on m3). It contains no secrets.
 	StateDir string `toml:"state_dir"`
