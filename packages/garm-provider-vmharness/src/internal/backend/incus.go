@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	garmErrors "github.com/cloudbase/garm-provider-common/errors"
 )
@@ -562,6 +563,42 @@ func (b *IncusBackend) Create(ctx context.Context, args CreateArgs) (Instance, e
 	if out, err := b.run(ctx, "", "start", args.Name); err != nil {
 		_ = b.forceDelete(ctx, args.Name)
 		return Instance{}, fmt.Errorf("incus start %s: %w: %s", args.Name, err, strings.TrimSpace(out))
+	}
+
+	// 6. GPU userspace onto STANDARD paths (post-start). The pre-start
+	//    environment.PATH/LD_LIBRARY_PATH only reach the container's PID1 (init);
+	//    the GARM runner runs as a systemd service, which gets a clean env and
+	//    does NOT inherit them — so a job step's `nvidia-smi` was "command not
+	//    found" even though /dev/nvidia* was shared. Put the host driver
+	//    userspace where systemd's DEFAULT search paths find it: symlink
+	//    nvidia-smi into /usr/local/bin (on the default PATH) and register the
+	//    driver lib dir via ld.so.conf.d (so libcuda.so.1 resolves without
+	//    LD_LIBRARY_PATH). Both targets are the resolved /nix/store paths reached
+	//    through the read-only /nix/store mount. Best-effort + ordered AFTER
+	//    start: the job step runs many seconds later (after runner registration +
+	//    job assignment), so this always lands before any GPU use; a failure here
+	//    leaves the shared /dev/nvidia* + env fallback intact rather than killing
+	//    an otherwise-usable runner.
+	if b.GpuPassthrough {
+		ldLibraryPath, nvidiaSmiBinDir := resolveHostGpuUserspace()
+		for i := 0; i < 30; i++ {
+			if _, err := b.run(ctx, "", "exec", args.Name, "--", "true"); err == nil {
+				break
+			}
+			time.Sleep(time.Second)
+		}
+		setup := fmt.Sprintf(
+			"ln -sf %s/nvidia-smi /usr/local/bin/nvidia-smi; "+
+				"printf '%%s\\n' %s > /etc/ld.so.conf.d/nvidia-gpu.conf; "+
+				"ldconfig",
+			nvidiaSmiBinDir, ldLibraryPath,
+		)
+		if out, err := b.run(ctx, "", "exec", args.Name, "--", "bash", "-c", setup); err != nil {
+			// Non-fatal: the GPU device is shared and the env fallback is set;
+			// surface the detail so a genuinely broken setup is diagnosable.
+			fmt.Printf("garm-provider-vmharness: WARNING: GPU userspace setup on %s failed: %v: %s\n",
+				args.Name, err, strings.TrimSpace(out))
+		}
 	}
 
 	return b.Get(ctx, args.Name)
