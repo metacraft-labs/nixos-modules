@@ -1,14 +1,22 @@
 top@{ ... }:
 {
-  # Declarative GARM Reconcile — deliverables (2)+(3) gate: t_garm_incus_runner_host.
+  # Declarative GARM Reconcile — deliverables (2)+(2b)+(3) gate: t_garm_incus_runner_host.
   #
   # Boots a NixOS VM with incus + the `services.garm-incus-runner-host` helper
-  # and proves the two operator steps it replaces are now declarative:
+  # and proves the operator steps it replaces are now declarative:
   #
-  #   (2) incus PRESEED bridge — after switch, the managed `incusbr0` exists on
-  #       the declared per-host subnet (gateway .1/24, ipv4.nat on), created by
-  #       the nixpkgs incus-preseed.service the helper populates. Replaces the
-  #       manual `incus admin init` / `incus network create incusbr0 …`.
+  #   (2) incus PRESEED triple — after switch, the managed `incusbr0` exists on
+  #       the declared per-host subnet (gateway .1/24, ipv4.nat on), plus the
+  #       `default` storage pool and the `default` profile's root+eth0 devices,
+  #       created by the nixpkgs incus-preseed.service the helper populates.
+  #       Replaces the manual `incus admin init` / `incus network create …`.
+  #
+  #   (2b) convergence ONESHOT — the helper's garm-incus-storage-network oneshot
+  #        create-if-missing reconciles the same triple (pool + bridge + default
+  #        profile root/eth0) on every switch, so a host whose incus already
+  #        self-initialised (where the preseed no-ops) still converges. We assert
+  #        it is green, that the triple is present, and that a re-run is a NO-OP
+  #        (idempotent — every step logs the "present" short-circuit).
   #
   #   (3) image-import ONESHOT — the helper's garm-incus-image-import oneshot
   #       imports the runner image under the declared alias iff absent, and a
@@ -91,6 +99,43 @@ top@{ ... }:
                 assert addr == "10.157.159.1/24", f"incusbr0 ipv4.address={addr!r}"
                 nat = host.succeed("incus network get incusbr0 ipv4.nat").strip()
                 assert nat == "true", f"incusbr0 ipv4.nat={nat!r}"
+
+            with subtest("(2b) convergence oneshot converged pool+network+profile"):
+                host.wait_for_unit("garm-incus-storage-network.service")
+                state = host.succeed(
+                    "systemctl show -p Result --value garm-incus-storage-network.service"
+                ).strip()
+                assert state == "success", f"convergence oneshot result={state!r}"
+                # storage pool present.
+                host.succeed("incus storage show default")
+                pool_driver = host.succeed("incus storage show default | sed -n 's/^driver: //p'").strip()
+                assert "dir" in pool_driver, f"default pool driver={pool_driver!r}"
+                # default profile has both root (on the pool) and eth0 (on the bridge).
+                devs = host.succeed("incus profile device list default")
+                assert "root" in devs and "eth0" in devs, f"profile devices missing: {devs!r}"
+                rootpool = host.succeed("incus profile device get default root pool").strip()
+                assert rootpool == "default", f"root device pool={rootpool!r}"
+                eth0net = host.succeed("incus profile device get default eth0 network").strip()
+                assert eth0net == "incusbr0", f"eth0 device network={eth0net!r}"
+
+            with subtest("(2b) a re-run of the convergence oneshot is a no-op"):
+                host.systemctl("restart garm-incus-storage-network.service")
+                host.wait_for_unit("garm-incus-storage-network.service")
+                state = host.succeed(
+                    "systemctl show -p Result --value garm-incus-storage-network.service"
+                ).strip()
+                assert state == "success", f"re-run result={state!r}"
+                # Every guarded step short-circuited on the already-present entity.
+                for token in ("storage pool 'default' present",
+                              "network 'incusbr0' present",
+                              "profile default root present",
+                              "profile default eth0 present"):
+                    host.succeed(
+                        f"journalctl -u garm-incus-storage-network.service | grep -qF \"{token}\""
+                    )
+                # The triple is unchanged after the re-run.
+                addr = host.succeed("incus network get incusbr0 ipv4.address").strip()
+                assert addr == "10.157.159.1/24", f"incusbr0 drifted: {addr!r}"
 
             with subtest("(3) image-import oneshot registered the alias"):
                 host.wait_for_unit("garm-incus-image-import.service")
