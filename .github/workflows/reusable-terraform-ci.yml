@@ -899,6 +899,13 @@ jobs:
           role-session-name: terraform-drift-${{ github.run_id }}
           role-duration-seconds: ${{ inputs.aws_role_duration_seconds }}
 
+      - name: Terranix
+        if: inputs.terranix
+        run: |
+          cd ${{ inputs.working_directory }}
+          NIXPKGS=$(nix eval --raw nixpkgs#path --inputs-from . --accept-flake-config)
+          nix develop --accept-flake-config --command bash -c "terranix --pkgs '$NIXPKGS' > config.tf.json"
+
       - name: Init
         env:
           BACKEND_CONFIG_FILE: ${{ inputs.backend_config_file }}
@@ -931,17 +938,36 @@ jobs:
       - name: Detect drift
         id: drift
         run: |
+          set -euo pipefail
+
           cd ${{ inputs.working_directory }}
           tofu_bin="$(nix develop --accept-flake-config --command bash -euo pipefail -c 'command -v tofu' | tail -n 1)"
-          env -u AWS_PROFILE -u AWS_DEFAULT_PROFILE "$tofu_bin" plan -input=false -no-color -detailed-exitcode 2>&1 | tee /tmp/drift-plan.txt || {
-            exit_code=$?
-            if [ "$exit_code" -eq 2 ]; then
-              echo "drift_detected=true" >> "$GITHUB_OUTPUT"
-              echo "::warning::Infrastructure drift detected!"
-            else
-              exit $exit_code
-            fi
+          run_tofu() {
+            env -u AWS_PROFILE -u AWS_DEFAULT_PROFILE "$tofu_bin" "$@"
           }
+
+          set +e
+          run_tofu plan \
+            -input=false \
+            -no-color \
+            -detailed-exitcode \
+            > /tmp/drift-plan.txt 2>&1
+          plan_exit=$?
+          set -e
+
+          cat /tmp/drift-plan.txt
+
+          if [ "$plan_exit" -eq 0 ]; then
+            exit 0
+          fi
+
+          if [ "$plan_exit" -eq 2 ]; then
+            echo "drift_detected=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::Infrastructure drift detected!"
+            exit 0
+          fi
+
+          exit "$plan_exit"
 
       - name: Open drift issue
         if: steps.drift.outputs.drift_detected == 'true'

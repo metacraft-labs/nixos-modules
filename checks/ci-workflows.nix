@@ -4,6 +4,7 @@
     { pkgs, ... }:
     let
       flakeChecksWorkflow = ../.github/workflows/reusable-flake-checks-ci-matrix.yml;
+      terraformWorkflow = ../.github/workflows/reusable-terraform-ci.yml;
     in
     {
       checks.reusable-flake-checks-mcl-ref =
@@ -153,6 +154,109 @@
                     "main",
                 )
                 run_case("empty_context_falls_back", {}, "main")
+            PY
+
+            touch "$out"
+          '';
+
+      checks.reusable-terraform-drift-workflow =
+        pkgs.runCommand "reusable-terraform-drift-workflow"
+          {
+            nativeBuildInputs = [
+              pkgs.bash
+              pkgs.python3
+            ];
+          }
+          ''
+            python3 - <<'PY'
+            import subprocess
+            import tempfile
+            from pathlib import Path
+
+            workflow = Path("${terraformWorkflow}").read_text()
+            lines = workflow.splitlines()
+
+            def extract_named_block(start_text, base_indent=None):
+                start = None
+                for index, line in enumerate(lines):
+                    if line.strip() == start_text:
+                        start = index
+                        break
+                assert start is not None, f"{start_text!r} not found"
+
+                if base_indent is None:
+                    base_indent = len(lines[start]) - len(lines[start].lstrip())
+
+                end = len(lines)
+                for index in range(start + 1, len(lines)):
+                    if lines[index].strip() and (
+                        len(lines[index]) - len(lines[index].lstrip())
+                    ) <= base_indent:
+                        end = index
+                        break
+                return lines[start:end]
+
+            def extract_run_script(block_lines, step_name):
+                step_index = None
+                for index, line in enumerate(block_lines):
+                    if line.strip() == f"- name: {step_name}":
+                        step_index = index
+                        break
+                assert step_index is not None, f"{step_name!r} step not found"
+
+                step_indent = len(block_lines[step_index]) - len(block_lines[step_index].lstrip())
+                step_end = len(block_lines)
+                for index in range(step_index + 1, len(block_lines)):
+                    if block_lines[index].strip() and (
+                        len(block_lines[index]) - len(block_lines[index].lstrip())
+                    ) <= step_indent:
+                        step_end = index
+                        break
+
+                run_index = None
+                for index in range(step_index + 1, step_end):
+                    if block_lines[index].strip() == "run: |":
+                        run_index = index
+                        break
+                assert run_index is not None, f"{step_name!r} run block not found"
+
+                run_indent = len(block_lines[run_index]) - len(block_lines[run_index].lstrip())
+                block_indent = run_indent + 2
+                script_lines = []
+                for line in block_lines[run_index + 1:step_end]:
+                    if not line.strip():
+                        script_lines.append("")
+                        continue
+                    indent = len(line) - len(line.lstrip())
+                    assert indent >= block_indent, f"unexpected run block indentation: {line!r}"
+                    script_lines.append(line[block_indent:])
+                return "\n".join(script_lines) + "\n"
+
+            drift_job = extract_named_block("drift-check:", base_indent=2)
+            drift_text = "\n".join(drift_job)
+
+            terranix_index = drift_text.find("- name: Terranix")
+            init_index = drift_text.find("- name: Init")
+            detect_index = drift_text.find("- name: Detect drift")
+            assert terranix_index != -1, "drift job must generate Terranix before init"
+            assert init_index != -1, "drift job Init step not found"
+            assert detect_index != -1, "drift job Detect drift step not found"
+            assert terranix_index < init_index < detect_index, (
+                "drift job must generate Terranix before init and plan"
+            )
+
+            script = extract_run_script(drift_job, "Detect drift")
+            assert "set -euo pipefail" in script
+            assert "run_tofu()" in script
+            assert "plan_exit=$?" in script
+            assert "| tee /tmp/drift-plan.txt" not in script, (
+                "drift plan exit code must not be hidden behind tee"
+            )
+
+            with tempfile.TemporaryDirectory() as temp:
+                script_path = Path(temp) / "detect-drift.sh"
+                script_path.write_text(script)
+                subprocess.run(["${pkgs.bash}/bin/bash", "-n", str(script_path)], check=True)
             PY
 
             touch "$out"
