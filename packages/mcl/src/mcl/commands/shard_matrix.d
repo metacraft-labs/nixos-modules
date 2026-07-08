@@ -4,7 +4,7 @@ import std.algorithm : map;
 import std.array : array;
 import std.conv : ConvException, to, parse;
 import std.exception : ifThrown;
-import std.file : append, write, readText;
+import std.file : write, readText;
 import std.format : fmt = format;
 import std.logger : warningf, infof;
 import std.stdio : stdout, stderr;
@@ -20,7 +20,8 @@ import mcl.utils.json : toJSON;
 import mcl.utils.nix : nix;
 import mcl.utils.path : createResultDirs, resultDir, rootDir;
 import mcl.utils.string : enumToString, writeRecordAsTable;
-import mcl.commands.ci_matrix : NixSystem, currentSystem, ci_matrix, CiMatrixArgs, CiMatrixBaseArgs;
+import mcl.commands.ci_matrix : NixSystem, currentSystem, ci_matrix, CiMatrixArgs, CiMatrixBaseArgs,
+    appendGitHubOutput;
 
 @(Command("shard-matrix", "shard_matrix")
     .Description("Generate a shard matrix for a flake"))
@@ -190,14 +191,12 @@ void saveShardMatrix(ShardMatrix evalMatrix, ShardMatrixArgs args)
 
     if (args.githubOutput != "")
     {
-        args.githubOutput.append(evalMatrixLine);
-        args.githubOutput.append(buildMatrixLine);
+        args.githubOutput.appendGitHubOutput(evalMatrixLine ~ buildMatrixLine);
     }
     else
     {
         createResultDirs();
-        resultDir.buildPath("gh-output.env").append(evalMatrixLine);
-        resultDir.buildPath("gh-output.env").append(buildMatrixLine);
+        resultDir.buildPath("gh-output.env").appendGitHubOutput(evalMatrixLine ~ buildMatrixLine);
     }
     rootDir.buildPath("shardMatrix.json").write(evalMatrixString);
 }
