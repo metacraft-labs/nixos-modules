@@ -197,13 +197,16 @@ top@{ ... }:
                             obj = SCALESETS[name]
                         else:
                             sid = NEXT_ID[0]; NEXT_ID[0] += 1
-                            obj = {"id": sid, "name": name,
-                                   "runnerGroupId": body.get("runnerGroupId", 1),
-                                   "runnerGroupName": "Default",
-                                   "labels": body.get("labels", []),
-                                   "enabled": body.get("enabled", True),
-                                   "runnerSetting": body.get("RunnerSetting", {}),
-                                   "runnerJitConfigUrl": "http://127.0.0.1:%d/ado/jit" % PORT}
+                            obj = {
+                                "id": sid,
+                                "name": name,
+                                "runnerGroupId": body.get("runnerGroupId", 1),
+                                "runnerGroupName": "Default",
+                                "labels": body.get("labels", []),
+                                "enabled": body.get("enabled", True),
+                                "runnerSetting": body.get("RunnerSetting", {}),
+                                "runnerJitConfigUrl": "http://127.0.0.1:%d/ado/jit" % PORT,
+                            }
                             SCALESETS[name] = obj
                     return self._send(200, obj)
                 if p == "/status" or p == "/system-info/":

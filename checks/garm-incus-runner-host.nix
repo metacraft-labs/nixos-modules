@@ -31,19 +31,27 @@ top@{ ... }:
       # trivial image. `incus image import <tarball>` registers it (alias) in
       # the local image store without needing a bootable rootfs for THIS gate
       # (we assert registration, not launch).
-      testImage = pkgs.runCommand "vmh-linux-runner-test-image.tar.gz" { nativeBuildInputs = [ pkgs.gnutar pkgs.gzip ]; } ''
-        mkdir -p build/rootfs
-        cat > build/metadata.yaml <<EOF
-        architecture: x86_64
-        creation_date: 1700000000
-        properties:
-          description: garm reconcile gate test image
-          os: debian
-          release: bookworm
-        EOF
-        # An empty rootfs dir is fine for registration.
-        tar -C build -czf $out metadata.yaml rootfs
-      '';
+      testImage =
+        pkgs.runCommand "vmh-linux-runner-test-image.tar.gz"
+          {
+            nativeBuildInputs = [
+              pkgs.gnutar
+              pkgs.gzip
+            ];
+          }
+          ''
+            mkdir -p build/rootfs
+            cat > build/metadata.yaml <<EOF
+            architecture: x86_64
+            creation_date: 1700000000
+            properties:
+              description: garm reconcile gate test image
+              os: debian
+              release: bookworm
+            EOF
+            # An empty rootfs dir is fine for registration.
+            tar -C build -czf $out metadata.yaml rootfs
+          '';
     in
     {
       checks = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {

@@ -139,9 +139,7 @@
           netAddr = builtins.elemAt parts 0;
           prefix = builtins.elemAt parts 1;
           octets = lib.splitString "." netAddr;
-          derivedGateway = lib.concatStringsSep "." (
-            (lib.sublist 0 3 octets) ++ [ "1" ]
-          );
+          derivedGateway = lib.concatStringsSep "." ((lib.sublist 0 3 octets) ++ [ "1" ]);
           gateway = if cfg.bridgeGateway != "" then cfg.bridgeGateway else derivedGateway;
 
           importScript = pkgs.writeShellApplication {
@@ -157,7 +155,7 @@
 
               # Idempotent: if the alias already resolves to an image, do nothing.
               if ${incusBin} image alias list --format csv 2>/dev/null \
-                   | cut -d, -f1 | grep -qxF "$alias"; then
+                  | cut -d, -f1 | grep -qxF "$alias"; then
                 echo "garm-incus-image-import: alias '$alias' already present — no-op"
                 exit 0
               fi
