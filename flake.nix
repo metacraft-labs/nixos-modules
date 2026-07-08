@@ -3,11 +3,11 @@
 
   nixConfig = {
     extra-substituters = [
-      "https://cache.metacraft-labs.com/metacraft-public"
+      "https://cache.metacraft-labs.com/metacraft-private-infrastructure"
       "https://dlang-community.cachix.org"
     ];
     extra-trusted-public-keys = [
-      "metacraft-public:UtS6PK+p0uZaJK3i/jD2DQOjTpddhQUQmNQDQih5N4Q="
+      "metacraft-private-infrastructure:TWjFAlGXK9Mky5VG3PBln2MqYz4XPw3MTHHVPYZiAhE="
       "dlang-community.cachix.org-1:eAX1RqX4PjTDPCAp/TvcZP+DYBco2nJBackkAJ2BsDQ="
     ];
   };
