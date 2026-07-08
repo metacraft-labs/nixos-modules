@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -65,10 +66,32 @@ type IncusBackend struct {
 	RangeStart  string
 	RangeEnd    string
 	Nameservers []string
-	// GpuPassthrough, when true, attaches an NVIDIA GPU to each per-job
-	// container before start (`incus config device add <name> gpu gpu` +
-	// `incus config set <name> nvidia.runtime=true`). Requires the host's
-	// nvidia-container-toolkit (CDI runtime). Backs the `incus-gpu` class.
+	// GpuPassthrough, when true, gives each per-job container a working SHARED
+	// NVIDIA GPU userspace before start — the container's `nvidia-smi`/CUDA see
+	// the host's GPU(s) WHILE the host keeps using them (cooperative), with no
+	// driver-version coupling. Backs the `incus-gpu` class.
+	//
+	// The recipe is NOT `nvidia.runtime=true` + the nvidia-container-toolkit
+	// CDI: incus-lts (6.0.6) has NO CDI (CDI is LXD-only) and its `nvidia.runtime`
+	// lxc hook does NOT inject the userspace on a NixOS host (NVIDIA_VISIBLE_DEVICES
+	// stays `none`). What works (proven live on gpu-server-001 — guest lists both
+	// RTX 3090s while the host uses them) is:
+	//
+	//   * `incus config device add <name> gpu gpu` — shares the host /dev/nvidia*
+	//     char devices cooperatively (the host never loses the GPU).
+	//   * mount the host `/nix/store` READ-ONLY (unless ShareHostNixStore already
+	//     did) so the Nix-ELF loader resolves and the driver `.so`s (referenced by
+	//     absolute /nix/store paths behind the /run/opengl-driver symlinks) load.
+	//   * set `environment.LD_LIBRARY_PATH` to the host `/run/opengl-driver/lib`
+	//     RESOLVED to its /nix/store target (so `libcuda.so.1` etc. resolve via the
+	//     mounted store), and prepend the host `nvidia-smi`'s store bin dir to
+	//     `environment.PATH`. Both are resolved on the HOST at Create time, so the
+	//     recipe follows whatever driver the current system provides.
+	//
+	// NB: we do NOT bind-mount /run/opengl-driver itself — it is a symlink into
+	// the /nix ZFS dataset and incus mounts the dataset root, not the subpath, so
+	// the mount is unusable. The full /nix/store mount + the resolved LD_LIBRARY_PATH
+	// is what makes the driver libs resolve.
 	GpuPassthrough bool
 	// ShareHostNixStore, when true, wires each per-job container into the
 	// HOST's shared `/nix/store` as a build-farm participant (the multi-user
@@ -142,6 +165,39 @@ const (
 	hostNixStorePath        = "/nix/store"
 	hostNixDaemonSocketPath = "/nix/var/nix/daemon-socket"
 )
+
+// Host GPU userspace anchors for the `incus-gpu` shared-GPU recipe. Both are
+// stable NixOS host conventions resolved on the HOST at Create time (no
+// driver-version coupling): hostOpenGLDriver/lib holds the driver .so symlinks
+// (libcuda.so.1, …) and hostNvidiaSmi is the host nvidia-smi launcher. The
+// container reaches the resolved /nix/store targets through the read-only
+// /nix/store mount, so no per-driver paths are hardcoded.
+const (
+	hostOpenGLDriver = "/run/opengl-driver"
+	hostNvidiaSmi    = "/run/current-system/sw/bin/nvidia-smi"
+)
+
+// gpuGuestPath is the fallback container PATH the GPU env prepends the host
+// nvidia-smi bin dir onto (a standard Debian PATH; the image's own PATH is
+// replaced by incus's environment.PATH so it must include the usual dirs).
+const gpuGuestPath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+// resolveHostGpuUserspace resolves, on the HOST, the driver library dir and the
+// nvidia-smi bin dir the guest needs for a working shared GPU. Each falls back
+// to the literal (unresolved) path when the symlink cannot be resolved (e.g. a
+// non-GPU host, or the hermetic sandbox where /run is absent) so Create never
+// hard-fails and the emitted config stays deterministic for the unit test.
+func resolveHostGpuUserspace() (ldLibraryPath, nvidiaSmiBinDir string) {
+	ldLibraryPath = filepath.Join(hostOpenGLDriver, "lib")
+	if resolved, err := filepath.EvalSymlinks(hostOpenGLDriver); err == nil {
+		ldLibraryPath = filepath.Join(resolved, "lib")
+	}
+	nvidiaSmiBinDir = filepath.Dir(hostNvidiaSmi)
+	if resolved, err := filepath.EvalSymlinks(hostNvidiaSmi); err == nil {
+		nvidiaSmiBinDir = filepath.Dir(resolved)
+	}
+	return ldLibraryPath, nvidiaSmiBinDir
+}
 
 // incusMetaPrefix namespaces the provider's stateless identity config keys.
 const incusMetaPrefix = "user.garm."
@@ -381,20 +437,45 @@ func (b *IncusBackend) Create(ctx context.Context, args CreateArgs) (Instance, e
 		}
 	}
 
-	// 4b. GPU passthrough (the `incus-gpu` class). Attach an NVIDIA GPU device
-	//     and enable the nvidia container runtime so the host's
-	//     nvidia-container-toolkit (CDI) exposes the GPU + userspace driver into
-	//     the container. Done pre-start (a stopped container) so the device is
-	//     present on first boot. `gputype: physical` is Incus's default for a
-	//     `gpu` device and covers the whole-GPU passthrough this class needs.
+	// 4b. Shared GPU userspace (the `incus-gpu` class). Give the container a
+	//     working NVIDIA userspace that COMPOSES with the host's own use of the
+	//     GPU (cooperative — the host never loses it) and has no driver-version
+	//     coupling. This is NOT `nvidia.runtime=true` (incus-lts has no CDI and
+	//     its lxc hook does not inject the userspace on NixOS — see the struct
+	//     doc); it is the /dev/nvidia* share + the /nix/store mount + the driver
+	//     LD_LIBRARY_PATH + nvidia-smi on PATH, all resolved on the host. Done
+	//     pre-start so the devices+env are present on first boot.
 	if b.GpuPassthrough {
-		if out, err := b.run(ctx, "", "config", "set", args.Name, "nvidia.runtime=true"); err != nil {
-			_ = b.forceDelete(ctx, args.Name)
-			return Instance{}, fmt.Errorf("incus config set nvidia.runtime: %w: %s", err, strings.TrimSpace(out))
-		}
+		// Share the host /dev/nvidia* char devices cooperatively. `gputype:
+		// physical` is incus's default for a `gpu` device and covers the
+		// whole-GPU cooperative share this class needs.
 		if out, err := b.run(ctx, "", "config", "device", "add", args.Name, "gpu", "gpu"); err != nil {
 			_ = b.forceDelete(ctx, args.Name)
 			return Instance{}, fmt.Errorf("incus config device add gpu: %w: %s", err, strings.TrimSpace(out))
+		}
+		// The host /nix/store READ-ONLY so the Nix-ELF loader + the driver .so
+		// files (referenced by absolute /nix/store paths) resolve. Guard by
+		// device name: when ShareHostNixStore is also on it already attaches an
+		// identical `nixstore` disk below, so skip here to avoid a double-add.
+		if !b.ShareHostNixStore {
+			if err := b.addDisk(ctx, args.Name, "nixstore", hostNixStorePath, hostNixStorePath, true); err != nil {
+				_ = b.forceDelete(ctx, args.Name)
+				return Instance{}, err
+			}
+		}
+		// The driver-lib LD_LIBRARY_PATH (so libcuda.so.1 etc. resolve via the
+		// mounted store) and the host nvidia-smi on PATH — both resolved on the
+		// host, so the recipe follows whatever driver the current system runs.
+		ldLibraryPath, nvidiaSmiBinDir := resolveHostGpuUserspace()
+		gpuEnv := [][2]string{
+			{"environment.LD_LIBRARY_PATH", ldLibraryPath},
+			{"environment.PATH", nvidiaSmiBinDir + ":" + gpuGuestPath},
+		}
+		for _, kv := range gpuEnv {
+			if out, err := b.run(ctx, "", "config", "set", args.Name, kv[0], kv[1]); err != nil {
+				_ = b.forceDelete(ctx, args.Name)
+				return Instance{}, fmt.Errorf("incus config set %s=%s: %w: %s", kv[0], kv[1], err, strings.TrimSpace(out))
+			}
 		}
 	}
 

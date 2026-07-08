@@ -207,11 +207,16 @@ func TestIncusCreateGetDeleteLifecycle(t *testing.T) {
 	}
 }
 
-// TestIncusGpuPassthroughAttachesGpuDevice proves the `incus-gpu` class path:
-// with GpuPassthrough set, Create attaches a `gpu` device and sets
-// nvidia.runtime=true on the container BEFORE start. Without it, neither is
-// present (the plain `incus` class must not touch the GPU).
-func TestIncusGpuPassthroughAttachesGpuDevice(t *testing.T) {
+// TestIncusGpuPassthroughSharedUserspace proves the `incus-gpu` class path: the
+// PROVEN shared-GPU recipe (guest nvidia-smi/CUDA see the host GPU while the
+// host keeps using it, no driver-version coupling). With GpuPassthrough set,
+// Create BEFORE start (i) shares /dev/nvidia* via a `gpu` device, (ii) mounts
+// the host /nix/store READ-ONLY so the Nix-ELF loader + driver .so resolve, and
+// (iii) sets environment.LD_LIBRARY_PATH (driver libs) + environment.PATH
+// (nvidia-smi bin dir prepended). It MUST NOT set nvidia.runtime (incus-lts has
+// no CDI; the hook does not inject the userspace on NixOS). Without the toggle
+// the plain `incus` class touches none of this.
+func TestIncusGpuPassthroughSharedUserspace(t *testing.T) {
 	cmd, stateDir := writeMockIncus(t)
 	b := newTestIncusBackend(cmd)
 	b.GpuPassthrough = true
@@ -228,21 +233,57 @@ func TestIncusGpuPassthroughAttachesGpuDevice(t *testing.T) {
 
 	devices, err := os.ReadFile(filepath.Join(stateDir, "garm-gpu-1", "devices"))
 	if err != nil {
-		t.Fatalf("expected a gpu device to be added, but no devices file: %v", err)
+		t.Fatalf("expected gpu devices to be added, but no devices file: %v", err)
 	}
-	if !strings.Contains(string(devices), "gpu\tgpu") {
-		t.Fatalf("expected a `gpu` device of type `gpu`, got: %q", string(devices))
+	dev := string(devices)
+	// (i) cooperative /dev/nvidia* share.
+	if !strings.Contains(dev, "gpu\tgpu") {
+		t.Fatalf("expected a `gpu` device of type `gpu`, got: %q", dev)
+	}
+	// (ii) /nix/store READ-ONLY so the driver .so files resolve.
+	if !strings.Contains(dev, "nixstore\tdisk\tsource=/nix/store path=/nix/store readonly=true") {
+		t.Fatalf("expected /nix/store read-only mount, got: %q", dev)
 	}
 
 	config, err := os.ReadFile(filepath.Join(stateDir, "garm-gpu-1", "config"))
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	if !strings.Contains(string(config), "nvidia.runtime\ttrue") {
-		t.Fatalf("expected nvidia.runtime=true, got config: %q", string(config))
+	cfg := string(config)
+	// It must NOT use nvidia.runtime (the discredited CDI path).
+	if strings.Contains(cfg, "nvidia.runtime") {
+		t.Fatalf("GPU recipe must NOT set nvidia.runtime (no CDI on incus-lts), got config: %q", cfg)
+	}
+	// (iii) driver LD_LIBRARY_PATH (a …/lib dir) + nvidia-smi on PATH.
+	if !strings.Contains(cfg, "environment.LD_LIBRARY_PATH\t") {
+		t.Fatalf("expected environment.LD_LIBRARY_PATH to be set, got config: %q", cfg)
+	}
+	ld := configValue(cfg, "environment.LD_LIBRARY_PATH")
+	if !strings.HasSuffix(ld, "/lib") {
+		t.Fatalf("expected LD_LIBRARY_PATH to be a driver …/lib dir, got %q", ld)
+	}
+	if !strings.Contains(cfg, "environment.PATH\t") {
+		t.Fatalf("expected environment.PATH to be set, got config: %q", cfg)
+	}
+	pathVal := configValue(cfg, "environment.PATH")
+	if !strings.HasSuffix(pathVal, gpuGuestPath) || !strings.Contains(pathVal, ":") {
+		t.Fatalf("expected PATH to prepend a bin dir before the default PATH, got %q", pathVal)
 	}
 
-	// The plain (non-GPU) backend must NOT attach a GPU or set nvidia.runtime.
+	// Composition with ShareHostNixStore: the /nix/store mount is added exactly
+	// ONCE (guarded by device name), not double-added.
+	both := newTestIncusBackend(cmd)
+	both.GpuPassthrough = true
+	both.ShareHostNixStore = true
+	if _, err := both.Create(ctx, CreateArgs{Name: "garm-gpu-both", SourceImage: "runner-linux"}); err != nil {
+		t.Fatalf("Create (gpu+shared store): %v", err)
+	}
+	bothDev, _ := os.ReadFile(filepath.Join(stateDir, "garm-gpu-both", "devices"))
+	if n := strings.Count(string(bothDev), "nixstore\tdisk\t"); n != 1 {
+		t.Fatalf("expected the /nix/store mount added exactly once with gpu+shared-store, got %d:\n%s", n, string(bothDev))
+	}
+
+	// The plain (non-GPU) backend must NOT attach any device or GPU env.
 	plain := newTestIncusBackend(cmd)
 	if _, err := plain.Create(ctx, CreateArgs{
 		Name:        "garm-plain-1",
@@ -255,6 +296,21 @@ func TestIncusGpuPassthroughAttachesGpuDevice(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(stateDir, "garm-plain-1", "devices")); err == nil {
 		t.Fatalf("plain incus class must not attach any device")
 	}
+	pcfg, _ := os.ReadFile(filepath.Join(stateDir, "garm-plain-1", "config"))
+	if strings.Contains(string(pcfg), "environment.LD_LIBRARY_PATH") {
+		t.Fatalf("plain incus class must not set GPU env, got: %q", string(pcfg))
+	}
+}
+
+// configValue extracts the value for a "<key>\t<value>" line from the mock
+// incus config dump.
+func configValue(cfg, key string) string {
+	for _, line := range strings.Split(cfg, "\n") {
+		if strings.HasPrefix(line, key+"\t") {
+			return strings.TrimPrefix(line, key+"\t")
+		}
+	}
+	return ""
 }
 
 // TestIncusSecurityNestingEnablesNesting proves the HR1 nested-Docker path:
