@@ -4,14 +4,14 @@ import std.stdio : writeln, stderr, stdout;
 import std.traits : EnumMembers;
 import std.string : indexOf, splitLines, strip;
 import std.algorithm : map, filter, reduce, chunkBy, find, any, sort, startsWith, endsWith, each, canFind, fold;
-import std.file : write, readText, dirEntries, SpanMode, append;
+import std.file : write, readText, dirEntries, SpanMode, append, exists, mkdirRecurse;
 import std.range : array, enumerate, empty, front, indexed, iota, join, chain, split;
 import std.exception : ifThrown;
 import std.conv : to, text;
 import std.json : JSONValue, parseJSON, JSONOptions, JSONType;
 import std.regex : matchFirst;
 import core.cpuid : threadsPerCPU;
-import std.path : buildPath;
+import std.path : buildPath, dirName;
 import std.process : pipeProcess, wait, Redirect, kill;
 import std.exception : enforce;
 import std.format : fmt = format;
@@ -269,6 +269,35 @@ unittest
         "cached-package",
         "cached-deployment-target",
         "uncached-package",
+    ]);
+}
+
+@("ci matrix GitHub output creates missing parent directory")
+unittest
+{
+    import std.file : deleteme, exists, readText, rmdirRecurse;
+
+    auto outputDir = deleteme ~ ".ci-matrix-output";
+    auto outputPath = outputDir.buildPath("missing", "output.env");
+    scope(exit)
+        if (outputDir.exists)
+            outputDir.rmdirRecurse;
+
+    auto packages = [
+        Package(name: "testPackage"),
+        Package(name: "testPackage2"),
+    ];
+
+    appendGHCIBuildOutput(packages, outputPath);
+
+    const output = outputPath.readText;
+    assert(output.githubOutputValue("build_matrix").matrixPackageNames == [
+        "testPackage",
+        "testPackage2",
+    ]);
+    assert(output.githubOutputValue("full_matrix").matrixPackageNames == [
+        "testPackage",
+        "testPackage2",
     ]);
 }
 
@@ -1312,8 +1341,17 @@ void appendGHCIBuildOutput(Package[] packages, string outputPath)
         "include": JSONValue(packages.map!toJSON.array)
     ]).toString(JSONOptions.doNotEscapeSlashes) ~ "\n";
 
-    outputPath.append(buildMatrixLine);
-    outputPath.append(fullMatrixLine);
+    appendGitHubOutput(outputPath, buildMatrixLine ~ fullMatrixLine);
+}
+
+void appendGitHubOutput(string outputPath, string content)
+{
+    const outputDir = outputPath.dirName;
+    if (outputDir != "" && outputDir != "." && !outputDir.exists)
+        outputDir.mkdirRecurse;
+    if (!outputPath.exists)
+        outputPath.write("");
+    outputPath.append(content);
 }
 
 // Extract the host[:port] from a cache URL ("https://host/path" -> "host").
