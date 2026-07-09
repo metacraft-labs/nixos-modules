@@ -16,6 +16,7 @@
     ./garm-incus-runner-host.nix
     ./garm-macos-runner-install-wrapper.nix
     ./garm-provider-vmharness-protocol.nix
+    ./s3-artifact-store.nix
     ./repro-binary-cache-systemd.nix
     ./repro-binary-cache-cross-host.nix
     ./repro-deploy-agent-https.nix

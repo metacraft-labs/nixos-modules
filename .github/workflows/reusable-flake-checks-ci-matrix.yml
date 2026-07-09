@@ -62,6 +62,17 @@ on:
       NIX_GITLAB_TOKEN:
         description: GitLab token to add as access-token in nix.conf
         required: false
+      # In-house S3 artifact store (Garage on high-mem-server). When set, CI
+      # artifacts are ALSO mirrored to the `ci-artifacts` bucket over the
+      # NetBird VPN, moving them off GitHub's quota-limited artifact storage.
+      # The upload is strictly non-blocking. Distributed per-repo by
+      # infra/scripts/s3-artifact-store/configure-github-repo.sh.
+      MCL_S3_ARTIFACTS_ACCESS_KEY_ID:
+        description: 'S3 access key id for the CI artifact store (optional)'
+        required: false
+      MCL_S3_ARTIFACTS_SECRET_ACCESS_KEY:
+        description: 'S3 secret access key for the CI artifact store (optional)'
+        required: false
 
 jobs:
   compute-mcl-ref:
@@ -690,6 +701,43 @@ jobs:
           path: .result/deployment-cache-push-events.jsonl
           if-no-files-found: warn
           retention-days: 1
+
+      # In-house S3 mirror of the same artifact, over the NetBird VPN, using a
+      # bucket-scoped CI credential (the Attic-token analog). STRICTLY
+      # NON-BLOCKING: every failure is swallowed so a store/VPN hiccup can
+      # never fail CI. Skipped entirely when the credential is absent (e.g.
+      # forks / repos not yet onboarded). Object key namespaces by run + job so
+      # a fetch is deterministic, and the store's `ci-artifacts` lifecycle
+      # (retention-days: 1) reaps it just like the GitHub artifact.
+      - name: Upload CI artifacts to S3 (non-blocking mirror)
+        if: ${{ always() && inputs.push-deployment-caches && !matrix.noop && matrix.deploymentTarget }}
+        continue-on-error: true
+        shell: bash
+        env:
+          MCL_S3_ARTIFACTS_ENDPOINT: ${{ vars.MCL_S3_ARTIFACTS_ENDPOINT }}
+          MCL_S3_ARTIFACTS_BUCKET: ${{ vars.MCL_S3_ARTIFACTS_BUCKET }}
+          MCL_S3_ARTIFACTS_REGION: ${{ vars.MCL_S3_ARTIFACTS_REGION }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.MCL_S3_ARTIFACTS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.MCL_S3_ARTIFACTS_SECRET_ACCESS_KEY }}
+          AWS_EC2_METADATA_DISABLED: 'true'
+          S3_OBJECT_PREFIX: deployment-cache-push/${{ github.run_id }}/${{ strategy.job-index }}
+        run: |
+          set -u
+          if [[ -z "''${AWS_ACCESS_KEY_ID:-}" || -z "''${AWS_SECRET_ACCESS_KEY:-}" || -z "''${MCL_S3_ARTIFACTS_ENDPOINT:-}" ]]; then
+            echo "S3 artifact store not configured for this repo; skipping mirror."
+            exit 0
+          fi
+          [[ -f .result/deployment-cache-push-events.jsonl ]] || { echo "no artifact to mirror."; exit 0; }
+          region="''${MCL_S3_ARTIFACTS_REGION:-garage}"
+          bucket="''${MCL_S3_ARTIFACTS_BUCKET:-ci-artifacts}"
+          if nix shell nixpkgs#awscli2 -c \
+              aws --endpoint-url "$MCL_S3_ARTIFACTS_ENDPOINT" --region "$region" \
+                  s3 cp .result/deployment-cache-push-events.jsonl \
+                  "s3://$bucket/$S3_OBJECT_PREFIX/deployment-cache-push-events.jsonl"; then
+            echo "Mirrored deployment-cache-push-events.jsonl to s3://$bucket/$S3_OBJECT_PREFIX/"
+          else
+            echo "::warning title=S3 artifact mirror::upload failed (non-blocking); continuing"
+          fi
 
   results:
     runs-on: ${{ fromJSON(inputs.results-runner) }}
