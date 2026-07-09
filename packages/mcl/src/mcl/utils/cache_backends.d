@@ -15,7 +15,11 @@ import mcl.utils.process : ProcessResult, ProcessRunner;
 enum ulong defaultCacheProbeTimeoutSeconds = 30;
 enum ulong defaultAtticPushTimeoutSeconds = 1800;
 enum ulong cacheProbeMaxAttempts = 3;
-enum ulong atticPushMaxAttempts = 3;
+// Deployment-closure pushes are idempotent (see isTransientAtticPushFailure), so
+// a transient network/proxy hiccup is worth several retries with backoff rather
+// than aborting the whole per-host publish loop. 5 attempts ≈ 2+5+10+20s of
+// backoff around ~flaky-cache windows.
+enum ulong atticPushMaxAttempts = 5;
 
 enum CacheBackend
 {
@@ -446,15 +450,51 @@ private bool isTransientAtticPushFailure(ProcessResult result)
     if (isTimeoutExitCode(result.exitCode))
         return true;
 
+    // A deployment-closure push is IDEMPOTENT and content-addressed: re-pushing
+    // paths already present on the cache is a harmless no-op (attic skips them),
+    // and the closure is signed/CA so a retry can never publish wrong bytes. So
+    // we retry generously — any failure that is plausibly a transient
+    // network/server/proxy hiccup rather than a deterministic push error. The
+    // narrow original list (only 504/gateway-timeout) let real intermittent
+    // failures (502/503/500, 429, connection reset, broken pipe, early EOF, TLS
+    // handshake, transient DNS) abort the WHOLE per-host publish loop with no
+    // retry, blocking healthy hosts' manifests. See the runners campaign.
     auto output = (result.stdout ~ "\n" ~ result.stderr).toLower;
-    return output.canFind("http 504")
-        || output.canFind("504 gateway timeout")
-        || output.canFind("gateway timeout")
-        || output.canFind("upstream timed out")
-        || output.canFind("deadline exceeded")
-        || output.canFind("connection timed out")
-        || output.canFind("connection pool timed out")
-        || output.canFind("internalservererror");
+    static immutable string[] transientMarkers = [
+        // Gateway / upstream / server-side 5xx (nginx in front of atticd).
+        "http 500", "http 502", "http 503", "http 504",
+        "500 internal server error", "502 bad gateway",
+        "503 service unavailable", "504 gateway timeout",
+        "internalservererror", "bad gateway", "gateway timeout",
+        "service unavailable", "upstream timed out",
+        "upstream connect error", "no healthy upstream",
+        // Rate limiting / backpressure.
+        "http 429", "429 too many requests", "too many requests",
+        "slow down",
+        // Timeouts / deadlines (any layer).
+        "deadline exceeded", "connection timed out", "connection pool timed out",
+        "timed out", "timeout", "i/o timeout", "operation timed out",
+        // Connection churn / mid-transfer drops.
+        "connection reset", "reset by peer", "broken pipe",
+        "connection refused", "connection closed", "connection aborted",
+        "unexpected eof", "early eof", "incomplete", "premature",
+        "transfer closed", "empty reply from server", "recv failure",
+        "send failure", "remote end closed",
+        // TLS / handshake churn.
+        "tls handshake", "handshake failed", "handshake timeout",
+        "eof occurred in violation", "sslerror", "ssl error",
+        // Transient DNS.
+        "temporary failure in name resolution", "name resolution",
+        "could not resolve host", "no address associated",
+        // Generic transport hiccups attic/reqwest surface.
+        "network is unreachable", "no route to host",
+        "connection error", "request error", "error sending request",
+        "channel closed", "stream closed", "hyper::error",
+    ];
+    foreach (marker; transientMarkers)
+        if (output.canFind(marker))
+            return true;
+    return false;
 }
 
 private void sleepBeforeAtticPushRetry(ulong failedAttempt)
@@ -467,7 +507,11 @@ private void sleepBeforeAtticPushRetry(ulong failedAttempt)
         import core.thread : Thread;
         import core.time : seconds;
 
-        Thread.sleep(failedAttempt == 1 ? 2.seconds : 10.seconds);
+        // Graduated backoff: 2s, 5s, 10s, then 20s for any further attempts.
+        ulong delay = failedAttempt == 1 ? 2
+            : failedAttempt == 2 ? 5
+            : failedAttempt == 3 ? 10 : 20;
+        Thread.sleep(delay.seconds);
     }
 }
 
@@ -978,6 +1022,100 @@ unittest
     ), &fakeRunner, &fakeRunner) == 0);
 
     assert(atticPushes == 2);
+}
+
+@("test_attic_push_retries_broadened_transient_errors_and_succeeds")
+unittest
+{
+    // Each of these transient failure signatures used to abort with NO retry
+    // (only 504/gateway-timeout was recognised); now they retry and succeed.
+    static immutable string[] transientStderrs = [
+        "error: HTTP 502 Bad Gateway",
+        "error: HTTP 503 Service Unavailable",
+        "error: unexpected EOF during handshake",
+        "error: connection reset by peer",
+        "error: HTTP 429 Too Many Requests",
+        "error: broken pipe while uploading nar",
+        "error: temporary failure in name resolution",
+    ];
+    foreach (stderr; transientStderrs)
+    {
+        auto root = "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-root";
+        ulong atticPushes;
+        ProcessResult fakeRunner(string[] command)
+        {
+            if (isCommandInvocation(command, "attic", "push"))
+            {
+                ++atticPushes;
+                return atticPushes == 1 ? ProcessResult(1, "", stderr) : ProcessResult(0, "", "");
+            }
+            if (command.length >= 2 && command[0] == "nix" && command[1] == "path-info"
+                && command.canFind("--json"))
+                return ProcessResult(0,
+                    `{"/nix/store/0123456789abcdfghijklmnpqrsvwxyz-root":{"narSize":7}}`, "");
+            if (command.length >= 2 && command[0] == "nix" && command[1] == "path-info"
+                && command.canFind("--recursive"))
+                return ProcessResult(0, root ~ "\n", "");
+            if (command.canFind("--store"))
+                return ProcessResult(0, root ~ "\n", "");
+            return ProcessResult(0, "", "");
+        }
+
+        assert(pushClosure(CachePushRequest(
+            backend: CacheBackend.attic,
+            cache: "example-deploy-cache",
+            storePaths: [root],
+            substituters: ["https://cache.example/example-deploy-cache"],
+        ), &fakeRunner, &fakeRunner) == 0, "should retry+succeed for: " ~ stderr);
+        assert(atticPushes == 2, "expected exactly one retry for: " ~ stderr);
+    }
+}
+
+@("test_attic_push_does_not_retry_permanent_auth_failure")
+unittest
+{
+    import std.file : deleteme, remove;
+
+    auto eventLog = deleteme ~ ".attic-push-permanent.events.jsonl";
+    scope(exit)
+        if (eventLog.exists) eventLog.remove;
+
+    // A deterministic auth/permission failure (403 Forbidden) is NOT transient:
+    // retrying is pointless, so the push fails after a single attempt.
+    auto root = "/nix/store/0123456789abcdfghijklmnpqrsvwxyz-root";
+    ulong atticPushes;
+    ProcessResult fakeRunner(string[] command)
+    {
+        if (isCommandInvocation(command, "attic", "push"))
+        {
+            ++atticPushes;
+            return ProcessResult(1, "", "error: HTTP 403 Forbidden: invalid token");
+        }
+        if (command.length >= 2 && command[0] == "nix" && command[1] == "path-info"
+            && command.canFind("--json"))
+            return ProcessResult(0,
+                `{"/nix/store/0123456789abcdfghijklmnpqrsvwxyz-root":{"narSize":7}}`, "");
+        if (command.length >= 2 && command[0] == "nix" && command[1] == "path-info"
+            && command.canFind("--recursive"))
+            return ProcessResult(0, root ~ "\n", "");
+        if (command.canFind("--store"))
+            return ProcessResult(0, root ~ "\n", "");
+        return ProcessResult(0, "", "");
+    }
+
+    bool threw;
+    try
+        pushClosure(CachePushRequest(
+            backend: CacheBackend.attic,
+            cache: "example-deploy-cache",
+            storePaths: [root],
+            substituters: ["https://cache.example/example-deploy-cache"],
+            eventLogPath: eventLog,
+        ), &fakeRunner, &fakeRunner);
+    catch (Exception e)
+        threw = true;
+    assert(threw);
+    assert(atticPushes == 1, "permanent 403 must not be retried");
 }
 
 @("test_attic_push_uses_configured_timeout")
