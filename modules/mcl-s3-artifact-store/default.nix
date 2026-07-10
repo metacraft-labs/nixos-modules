@@ -238,13 +238,13 @@
           {"Rules":[{"ID":"expire-artifacts","Status":"Enabled","Filter":{"Prefix":""},"Expiration":{"Days":$expiry}}]}
           JSON
               if AWS_ACCESS_KEY_ID="$keyId" \
-                 AWS_SECRET_ACCESS_KEY="$secret" \
-                 AWS_EC2_METADATA_DISABLED=true \
-                   aws --endpoint-url ${escapeShellArg localS3Endpoint} \
-                       --region ${escapeShellArg cfg.region} \
-                       s3api put-bucket-lifecycle-configuration \
-                       --bucket "$name" \
-                       --lifecycle-configuration "file://$stateDir/lifecycle.json"
+                AWS_SECRET_ACCESS_KEY="$secret" \
+                AWS_EC2_METADATA_DISABLED=true \
+                aws --endpoint-url ${escapeShellArg localS3Endpoint} \
+                --region ${escapeShellArg cfg.region} \
+                s3api put-bucket-lifecycle-configuration \
+                --bucket "$name" \
+                --lifecycle-configuration "file://$stateDir/lifecycle.json"
               then
                 echo "s3-artifact-store-bootstrap: lifecycle expiry ''${expiry}d set on '$name'."
               else
@@ -428,13 +428,82 @@
           };
         };
 
+        # A STATIC `garage` user/group so the on-disk metadata + data dirs (and
+        # the dedicated /storage dataset in prod) have a stable, known owner.
+        # The upstream nixpkgs garage module runs the service under
+        # `DynamicUser = true` (mkDefault) with NO static user, and it only
+        # provisions a StateDirectory when metadata_dir/data_dir sit under the
+        # default `/var/lib/garage` prefix — a non-default `data_dir` (e.g. the
+        # prod `/storage/s3-artifact-store/data`) is emitted purely as a
+        # `ReadWritePaths=` bind, which systemd REFUSES to set up if the leaf
+        # does not already exist (`status=226/NAMESPACE`, the unit cannot even
+        # spawn). This module owns a non-default `data_dir`, so it must both
+        # CREATE that directory (below) and give it a deterministic owner —
+        # hence pinning the service off DynamicUser onto this static user.
+        users.users.garage = {
+          isSystemUser = true;
+          group = "garage";
+          description = "Garage S3 object-storage service user";
+        };
+        users.groups.garage = { };
+
+        systemd.services.garage.serviceConfig = {
+          DynamicUser = lib.mkForce false;
+          User = "garage";
+          Group = "garage";
+          # `DynamicUser = true` (the upstream default we pin OFF above) IMPLIES a
+          # set of sandbox tighteners that would otherwise silently revert to
+          # their permissive defaults once the service runs as a static user —
+          # turning a credential-bearing store into a laxer sandbox. Re-assert
+          # each one explicitly so the static-user unit is NO WEAKER than the
+          # original DynamicUser unit (systemd.exec(5): DynamicUser= implies
+          # ProtectSystem=strict, ProtectHome=read-only, PrivateTmp=,
+          # RemoveIPC=, NoNewPrivileges= and RestrictSUIDSGID=). The upstream
+          # module already sets NoNewPrivileges + ProtectHome; we add the rest.
+          # ProtectSystem=strict keeps the whole FS read-only except the data
+          # dir (ReadWritePaths, wired by upstream) and the meta dir (under the
+          # StateDirectory=garage prefix, which is RW) — exactly what worked
+          # under DynamicUser, so nothing garage needs to write is lost.
+          ProtectSystem = lib.mkDefault "strict";
+          PrivateTmp = lib.mkDefault true;
+          RemoveIPC = lib.mkDefault true;
+          RestrictSUIDSGID = lib.mkDefault true;
+        };
         systemd.services.garage.restartTriggers = [ cfg.environmentFile ];
 
+        # THE FIX for the `status=226/NAMESPACE` boot failure: create BOTH
+        # Garage state directories (idempotently, with the right owner) BEFORE
+        # garage.service starts. `mkdir -p` (not a tmpfiles `d` rule, which does
+        # NOT create missing PARENT components) so an arbitrarily nested,
+        # not-yet-existing leaf like `/storage/s3-artifact-store/data` is
+        # materialized. In prod the DATA dir's parent is a dedicated ZFS dataset
+        # provisioned (with a refquota) by the infra layer ordered before this
+        # oneshot; here we only guarantee the leaf exists + is garage-owned so
+        # the systemd sandbox's `ReadWritePaths=`/StateDirectory bind succeeds.
         systemd.tmpfiles.rules = [
           "d ${bootstrapDir} 0750 root root -"
-          "d ${cfg.metadataDir} 0700 garage garage -"
-          "d ${cfg.dataDir} 0700 garage garage -"
         ];
+
+        systemd.services.garage-storage-dirs = {
+          description = "Create + own the Garage metadata/data directories (pre-start)";
+          after = [ "local-fs.target" ];
+          before = [ "garage.service" ];
+          requiredBy = [ "garage.service" ];
+          wantedBy = [ "multi-user.target" ];
+          serviceConfig = {
+            Type = "oneshot";
+            RemainAfterExit = true;
+          };
+          path = [ pkgs.coreutils ];
+          script = ''
+            set -euo pipefail
+            for d in ${escapeShellArg cfg.metadataDir} ${escapeShellArg cfg.dataDir}; do
+              mkdir -p "$d"
+              chown garage:garage "$d"
+              chmod 0700 "$d"
+            done
+          '';
+        };
 
         systemd.services.s3-artifact-store-bootstrap = {
           description = "Idempotent bootstrap of managed S3 buckets + lifecycle";

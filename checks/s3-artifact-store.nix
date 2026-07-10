@@ -65,11 +65,24 @@ top@{ ... }:
                 pkgs.awscli2
                 pkgs.jq
               ];
+              # Reproduce the PROD topology that broke garage.service on
+              # high-mem-server: a NON-DEFAULT data dir whose PARENT exists but
+              # whose LEAF does not, and a metadata dir OUTSIDE the default
+              # `/var/lib/garage` prefix (so upstream's StateDirectory auto-
+              # provisioning does NOT kick in and cover for us). `/srv` exists on
+              # the test VM but `/srv/s3-store` and its `data` leaf do NOT — the
+              # exact shape of the real `/storage/s3-artifact-store/data` (parent
+              # dataset present, leaf absent, nothing on the default prefix). If
+              # the module fails to CREATE these dirs (+ own them), garage.service
+              # dies with `status=226/NAMESPACE` and every subtest below fails —
+              # so this config makes the check non-vacuous against the bug.
               mcl.s3-artifact-store = {
                 enable = true;
                 domain = "s3.test.local";
                 environmentFile = testEnvFile;
                 nodeCapacity = "1G";
+                dataDir = "/srv/s3-store/data";
+                metadataDir = "/srv/s3-store/meta";
                 networkAcl.allow = [ allowedCidr ]; # only the `allowed` node /32
                 buckets = [
                   {
@@ -120,7 +133,22 @@ top@{ ... }:
 
             start_all()
             server.wait_for_unit("multi-user.target")
-            server.wait_for_unit("garage.service")
+
+            with subtest("dir-provisioning: garage.service STARTS even though its data/meta dirs did not pre-exist"):
+                # The regression this guards: with a non-default data_dir whose
+                # leaf does not exist, the systemd sandbox's ReadWritePaths bind
+                # fails at namespace setup (status=226/NAMESPACE) and garage
+                # cannot even spawn. Assert the pre-start dir oneshot ran, that
+                # both dirs now exist owned by `garage`, and that garage is
+                # genuinely ACTIVE (not just loaded).
+                server.wait_for_unit("garage-storage-dirs.service")
+                server.wait_for_unit("garage.service")
+                server.require_unit_state("garage.service", "active")
+                server.succeed("test -d /srv/s3-store/data")
+                server.succeed("test -d /srv/s3-store/meta")
+                server.succeed("test \"$(stat -c '%U' /srv/s3-store/data)\" = garage")
+                server.succeed("test \"$(stat -c '%U' /srv/s3-store/meta)\" = garage")
+
             server.wait_for_open_port(3900)
             # The bootstrap unit applies the single-node layout, creates the
             # bucket, and sets the lifecycle rule.
