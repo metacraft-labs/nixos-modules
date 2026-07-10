@@ -197,6 +197,20 @@
           # systemd JobRemoved D-Bus signal on the classic dbus-daemon, fixed in the
           # consumer (infra) via services.dbus.implementation = "broker" plus a
           # TimeoutStartSec bound on this service.
+          #
+          # FU1 (DEPLOY-AGENT-SELFHEAL): restartIfChanged=false alone does NOT make
+          # a switch that (re)starts this unit safe. When switch-to-configuration
+          # runs from inside this unit's own cgroup and issues
+          # `systemctl start/restart mcl-deploy-agent.service`, systemd terminates
+          # the running invocation to service that job -- which kills the switch
+          # process mid-activation, so its own restart job never completes and the
+          # deploy wedges (verified on gpu-server-001/002). The fix lives in
+          # `mcl deploy-agent`/`deploy-apply`: switch-to-configuration is executed in
+          # a detached `systemd-run` transient unit (its OWN cgroup), so systemd can
+          # freely (re)start this unit without tearing the switch down, while the
+          # agent still `--wait`s for and reports the switch exit code. Verified:
+          # a detached switch that `systemctl restart`s the launching oneshot lets
+          # the restart complete and the switch survive.
           restartIfChanged = false;
           serviceConfig = {
             Type = "oneshot";

@@ -90,6 +90,12 @@ struct DeployApplyArgs
         .EnvFallback("MCL_DEPLOY_GENERATION_COMMAND"))
     string generationCommand = "readlink -f /run/current-system";
 
+    @(NamedArgument(["no-detach-switch"])
+        .Description("Run switch-to-configuration in-process instead of a detached systemd-run scope. "
+            ~ "Detaching is the default and prevents the agent unit from deadlocking when the switch "
+            ~ "restarts mcl-deploy-agent.service; disable only in environments without systemd."))
+    bool noDetachSwitch;
+
     @(NamedArgument(["transport"])
         .Placeholder("NAME")
         .Description("Deployment transport recorded in target-side events"))
@@ -150,6 +156,51 @@ bool automaticRollbackRequested(JSONValue manifest)
 ProcessResult shell(ProcessRunner runner, string command)
 {
     return runner(["/bin/sh", "-c", command]);
+}
+
+// Run an activation command (switch-to-configuration) detached from the caller's
+// systemd unit.
+//
+// The pull agent and the reconciler both run switch-to-configuration from inside
+// their own oneshot unit's cgroup. The activated closure legitimately contains a
+// new version of that very unit, so switch-to-configuration issues
+// `systemctl start/restart mcl-deploy-agent.service` (the timer-wanted oneshot).
+// systemd cannot complete that start while the current invocation is still alive,
+// so switch-to-configuration blocks forever waiting on a job that can never finish,
+// wedging the deploy until the service start-timeout kills it.
+//
+// systemd-run moves the switch into its own transient scope with a distinct cgroup,
+// so systemd is free to (re)start mcl-deploy-agent.service concurrently. --wait
+// propagates the switch exit code back to the agent, --pipe forwards stdout/stderr
+// so events keep their diagnostics, and --collect garbage-collects the transient
+// unit even if it fails.
+ProcessResult detachedSwitch(ProcessRunner runner, string command, bool detach)
+{
+    if (!detach)
+        return shell(runner, command);
+
+    import std.uuid : randomUUID;
+
+    auto unitName = "mcl-deploy-activate-" ~ randomUUID.toString;
+
+    // The transient scope does not inherit the agent unit's environment, so
+    // forward PATH explicitly; switch-to-configuration's activation scripts call
+    // unqualified tools (mkdir, systemctl, ...) that must resolve on PATH.
+    auto path = environment.get("PATH", "");
+
+    string[] cmd = [
+        "systemd-run",
+        "--collect",
+        "--pipe",
+        "--wait",
+        "--quiet",
+        "--service-type=exec",
+        "--unit=" ~ unitName,
+    ];
+    if (path != "")
+        cmd ~= "--setenv=PATH=" ~ path;
+    cmd ~= ["/bin/sh", "-c", command];
+    return runner(cmd);
 }
 
 int deployApplyImpl(DeployApplyArgs args, DeployApplyDependencies deps)
@@ -275,7 +326,7 @@ int deployApplyImpl(DeployApplyArgs args, DeployApplyDependencies deps)
     auto switchCommand = args.switchCommand == ""
         ? manifestDesiredSystemPath(manifest) ~ "/bin/switch-to-configuration switch"
         : args.switchCommand;
-    auto switched = shell(runner, switchCommand);
+    auto switched = detachedSwitch(runner, switchCommand, !args.noDetachSwitch);
     auto current = shell(queryRunner, args.generationCommand).stdout.strip;
     emit("switch", "switch-to-configuration", ["sh", "-c", switchCommand],
         switched.succeeded ? "succeeded" : "failed",
@@ -328,7 +379,7 @@ int deployApplyImpl(DeployApplyArgs args, DeployApplyDependencies deps)
             auto rollbackCommand = args.rollbackCommand == ""
                 ? previous ~ "/bin/switch-to-configuration switch"
                 : args.rollbackCommand;
-            auto rollback = shell(runner, rollbackCommand);
+            auto rollback = detachedSwitch(runner, rollbackCommand, !args.noDetachSwitch);
             emit("rollback", "switch-to-configuration rollback", ["sh", "-c", rollbackCommand],
                 rollback.succeeded ? "succeeded" : "failed",
                 rollback.exitCode,

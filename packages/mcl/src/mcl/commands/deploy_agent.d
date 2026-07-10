@@ -102,6 +102,12 @@ struct DeployAgentArgs
         .Description("Command that prints the current system generation path")
         .EnvFallback("MCL_DEPLOY_GENERATION_COMMAND"))
     string generationCommand = "readlink -f /run/current-system";
+
+    @(NamedArgument(["no-detach-switch"])
+        .Description("Run switch-to-configuration in-process instead of a detached systemd-run scope. "
+            ~ "Detaching is the default and prevents this agent unit from deadlocking when the switch "
+            ~ "restarts mcl-deploy-agent.service; disable only in environments without systemd."))
+    bool noDetachSwitch;
 }
 
 struct DeployAgentDependencies
@@ -389,6 +395,7 @@ int deployAgentImpl(DeployAgentArgs args, DeployAgentDependencies deps)
     applyArgs.switchCommand = args.switchCommand;
     applyArgs.rollbackCommand = args.rollbackCommand;
     applyArgs.generationCommand = args.generationCommand;
+    applyArgs.noDetachSwitch = args.noDetachSwitch;
     applyArgs.transport = "pull-agent";
     applyArgs.controller = "mcl-deploy-agent";
 

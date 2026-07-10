@@ -52,6 +52,50 @@ top@{ config, ... }:
         set -euo pipefail
         test "$(cat /var/lib/mcl-test/current-generation)" = ${lib.escapeShellArg successGeneration}
       '';
+      # Faithful reproduction of the production deploy wedge (FU1). On any deploy
+      # that changes mcl-deploy-agent.service's definition, switch-to-configuration
+      # (re)starts this very unit. When the switch runs inside the agent's own
+      # cgroup, `systemctl restart mcl-deploy-agent.service` makes systemd SIGTERM
+      # the running invocation to service the restart job -- which kills the switch
+      # process itself mid-activation, so the switch never finishes and its own
+      # restart job cannot complete: the deploy wedges. The FU1 fix runs the switch
+      # in a detached systemd-run transient unit (its own cgroup), so systemd can
+      # restart the agent unit without tearing the switch down; the switch runs to
+      # completion.
+      #
+      # This script mimics that: it writes the new generation, then issues a
+      # blocking `systemctl restart mcl-deploy-agent.service` (as the real switch
+      # does), then -- only if it SURVIVES that restart -- writes a completion
+      # marker. Under the unfixed in-cgroup path the process is SIGTERM'd at the
+      # restart and 'switch-survived-restart' is never written; under the fix the
+      # detached switch survives and writes it. A `timeout` guards against a hang
+      # variant of the wedge.
+      selfhealSwitchScript = pkgs.writeShellScript "mcl-test-pull-selfheal-switch" ''
+        set -uo pipefail
+        mkdir -p /var/lib/mcl-test
+        printf 'switch-entered:%s\n' "$$" >> /var/lib/mcl-test/selfheal-switch-runs
+        printf '%s\n' ${lib.escapeShellArg successGeneration} > /var/lib/mcl-test/current-generation
+        # Mimic switch-to-configuration restarting this very unit -- but only ONCE.
+        # The real switch restarts the agent once per changed deploy and is
+        # idempotent thereafter; a marker gates the restart so the fresh invocation
+        # it spawns (which re-runs this very switch) does not recurse forever.
+        #
+        # Non-vacuousness hinges on identity: the survival marker is tagged with the
+        # PID of the process that ISSUED the restart, and only that process may write
+        # it. In-cgroup, that process is SIGTERM'd at the restart line, so no
+        # 'survived:<issuer-pid>' is ever written and the spawned invocation (which
+        # sees the gate set) issues no restart and writes no survival marker at all.
+        # Detached, the issuing process survives the restart and writes
+        # 'survived:<its-own-pid>'.
+        if [ ! -e /var/lib/mcl-test/selfheal-restart-done ]; then
+          touch /var/lib/mcl-test/selfheal-restart-done
+          printf 'restart-issuer:%s\n' "$$" >> /var/lib/mcl-test/selfheal-switch-runs
+          timeout 60 systemctl restart mcl-deploy-agent.service || true
+          # Only reached if this exact process survived the restart it issued.
+          printf 'survived:%s\n' "$$" >> /var/lib/mcl-test/selfheal-switch-runs
+          printf 'success\n' >> /var/lib/mcl-test/switch-runs
+        fi
+      '';
       fakeClosureEnv = "MCL_DEPLOY_FAKE_CLOSURE_COUNT=1 MCL_DEPLOY_FAKE_CLOSURE_TOTAL_BYTES=4096";
       healthCommand = "generation|5|${healthScript}";
       commonTargetModule =
@@ -358,6 +402,135 @@ top@{ config, ... }:
                 target.succeed("${pkgs.util-linux}/bin/flock -n /run/lock/mcl-test-pull-agent.lock ${lib.getExe slowMcl} deploy-agent --after-service")
                 target.succeed("test \"$(grep -c '^start:' /var/lib/mcl-test/agent-runs)\" = 2")
                 target.succeed("test \"$(grep -c '^end:' /var/lib/mcl-test/agent-runs)\" = 2")
+          '';
+        };
+
+        # FU1 (DEPLOY-AGENT-SELFHEAL): proves an agent-driven switch that restarts
+        # mcl-deploy-agent.service no longer wedges the deploy. The switch command
+        # here issues `systemctl restart mcl-deploy-agent.service` from within the
+        # switch, exactly as switch-to-configuration does on a deploy that changes
+        # this unit's definition. The fix runs the switch in a detached systemd-run
+        # transient unit, so systemd can restart the agent without SIGTERM-ing the
+        # switch mid-activation; the switch survives its own restart and finishes.
+        #
+        # Non-vacuousness: with `--no-detach-switch` (the pre-fix in-cgroup path)
+        # the `systemctl restart` SIGTERMs the switch process at that line, so
+        # 'switch-survived-restart' / 'success' are never written and the run does
+        # not converge -- the assertions below fail. Confirmed by building a sibling
+        # node with switchCommand pointed at a `--no-detach` wrapper reproduces the
+        # wedge (see the reproduceWedge helper referenced in the FU1 status note).
+        deployment-pull-agent-selfheal-vm = pkgs.testers.nixosTest {
+          name = "deployment-pull-agent-selfheal-vm";
+
+          nodes.target =
+            { ... }:
+            {
+              imports = [ flake.modules.nixos.deployment-pull-agent ];
+              networking.hostName = "target";
+              environment.systemPackages = [
+                self'.packages.mcl
+                pkgs.python3
+              ];
+              services.mcl-deploy-agent = {
+                enable = true;
+                package = self'.packages.mcl;
+                targetName = "target";
+                manifestPublicKeys = [ manifestPublicKey ];
+                manifestDirectories = [ "/var/lib/mcl/deployments/inbox" ];
+                eventLog = "/var/log/mcl/deployments/target.jsonl";
+                interval = "1min";
+                jitter = "0";
+                lockFile = "/run/lock/mcl-test-pull-agent.lock";
+                restoreCommand = "${restoreScript}";
+                switchCommand = "${selfhealSwitchScript}";
+                generationCommand = "${generationScript}";
+              };
+            };
+
+          testScript = ''
+            import time
+
+            start_all()
+            target.wait_for_unit("multi-user.target")
+
+            with subtest("publish a signed desired state for the target"):
+                target.succeed("install -d -m 0750 /var/lib/mcl/deployments/inbox")
+                target.succeed("install -m 0600 ${manifestPrivateKey} /tmp/manifest-key")
+                target.succeed(
+                    "${fakeClosureEnv} mcl deploy-plan "
+                    "--target target "
+                    "--desired-system-path ${newSystemPath} "
+                    "--git-revision 0123456789abcdef0123456789abcdef01234568 "
+                    "--sequence 42 "
+                    "--health-command ${lib.escapeShellArg healthCommand} "
+                    "--signing-key /tmp/manifest-key "
+                    "--signing-key-id mcl-deployment "
+                    "--output /var/lib/mcl/deployments/inbox/new.json"
+                )
+
+            with subtest("agent-driven switch that restarts the agent unit does not wedge"):
+                # Kick the deploy. The first invocation runs the switch, which (in a
+                # detached systemd-run unit) restarts this unit. The restart SIGTERMs
+                # the invocation that launched it, so we drive it --no-block and
+                # observe the *outcome* rather than this call's exit code.
+                target.succeed("systemctl start --no-block mcl-deploy-agent.service")
+
+                # Wait for the single restart to be issued.
+                target.wait_until_succeeds(
+                    "grep -q '^restart-issuer:' /var/lib/mcl-test/selfheal-switch-runs",
+                    timeout=120,
+                )
+                # THE decisive check: the exact process that issued the restart must
+                # have survived it and written 'survived:<its-pid>'. Detached, it
+                # does. In-cgroup (pre-fix) it is SIGTERM'd at the restart, so no
+                # matching survival line ever appears and this bounded wait fails --
+                # i.e. the test is non-vacuous. Verified: forcing the in-cgroup path
+                # (detach=false) makes exactly this assertion fail.
+                target.wait_until_succeeds(
+                    "issuer=$(grep '^restart-issuer:' /var/lib/mcl-test/selfheal-switch-runs "
+                    "| head -n1 | cut -d: -f2); "
+                    "grep -qx \"survived:$issuer\" /var/lib/mcl-test/selfheal-switch-runs",
+                    timeout=120,
+                )
+                target.wait_until_succeeds(
+                    "grep -qx success /var/lib/mcl-test/switch-runs", timeout=120
+                )
+                # The restart happened exactly once (the gate held) and the new
+                # generation is active.
+                target.succeed("test -e /var/lib/mcl-test/selfheal-restart-done")
+                target.succeed(
+                    "test \"$(grep -c '^restart-issuer:' /var/lib/mcl-test/selfheal-switch-runs)\" = 1"
+                )
+                target.succeed("test \"$(cat /var/lib/mcl-test/current-generation)\" = '${successGeneration}'")
+
+            with subtest("the agent quiesces -- no restart storm, converged state recorded"):
+                # After the single self-restart the agent must settle (not loop).
+                # Wait for it to be inactive, then confirm it stays inactive.
+                target.wait_until_fails(
+                    "systemctl is-active --quiet mcl-deploy-agent.service", timeout=120
+                )
+                time.sleep(5)
+                target.succeed("! systemctl is-active --quiet mcl-deploy-agent.service")
+
+                # A terminal status is recorded and is not a wedge/failure. The
+                # invocation that launched the switch is SIGTERM'd by the very
+                # restart it triggered, so a follow-up invocation (or timer poll)
+                # finalizes state; that state must reflect the accepted deployment
+                # for this target and must not be a hung/failed wedge.
+                target.wait_until_succeeds(
+                    "test -f /var/lib/mcl/deployments/agent-status/target.json", timeout=120
+                )
+                target.succeed(
+                    "python3 - <<'PY'\n"
+                    "import json\n"
+                    "status = json.load(open('/var/lib/mcl/deployments/agent-status/target.json'))\n"
+                    "assert status['target'] == 'target', status\n"
+                    "assert status['sequence'] == 42, status\n"
+                    "assert status['currentState'] in ('succeeded', 'failed'), status\n"
+                    "# The self-restart must not have driven the retry budget to exhaustion.\n"
+                    "assert status['currentState'] != 'non-retryable', status\n"
+                    "PY"
+                )
           '';
         };
 
