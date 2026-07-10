@@ -731,6 +731,127 @@
         '';
       };
 
+      # ----- FU9 GARM-API-WATCHDOG ------------------------------------------
+      hcfg = cfg.healthcheck;
+      # The probe address MUST match what garm binds and what reconcile uses:
+      # loopback + the configured apiserver port. controller-info is a stable,
+      # always-present route; a 200/401/409 all prove the LISTENER is bound and
+      # serving (401 = auth required, 409 = init/urls required — the socket is
+      # up either way). Only a connection-refused / timeout means the API died.
+      healthProbeURL = "http://127.0.0.1:${toString cfg.apiServer.port}/api/v1/controller-info";
+
+      # The ExecStartPost bind-verify: wait up to startupBindTimeout for the API
+      # listener to answer, else exit non-zero so garm.service (Restart=always)
+      # restarts. Catches the startup bind race directly.
+      bindVerifyScript = pkgs.writeShellApplication {
+        name = "garm-bind-verify";
+        runtimeInputs = [
+          pkgs.coreutils
+          pkgs.curl
+        ];
+        text = ''
+          set -euo pipefail
+          url="${healthProbeURL}"
+          deadline=$(( $(date +%s) + ${toString hcfg.startupBindTimeout} ))
+          while :; do
+            # ANY HTTP response (curl exit 0, incl. 401/409) means bound+serving.
+            if curl -s -o /dev/null --max-time ${toString hcfg.probeTimeout} "$url" </dev/null; then
+              echo "garm-bind-verify: API listener is up ($url)"
+              exit 0
+            fi
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "garm-bind-verify: API did NOT bind within ${toString hcfg.startupBindTimeout}s ($url) — failing start so systemd restarts garm" >&2
+              exit 1
+            fi
+            sleep 1
+          done
+        '';
+      };
+
+      # The periodic health-check: one probe per timer tick. Persists a
+      # consecutive-failure counter + the last watchdog-restart timestamp under
+      # stateDir. Restarts garm.service ONLY when the API has been refused
+      # `failureThreshold` times in a row AND garm.service is active AND we have
+      # not restarted within `minRestartInterval` — no false positives, no
+      # storms.
+      healthCheckScript = pkgs.writeShellApplication {
+        name = "garm-healthcheck";
+        runtimeInputs = [
+          pkgs.coreutils
+          pkgs.curl
+          pkgs.systemd
+          pkgs.gnused
+        ];
+        text = ''
+          set -euo pipefail
+
+          url="${healthProbeURL}"
+          fail_file="${stateDir}/healthcheck-consecutive-failures"
+          last_restart_file="${stateDir}/healthcheck-last-restart"
+          threshold=${toString hcfg.failureThreshold}
+
+          log() { echo "garm-healthcheck: $*"; }
+
+          # Probe. curl exit 0 for ANY HTTP status (incl. 401/409) ⇒ the
+          # listener is BOUND and serving. Non-zero (connection-refused, timeout,
+          # reset) ⇒ the API is dead.
+          if curl -s -o /dev/null --max-time ${toString hcfg.probeTimeout} "$url" </dev/null; then
+            # Healthy: reset the consecutive-failure counter.
+            if [ -f "$fail_file" ] && [ "$(cat "$fail_file" 2>/dev/null || echo 0)" != "0" ]; then
+              log "API healthy again ($url) — resetting failure counter"
+            fi
+            printf '0' > "$fail_file"
+            exit 0
+          fi
+
+          # Failed probe. Only act if garm.service is actually meant to be up:
+          # a stopped/failed garm is systemd's job (Restart=always), and probing
+          # a deliberately-stopped garm must not trigger a spurious "restart".
+          if [ "$(systemctl is-active garm.service 2>/dev/null || true)" != "active" ]; then
+            log "API probe failed but garm.service is not active — leaving to systemd (no watchdog action)"
+            printf '0' > "$fail_file"
+            exit 0
+          fi
+
+          fails=$(( $(cat "$fail_file" 2>/dev/null || echo 0) + 1 ))
+          printf '%s' "$fails" > "$fail_file"
+          log "API probe failed ($url); consecutive failures = $fails/$threshold"
+
+          if [ "$fails" -lt "$threshold" ]; then
+            exit 0
+          fi
+
+          # Threshold reached. Rate-limit: refuse to restart if we restarted
+          # within minRestartInterval. `systemd-analyze timespan` normalises any
+          # span to a "μs: <N>" line; convert that to whole seconds. Fall back to
+          # 600s (10min) if parsing ever fails, so the rate-limit is never a
+          # no-op that would let a storm through.
+          now=$(date +%s)
+          min_gap_us=$(systemd-analyze timespan "${hcfg.minRestartInterval}" 2>/dev/null \
+            | sed -n 's/^[^0-9]*μs:[[:space:]]*\([0-9]\+\).*/\1/p' | head -n1)
+          if [ -n "''${min_gap_us:-}" ]; then
+            min_gap_s=$(( min_gap_us / 1000000 ))
+          else
+            min_gap_s=600
+          fi
+
+          if [ -f "$last_restart_file" ]; then
+            last=$(cat "$last_restart_file" 2>/dev/null || echo 0)
+            if [ $(( now - last )) -lt "$min_gap_s" ]; then
+              log "API dead for $fails probes, but a watchdog restart happened $(( now - last ))s ago (< ''${min_gap_s}s) — RATE-LIMITED, not restarting"
+              exit 0
+            fi
+          fi
+
+          log "API dead for $fails consecutive probes — restarting garm.service (watchdog recovery)"
+          printf '%s' "$now" > "$last_restart_file"
+          # Reset the counter so post-restart probes start fresh.
+          printf '0' > "$fail_file"
+          systemctl restart garm.service
+          log "garm.service restart issued"
+        '';
+      };
+
       # ----- The reusable provider submodule ---------------------------------
       # One named instance per `services.garm.providers.<name>`; the attr name is
       # the GARM `[[provider]].name` referenced by scale sets.
@@ -1314,6 +1435,108 @@
           type = types.bool;
           default = false;
           description = "Open the API server `port` in the host firewall.";
+        };
+
+        # ---- FU9 GARM-API-WATCHDOG: health supervision ------------------------
+        # GARM runs Type=simple + Restart=always. That only recovers a CRASH
+        # (main-process exit). It does NOT recover the failure mode observed live
+        # on high-mem-server: the garm PROCESS came up and its pool managers ran,
+        # but the HTTP API listener on :9997 NEVER BOUND (a bind race on a fast
+        # restart — the old instance's socket still held). The process stayed
+        # alive, so Restart=always never fired, and systemd had no visibility
+        # into the dead API → a ~3h silent outage that crash-looped
+        # garm-reconcile with connection-refused to 127.0.0.1:9997.
+        #
+        # This adds process-independent health supervision on the SAME address
+        # garm binds and reconcile probes (loopback 127.0.0.1:<apiServer.port>):
+        #   * a periodic health-check (systemd service+timer) that probes
+        #     GET /api/v1/controller-info — a 200/401/409 proves the listener is
+        #     BOUND + serving (401 = auth required, but the socket is up); a
+        #     connection-refused / timeout means the API is dead — and restarts
+        #     garm.service after N CONSECUTIVE failed probes (safe: a single
+        #     momentarily-busy probe never restarts), rate-limited so it can
+        #     never restart-storm;
+        #   * an ExecStartPost bind-verify on garm.service that waits up to
+        #     `startupBindTimeout` for the API to bind and FAILS (→ Restart=always
+        #     restarts garm) if it never does — catching the bind race AT
+        #     STARTUP, before the periodic probe would.
+        healthcheck = {
+          enable =
+            mkEnableOption "the GARM API health-check watchdog (auto-recover a process-alive-but-API-dead garm)"
+            // {
+              default = true;
+              example = false;
+            };
+
+          interval = mkOption {
+            type = types.str;
+            default = "1min";
+            description = ''
+              How often the health-check probes the GARM API
+              (`OnUnitActiveSec` / `OnBootSec` of the `garm-healthcheck.timer`,
+              a systemd time span). One probe per interval.
+            '';
+          };
+
+          failureThreshold = mkOption {
+            type = types.ints.positive;
+            default = 3;
+            description = ''
+              Number of CONSECUTIVE failed probes (connection-refused/timeout)
+              before the watchdog restarts `garm.service`. A single failing
+              probe (a momentarily-busy garm) never triggers a restart; the
+              failure counter is persisted under `stateDir` and RESET to zero on
+              the first successful probe. With the default 1min interval and a
+              threshold of 3, a genuinely dead API is recovered within ~3-4min.
+            '';
+          };
+
+          minRestartInterval = mkOption {
+            type = types.str;
+            default = "10min";
+            description = ''
+              Minimum wall-clock time between two watchdog-initiated restarts (a
+              `systemd-analyze timestamp`-parseable span). After the watchdog
+              restarts garm it will NOT restart again until this much time has
+              elapsed, even if probes keep failing — so a garm that is dead for
+              a deeper reason (bad config, disk full) is restarted at most once
+              per window instead of storming. The restart timestamp is persisted
+              under `stateDir`.
+            '';
+          };
+
+          probeTimeout = mkOption {
+            type = types.ints.positive;
+            default = 5;
+            description = ''
+              Per-probe curl timeout in seconds (`curl --max-time`). A probe
+              that neither connects nor responds within this window counts as a
+              failure. Keep it well below `interval`.
+            '';
+          };
+
+          startupBindVerify = mkOption {
+            type = types.bool;
+            default = true;
+            description = ''
+              Add an `ExecStartPost` to `garm.service` that waits up to
+              `startupBindTimeout` for the API listener to bind and FAILS the
+              start (so `Restart=always` restarts garm) if it never binds within
+              that window. Catches the startup bind race directly; the periodic
+              health-check catches later deaths. The probe is against the local
+              loopback API, so it never depends on external forge/GitHub state.
+            '';
+          };
+
+          startupBindTimeout = mkOption {
+            type = types.ints.positive;
+            default = 30;
+            description = ''
+              Seconds the `ExecStartPost` bind-verify waits for the API to bind
+              before failing the start (only used when `startupBindVerify` is
+              true).
+            '';
+          };
         };
 
         # ---- Declarative reconcile (PM5 "declarative reconcile", pulled fwd) --
@@ -1975,6 +2198,12 @@
                 "-config"
                 renderedConfig
               ];
+              # FU9 startup bind-verify: wait for the API listener to bind and
+              # FAIL the start (→ Restart=always restarts garm) if it never does
+              # within startupBindTimeout — catching the bind race at startup.
+              # A failing ExecStartPost marks the unit failed and triggers the
+              # Restart policy. Opt-outable via healthcheck.startupBindVerify.
+              ExecStartPost = lib.optional (hcfg.enable && hcfg.startupBindVerify) (lib.getExe bindVerifyScript);
               ExecReload = "${pkgs.coreutils}/bin/kill -HUP $MAINPID";
               Restart = "always";
               RestartSec = "5s";
@@ -2065,6 +2294,51 @@
             unitConfig = {
               StartLimitIntervalSec = "120";
               StartLimitBurst = 6;
+            };
+          };
+
+          # ---- FU9 GARM-API-WATCHDOG: health-check service + timer -----------
+          # A periodic oneshot that probes the GARM API on the SAME loopback
+          # address+port garm binds (and reconcile probes). It restarts
+          # garm.service ONLY after `failureThreshold` CONSECUTIVE
+          # connection-refused/timeout probes, and never more often than
+          # `minRestartInterval` — recovering a process-alive-but-API-dead garm
+          # without ever restarting a healthy-but-busy one or restart-storming.
+          #
+          # It runs as ROOT (needs `systemctl restart garm.service`) but does
+          # only a loopback curl + a counter file under stateDir + one restart;
+          # the heavy sandbox is unnecessary for a tiny probe and would block
+          # the `systemctl` D-Bus call, so it is intentionally minimal.
+          systemd.services.garm-healthcheck = mkIf hcfg.enable {
+            description = "GARM API health-check watchdog (auto-recover a process-alive-but-API-dead garm)";
+            documentation = [ "https://github.com/cloudbase/garm" ];
+            # Probe only once garm is (meant to be) up. Not a hard requires: the
+            # timer keeps probing across garm restarts.
+            after = [ "garm.service" ];
+            serviceConfig = {
+              Type = "oneshot";
+              ExecStart = lib.getExe healthCheckScript;
+              # The counter/timestamp live under garm's StateDirectory.
+              StateDirectory = "garm";
+              # Hardening: read-only system, no new privs. It still needs D-Bus
+              # to systemctl-restart garm, so keep the sandbox light.
+              ProtectSystem = "strict";
+              ReadWritePaths = [ stateDir ];
+              NoNewPrivileges = true;
+              ProtectHome = true;
+              PrivateTmp = true;
+            };
+          };
+
+          systemd.timers.garm-healthcheck = mkIf hcfg.enable {
+            description = "Periodic GARM API health-check (FU9 watchdog)";
+            wantedBy = [ "timers.target" ];
+            timerConfig = {
+              OnBootSec = hcfg.interval;
+              OnUnitActiveSec = hcfg.interval;
+              # If the machine was asleep, do not fire a burst of catch-up runs.
+              AccuracySec = "10s";
+              Unit = "garm-healthcheck.service";
             };
           };
         }

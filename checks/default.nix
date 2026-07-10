@@ -11,6 +11,7 @@
     ./deployment-pull-agent.nix
     ./deployment-reconciler.nix
     ./garm-service-boot.nix
+    ./garm-api-watchdog.nix
     ./garm-multi-provider.nix
     ./garm-reconcile.nix
     ./garm-incus-runner-host.nix
