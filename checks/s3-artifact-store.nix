@@ -64,25 +64,39 @@ top@{ ... }:
               environment.systemPackages = [
                 pkgs.awscli2
                 pkgs.jq
+                pkgs.acl # getfacl/setfacl for the traverse-ACL repro + assertion
               ];
-              # Reproduce the PROD topology that broke garage.service on
-              # high-mem-server: a NON-DEFAULT data dir whose PARENT exists but
-              # whose LEAF does not, and a metadata dir OUTSIDE the default
-              # `/var/lib/garage` prefix (so upstream's StateDirectory auto-
-              # provisioning does NOT kick in and cover for us). `/srv` exists on
-              # the test VM but `/srv/s3-store` and its `data` leaf do NOT — the
-              # exact shape of the real `/storage/s3-artifact-store/data` (parent
-              # dataset present, leaf absent, nothing on the default prefix). If
-              # the module fails to CREATE these dirs (+ own them), garage.service
-              # dies with `status=226/NAMESPACE` and every subtest below fails —
-              # so this config makes the check non-vacuous against the bug.
+              # Reproduce the REAL prod failure mode that the OLD `/srv` dataDir
+              # MISSED.
+              #
+              # On high-mem-server the dataDir (`/storage/s3-artifact-store/data`)
+              # lives under `/storage`, which is mode 0770 `root:metacraft` — NOT
+              # world-traversable. The static `garage` system user is not in the
+              # `metacraft` group and has no ACL entry, so it cannot TRAVERSE
+              # `/storage` to reach its own data dir and garage dies with
+              # `Unable to create Garage data directory: … Permission denied
+              # (os error 13)` — regardless of the systemd sandbox (confirmed live
+              # with `ProtectSystem=no`: still EACCES; the sandbox was never the
+              # blocker). The infra layer fixes it with a POSIX-ACL traverse grant
+              # `a+ /storage … u:garage:x`, exactly like the download-cache/garm
+              # services already do for their users. The OLD test used
+              # `dataDir=/srv/s3-store/data` under a world-traversable `/srv`
+              # (0755), so garage could always reach it and the test passed while
+              # prod failed.
+              #
+              # To reproduce hermetically: put the dataDir under a NON-traversable
+              # `/teststore` (0770 root:root — garage is not in root's group), and
+              # apply the SAME traverse-ACL fix the infra layer applies in prod.
+              # A toggle (`storeTraverseAcl`, flipped by the non-vacuity probe)
+              # controls whether the ACL is granted, so removing the fix
+              # reproduces the exact prod EACCES.
               mcl.s3-artifact-store = {
                 enable = true;
                 domain = "s3.test.local";
                 environmentFile = testEnvFile;
                 nodeCapacity = "1G";
-                dataDir = "/srv/s3-store/data";
-                metadataDir = "/srv/s3-store/meta";
+                dataDir = "/teststore/s3-artifact-store/data";
+                metadataDir = "/var/lib/garage/meta";
                 networkAcl.allow = [ allowedCidr ]; # only the `allowed` node /32
                 buckets = [
                   {
@@ -90,6 +104,42 @@ top@{ ... }:
                     lifecycleExpiryDays = 1;
                   }
                 ];
+              };
+
+              # Stand in for the prod `/storage` parent: a NON-world-traversable
+              # 0770 root:root dir, PLUS the infra-layer traverse-ACL fix under
+              # test. Created before the module's `garage-storage-dirs` pre-start
+              # oneshot. `garage` cannot traverse the 0770 dir by unix bits alone;
+              # only the `setfacl -m u:garage:x` grant (the exact analog of the
+              # infra `a+ /storage … u:garage:x` tmpfiles rule) lets it through.
+              # The `MCL_TEST_GRANT_GARAGE_ACL` toggle below is flipped OFF by the
+              # non-vacuity probe to reproduce the prod EACCES boot failure.
+              systemd.services.test-storage-parent = {
+                description = "Create the non-traversable /teststore parent (prod /storage analog) + traverse ACL";
+                wantedBy = [ "multi-user.target" ];
+                after = [ "local-fs.target" ];
+                before = [ "garage-storage-dirs.service" ];
+                requiredBy = [ "garage-storage-dirs.service" ];
+                serviceConfig = {
+                  Type = "oneshot";
+                  RemainAfterExit = true;
+                };
+                path = [
+                  pkgs.coreutils
+                  pkgs.acl
+                ];
+                script = ''
+                  set -euo pipefail
+                  mkdir -p /teststore
+                  chown root:root /teststore
+                  chmod 0770 /teststore
+                  # THE FIX under test: grant garage execute-only (traverse) on the
+                  # 0770 parent. Toggle default = grant; the probe unsets it.
+                  if [ "''${MCL_TEST_GRANT_GARAGE_ACL:-1}" = "1" ]; then
+                    setfacl -m u:garage:x /teststore
+                  fi
+                '';
+                environment.MCL_TEST_GRANT_GARAGE_ACL = "1";
               };
               # The module supplies the vhost + ACL but (like attic-cache-host)
               # does NOT own `services.nginx.enable` — that is the shared nginx
@@ -134,20 +184,36 @@ top@{ ... }:
             start_all()
             server.wait_for_unit("multi-user.target")
 
-            with subtest("dir-provisioning: garage.service STARTS even though its data/meta dirs did not pre-exist"):
-                # The regression this guards: with a non-default data_dir whose
-                # leaf does not exist, the systemd sandbox's ReadWritePaths bind
-                # fails at namespace setup (status=226/NAMESPACE) and garage
-                # cannot even spawn. Assert the pre-start dir oneshot ran, that
-                # both dirs now exist owned by `garage`, and that garage is
-                # genuinely ACTIVE (not just loaded).
+            with subtest("non-traversable parent + strict-sandbox: garage.service STARTS when its dataDir is under a 0770 parent it can only traverse via ACL"):
+                # The regression this guards (the REAL prod failure mode): the
+                # dataDir sits under a NON-world-traversable 0770 root:root parent
+                # (`/teststore`, the prod `/storage` analog). `garage` is not in
+                # root's group, so without an ACL it cannot traverse the parent to
+                # reach its own data dir and dies with `Unable to create Garage
+                # data directory: … Permission denied (os error 13)` — regardless
+                # of the sandbox. Assert the traverse-ACL was granted, the parent
+                # is genuinely 0770 (else the repro is vacuous), the pre-start dir
+                # oneshot ran, both dirs exist owned by `garage`, and garage is
+                # genuinely ACTIVE. Also assert the sandbox stays STRICT (the fix
+                # is a filesystem ACL, NOT a sandbox downgrade).
+                server.wait_for_unit("test-storage-parent.service")
                 server.wait_for_unit("garage-storage-dirs.service")
+                # The parent must really be non-world-traversable (0770), else a
+                # world-traversable dir would let garage through and the repro
+                # would be vacuous (the /srv trap the old test fell into).
+                server.succeed("test \"$(stat -c '%a' /teststore)\" = 770")
+                # The traverse ACL for garage must be present (the fix under test).
+                server.succeed("getfacl -p /teststore | grep -qx 'user:garage:--x'")
                 server.wait_for_unit("garage.service")
                 server.require_unit_state("garage.service", "active")
-                server.succeed("test -d /srv/s3-store/data")
-                server.succeed("test -d /srv/s3-store/meta")
-                server.succeed("test \"$(stat -c '%U' /srv/s3-store/data)\" = garage")
-                server.succeed("test \"$(stat -c '%U' /srv/s3-store/meta)\" = garage")
+                server.succeed("test -d /teststore/s3-artifact-store/data")
+                server.succeed("test -d /var/lib/garage/meta")
+                server.succeed("test \"$(stat -c '%U' /teststore/s3-artifact-store/data)\" = garage")
+                server.succeed("test \"$(stat -c '%U' /var/lib/garage/meta)\" = garage")
+                # The sandbox must remain STRICT — the fix must not weaken it.
+                server.succeed(
+                    "systemctl show garage.service -p ProtectSystem | grep -qx 'ProtectSystem=strict'"
+                )
 
             server.wait_for_open_port(3900)
             # The bootstrap unit applies the single-node layout, creates the

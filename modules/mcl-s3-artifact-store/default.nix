@@ -461,9 +461,16 @@
           # RemoveIPC=, NoNewPrivileges= and RestrictSUIDSGID=). The upstream
           # module already sets NoNewPrivileges + ProtectHome; we add the rest.
           # ProtectSystem=strict keeps the whole FS read-only except the data
-          # dir (ReadWritePaths, wired by upstream) and the meta dir (under the
-          # StateDirectory=garage prefix, which is RW) — exactly what worked
-          # under DynamicUser, so nothing garage needs to write is lost.
+          # dir (emitted by upstream as a `ReadWritePaths=` bind because it is a
+          # non-default path) and the meta dir (under the StateDirectory=garage
+          # prefix, which is RW). We KEEP strict (NOT downgraded to `full`/`no`):
+          # verified live via `systemd-run` that a `ReadWritePaths=` entry nested
+          # inside a SEPARATE ZFS-dataset mount composes correctly under strict
+          # (both the leaf and the mountpoint compose; the sandbox was never the
+          # blocker — see the traverse-ACL fix in the infra layer, which is the
+          # real root cause of the `Permission denied` boot failure). So strict
+          # stays a real sandbox (/, /usr, /etc, /boot, every other dataset RO)
+          # while garage writes only its own data + meta dirs.
           ProtectSystem = lib.mkDefault "strict";
           PrivateTmp = lib.mkDefault true;
           RemoveIPC = lib.mkDefault true;
@@ -497,6 +504,22 @@
           path = [ pkgs.coreutils ];
           script = ''
             set -euo pipefail
+
+            # Repair the StateDirectory ownership left stale by the
+            # DynamicUser=true → static-`garage` switch. systemd logs
+            # "Apparently, service previously had DynamicUser= turned on, and has
+            # now turned it off" and migrates `/var/lib/private/garage` →
+            # `/var/lib/garage`, but the migrated prefix keeps the OLD dynamic
+            # uid (observed live: `/var/lib/garage` owned `nobody:nogroup`/65534)
+            # while our static `garage` is uid 972. The 0755 prefix is still
+            # traversable so garage can reach its 0700 meta LEAF, but leaving the
+            # StateDirectory root owned by a stale dynamic uid is wrong on a
+            # credential-bearing store; chown it to the static user so the whole
+            # state tree has a single deterministic owner (idempotent).
+            if [ -d ${escapeShellArg stateDir} ]; then
+              chown garage:garage ${escapeShellArg stateDir}
+            fi
+
             for d in ${escapeShellArg cfg.metadataDir} ${escapeShellArg cfg.dataDir}; do
               mkdir -p "$d"
               chown garage:garage "$d"
