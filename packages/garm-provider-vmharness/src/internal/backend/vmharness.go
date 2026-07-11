@@ -166,7 +166,14 @@ func windowsBootstrapCommand(guestPath string) []string {
 
 func (b *VMHarnessRunBackend) toInstance(st vmhState) Instance {
 	status := "stopped"
-	if processRunning(st.PID) {
+	// vm-harness writes DONE only after the guest command has exited and its
+	// cleanup has completed.  Prefer that durable terminal marker over kill(0):
+	// on Darwin a released child may remain visible as a zombie (or its PID may
+	// be reused), which otherwise leaves a failed runner stuck as "running" and
+	// permanently consumes scale-set capacity.
+	_, terminalErr := os.Stat(filepath.Join(st.OutputDir, "DONE"))
+	terminal := terminalErr == nil
+	if !terminal && processRunning(st.PID) {
 		status = "running"
 	}
 	return Instance{

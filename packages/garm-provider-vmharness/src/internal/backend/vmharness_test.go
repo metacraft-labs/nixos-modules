@@ -322,6 +322,29 @@ func TestVMHarnessRunBackendDeleteCleansTartEphemeralsByPrefix(t *testing.T) {
 	}
 }
 
+func TestVMHarnessRunBackendDoneMarkerOverridesLivePID(t *testing.T) {
+	tmp := t.TempDir()
+	outputDir := filepath.Join(tmp, "run")
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outputDir, "DONE"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	b := &VMHarnessRunBackend{StateDir: filepath.Join(tmp, "state")}
+	inst := b.toInstance(vmhState{
+		ProviderID: "finished-instance",
+		Name:       "finished-instance",
+		PoolID:     "pool",
+		PID:        os.Getpid(), // definitely alive; DONE must still win
+		OutputDir:  outputDir,
+	})
+	if inst.Status != "stopped" {
+		t.Fatalf("terminal vm-harness run status = %q, want stopped", inst.Status)
+	}
+}
+
 func shellSingleQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
 }
