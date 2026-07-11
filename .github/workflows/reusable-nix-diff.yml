@@ -4,8 +4,8 @@ on:
   workflow_call:
     inputs:
       runner:
-        description: 'JSON-encoded list of runner labels'
-        default: '["self-hosted", "Linux", "x86-64-v2"]'
+        description: 'JSON-encoded runner class (single-name self-hosted class, e.g. "incus")'
+        default: '["incus"]'
         required: false
         type: string
       machines-attr:

@@ -20,7 +20,14 @@ on:
         default: ''
 
       runner:
-        description: 'JSON-encoded runner labels for self-hosted runner'
+        # PERSISTENT-RUNNER / INFRA EXEMPTION (ci-workflow-standards coexistence
+        # model): Terraform plan/apply/drift jobs are infra-deploy jobs that
+        # touch remote state and cloud credentials, so they run on a persistent
+        # self-hosted runner rather than an ephemeral Nix class (incus). The
+        # default label array is retained deliberately; callers may override.
+        # If the `x86-64-v2` capability label is retired, infra should repoint
+        # this to the canonical persistent Linux class ([self-hosted, linux, nixos]).
+        description: 'JSON-encoded runner labels for the persistent self-hosted runner (infra exemption)'
         type: string
         required: false
         default: '["self-hosted", "Linux", "x86-64-v2"]'

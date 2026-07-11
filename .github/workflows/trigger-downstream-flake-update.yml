@@ -7,7 +7,7 @@ on:
 
 jobs:
   trigger-downstream-repo:
-    runs-on: [self-hosted, nixos, x86-64-v2, bare-metal]
+    runs-on: incus
 
     strategy:
       matrix:

@@ -5,31 +5,28 @@ on:
   workflow_call:
     inputs:
       runners:
-        description: 'JSON-encoded map of nix system to a list of runner labels'
+        description: 'JSON-encoded map of nix system to its single-name self-hosted runner class'
+        # Map each Nix system to its runner class: Linux x64 -> incus,
+        # macOS arm64 -> macos-tart (the two Nix classes this matrix covers).
         default: | # json
           {
             "x86_64-linux": [
-              "self-hosted",
-              "nixos",
-              "x86-64-v3",
-              "bare-metal"
+              "incus"
             ],
             "aarch64-darwin": [
-              "self-hosted",
-              "macOS",
-              "aarch64-darwin"
+              "macos-tart"
             ]
           }
         required: false
         type: string
       non-nix-runner:
-        description: 'JSON-encoded runner labels for non-nix tasks (initial comment, mcl reference compute)'
-        default: '["self-hosted", "nixos", "x86-64-v2", "bare-metal"]'
+        description: 'JSON-encoded runner class for non-nix tasks (initial comment, mcl reference compute)'
+        default: '["incus"]'
         required: false
         type: string
       results-runner:
-        description: 'JSON-encoded runner labels for Final Results and deploy orchestration'
-        default: '["self-hosted", "nixos", "x86-64-v2", "bare-metal"]'
+        description: 'JSON-encoded runner class for Final Results and deploy orchestration'
+        default: '["incus"]'
         required: false
         type: string
       push-deployment-caches:
