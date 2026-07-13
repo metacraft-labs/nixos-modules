@@ -786,8 +786,14 @@
           set -euo pipefail
 
           url="${healthProbeURL}"
-          fail_file="${stateDir}/healthcheck-consecutive-failures"
-          last_restart_file="${stateDir}/healthcheck-last-restart"
+          # The watchdog runs as root; its counter/timestamp live in ITS OWN
+          # state dir (/var/lib/garm-healthcheck), NOT garm's StateDirectory.
+          # Sharing garm's StateDirectory made systemd re-chown /var/lib/garm to
+          # root:root on every timer run (~1/min), so garm — which runs as the
+          # non-root `garm` user — lost access to its own SQLite DB and could
+          # manage no runners (whole ephemeral fleet stalled).
+          fail_file="/var/lib/garm-healthcheck/healthcheck-consecutive-failures"
+          last_restart_file="/var/lib/garm-healthcheck/healthcheck-last-restart"
           threshold=${toString hcfg.failureThreshold}
 
           log() { echo "garm-healthcheck: $*"; }
@@ -2318,12 +2324,13 @@
             serviceConfig = {
               Type = "oneshot";
               ExecStart = lib.getExe healthCheckScript;
-              # The counter/timestamp live under garm's StateDirectory.
-              StateDirectory = "garm";
+              # Use the watchdog's OWN state dir — NOT garm's. This root-run
+              # oneshot with StateDirectory="garm" made systemd re-chown
+              # /var/lib/garm to root on every run, breaking garm's DB access.
+              StateDirectory = "garm-healthcheck";
               # Hardening: read-only system, no new privs. It still needs D-Bus
               # to systemctl-restart garm, so keep the sandbox light.
               ProtectSystem = "strict";
-              ReadWritePaths = [ stateDir ];
               NoNewPrivileges = true;
               ProtectHome = true;
               PrivateTmp = true;
