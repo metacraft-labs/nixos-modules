@@ -135,9 +135,11 @@ func TestVMHarnessRunBackendMacOSCreateCommand(t *testing.T) {
 func TestVMHarnessRunBackendDarwinAsUserWrapper(t *testing.T) {
 	tmp := t.TempDir()
 	logPath := filepath.Join(tmp, "launchctl.log")
+	cwdPath := filepath.Join(tmp, "launchctl.cwd")
 	mockLaunchctl := filepath.Join(tmp, "launchctl")
 	script := "#!/bin/sh\n" +
 		"printf '%s\\n' \"$@\" > " + shellSingleQuote(logPath) + "\n" +
+		"pwd > " + shellSingleQuote(cwdPath) + "\n" +
 		"sleep 30\n"
 	if err := os.WriteFile(mockLaunchctl, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
@@ -181,6 +183,17 @@ func TestVMHarnessRunBackendDarwinAsUserWrapper(t *testing.T) {
 	}
 	if argv == "" {
 		t.Fatal("mock launchctl did not record argv")
+	}
+	cwd, err := os.ReadFile(cwdPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCWD, err := filepath.EvalSymlinks(filepath.Join(tmp, "state", "instances", "garm-macos-asuser-test", "run"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.TrimSpace(string(cwd)), wantCWD; got != want {
+		t.Fatalf("console-user wrapper cwd = %q, want %q", got, want)
 	}
 	for _, want := range []string{
 		"asuser\n",

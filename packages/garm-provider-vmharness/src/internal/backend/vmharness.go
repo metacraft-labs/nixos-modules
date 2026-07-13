@@ -226,6 +226,7 @@ func (b *VMHarnessRunBackend) Create(ctx context.Context, args CreateArgs) (Inst
 
 	cmdPath := b.VMHarnessPath
 	cmdArgs := argv
+	runAsConsoleUser := false
 	if uid := os.Getenv("VM_HARNESS_DARWIN_ASUSER_UID"); uid != "" {
 		launchctl := os.Getenv("VM_HARNESS_DARWIN_LAUNCHCTL")
 		if launchctl == "" {
@@ -246,12 +247,20 @@ func (b *VMHarnessRunBackend) Create(ctx context.Context, args CreateArgs) (Inst
 			if err := os.Chown(outDir, uidNum, -1); err != nil {
 				return Instance{}, fmt.Errorf("chown vm-harness output directory to uid %d: %w", uidNum, err)
 			}
+			runAsConsoleUser = true
 			cmdArgs = append([]string{"asuser", uid, "/usr/bin/sudo", "-E", "-u", "#" + uid, "--", b.VMHarnessPath}, argv...)
 		} else {
 			cmdArgs = append([]string{"asuser", uid, b.VMHarnessPath}, argv...)
 		}
 	}
 	cmd := exec.Command(cmdPath, cmdArgs...)
+	if runAsConsoleUser {
+		// GARM's service working directory is deliberately root-only. A child
+		// after setuid cannot even resolve that inherited cwd, and Nim calls
+		// getCurrentDir before launching Tart. The per-instance output directory
+		// was just chowned to the console user and is otherwise self-contained.
+		cmd.Dir = outDir
+	}
 	cmd.Env = vmHarnessChildEnv()
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	logFile, err := os.OpenFile(filepath.Join(dir, "vm-harness.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
