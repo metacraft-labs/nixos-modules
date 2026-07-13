@@ -103,6 +103,13 @@ runs:
       id: check-nix
       shell: bash
       run: |
+        if [[ -L /nix ]]; then
+          echo "symlinked_store=true" >> "$GITHUB_OUTPUT"
+          echo "Detected a symlinked /nix store"
+        else
+          echo "symlinked_store=false" >> "$GITHUB_OUTPUT"
+        fi
+
         if command -v nix &>/dev/null; then
           echo "has_nix=true" >> "$GITHUB_OUTPUT"
           echo "Nix is already installed: $(nix --version)"
@@ -116,6 +123,7 @@ runs:
       if: steps.check-nix.outputs.has_nix != 'true'
       with:
         determinate: false
+        extra-conf: ${{ steps.check-nix.outputs.symlinked_store == 'true' && 'allow-symlinked-store = true' || '' }}
 
     - name: Connect NetBird
       if: ${{ inputs.netbird-setup-key != '' && runner.os == 'Linux' }}
@@ -199,6 +207,10 @@ runs:
           trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= ${{inputs.trusted-public-keys}}
           netrc-file = $HOME/.config/nix/netrc
         EOF
+
+        if [[ "${{ steps.check-nix.outputs.symlinked_store }}" == "true" ]]; then
+          echo "allow-symlinked-store = true" >> "$HOME/.config/nix/nix.conf"
+        fi
 
         touch "$HOME/.config/nix/netrc"
         chmod 0600 "$HOME/.config/nix/netrc"
