@@ -537,9 +537,33 @@ function Fail-Install {
 	exit 1
 }
 
+function Invoke-FileDownload {
+	param(
+		[string]$Uri,
+		[hashtable]$Headers=@{},
+		[string]$Destination,
+		[int]$MaxAttempts=5
+	)
+	for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+		try {
+			Remove-Item -Force $Destination -ErrorAction SilentlyContinue
+			Invoke-WebRequest -UseBasicParsing -Method Get -Uri $Uri -Headers $Headers -OutFile $Destination
+			return
+		} catch {
+			Remove-Item -Force $Destination -ErrorAction SilentlyContinue
+			if ($attempt -ge $MaxAttempts) {
+				throw
+			}
+			$delay = [Math]::Min(30, [Math]::Pow(2, $attempt))
+			Write-Host "download attempt $attempt failed for $Uri; retrying in $delay seconds: $($_.Exception.Message)"
+			Start-Sleep -Seconds $delay
+		}
+	}
+}
+
 function Get-MetadataFile {
 	param([string]$Path, [string]$Destination)
-	Invoke-WebRequest -UseBasicParsing -Method Get -Uri "$MetadataURL/$Path" -Headers @{Accept='application/json'; Authorization="Bearer $BearerToken"} -OutFile $Destination
+	Invoke-FileDownload -Uri "$MetadataURL/$Path" -Headers @{Accept='application/json'; Authorization="Bearer $BearerToken"} -Destination $Destination
 }
 
 function Send-SystemInfo {
@@ -575,7 +599,7 @@ if (-not (Test-Path (Join-Path $RunHome 'run.cmd'))) {
 	if (-not [string]::IsNullOrWhiteSpace($TempDownloadToken)) {
 		$headers['Authorization'] = "Bearer $TempDownloadToken"
 	}
-	Invoke-WebRequest -UseBasicParsing -Uri $DownloadURL -Headers $headers -OutFile $archive
+	Invoke-FileDownload -Uri $DownloadURL -Headers $headers -Destination $archive
 	{{- if .SHA256Checksum }}
 	$actualHash = (Get-FileHash -Algorithm SHA256 -Path $archive).Hash.ToLowerInvariant()
 	if ($actualHash -ne $SHA256Checksum.ToLowerInvariant()) {
@@ -596,7 +620,7 @@ $rsaParamsPath = Join-Path $RunHome '.credentials_rsaparams'
 $rsaParamsTmp = [System.IO.Path]::GetTempFileName()
 try {
 	Add-Type -AssemblyName System.Security
-	Invoke-WebRequest -UseBasicParsing -Method Get -Uri "$MetadataURL/credentials/credentials_rsaparams" -Headers @{Accept='application/json'; Authorization="Bearer $BearerToken"} -OutFile $rsaParamsTmp
+	Invoke-FileDownload -Uri "$MetadataURL/credentials/credentials_rsaparams" -Headers @{Accept='application/json'; Authorization="Bearer $BearerToken"} -Destination $rsaParamsTmp
 	$rsaBytes = [System.IO.File]::ReadAllBytes($rsaParamsTmp)
 	$protectedBytes = [System.Security.Cryptography.ProtectedData]::Protect($rsaBytes, $null, [System.Security.Cryptography.DataProtectionScope]::LocalMachine)
 	[System.IO.File]::WriteAllBytes($rsaParamsPath, $protectedBytes)
