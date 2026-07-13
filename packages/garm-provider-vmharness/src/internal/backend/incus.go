@@ -171,8 +171,25 @@ type IncusBackend struct {
 const (
 	hostNixStorePath        = "/nix/store"
 	hostNixDaemonSocketPath = "/nix/var/nix/daemon-socket"
+	hostNixClientPath       = "/run/current-system/sw/bin/nix"
 	incusIPAllocationLock   = "/tmp/garm-provider-vmharness-incus-ip-allocation.lock"
 )
+
+// resolveHostNixBinDir resolves the host's system Nix client into its immutable
+// store directory. Containers with ShareHostNixStore can execute that binary
+// through the read-only /nix/store mount; /run/current-system itself is not
+// shared into the guest. Refuse to create a nominally shared-store runner if
+// the host client cannot be resolved into the store it actually shares.
+func resolveHostNixBinDir() (string, error) {
+	resolved, err := filepath.EvalSymlinks(hostNixClientPath)
+	if err != nil {
+		return "", fmt.Errorf("resolve host Nix client %s: %w", hostNixClientPath, err)
+	}
+	if !strings.HasPrefix(resolved, hostNixStorePath+"/") {
+		return "", fmt.Errorf("host Nix client %s resolved outside %s: %s", hostNixClientPath, hostNixStorePath, resolved)
+	}
+	return filepath.Dir(resolved), nil
+}
 
 // Host GPU userspace anchors for the `incus-gpu` shared-GPU recipe. Both are
 // stable NixOS host conventions resolved on the HOST at Create time (no
@@ -617,7 +634,48 @@ func (b *IncusBackend) Create(ctx context.Context, args CreateArgs) (Instance, e
 		return Instance{}, fmt.Errorf("incus start %s: %w: %s", args.Name, err, strings.TrimSpace(out))
 	}
 
-	// 6. GPU userspace onto STANDARD paths (post-start). The pre-start
+	// 6. Shared Nix client onto STANDARD paths (post-start). Mounting the host
+	//    store + daemon socket is not sufficient when the Debian runner image
+	//    has no Nix client of its own: setup-nix otherwise tries a single-user
+	//    install and hits EXDEV moving from /nix/temp-install-dir into the
+	//    separately-mounted /nix/store. Install small wrappers in /usr/local/bin
+	//    that execute the host's immutable Nix clients through the store mount
+	//    and always select the shared host daemon. Do this before Create returns,
+	//    so GARM cannot hand a GitHub job to a runner that lacks a usable `nix`.
+	if b.ShareHostNixStore {
+		ready := false
+		for i := 0; i < 30; i++ {
+			if _, err := b.run(ctx, "", "exec", args.Name, "--", "true"); err == nil {
+				ready = true
+				break
+			}
+			time.Sleep(time.Second)
+		}
+		if !ready {
+			_ = b.forceDelete(ctx, args.Name)
+			return Instance{}, fmt.Errorf("incus container %s did not become ready for shared Nix client setup", args.Name)
+		}
+		nixBinDir, err := resolveHostNixBinDir()
+		if err != nil {
+			_ = b.forceDelete(ctx, args.Name)
+			return Instance{}, err
+		}
+		setup := fmt.Sprintf(
+			"set -eu; nix_bin_dir=%q; "+
+				"for tool in nix nix-build nix-channel nix-collect-garbage nix-copy-closure nix-env nix-hash nix-instantiate nix-prefetch-url nix-shell nix-store; do "+
+				"target=\"$nix_bin_dir/$tool\"; [ -x \"$target\" ] || continue; "+
+				"rm -f \"/usr/local/bin/$tool\"; "+
+				"printf '#!/bin/sh\\nexport NIX_REMOTE=daemon\\nexec \"%%s\" \"$@\"\\n' \"$target\" > \"/usr/local/bin/$tool\"; "+
+				"chmod 0755 \"/usr/local/bin/$tool\"; done",
+			nixBinDir,
+		)
+		if out, err := b.run(ctx, "", "exec", args.Name, "--", "bash", "-c", setup); err != nil {
+			_ = b.forceDelete(ctx, args.Name)
+			return Instance{}, fmt.Errorf("shared Nix client setup on %s failed: %w: %s", args.Name, err, strings.TrimSpace(out))
+		}
+	}
+
+	// 7. GPU userspace onto STANDARD paths (post-start). The pre-start
 	//    environment.PATH/LD_LIBRARY_PATH only reach the container's PID1 (init);
 	//    the GARM runner runs as a systemd service, which gets a clean env and
 	//    does NOT inherit them — so a job step's `nvidia-smi` was "command not

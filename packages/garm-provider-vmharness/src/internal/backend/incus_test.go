@@ -85,6 +85,12 @@ case "$cmd" in
     [ -d "$d" ] || { echo "Error: Instance '$name' not found" >&2; exit 1; }
     echo "Running" > "$d/status"
     ;;
+  exec)
+    name="$1"; shift
+    d="$STATE/$name"
+    [ -d "$d" ] || { echo "Error: Instance '$name' not found" >&2; exit 1; }
+    printf '%s\n' "$*" >> "$d/execs"
+    ;;
   stop)
     name="$1"; d="$STATE/$name"
     [ -d "$d" ] || { echo "Error: Instance '$name' not found" >&2; exit 1; }
@@ -531,6 +537,24 @@ func TestIncusSharedStoresAttachStoreDisks(t *testing.T) {
 			if strings.HasPrefix(line, dname+"\tdisk\t") && strings.Contains(line, "readonly=true") {
 				t.Fatalf("%s share must be read-write (writable-by-design), got: %q", dname, line)
 			}
+		}
+	}
+
+	// The Debian runner image intentionally carries no private Nix install.
+	// Shared-store mode must expose the host's immutable clients on the normal
+	// job PATH and force every invocation through the mounted host daemon.
+	execs, err := os.ReadFile(filepath.Join(stateDir, "garm-store-1", "execs"))
+	if err != nil {
+		t.Fatalf("expected shared Nix client setup execs: %v", err)
+	}
+	execText := string(execs)
+	for _, want := range []string{
+		"/usr/local/bin/$tool",
+		"NIX_REMOTE=daemon",
+		"nix-store",
+	} {
+		if !strings.Contains(execText, want) {
+			t.Fatalf("expected shared Nix client setup to contain %q, got:\n%s", want, execText)
 		}
 	}
 
