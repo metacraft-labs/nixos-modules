@@ -495,7 +495,7 @@ func TestMacOSPickToolsAndBootstrap(t *testing.T) {
 		"command -v gh",
 		"command -v git-lfs",
 		"https://install.determinate.systems/nix",
-		`sh "$nix_installer" install macos --no-confirm --encrypt false`,
+		`sh "$nix_installer" install macos --no-confirm --prefer-upstream-nix --encrypt false`,
 		"get_metadata_file \"credentials/runner\"",
 		"exec ./run.sh",
 		"https://example.invalid/osx.tar.gz",

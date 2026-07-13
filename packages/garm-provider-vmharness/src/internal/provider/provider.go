@@ -290,7 +290,7 @@ if ! command -v nix >/dev/null 2>&1; then
 	# to an encrypted APFS volume, whose post-create mount fails in cloned Tart
 	# guests. These VMs are ephemeral, so the macOS planner's unencrypted volume
 	# is both sufficient and reliably mountable.
-	sh "$nix_installer" install macos --no-confirm --encrypt false || fail "failed to install guest-local Nix"
+	sh "$nix_installer" install macos --no-confirm --prefer-upstream-nix --encrypt false || fail "failed to install guest-local Nix"
 	rm -f "$nix_installer"
 fi
 command -v nix >/dev/null 2>&1 || fail "Nix is unavailable after installation"
