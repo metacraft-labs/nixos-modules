@@ -26,6 +26,8 @@ import (
 	garmErrors "github.com/cloudbase/garm-provider-common/errors"
 )
 
+const windowsRunnerTimeoutSec = "43200"
+
 // VMHarnessRunBackend drives vm-harness backends whose lifecycle is already
 // one-shot and self-cleaning. It starts `vm-harness run` in the background and
 // records only a pid + metadata file under StateDir, keeping the provider
@@ -209,7 +211,10 @@ func (b *VMHarnessRunBackend) Create(ctx context.Context, args CreateArgs) (Inst
 	if strings.EqualFold(args.OSName, "windows") || b.GuestOS == "windows" {
 		guestPath = `C:\garm-bootstrap.ps1`
 		bootstrapPath = filepath.Join(dir, "garm-bootstrap.ps1")
-		argv = append(argv, "--copy-to", bootstrapPath+":"+guestPath, "--")
+		// A GitHub Actions job may run for up to six hours by default. Keep the
+		// guest alive beyond that boundary so boot and runner cleanup time do not
+		// consume part of the job's usable window.
+		argv = append(argv, "--timeout-sec", windowsRunnerTimeoutSec, "--copy-to", bootstrapPath+":"+guestPath, "--")
 		argv = append(argv, windowsBootstrapCommand(guestPath)...)
 	} else {
 		argv = append(argv, "--copy-to", bootstrapPath+":"+guestPath, "--", "/bin/sh", "-c", "chmod +x "+guestPath+" && exec "+guestPath)

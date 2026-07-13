@@ -226,6 +226,8 @@ func TestVMHarnessRunBackendWindowsCreateCommandWaitsAfterBootstrap(t *testing.T
 		"qemu-windows-arm\n",
 		"--guest\n",
 		"windows\n",
+		"--timeout-sec\n",
+		windowsRunnerTimeoutSec + "\n",
 		"--copy-to\n",
 		"garm-bootstrap.ps1:C:\\garm-bootstrap.ps1\n",
 		"--\n",
