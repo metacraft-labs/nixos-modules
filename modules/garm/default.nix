@@ -2185,6 +2185,11 @@
           systemd.services.garm = {
             description = "GitHub Actions Runner Manager (garm)";
             documentation = [ "https://github.com/cloudbase/garm" ];
+            # GARM reads the external-provider executable and config paths only
+            # at daemon startup.  Keep those paths tied to the declarative
+            # template so a provider package/config change cannot leave the
+            # old provider live after a system switch.
+            restartTriggers = [ configTemplate ];
             after = [
               "network.target"
             ]
