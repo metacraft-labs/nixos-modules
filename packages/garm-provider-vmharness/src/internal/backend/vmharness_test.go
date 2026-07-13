@@ -10,6 +10,28 @@ import (
 	"time"
 )
 
+func TestVMHarnessChildEnvDropsSharedNixStoreOnlyForTartGuests(t *testing.T) {
+	t.Setenv("MCL_RUNNER_SHARED_NIX_STORE", "/nix/store")
+
+	hasSharedStore := func(env []string) bool {
+		for _, entry := range env {
+			if entry == "MCL_RUNNER_SHARED_NIX_STORE=/nix/store" {
+				return true
+			}
+		}
+		return false
+	}
+
+	for _, backendID := range []string{"tart-macos", "tart-linux-arm"} {
+		if hasSharedStore(vmHarnessChildEnv(backendID)) {
+			t.Fatalf("%s child retained the incomplete shared Nix store", backendID)
+		}
+	}
+	if !hasSharedStore(vmHarnessChildEnv("qemu-windows-arm")) {
+		t.Fatal("non-Tart child unexpectedly lost the shared Nix store environment")
+	}
+}
+
 func TestVMHarnessRunBackendMacOSCreateCommand(t *testing.T) {
 	t.Setenv("VM_HARNESS_DARWIN_ASUSER_UID", "")
 	oldTartHome, hadTartHome := os.LookupEnv("TART_HOME")
@@ -37,6 +59,7 @@ func TestVMHarnessRunBackendMacOSCreateCommand(t *testing.T) {
 	t.Setenv("XPC_SERVICE_NAME", "org.nixos.garm")
 	t.Setenv("VM_HARNESS_TART_STATE_DIR", filepath.Join(tmp, "tart-home"))
 	t.Setenv("VM_HARNESS_TEST_KEEP", "yes")
+	t.Setenv("MCL_RUNNER_SHARED_NIX_STORE", "/nix/store")
 
 	b := &VMHarnessRunBackend{
 		VMHarnessPath: mock,
@@ -94,6 +117,9 @@ func TestVMHarnessRunBackendMacOSCreateCommand(t *testing.T) {
 	}
 	if !strings.Contains(string(envData), "TART_HOME="+filepath.Join(tmp, "tart-home")) {
 		t.Fatalf("vm-harness child env did not derive TART_HOME from VM_HARNESS_TART_STATE_DIR:\n%s", string(envData))
+	}
+	if strings.Contains(string(envData), "MCL_RUNNER_SHARED_NIX_STORE=") {
+		t.Fatalf("Tart vm-harness child retained the host Nix store mount:\n%s", string(envData))
 	}
 	for _, want := range []string{
 		"run\n",

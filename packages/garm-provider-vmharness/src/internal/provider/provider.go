@@ -232,6 +232,11 @@ METADATA_URL={{ shell .MetadataURL }}
 BEARER_TOKEN={{ shell .CallbackToken }}
 RUN_HOME="$HOME/actions-runner"
 
+# Cirrus' Apple-silicon base already contains Homebrew, GitHub CLI, and Git
+# LFS, but non-login SSH sessions omit Homebrew from PATH. Keep those tools
+# visible to the runner and expose the guest-local Nix profile installed below.
+export PATH="/nix/var/nix/profiles/default/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:${PATH}"
+
 call_status() {
 	payload="$1"
 	case "$CALLBACK_URL" in
@@ -268,6 +273,23 @@ get_metadata_file() {
 if [ -z "$METADATA_URL" ]; then
 	fail "missing metadata URL"
 fi
+
+status "preparing macOS runner toolchain"
+command -v gh >/dev/null 2>&1 || fail "GitHub CLI is missing from the macOS image"
+command -v git-lfs >/dev/null 2>&1 || fail "Git LFS is missing from the macOS image"
+
+# The macOS backend deliberately does not attach the host's read-only
+# /nix/store. Install Nix into the ephemeral guest so actions that use the
+# standard Determinate setup detect a healthy, writable daemon-backed store.
+if ! command -v nix >/dev/null 2>&1; then
+	status "installing guest-local Nix"
+	nix_installer="$(mktemp "${TMPDIR:-/tmp}/nix-installer.XXXXXX")"
+	curl --proto '=https' --tlsv1.2 --retry 5 --retry-delay 5 --retry-connrefused --fail -sSL \
+		https://install.determinate.systems/nix -o "$nix_installer" || fail "failed to download Nix installer"
+	sh "$nix_installer" install --no-confirm || fail "failed to install guest-local Nix"
+	rm -f "$nix_installer"
+fi
+command -v nix >/dev/null 2>&1 || fail "Nix is unavailable after installation"
 
 mkdir -p "$RUN_HOME"
 cd "$RUN_HOME"
@@ -405,6 +427,8 @@ fi
 if ! id -u "$RUNNER_USER" >/dev/null 2>&1; then
 	useradd -m -s /bin/bash -g "$RUNNER_GROUP" "$RUNNER_USER"
 fi
+printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$RUNNER_USER" > "/etc/sudoers.d/90-garm-${RUNNER_USER}"
+chmod 0440 "/etc/sudoers.d/90-garm-${RUNNER_USER}"
 mkdir -p "$RUN_HOME"
 
 if [ ! -x "$RUN_HOME/run.sh" ]; then

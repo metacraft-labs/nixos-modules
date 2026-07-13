@@ -491,6 +491,11 @@ func TestMacOSPickToolsAndBootstrap(t *testing.T) {
 	}
 	text := string(script)
 	for _, want := range []string{
+		`export PATH="/nix/var/nix/profiles/default/bin:/opt/homebrew/bin`,
+		"command -v gh",
+		"command -v git-lfs",
+		"https://install.determinate.systems/nix",
+		`sh "$nix_installer" install --no-confirm`,
 		"get_metadata_file \"credentials/runner\"",
 		"exec ./run.sh",
 		"https://example.invalid/osx.tar.gz",
@@ -541,6 +546,8 @@ func TestLinuxBootstrapCreatesRunnerHomeBeforeDownload(t *testing.T) {
 		`exec sudo -E bash "$0" "$@"`,
 		"groupadd \"$RUNNER_GROUP\"",
 		"useradd -m -s /bin/bash -g \"$RUNNER_GROUP\" \"$RUNNER_USER\"",
+		`printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$RUNNER_USER"`,
+		`chmod 0440 "/etc/sudoers.d/90-garm-${RUNNER_USER}"`,
 		"get_metadata_file \"credentials/runner\"",
 		"call_status '{\"status\":\"idle\",\"message\":\"runner configured\"}'",
 		"exec sudo -u \"$RUNNER_USER\" -H ./run.sh",

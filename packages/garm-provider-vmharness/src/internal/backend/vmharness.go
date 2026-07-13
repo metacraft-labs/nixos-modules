@@ -111,7 +111,7 @@ func processRunning(pid int) bool {
 	return p.Signal(syscall.Signal(0)) == nil
 }
 
-func vmHarnessChildEnv() []string {
+func vmHarnessChildEnv(backendID string) []string {
 	env := os.Environ()
 	out := make([]string, 0, len(env))
 	hasTartHome := false
@@ -122,6 +122,14 @@ func vmHarnessChildEnv() []string {
 		}
 		if strings.HasPrefix(entry, "TART_HOME=") {
 			hasTartHome = true
+		}
+		// The Cirrus Tart bases do not ship a Nix client/daemon. Mounting only
+		// the host's read-only store therefore leaves /nix unusable and makes
+		// the standard Nix installer fail. Keep Tart guests isolated with a
+		// writable guest-local store until the backend can safely expose a
+		// complete daemon-backed shared store.
+		if (backendID == "tart-macos" || backendID == "tart-linux-arm") && strings.HasPrefix(entry, "MCL_RUNNER_SHARED_NIX_STORE=") {
+			continue
 		}
 		if strings.HasPrefix(entry, "VM_HARNESS_TART_STATE_DIR=") {
 			tartStateDir = strings.TrimPrefix(entry, "VM_HARNESS_TART_STATE_DIR=")
@@ -261,7 +269,7 @@ func (b *VMHarnessRunBackend) Create(ctx context.Context, args CreateArgs) (Inst
 		// was just chowned to the console user and is otherwise self-contained.
 		cmd.Dir = outDir
 	}
-	cmd.Env = vmHarnessChildEnv()
+	cmd.Env = vmHarnessChildEnv(b.BackendID)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	logFile, err := os.OpenFile(filepath.Join(dir, "vm-harness.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
@@ -323,7 +331,7 @@ func (b *VMHarnessRunBackend) cleanupTartEphemerals(ctx context.Context, prefix 
 		return
 	}
 	cmd := exec.CommandContext(ctx, "tart", "list")
-	cmd.Env = vmHarnessChildEnv()
+	cmd.Env = vmHarnessChildEnv(b.BackendID)
 	out, err := cmd.Output()
 	if err != nil {
 		return
@@ -334,10 +342,10 @@ func (b *VMHarnessRunBackend) cleanupTartEphemerals(ctx context.Context, prefix 
 			continue
 		}
 		stop := exec.CommandContext(ctx, "tart", "stop", fields[1])
-		stop.Env = vmHarnessChildEnv()
+		stop.Env = vmHarnessChildEnv(b.BackendID)
 		_ = stop.Run()
 		del := exec.CommandContext(ctx, "tart", "delete", fields[1])
-		del.Env = vmHarnessChildEnv()
+		del.Env = vmHarnessChildEnv(b.BackendID)
 		_ = del.Run()
 	}
 }
