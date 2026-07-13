@@ -9,7 +9,7 @@ permissions:
 jobs:
   metacraft-cache:
     name: Reach Metacraft Attic Cache Over NetBird
-    runs-on: incus
+    runs-on: eph-linux-x64
     env:
       # The single NetBird+token-gated cache (Public-Attic-Cache-Decommission).
       # It is `--private`: reads require both NetBird membership AND a token.

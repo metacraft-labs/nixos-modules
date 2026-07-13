@@ -29,11 +29,11 @@ jobs:
       # on github-hosted runners
       matrix:
         include:
-          - runner: incus
+          - runner: eph-linux-x64
             nix-version: ''
-          - runner: incus
+          - runner: eph-linux-x64
             nix-version: 2.28.5
-          - runner: incus
+          - runner: eph-linux-x64
             nix-version: 2.33.0
     runs-on: ${{ matrix.runner }}
     steps:
@@ -59,7 +59,7 @@ jobs:
   # `.github/setup-nix/tests/devshell-fixture/`.
   test-setup-nix-devshell:
     name: Validate setup-nix devShell build-failure detection
-    runs-on: incus
+    runs-on: eph-linux-x64
     steps:
       - name: Checkout first to use locally defined actions
         uses: actions/checkout@v6.0.2
@@ -105,7 +105,7 @@ jobs:
           echo "OK: devShell environment exported; hello resolved to $(command -v hello)."
 
   test-mcl-secret-integration:
-    runs-on: incus
+    runs-on: eph-linux-x64
     steps:
       - name: Checkout first to use locally defined actions
         uses: actions/checkout@v6.0.2
@@ -131,20 +131,20 @@ jobs:
       runners: |
         {
           "x86_64-linux": [
-            "incus"
+            "eph-linux-x64"
           ],
           "aarch64-darwin": [
-            "macos-tart"
+            "eph-macos-arm64"
           ]
         }
 
   # The `just act lint` step builds `ci-image` and runs the lint workflow inside
   # it via `act`, i.e. it needs nested Docker. This is exactly what the
-  # `incus-nested` class provides (vmharness-nested: nested docker + nested KVM),
-  # so this job targets that class rather than plain `incus`. It will queue until
-  # an `incus-nested` runner is attached to the fleet.
+  # `eph-linux-x64-nested` class provides (vmharness-nested: nested docker + nested KVM),
+  # so this job targets that class rather than plain `eph-linux-x64`. It will queue until
+  # an `eph-linux-x64-nested` runner is attached to the fleet.
   test-act:
-    runs-on: incus-nested
+    runs-on: eph-linux-x64-nested
     steps:
       - name: Checkout first to use locally defined actions
         uses: actions/checkout@v6.0.2

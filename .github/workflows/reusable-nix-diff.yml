@@ -4,8 +4,8 @@ on:
   workflow_call:
     inputs:
       runner:
-        description: 'JSON-encoded runner class (single-name self-hosted class, e.g. "incus")'
-        default: '["incus"]'
+        description: 'JSON-encoded runner class (single-name self-hosted class, e.g. "eph-linux-x64")'
+        default: '["eph-linux-x64"]'
         required: false
         type: string
       machines-attr:

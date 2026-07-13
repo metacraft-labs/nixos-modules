@@ -5,8 +5,8 @@ on:
   workflow_call:
     inputs:
       runner:
-        description: 'JSON-encoded runner class (single-name self-hosted class, e.g. "incus")'
-        default: '["incus"]'
+        description: 'JSON-encoded runner class (single-name self-hosted class, e.g. "eph-linux-x64")'
+        default: '["eph-linux-x64"]'
         required: false
         type: string
 
@@ -33,7 +33,7 @@ on:
 
 jobs:
   updateFlakePackages:
-    runs-on: ${{ fromJSON(inputs.runner || '["incus"]') }}
+    runs-on: ${{ fromJSON(inputs.runner || '["eph-linux-x64"]') }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6.0.2

@@ -6,27 +6,27 @@ on:
     inputs:
       runners:
         description: 'JSON-encoded map of nix system to its single-name self-hosted runner class'
-        # Map each Nix system to its runner class: Linux x64 -> incus,
-        # macOS arm64 -> macos-tart (the two Nix classes this matrix covers).
+        # Map each Nix system to its runner class: Linux x64 -> eph-linux-x64,
+        # macOS arm64 -> eph-macos-arm64 (the two Nix classes this matrix covers).
         default: | # json
           {
             "x86_64-linux": [
-              "incus"
+              "eph-linux-x64"
             ],
             "aarch64-darwin": [
-              "macos-tart"
+              "eph-macos-arm64"
             ]
           }
         required: false
         type: string
       non-nix-runner:
         description: 'JSON-encoded runner class for non-nix tasks (initial comment, mcl reference compute)'
-        default: '["incus"]'
+        default: '["eph-linux-x64"]'
         required: false
         type: string
       results-runner:
         description: 'JSON-encoded runner class for Final Results and deploy orchestration'
-        default: '["incus"]'
+        default: '["eph-linux-x64"]'
         required: false
         type: string
       push-deployment-caches:

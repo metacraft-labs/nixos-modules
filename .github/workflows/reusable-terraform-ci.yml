@@ -23,7 +23,7 @@ on:
         # PERSISTENT-RUNNER / INFRA EXEMPTION (ci-workflow-standards coexistence
         # model): Terraform plan/apply/drift jobs are infra-deploy jobs that
         # touch remote state and cloud credentials, so they run on a persistent
-        # self-hosted runner rather than an ephemeral Nix class (incus). The
+        # self-hosted runner rather than an ephemeral Nix class (eph-linux-x64). The
         # default label array is retained deliberately; callers may override.
         # If the `x86-64-v2` capability label is retired, infra should repoint
         # this to the canonical persistent Linux class ([self-hosted, linux, nixos]).
