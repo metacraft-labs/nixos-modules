@@ -535,7 +535,16 @@
                 --username "$admin_user" --password "$admin_pw" >/dev/null 2>&1 || true
           fi
           garm-cli profile switch reconcile >/dev/null 2>&1 || true
-          garm-cli profile login reconcile --password "$admin_pw" >/dev/null 2>&1 || true
+          # `profile login` MUST be given --username: without it garm-cli drops
+          # into an interactive Username: prompt, which under systemd (no TTY)
+          # reads EOF and fails. The failure is swallowed by `|| true`, so the
+          # stale profile token is left in place — every subsequent garm-cli
+          # call then 401s (existence checks silently return empty, and the
+          # first un-guarded write, `credentials add`, aborts the reconcile).
+          # This only surfaced after a garm restart invalidated the token that
+          # the initial `init` (which does pass --username) had minted.
+          garm-cli profile login reconcile --username "$admin_user" \
+            --password "$admin_pw" >/dev/null 2>&1 || true
 
           # ---- (0.5) Controller URLs — REQUIRED before any /api/v1 op --------
           # GARM's apiRouter is guarded by `urlsRequired` (409 until metadata +
