@@ -553,7 +553,7 @@ func (b *IncusBackend) Create(ctx context.Context, args CreateArgs) (Instance, e
 			return Instance{}, fmt.Errorf("incus config set security.nesting=true: %w: %s", err, strings.TrimSpace(out))
 		}
 		if out, err := b.run(ctx, "", "config", "device", "add", args.Name, "kvm", "unix-char",
-			"source=/dev/kvm", "path=/dev/kvm"); err != nil {
+			"source=/dev/kvm", "path=/dev/kvm", "mode=0666"); err != nil {
 			_ = b.forceDelete(ctx, args.Name)
 			return Instance{}, fmt.Errorf("incus config device add kvm: %w: %s", err, strings.TrimSpace(out))
 		}

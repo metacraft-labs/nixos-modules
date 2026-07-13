@@ -395,7 +395,8 @@ func TestIncusNestedKvmAttachesKvmDevice(t *testing.T) {
 	// devices file rows are: <devname>\t<devtype>\t<k=v ...>
 	if !strings.Contains(string(devices), "kvm\tunix-char") ||
 		!strings.Contains(string(devices), "source=/dev/kvm") ||
-		!strings.Contains(string(devices), "path=/dev/kvm") {
+		!strings.Contains(string(devices), "path=/dev/kvm") ||
+		!strings.Contains(string(devices), "mode=0666") {
 		t.Fatalf("expected a `kvm` unix-char device sourcing /dev/kvm, got: %q", string(devices))
 	}
 

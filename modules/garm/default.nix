@@ -1206,7 +1206,9 @@
                 virtualisation (the `runs-on: incus` nested-VM path):
                 `incus config set <name> security.nesting true` plus
                 `incus config device add <name> kvm unix-char
-                source=/dev/kvm path=/dev/kvm`. The host must itself expose
+                source=/dev/kvm path=/dev/kvm mode=0666`. The permissive mode
+                is confined to the dedicated ephemeral guest so its
+                unprivileged runner can use KVM. The host must itself expose
                 `/dev/kvm` with nested virtualisation enabled
                 (`kvm_intel.nested=Y` / `kvm_amd.nested=Y`), and the runner
                 image must ship qemu/kvm. Default false ⇒ the container is

@@ -224,7 +224,10 @@ type Config struct {
 	// so an in-guest `qemu-system-* -enable-kvm` gets hardware-accelerated
 	// virtualisation (the `runs-on: incus` nested-VM path — HR2):
 	//   incus config set <name> security.nesting true
-	//   incus config device add <name> kvm unix-char source=/dev/kvm path=/dev/kvm
+	//   incus config device add <name> kvm unix-char source=/dev/kvm path=/dev/kvm mode=0666
+	// The device is world-open only inside this dedicated, ephemeral nested-KVM
+	// guest. Without the explicit mode, Incus creates it root-only and the
+	// unprivileged GitHub runner cannot use the capability it requested.
 	// The host must expose /dev/kvm with nested virtualisation enabled
 	// (kvm_intel.nested=Y / kvm_amd.nested=Y). Default false ⇒ the container is
 	// byte-unchanged (the live runners are untouched). Ignored by non-incus

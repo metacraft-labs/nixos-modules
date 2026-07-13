@@ -82,7 +82,7 @@ const configJSONSchema = `{
 		},
 		"incus_nested_kvm": {
 			"type": "boolean",
-			"description": "Expose the host /dev/kvm into each per-job container and set security.nesting=true so an in-guest qemu-system-* -enable-kvm gets hardware-accelerated virtualisation. Backs the runs-on:incus nested-VM path (HR2). Default false leaves the container byte-unchanged."
+			"description": "Expose the host /dev/kvm into each per-job container with a guest-local mode that lets the unprivileged runner use it, and set security.nesting=true so qemu-system-* -enable-kvm gets hardware-accelerated virtualisation. Backs the runs-on:incus nested-VM path (HR2). Default false leaves the container byte-unchanged."
 		},
 		"vm_harness_path": {
 			"type": "string",
@@ -151,7 +151,7 @@ const extraSpecsJSONSchema = `{
 		},
 		"incus_nested_kvm": {
 			"type": "boolean",
-			"description": "Expose the host /dev/kvm into this pool's per-job incus containers and set security.nesting=true so an in-guest qemu-system-* -enable-kvm gets hardware-accelerated virtualisation. Backs the runs-on:incus nested-VM path (HR2)."
+			"description": "Expose the host /dev/kvm into this pool's per-job incus containers with a guest-local mode that lets the unprivileged runner use it, and set security.nesting=true so qemu-system-* -enable-kvm gets hardware-accelerated virtualisation. Backs the runs-on:incus nested-VM path (HR2)."
 		}
 	},
 	"additionalProperties": true
