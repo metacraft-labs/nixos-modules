@@ -286,7 +286,11 @@ if ! command -v nix >/dev/null 2>&1; then
 	nix_installer="$(mktemp "${TMPDIR:-/tmp}/nix-installer.XXXXXX")"
 	curl --proto '=https' --tlsv1.2 --retry 5 --retry-delay 5 --retry-connrefused --fail -sSL \
 		https://install.determinate.systems/nix -o "$nix_installer" || fail "failed to download Nix installer"
-	sh "$nix_installer" install --no-confirm || fail "failed to install guest-local Nix"
+	# Select the macOS planner explicitly. The generic planner currently defaults
+	# to an encrypted APFS volume, whose post-create mount fails in cloned Tart
+	# guests. These VMs are ephemeral, so the macOS planner's unencrypted volume
+	# is both sufficient and reliably mountable.
+	sh "$nix_installer" install macos --no-confirm --encrypt false || fail "failed to install guest-local Nix"
 	rm -f "$nix_installer"
 fi
 command -v nix >/dev/null 2>&1 || fail "Nix is unavailable after installation"
