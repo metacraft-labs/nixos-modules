@@ -276,6 +276,7 @@ func TestQemuWindowsArmBootstrapRejectsNonJIT(t *testing.T) {
 }
 
 func TestQemuWindowsArmCreateInstanceWritesBootstrapWithGuestURLOverrides(t *testing.T) {
+	t.Setenv("VM_HARNESS_DARWIN_ASUSER_UID", "")
 	tmp := t.TempDir()
 	logPath := filepath.Join(tmp, "vm-harness.argv")
 	mock := filepath.Join(tmp, "vm-harness")

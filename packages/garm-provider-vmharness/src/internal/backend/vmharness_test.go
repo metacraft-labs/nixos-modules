@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,18 @@ import (
 )
 
 func TestVMHarnessRunBackendMacOSCreateCommand(t *testing.T) {
+	t.Setenv("VM_HARNESS_DARWIN_ASUSER_UID", "")
+	oldTartHome, hadTartHome := os.LookupEnv("TART_HOME")
+	if err := os.Unsetenv("TART_HOME"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if hadTartHome {
+			_ = os.Setenv("TART_HOME", oldTartHome)
+		} else {
+			_ = os.Unsetenv("TART_HOME")
+		}
+	})
 	tmp := t.TempDir()
 	logPath := filepath.Join(tmp, "argv.log")
 	envPath := filepath.Join(tmp, "env.log")
@@ -61,9 +74,17 @@ func TestVMHarnessRunBackendMacOSCreateCommand(t *testing.T) {
 	if argv == "" {
 		t.Fatal("mock vm-harness did not record argv")
 	}
-	envData, err := os.ReadFile(envPath)
-	if err != nil {
-		t.Fatal(err)
+	var envData []byte
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(envPath)
+		if err == nil && strings.Contains(string(data), "VM_HARNESS_TEST_KEEP=yes") {
+			envData = data
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if len(envData) == 0 {
+		t.Fatal("mock vm-harness did not record its complete environment")
 	}
 	if strings.Contains(string(envData), "XPC_SERVICE_NAME=") {
 		t.Fatalf("vm-harness child env leaked launchd XPC identity:\n%s", string(envData))
@@ -121,7 +142,8 @@ func TestVMHarnessRunBackendDarwinAsUserWrapper(t *testing.T) {
 	if err := os.WriteFile(mockLaunchctl, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("VM_HARNESS_DARWIN_ASUSER_UID", "508")
+	uid := os.Getuid()
+	t.Setenv("VM_HARNESS_DARWIN_ASUSER_UID", fmt.Sprintf("%d", uid))
 	t.Setenv("VM_HARNESS_DARWIN_LAUNCHCTL", mockLaunchctl)
 
 	b := &VMHarnessRunBackend{
@@ -162,7 +184,12 @@ func TestVMHarnessRunBackendDarwinAsUserWrapper(t *testing.T) {
 	}
 	for _, want := range []string{
 		"asuser\n",
-		"508\n",
+		fmt.Sprintf("%d\n", uid),
+		"/usr/bin/sudo\n",
+		"-E\n",
+		"-u\n",
+		fmt.Sprintf("#%d\n", uid),
+		"--\n",
 		"/nix/store/test-vm-harness/bin/vm-harness\n",
 		"run\n",
 		"tart-macos\n",
@@ -174,6 +201,7 @@ func TestVMHarnessRunBackendDarwinAsUserWrapper(t *testing.T) {
 }
 
 func TestVMHarnessRunBackendWindowsCreateCommandWaitsAfterBootstrap(t *testing.T) {
+	t.Setenv("VM_HARNESS_DARWIN_ASUSER_UID", "")
 	tmp := t.TempDir()
 	logPath := filepath.Join(tmp, "argv.log")
 	mock := filepath.Join(tmp, "vm-harness")

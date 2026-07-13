@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	garmErrors "github.com/cloudbase/garm-provider-common/errors"
@@ -99,6 +100,7 @@ case "$cmd" in
     # list [filter] --format json
     filter=""
     if [ "${1:-}" != "--format" ]; then filter="$1"; shift; fi
+	if [ -n "${MOCK_INCUS_LIST_DELAY:-}" ]; then sleep "$MOCK_INCUS_LIST_DELAY"; fi
     printf '['
     first=1
     for d in "$STATE"/*/; do
@@ -204,6 +206,50 @@ func TestIncusCreateGetDeleteLifecycle(t *testing.T) {
 	// idempotent: deleting a missing container is success.
 	if err := b.Delete(ctx, "garm-linux-1"); err != nil {
 		t.Fatalf("second Delete not idempotent: %v", err)
+	}
+}
+
+func TestIncusConcurrentCreatesAllocateDistinctIPv4(t *testing.T) {
+	cmd, _ := writeMockIncus(t)
+	t.Setenv("MOCK_INCUS_LIST_DELAY", "0.2")
+	lockPath := filepath.Join(t.TempDir(), "incus-ip.lock")
+	ctx := context.Background()
+
+	type result struct {
+		inst Instance
+		err  error
+	}
+	results := make(chan result, 2)
+	var ready sync.WaitGroup
+	ready.Add(2)
+	start := make(chan struct{})
+	for _, name := range []string{"garm-concurrent-1", "garm-concurrent-2"} {
+		name := name
+		go func() {
+			ready.Done()
+			<-start
+			b := newTestIncusBackend(cmd)
+			b.IPAllocationLockPath = lockPath
+			inst, err := b.Create(ctx, CreateArgs{Name: name, SourceImage: "runner-linux"})
+			results <- result{inst: inst, err: err}
+		}()
+	}
+	ready.Wait()
+	close(start)
+
+	addresses := map[string]bool{}
+	for i := 0; i < 2; i++ {
+		r := <-results
+		if r.err != nil {
+			t.Fatalf("concurrent Create: %v", r.err)
+		}
+		if len(r.inst.Addresses) != 1 {
+			t.Fatalf("expected one address, got %+v", r.inst)
+		}
+		addresses[r.inst.Addresses[0]] = true
+	}
+	if !addresses["10.0.100.200"] || !addresses["10.0.100.201"] || len(addresses) != 2 {
+		t.Fatalf("expected distinct lowest addresses, got %v", addresses)
 	}
 }
 

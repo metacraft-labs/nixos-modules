@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -231,7 +232,24 @@ func (b *VMHarnessRunBackend) Create(ctx context.Context, args CreateArgs) (Inst
 			launchctl = "/bin/launchctl"
 		}
 		cmdPath = launchctl
-		cmdArgs = append([]string{"asuser", uid, b.VMHarnessPath}, argv...)
+		if ephemeralPrefix != "" {
+			// Tart links AppKit even for --no-graphics. Merely entering the
+			// console user's bootstrap namespace while retaining uid 0 can
+			// deadlock AppKit/LaunchServices during NSApplication startup on
+			// current macOS releases. Run Tart's vm-harness process as the
+			// actual console user and preserve the explicitly allow-listed
+			// provider environment through sudo. Windows QEMU remains root.
+			uidNum, err := strconv.Atoi(uid)
+			if err != nil || uidNum < 0 {
+				return Instance{}, fmt.Errorf("invalid VM_HARNESS_DARWIN_ASUSER_UID %q", uid)
+			}
+			if err := os.Chown(outDir, uidNum, -1); err != nil {
+				return Instance{}, fmt.Errorf("chown vm-harness output directory to uid %d: %w", uidNum, err)
+			}
+			cmdArgs = append([]string{"asuser", uid, "/usr/bin/sudo", "-E", "-u", "#" + uid, "--", b.VMHarnessPath}, argv...)
+		} else {
+			cmdArgs = append([]string{"asuser", uid, b.VMHarnessPath}, argv...)
+		}
 	}
 	cmd := exec.Command(cmdPath, cmdArgs...)
 	cmd.Env = vmHarnessChildEnv()
@@ -275,8 +293,12 @@ func (b *VMHarnessRunBackend) Delete(ctx context.Context, idOrName string) error
 	if err != nil {
 		return nil
 	}
-	if processRunning(st.PID) {
+	if st.PID > 0 {
+		// The process-group leader (vm-harness) can exit before a Tart child.
+		// Signal the group even when kill(pid, 0) says the leader is gone.
 		_ = syscall.Kill(-st.PID, syscall.SIGTERM)
+	}
+	if processRunning(st.PID) {
 		if p, err := os.FindProcess(st.PID); err == nil {
 			_ = p.Signal(syscall.SIGTERM)
 		}

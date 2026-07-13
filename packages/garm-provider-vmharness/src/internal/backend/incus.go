@@ -20,10 +20,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	garmErrors "github.com/cloudbase/garm-provider-common/errors"
@@ -67,6 +69,10 @@ type IncusBackend struct {
 	RangeStart  string
 	RangeEnd    string
 	Nameservers []string
+	// IPAllocationLockPath overrides the host-wide lease lock path. Production
+	// leaves this empty so every provider subprocess on the host shares the
+	// default lock. Tests may point it at an isolated temporary directory.
+	IPAllocationLockPath string
 	// GpuPassthrough, when true, gives each per-job container a working SHARED
 	// NVIDIA GPU userspace before start — the container's `nvidia-smi`/CUDA see
 	// the host's GPU(s) WHILE the host keeps using them (cooperative), with no
@@ -165,6 +171,7 @@ type IncusBackend struct {
 const (
 	hostNixStorePath        = "/nix/store"
 	hostNixDaemonSocketPath = "/nix/var/nix/daemon-socket"
+	incusIPAllocationLock   = "/tmp/garm-provider-vmharness-incus-ip-allocation.lock"
 )
 
 // Host GPU userspace anchors for the `incus-gpu` shared-GPU recipe. Both are
@@ -334,6 +341,35 @@ func (b *IncusBackend) allocateIPv4(ctx context.Context) (string, error) {
 	return "", fmt.Errorf("no free static IPv4 in range %s-%s", b.RangeStart, b.RangeEnd)
 }
 
+// acquireIPAllocationLock serialises only the non-atomic Incus lease window:
+// list existing user.garm.ipv4 tags, select an address, create the container,
+// and publish its tag. GARM invokes external-provider requests in separate
+// processes, so an in-process mutex cannot prevent two concurrent Creates
+// from observing the same free address. A host filesystem lock can.
+func (b *IncusBackend) acquireIPAllocationLock() (*os.File, error) {
+	path := b.IPAllocationLockPath
+	if path == "" {
+		path = incusIPAllocationLock
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("open incus IPv4 allocation lock %s: %w", path, err)
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("lock incus IPv4 allocation lock %s: %w", path, err)
+	}
+	return f, nil
+}
+
+func releaseIPAllocationLock(f *os.File) {
+	if f == nil {
+		return
+	}
+	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	_ = f.Close()
+}
+
 func ipv4ToUint(ip net.IP) uint32 {
 	ip = ip.To4()
 	return uint32(ip[0])<<24 | uint32(ip[1])<<16 | uint32(ip[2])<<8 | uint32(ip[3])
@@ -387,6 +423,17 @@ func (b *IncusBackend) Create(ctx context.Context, args CreateArgs) (Instance, e
 	if args.SourceImage == "" {
 		return Instance{}, fmt.Errorf("incus Create: SourceImage (image alias) is required")
 	}
+	leaseLock, err := b.acquireIPAllocationLock()
+	if err != nil {
+		return Instance{}, err
+	}
+	leaseLockHeld := true
+	defer func() {
+		if leaseLockHeld {
+			releaseIPAllocationLock(leaseLock)
+		}
+	}()
+
 	ip, err := b.allocateIPv4(ctx)
 	if err != nil {
 		return Instance{}, err
@@ -422,6 +469,11 @@ func (b *IncusBackend) Create(ctx context.Context, args CreateArgs) (Instance, e
 			return Instance{}, fmt.Errorf("incus config set %s: %w: %s", k, err, strings.TrimSpace(out))
 		}
 	}
+	// The selected address is visible to every other provider process now.
+	// Release before cloud-init/device setup and start so the expensive parts
+	// of independent runner launches still happen concurrently.
+	releaseIPAllocationLock(leaseLock)
+	leaseLockHeld = false
 
 	// 3. static IPv4 (DHCP does not lease on incusbr0).
 	if out, err := b.run(ctx, b.networkConfig(ip), "config", "set", args.Name, "cloud-init.network-config", "-"); err != nil {
