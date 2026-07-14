@@ -21,6 +21,7 @@
     ./mcl-s3-artifact-store
     ./mcl-repro-binary-cache
     ./mcl-repro-cache-client
+    ./mcl-reprobuild
     ./mcl-repro-deploy-agent
     ./garm
     ./virtualisation/desktop-vms.nix
