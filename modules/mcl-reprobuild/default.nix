@@ -61,7 +61,12 @@ in
       options.programs.reprobuild = mkOptions { inherit lib pkgs; };
 
       config = lib.mkIf cfg.enable {
-        environment.systemPackages = [ cfg.package ];
+        # hiPrio: the full `reprobuild` package and the sibling
+        # `repro-binary-cache-client` (installed by mcl-repro-cache-client) both
+        # ship lib/librepro_monitor_shim.so, so buildEnv errors on the collision
+        # when both modules are enabled on one host. Give reprobuild priority so
+        # its copy wins the merge instead of aborting the profile build.
+        environment.systemPackages = [ (lib.hiPrio cfg.package) ];
       };
     };
 
@@ -80,7 +85,9 @@ in
       options.programs.reprobuild = mkOptions { inherit lib pkgs; };
 
       config = lib.mkIf cfg.enable {
-        home.packages = [ cfg.package ];
+        # hiPrio — see the NixOS class above: avoids the buildEnv collision on
+        # librepro_monitor_shim.so with the repro-binary-cache-client package.
+        home.packages = [ (lib.hiPrio cfg.package) ];
       };
     };
 }
