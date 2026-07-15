@@ -16,17 +16,19 @@
 # vendors. The daemon (`garm`) and admin CLI (`garm-cli`) are both produced.
 buildGo126Module rec {
   pname = "garm";
-  version = "0.2.1";
+  version = "0.2.1-unstable-2026-07-08";
 
-  # Pin the exact upstream commit for v0.2.1 (do NOT depend on the local
-  # references/garm overlay — CI builds nixos-modules without it).
-  rev = "154638445c3949c1958b01812f69d9a1e4d82684";
+  # v0.2.1 can wedge a scale-set listener forever when a delayed job message
+  # races an already-terminal runner transition. Pin the upstream fix merged
+  # by cloudbase/garm#817 until the next tagged release includes it. Do not
+  # depend on the local references/garm overlay: CI builds this flake alone.
+  rev = "0a9a939c10f1e253947b63b0708acaa0c9d5e0bc";
 
   src = fetchFromGitHub {
     owner = "cloudbase";
     repo = "garm";
     inherit rev;
-    hash = "sha256-Eqa0gnPm/puaxVqODJ+nwphYgt0crN6D/OmRijzmZ/M=";
+    hash = "sha256-lv15Q8gzg+SeRxlBXA70W26W+chIOqtgvuMahsMHb6s=";
   };
 
   # Deps are vendored in-tree → build offline against `vendor/`.
