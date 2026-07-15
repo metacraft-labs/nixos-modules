@@ -222,9 +222,13 @@ top@{ ... }:
                 )
 
             with subtest("the failure counter reset to 0 after recovery"):
-                # After a healthy probe the persisted counter is 0 again.
+                # After a healthy probe the persisted counter is 0 again. The
+                # watchdog deliberately owns a private StateDirectory; reading
+                # garm's StateDirectory here would miss the file and regress the
+                # permission boundary that prevents the root-run oneshot from
+                # re-chowning GARM's SQLite state.
                 withwatchdog.wait_until_succeeds(
-                    "test \"$(cat /var/lib/garm/healthcheck-consecutive-failures)\" = 0",
+                    "test \"$(cat /var/lib/garm-healthcheck/healthcheck-consecutive-failures)\" = 0",
                     timeout=15,
                 )
           '';
