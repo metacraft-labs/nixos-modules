@@ -29,6 +29,11 @@ on:
         default: '["eph-linux-x64"]'
         required: false
         type: string
+      foundry-darwin-bootstrap-runner:
+        description: 'Temporary JSON-encoded runner class for Foundry on Darwin while vm-harness lifetime fixes are deployed'
+        default: ''
+        required: false
+        type: string
       push-deployment-caches:
         description: 'Push deployment target closures to configured deployment cache backends'
         default: false
@@ -395,9 +400,17 @@ jobs:
         )}}
 
     name: ${{ matrix.name }} | ${{ matrix.system }}
-    runs-on: ${{ matrix.ghRunner }}
+    # The provider fix in this PR cannot affect the runner executing this PR.
+    # Keep this narrow escape hatch until that fix is deployed, then remove it.
+    runs-on: >-
+      ${{
+        matrix.name == 'foundry' &&
+        matrix.system == 'aarch64-darwin' &&
+        inputs.foundry-darwin-bootstrap-runner != '' &&
+        fromJSON(inputs.foundry-darwin-bootstrap-runner) ||
+        matrix.ghRunner
+      }}
     continue-on-error: ${{ matrix.allowedToFail }}
-
     steps:
       - name: No builds required
         if: ${{ matrix.noop }}

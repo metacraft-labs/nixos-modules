@@ -506,6 +506,10 @@ top@{ config, ... }:
                   workflow,
               ), "workflow must default results-runner to the ephemeral Linux class"
               assert "runs-on: ''${{ fromJSON(inputs.non-nix-runner) }}" in workflow, "non-nix helper jobs must use JSON runner labels"
+              assert "foundry-darwin-bootstrap-runner: '[\"aarch64-darwin\"]'" in repo_workflow, "only the long Foundry Darwin bootstrap build must use the persistent runner class"
+              assert "matrix.name == 'foundry'" in workflow, "Foundry bootstrap runner selection must stay package-scoped"
+              assert "matrix.system == 'aarch64-darwin'" in workflow, "Foundry bootstrap runner selection must stay Darwin-scoped"
+              assert "inputs.foundry-darwin-bootstrap-runner" in workflow, "Foundry bootstrap runner override must remain opt-in for reusable-workflow callers"
               results_job_match = re.search(
                   r"(?ms)^  results:\n(?P<body>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
                   workflow,
