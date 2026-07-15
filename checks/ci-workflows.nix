@@ -159,6 +159,77 @@
             touch "$out"
           '';
 
+      checks.reusable-flake-checks-attic-credentials =
+        pkgs.runCommand "reusable-flake-checks-attic-credentials"
+          {
+            nativeBuildInputs = [ pkgs.python3 ];
+          }
+          ''
+            python3 - <<'PY'
+            from pathlib import Path
+
+            workflow = Path("${flakeChecksWorkflow}").read_text()
+            lines = workflow.splitlines()
+
+            def named_steps(name):
+                blocks = []
+                for start, line in enumerate(lines):
+                    if line.strip() != f"- name: {name}":
+                        continue
+                    step_indent = len(line) - len(line.lstrip())
+                    end = len(lines)
+                    for index in range(start + 1, len(lines)):
+                        if lines[index].strip() and (
+                            len(lines[index]) - len(lines[index].lstrip())
+                        ) <= step_indent:
+                            end = index
+                            break
+                    blocks.append("\n".join(lines[start:end]))
+                return blocks
+
+            declaration = workflow.split("\njobs:\n", 1)[0]
+            assert "      ATTIC_PULL_TOKEN:\n" in declaration
+            assert "      ATTIC_TOKEN:\n" in declaration
+
+            pull_expression = (
+                "ATTIC_TOKEN: "
+                + "$"
+                + "{{ secrets.ATTIC_PULL_TOKEN || secrets.ATTIC_TOKEN }}"
+            )
+
+            auth_steps = named_steps("Authenticate nix to the private Attic cache")
+            assert len(auth_steps) == 4, f"expected four Nix pull-auth steps, got {len(auth_steps)}"
+            for step in auth_steps:
+                assert pull_expression in step, "Nix cache auth must prefer the pull-only token"
+
+            probe_step_names = [
+                "Generate Shard Matrix",
+                "Generate CI Matrix",
+                "Regenerate CI matrix shards when artifacts are unavailable",
+                "Generate CI matrix comment",
+                "Print CI Matrix",
+            ]
+            for name in probe_step_names:
+                steps = named_steps(name)
+                assert len(steps) == 1, f"expected one {name!r} step, got {len(steps)}"
+                assert pull_expression in steps[0], f"{name} must prefer the pull-only token"
+
+            merge_steps = named_steps("Merge matrices")
+            assert len(merge_steps) == 1
+            assert "ATTIC_" not in merge_steps[0], "matrix merging does not need Attic credentials"
+
+            push_step_name = "Push deployment closure caches " + "$" + "{{ matrix.name }}"
+            push_steps = named_steps(push_step_name)
+            assert len(push_steps) == 1
+            assert "secrets.ATTIC_TOKEN" in push_steps[0]
+            assert "secrets.ATTIC_PULL_TOKEN" not in push_steps[0], (
+                "deployment cache publication must retain the push credential"
+            )
+            PY
+
+            touch "$out"
+          '';
+
       checks.reusable-terraform-drift-workflow =
         pkgs.runCommand "reusable-terraform-drift-workflow"
           {

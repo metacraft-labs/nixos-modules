@@ -354,13 +354,6 @@ jobs:
       - name: Merge matrices
         if: needs.eval-matrix.result == 'success'
         id: merge
-        env:
-          # Authenticate mcl's cache-status (narinfo) probe to the private
-          # Attic cache; scoped to the Attic host inside mcl. Without this the
-          # per-derivation probe HEADs a token-gated cache unauthenticated and
-          # cannot identify cached derivations, scheduling redundant builds.
-          ATTIC_SUBSTITUTER: ${{ vars.ATTIC_SUBSTITUTER }}
-          ATTIC_TOKEN: ${{ secrets.ATTIC_PULL_TOKEN || secrets.ATTIC_TOKEN }}
         run: ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} merge-ci-matrices
 
       - name: Generate CI matrix comment
