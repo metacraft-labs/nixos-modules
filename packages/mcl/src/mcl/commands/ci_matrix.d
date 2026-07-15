@@ -1414,7 +1414,7 @@ bool isCached(in Package pkg, string binaryCacheHttpEndpoint, in string[string] 
     }
     catch (HTTPStatusException e)
     {
-        if (e.status == 404)
+        if (cacheProbeHttpStatusIsMiss(e.status))
             return false;
         else
             throw e;
@@ -1423,6 +1423,25 @@ bool isCached(in Package pkg, string binaryCacheHttpEndpoint, in string[string] 
     {
         return false;
     }
+}
+
+bool cacheProbeHttpStatusIsMiss(long status) pure nothrow @safe
+{
+    // Cache lookup is an optimisation: if a cache rejects, rate-limits, or
+    // otherwise cannot answer a narinfo request, the safe result is "not
+    // proven cached" so CI builds the output.  An HTTP cache failure must not
+    // abort matrix generation and skip the build entirely.
+    return status >= 400 && status < 600;
+}
+
+@("cache probe HTTP failures are cache misses")
+unittest
+{
+    foreach (status; [401L, 403L, 404L, 429L, 500L, 503L])
+        assert(cacheProbeHttpStatusIsMiss(status));
+
+    assert(!cacheProbeHttpStatusIsMiss(200));
+    assert(!cacheProbeHttpStatusIsMiss(302));
 }
 
 @("isCached")
