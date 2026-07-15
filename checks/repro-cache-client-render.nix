@@ -3,15 +3,19 @@ top@{ ... }:
   # Reprobuild-Binary-Cache-Fleet R2 (REPRO-FLEET-PROVISION) gate:
   # t_repro_cache_client_render.
   #
-  # Proves the reusable `mcl-repro-cache-client` module (a) puts the reprobuild
-  # binary-cache client on PATH and (b) RENDERS the R1 caches.conf with the
-  # managed fleet cache — the EXACT url + 130-hex ECDSA-P256 trusted key +
-  # priority — for the NixOS module class (system-wide /etc/repro/caches.conf),
-  # asserted live in a booted VM.
+  # Proves the reusable `mcl-reprobuild` module (a) puts the reprobuild `repro`
+  # CLI — which BUNDLES the binary-cache client — on PATH and (b) RENDERS the R1
+  # caches.conf with the managed fleet cache — the EXACT url + 130-hex ECDSA-P256
+  # trusted key + priority — for the NixOS module class (system-wide
+  # /etc/repro/caches.conf), asserted live in a booted VM.
+  #
+  # (mcl-reprobuild superseded the former mcl-repro-cache-client module — the
+  # separate `repro-binary-cache-client` package was just `reprobuild` renamed,
+  # so the client config knobs now live on the one reprobuild module.)
   #
   # The home-manager module class shares the SAME renderer + option schema (one
-  # definition in modules/mcl-repro-cache-client), so this render proof covers
-  # it too; ~/dotfiles additionally evaluates the home config as its own build.
+  # definition in modules/mcl-reprobuild), so this render proof covers it too;
+  # ~/dotfiles additionally evaluates the home config as its own build.
   #
   # NON-VACUITY: the assertions check the EXACT 130-hex key string, the exact
   # url, and the exact priority line. A missing key, a wrong key, or a wrong
@@ -26,9 +30,10 @@ top@{ ... }:
     }:
     let
       flake = top.config.flake;
-      # Pass the client package explicitly (like the sibling cross-host gate
-      # passes the daemon), keeping the check self-contained.
-      reproClient = inputs'.reprobuild.packages.repro-binary-cache-client;
+      # Pass the reprobuild package explicitly (like the sibling cross-host gate
+      # passes the daemon), keeping the check self-contained. This is the full
+      # toolset — `repro` plus the bundled `repro-binary-cache-client`.
+      reproPkg = inputs'.reprobuild.packages.reprobuild;
 
       # The concrete fleet cache (from R3's managed signing key). The pubkey is
       # the exact 130-hex string committed at
@@ -54,10 +59,10 @@ top@{ ... }:
           nodes.host =
             { ... }:
             {
-              imports = [ flake.modules.nixos.mcl-repro-cache-client ];
-              programs.repro-cache-client = {
+              imports = [ flake.modules.nixos.mcl-reprobuild ];
+              programs.reprobuild = {
                 enable = true;
-                package = reproClient;
+                package = reproPkg;
                 inherit caches;
               };
             };
@@ -66,8 +71,10 @@ top@{ ... }:
             start_all()
             host.wait_for_unit("multi-user.target")
 
-            with subtest("the reprobuild binary-cache client is on PATH"):
-                # `enable` puts the client package in environment.systemPackages.
+            with subtest("repro + the bundled binary-cache client are on PATH"):
+                # `enable` puts the reprobuild package in environment.systemPackages;
+                # it ships both `repro` and `repro-binary-cache-client`.
+                host.succeed("command -v repro")
                 host.succeed("command -v repro-binary-cache-client")
 
             with subtest("/etc/repro/caches.conf is rendered with the fleet cache"):
