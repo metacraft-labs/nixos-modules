@@ -55,8 +55,8 @@ jobs:
           # token is 401 — that is the defence-in-depth invariant.
           for attempt in $(seq 1 30); do
             if curl -fsS --connect-timeout 2 --max-time 5 \
-                 -H "Authorization: Bearer $ATTIC_TOKEN" \
-                 "$ATTIC_SUBSTITUTER/nix-cache-info" >/dev/null; then
+                -H "Authorization: Bearer $ATTIC_TOKEN" \
+                "$ATTIC_SUBSTITUTER/nix-cache-info" >/dev/null; then
               echo "authenticated read of $ATTIC_SUBSTITUTER succeeded"
               break
             fi
