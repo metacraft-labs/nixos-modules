@@ -50,8 +50,11 @@ on:
         required: false
         type: string
     secrets:
+      ATTIC_PULL_TOKEN:
+        description: 'Read-only Attic token for cache substitution and status probes'
+        required: false
       ATTIC_TOKEN:
-        description: 'Attic push token for optional deployment closure mirroring'
+        description: 'Attic push token for optional deployment closure mirroring and pull-token fallback'
         required: false
       NIX_GITHUB_TOKEN:
         description: GitHub token to add as access-token in nix.conf
@@ -158,7 +161,7 @@ jobs:
         shell: bash
         env:
           ATTIC_SUBSTITUTER: ${{ vars.ATTIC_SUBSTITUTER }}
-          ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
+          ATTIC_TOKEN: ${{ secrets.ATTIC_PULL_TOKEN || secrets.ATTIC_TOKEN }}
         run: |
           [ -n "$ATTIC_SUBSTITUTER" ] && [ -n "$ATTIC_TOKEN" ] || exit 0
           h="${ATTIC_SUBSTITUTER#http://}"; h="${h#https://}"; h="${h%%/*}"
@@ -178,7 +181,7 @@ jobs:
           # Authenticate mcl's cache-status (narinfo) probe to the private
           # Attic cache; scoped to the Attic host inside mcl.
           ATTIC_SUBSTITUTER: ${{ vars.ATTIC_SUBSTITUTER }}
-          ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
+          ATTIC_TOKEN: ${{ secrets.ATTIC_PULL_TOKEN || secrets.ATTIC_TOKEN }}
         run: ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} shard-matrix
 
       - name: Post CI matrix comment
@@ -213,7 +216,7 @@ jobs:
         shell: bash
         env:
           ATTIC_SUBSTITUTER: ${{ vars.ATTIC_SUBSTITUTER }}
-          ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
+          ATTIC_TOKEN: ${{ secrets.ATTIC_PULL_TOKEN || secrets.ATTIC_TOKEN }}
         run: |
           [ -n "$ATTIC_SUBSTITUTER" ] && [ -n "$ATTIC_TOKEN" ] || exit 0
           h="${ATTIC_SUBSTITUTER#http://}"; h="${h#https://}"; h="${h%%/*}"
@@ -234,7 +237,7 @@ jobs:
           # Authenticate mcl's cache-status (narinfo) probe to the private
           # Attic cache; scoped to the Attic host inside mcl.
           ATTIC_SUBSTITUTER: ${{ vars.ATTIC_SUBSTITUTER }}
-          ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
+          ATTIC_TOKEN: ${{ secrets.ATTIC_PULL_TOKEN || secrets.ATTIC_TOKEN }}
         run: |
           ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} -- ci-matrix \
             --flake-attribute-path "${{ matrix.flakeAttrPath }}" \
@@ -278,7 +281,7 @@ jobs:
         shell: bash
         env:
           ATTIC_SUBSTITUTER: ${{ vars.ATTIC_SUBSTITUTER }}
-          ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
+          ATTIC_TOKEN: ${{ secrets.ATTIC_PULL_TOKEN || secrets.ATTIC_TOKEN }}
         run: |
           [ -n "$ATTIC_SUBSTITUTER" ] && [ -n "$ATTIC_TOKEN" ] || exit 0
           h="${ATTIC_SUBSTITUTER#http://}"; h="${h#https://}"; h="${h%%/*}"
@@ -304,7 +307,7 @@ jobs:
           # Authenticate mcl's cache-status (narinfo) probe (same reason as the
           # Merge matrices step below).
           ATTIC_SUBSTITUTER: ${{ vars.ATTIC_SUBSTITUTER }}
-          ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
+          ATTIC_TOKEN: ${{ secrets.ATTIC_PULL_TOKEN || secrets.ATTIC_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -355,10 +358,9 @@ jobs:
           # Authenticate mcl's cache-status (narinfo) probe to the private
           # Attic cache; scoped to the Attic host inside mcl. Without this the
           # per-derivation probe HEADs a token-gated cache unauthenticated and
-          # crashes with HTTP 401, silently skipping Publish Deployment
-          # Manifests and blocking deploys fleet-wide.
+          # cannot identify cached derivations, scheduling redundant builds.
           ATTIC_SUBSTITUTER: ${{ vars.ATTIC_SUBSTITUTER }}
-          ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
+          ATTIC_TOKEN: ${{ secrets.ATTIC_PULL_TOKEN || secrets.ATTIC_TOKEN }}
         run: ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} merge-ci-matrices
 
       - name: Generate CI matrix comment
@@ -366,7 +368,7 @@ jobs:
           IS_INITIAL: 'true'
           EXTRA_CACHE_URLS: ${{ vars.SUBSTITUTERS }}
           ATTIC_SUBSTITUTER: ${{ vars.ATTIC_SUBSTITUTER }}
-          ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
+          ATTIC_TOKEN: ${{ secrets.ATTIC_PULL_TOKEN || secrets.ATTIC_TOKEN }}
           PRECALC_MATRIX: ${{ steps.merge.outputs.full_matrix }}
         run: ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} print-table
 
@@ -427,7 +429,7 @@ jobs:
         shell: bash
         env:
           ATTIC_SUBSTITUTER: ${{ vars.ATTIC_SUBSTITUTER }}
-          ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
+          ATTIC_TOKEN: ${{ secrets.ATTIC_PULL_TOKEN || secrets.ATTIC_TOKEN }}
         run: |
           [ -n "$ATTIC_SUBSTITUTER" ] && [ -n "$ATTIC_TOKEN" ] || exit 0
           h="${ATTIC_SUBSTITUTER#http://}"; h="${h#https://}"; h="${h%%/*}"
@@ -761,7 +763,7 @@ jobs:
           IS_INITIAL: 'false'
           EXTRA_CACHE_URLS: ${{ vars.SUBSTITUTERS }}
           ATTIC_SUBSTITUTER: ${{ vars.ATTIC_SUBSTITUTER }}
-          ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
+          ATTIC_TOKEN: ${{ secrets.ATTIC_PULL_TOKEN || secrets.ATTIC_TOKEN }}
           PRECALC_MATRIX: ${{
             needs.merge-matrices.result == 'success' &&
             needs.merge-matrices.outputs.full_matrix ||
