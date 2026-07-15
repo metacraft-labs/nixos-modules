@@ -27,7 +27,12 @@ import (
 	garmErrors "github.com/cloudbase/garm-provider-common/errors"
 )
 
-const windowsRunnerTimeoutSec = "43200"
+// GitHub Actions jobs may run for up to six hours by default. Keep every
+// one-shot guest alive beyond that boundary so boot, package installation, and
+// runner cleanup do not consume part of the job's usable window. vm-harness'
+// default is only 600 seconds, which deterministically terminates long Linux
+// and macOS jobs while the foreground ephemeral runner is still busy.
+const runnerTimeoutSec = "43200"
 
 // VMHarnessRunBackend drives vm-harness backends whose lifecycle is already
 // one-shot and self-cleaning. It starts `vm-harness run` in the background and
@@ -212,7 +217,11 @@ func (b *VMHarnessRunBackend) Create(ctx context.Context, args CreateArgs) (Inst
 
 	guestPath := "/tmp/garm-bootstrap.sh"
 	bootstrapPath := filepath.Join(dir, "garm-bootstrap.sh")
-	argv := []string{"run", "--backend", b.BackendID, "--guest", b.GuestOS, "--baseline", args.SourceImage, "--output-dir", outDir}
+	argv := []string{
+		"run", "--backend", b.BackendID, "--guest", b.GuestOS,
+		"--baseline", args.SourceImage, "--output-dir", outDir,
+		"--timeout-sec", runnerTimeoutSec,
+	}
 	ephemeralPrefix := b.tartEphemeralPrefix(args.Name)
 	if ephemeralPrefix != "" {
 		argv = append(argv, "--ephemeral-prefix", ephemeralPrefix)
@@ -220,10 +229,7 @@ func (b *VMHarnessRunBackend) Create(ctx context.Context, args CreateArgs) (Inst
 	if strings.EqualFold(args.OSName, "windows") || b.GuestOS == "windows" {
 		guestPath = `C:\garm-bootstrap.ps1`
 		bootstrapPath = filepath.Join(dir, "garm-bootstrap.ps1")
-		// A GitHub Actions job may run for up to six hours by default. Keep the
-		// guest alive beyond that boundary so boot and runner cleanup time do not
-		// consume part of the job's usable window.
-		argv = append(argv, "--timeout-sec", windowsRunnerTimeoutSec, "--copy-to", bootstrapPath+":"+guestPath, "--")
+		argv = append(argv, "--copy-to", bootstrapPath+":"+guestPath, "--")
 		argv = append(argv, windowsBootstrapCommand(guestPath)...)
 	} else {
 		argv = append(argv, "--copy-to", bootstrapPath+":"+guestPath, "--", "/bin/sh", "-c", "chmod +x "+guestPath+" && exec "+guestPath)

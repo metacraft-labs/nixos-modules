@@ -232,6 +232,8 @@ func TestVMHarnessRunBackendDarwinAsUserWrapper(t *testing.T) {
 		"/nix/store/test-vm-harness/bin/vm-harness\n",
 		"run\n",
 		"tart-macos\n",
+		"--timeout-sec\n",
+		runnerTimeoutSec + "\n",
 	} {
 		if !strings.Contains(argv, want) {
 			t.Fatalf("launchctl argv missing %q:\n%s", want, argv)
@@ -294,7 +296,7 @@ func TestVMHarnessRunBackendWindowsCreateCommandWaitsAfterBootstrap(t *testing.T
 		"--guest\n",
 		"windows\n",
 		"--timeout-sec\n",
-		windowsRunnerTimeoutSec + "\n",
+		runnerTimeoutSec + "\n",
 		"--copy-to\n",
 		"garm-bootstrap.ps1:C:\\garm-bootstrap.ps1\n",
 		"--\n",
