@@ -36,7 +36,10 @@ top@{ ... }:
     let
       flake = top.config.flake;
       reproBinaryCache = inputs'.reprobuild.packages.repro-binary-cache;
-      reproBinaryCacheClient = inputs'.reprobuild.packages.repro-binary-cache-client;
+      # Binary-Caches.md §"Client CLI Surface (`repro cache`)": the standalone
+      # `repro-binary-cache-client` package was retired; its toolset is now the
+      # `repro cache <subcommand>` group shipped by the full `reprobuild`
+      # package (`bin/repro`).
       repro = inputs'.reprobuild.packages.reprobuild;
 
       # --- Fixture provenance -------------------------------------------------
@@ -94,7 +97,7 @@ top@{ ... }:
               imports = [ flake.modules.nixos.mcl-repro-binary-cache ];
               environment.systemPackages = [
                 pkgs.curl
-                reproBinaryCacheClient
+                repro
               ];
 
               # M7-extended cache module: HTTPS (self-signed cert) + publish
@@ -209,19 +212,19 @@ top@{ ... }:
                 )
                 # gen-key prints the producer pubkey hex (proves a real key).
                 pub = agent.succeed(
-                    f"env {env} repro-binary-cache-client gen-key"
+                    f"env {env} repro cache gen-key"
                 ).strip()
                 assert len(pub) == 130, f"unexpected producer pubkey: {pub!r}"
                 assert pub != "${trustedAnchorHex}", "fresh producer key collided with the trusted anchor"
                 key = agent.succeed(
                     "env "
-                    "repro-binary-cache-client derive-key "
+                    "repro cache derive-key "
                     "--package-name=unauthorized --package-version=1 "
                     "--platform-cpu=x86_64 --platform-os=linux "
                     "--toolchain-name=none --toolchain-version=0"
                 ).strip()
                 out = agent.execute(
-                    f"env {env} repro-binary-cache-client publish {key} /tmp/pfx "
+                    f"env {env} repro cache publish {key} /tmp/pfx "
                     "--package-name=unauthorized --package-version=1 "
                     "--platform-cpu=x86_64 --platform-os=linux "
                     "--toolchain-name=none --toolchain-version=0 2>&1"

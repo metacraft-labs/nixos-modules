@@ -7,12 +7,14 @@ let
   # the same way Nix+Attic substituters/trusted-public-keys are provisioned.
   #
   # This SUPERSEDES the former `mcl-repro-cache-client` module. That module
-  # installed a SEPARATE `repro-binary-cache-client` package which is just
+  # installed a SEPARATE `repro-binary-cache-client` package which was just
   # `reprobuild.overrideAttrs { pname = …; }` — the identical toolset renamed,
   # so it duplicated the full closure and collided with this module on
-  # `lib/librepro_monitor_shim.so`. The client binary (`repro-binary-cache-client`)
-  # already ships INSIDE the `reprobuild` package, so there is one package here
-  # and the cache-client behaviour is purely the rendered `caches.conf` config.
+  # `lib/librepro_monitor_shim.so`. That standalone package was retired: the
+  # client toolset now ships as the `repro cache` subcommand group INSIDE the
+  # `reprobuild` package (Binary-Caches.md §"Client CLI Surface"), so there is
+  # one package here and the cache-client behaviour is purely the rendered
+  # `caches.conf` config.
   #
   # Two module classes are exported from ONE definition (shared option schema +
   # renderer):
@@ -30,8 +32,9 @@ let
   # entry lists a trusted-public-key. Rendering the fleet key here is what turns
   # substitution ON — the load-bearing bit.
 
-  # The reprobuild `repro` CLI (the full toolset — includes `repro`,
-  # `repro-binary-cache-client`, etc.), resolved against nixos-modules' OWN flake
+  # The reprobuild `repro` CLI (the full toolset — `repro`, with the binary-
+  # cache client folded in as its `repro cache` subcommand, etc.), resolved
+  # against nixos-modules' OWN flake
   # inputs (`inputs.reprobuild.packages.<system>`) per the consuming host's
   # system, so a consuming flake (infra, ~/dotfiles) does NOT need a `reprobuild`
   # input of its own. Indexed directly rather than via `withSystem` on purpose:

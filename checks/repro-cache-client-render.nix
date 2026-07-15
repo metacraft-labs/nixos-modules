@@ -10,8 +10,10 @@ top@{ ... }:
   # /etc/repro/caches.conf), asserted live in a booted VM.
   #
   # (mcl-reprobuild superseded the former mcl-repro-cache-client module — the
-  # separate `repro-binary-cache-client` package was just `reprobuild` renamed,
-  # so the client config knobs now live on the one reprobuild module.)
+  # client toolset is the `repro cache` subcommand group bundled in the one
+  # `reprobuild` package, so the client config knobs live on the one reprobuild
+  # module. The historical standalone `repro-binary-cache-client` package was
+  # retired; see Binary-Caches.md §"Client CLI Surface".)
   #
   # The home-manager module class shares the SAME renderer + option schema (one
   # definition in modules/mcl-reprobuild), so this render proof covers it too;
@@ -32,7 +34,7 @@ top@{ ... }:
       flake = top.config.flake;
       # Pass the reprobuild package explicitly (like the sibling cross-host gate
       # passes the daemon), keeping the check self-contained. This is the full
-      # toolset — `repro` plus the bundled `repro-binary-cache-client`.
+      # toolset — `repro`, whose `cache` subcommand bundles the client.
       reproPkg = inputs'.reprobuild.packages.reprobuild;
 
       # The concrete fleet cache (from R3's managed signing key). The pubkey is
@@ -71,11 +73,15 @@ top@{ ... }:
             start_all()
             host.wait_for_unit("multi-user.target")
 
-            with subtest("repro + the bundled binary-cache client are on PATH"):
+            with subtest("repro + its bundled binary-cache client subcommand are on PATH"):
                 # `enable` puts the reprobuild package in environment.systemPackages;
-                # it ships both `repro` and `repro-binary-cache-client`.
+                # it ships `repro`, whose `cache` subcommand group folds in the
+                # retired standalone `repro-binary-cache-client` toolset
+                # (Binary-Caches.md §"Client CLI Surface").
                 host.succeed("command -v repro")
-                host.succeed("command -v repro-binary-cache-client")
+                # `repro cache` prints its usage banner and exits 0 — proves the
+                # client toolset is bundled into the shipped `repro` binary.
+                host.succeed("repro cache 2>&1 | grep -q 'repro cache'")
 
             with subtest("/etc/repro/caches.conf is rendered with the fleet cache"):
                 host.succeed("test -f /etc/repro/caches.conf")
