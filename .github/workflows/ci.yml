@@ -128,6 +128,9 @@ jobs:
       pull-requests: write
     secrets: inherit
     with:
+      # Foundry takes longer than vm-harness's currently deployed 600-second
+      # default. Remove this override after this PR's provider fix is deployed.
+      foundry-darwin-bootstrap-runner: '["aarch64-darwin"]'
       runners: |
         {
           "x86_64-linux": [
