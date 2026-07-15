@@ -7,7 +7,7 @@ top@{ ... }:
   # merely that the unit is "active"):
   #
   #   (a) garm.service is active/running (a long-running Type=simple unit);
-  #   (b) the guest `garm --version` equals the packaged pin (v0.2.1);
+  #   (b) the guest `garm --version` equals the packaged post-v0.2.1 pin;
   #   (c) the daemon SERVES its API:
   #        - the apiserver port (9997) is listening;
   #        - GET /api/v1/controller-info BEFORE first-run responds 409 with the
@@ -93,9 +93,9 @@ top@{ ... }:
                 ).strip()
                 assert active == "active", f"garm.service ActiveState={active!r}"
 
-            with subtest("the packaged garm --version matches the M0 pin (v0.2.1)"):
+            with subtest("the packaged garm --version matches the post-v0.2.1 race-fix pin"):
                 version = server.succeed("garm --version").strip()
-                assert version == "v0.2.1", f"garm --version={version!r}"
+                assert version == "v0.2.1-unstable-2026-07-08", f"garm --version={version!r}"
 
             with subtest("the daemon binds the apiserver port"):
                 server.wait_for_open_port(9997)
