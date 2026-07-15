@@ -492,19 +492,19 @@ top@{ config, ... }:
               assert re.search(
                   r"non-nix-runner:\s*\n"
                   r"\s+description:.*\n"
-                  r"\s+default:\s*'\[\"self-hosted\",\s*\"nixos\",\s*\"x86-64-v2\",\s*\"bare-metal\"\]'\s*\n"
+                  r"\s+default:\s*'\[\"eph-linux-x64\"\]'\s*\n"
                   r"\s+required:\s*false\s*\n"
                   r"\s+type:\s*string",
                   workflow,
-              ), "workflow must expose non-nix-runner defaulting to self-hosted labels"
+              ), "workflow must default non-nix-runner to the ephemeral Linux class"
               assert re.search(
                   r"results-runner:\s*\n"
                   r"\s+description:.*\n"
-                  r"\s+default:\s*'\[\"self-hosted\",\s*\"nixos\",\s*\"x86-64-v2\",\s*\"bare-metal\"\]'\s*\n"
+                  r"\s+default:\s*'\[\"eph-linux-x64\"\]'\s*\n"
                   r"\s+required:\s*false\s*\n"
                   r"\s+type:\s*string",
                   workflow,
-              ), "workflow must expose results-runner defaulting to self-hosted labels"
+              ), "workflow must default results-runner to the ephemeral Linux class"
               assert "runs-on: ''${{ fromJSON(inputs.non-nix-runner) }}" in workflow, "non-nix helper jobs must use JSON runner labels"
               results_job_match = re.search(
                   r"(?ms)^  results:\n(?P<body>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
