@@ -50,6 +50,15 @@ jobs:
           nix-gitlab-token: ${{ secrets.NIX_GITLAB_TOKEN }}
           nix-gitlab-domain: ${{ vars.NIX_GITLAB_DOMAIN }}
 
+      - name: Provision nix-diff workflow tools
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          jq_store_path="$(nix build --no-link --print-out-paths 'nixpkgs#jq^bin')"
+          test -x "$jq_store_path/bin/jq"
+          echo "$jq_store_path/bin" >> "$GITHUB_PATH"
+
       - name: Discover machines and generate attributes
         id: discover
         run: |
