@@ -2229,7 +2229,7 @@
               ExecStartPre = lib.getExe renderScript;
               ExecStart = lib.escapeShellArgs [
                 (lib.getExe cfg.package)
-                "-config"
+                "--config"
                 renderedConfig
               ];
               # FU9 startup bind-verify: wait for the API listener to bind and
