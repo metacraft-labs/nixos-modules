@@ -16,6 +16,7 @@ let
             context.Background(),
             commonParams.OSType("macos"),
             "http://garm.example.test/api/v1/metadata",
+            "http://garm.example.test/api/v1/callbacks/status",
             "instance-token",
         )
         if err != nil {
