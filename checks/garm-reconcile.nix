@@ -26,6 +26,9 @@ top@{ ... }:
   # (that is the live e2e, out of scope here) — only the management API.
   #
   # Assertions (the milestone's a–e):
+  #   (a0) STARTUP-RESTART — force GARM's first post-start check to fail;
+  #                 systemd restarts GARM while reconcile's own readiness loop
+  #                 spans the gap and still converges successfully.
   #   (a) APPLY   — after activation the reconcile ran and GARM's DB holds
   #                 EXACTLY the declared orgs/creds/scale-sets (garm-cli list).
   #   (b) IDEMPOTENT — a SECOND `systemctl start garm-reconcile` makes ZERO
@@ -252,10 +255,23 @@ top@{ ... }:
       adminPw = "correct-horse-battery-staple-9!";
       adminPwFile = pkgs.writeText "garm-reconcile-admin-pw" adminPw;
 
+      # Deterministically exercise the production startup recovery contract on
+      # one node. The first ExecStartPost fails after the GARM process launches;
+      # Restart=always then starts it again and this check succeeds thereafter.
+      failInitialGarmStartOnce = pkgs.writeShellScript "garm-test-fail-initial-start-once" ''
+        marker=/var/lib/garm/test-failed-initial-start
+        if [ ! -e "$marker" ]; then
+          : > "$marker"
+          echo "garm-test: deliberately failing first post-start check"
+          exit 1
+        fi
+      '';
+
       # Common node config: garm + reconcile pointed at the mock endpoint.
       mkNode =
         {
           pruneUnmanaged,
+          failInitialGarmStart ? false,
           # When true the reconcile oneshot is NOT wanted by multi-user.target
           # (it does not auto-run at boot) and a KNOWN admin password is staged,
           # so the test can pre-populate GARM's DB by hand and then start the
@@ -289,6 +305,13 @@ top@{ ... }:
           # a no-op (mirrors the live high-mem-server case: EXP2/3/4 state was
           # created outside the reconcile).
           systemd.services.garm-reconcile.wantedBy = lib.mkIf adoptExisting (lib.mkForce [ ]);
+
+          # The reconcile must survive GARM's supported Restart=always path. Put
+          # the fail-once hook before the real API bind verification so the
+          # second start still proves the production post-start check.
+          systemd.services.garm.serviceConfig.ExecStartPost = lib.mkIf failInitialGarmStart (
+            lib.mkBefore [ failInitialGarmStartOnce ]
+          );
 
           services.garm = {
             enable = true;
@@ -366,7 +389,10 @@ top@{ ... }:
           name = "t_garm_reconcile";
 
           nodes.pruneoff = mkNode { pruneUnmanaged = false; };
-          nodes.pruneon = mkNode { pruneUnmanaged = true; };
+          nodes.pruneon = mkNode {
+            pruneUnmanaged = true;
+            failInitialGarmStart = true;
+          };
           nodes.adopt = mkNode {
             pruneUnmanaged = false;
             adoptExisting = true;
@@ -402,8 +428,59 @@ top@{ ... }:
                 node.wait_for_unit("garm.service")
                 node.wait_for_open_port(${toString mockPort})
                 node.wait_for_open_port(9997)
+                # A failed initial GARM bind verification is recovered by
+                # Restart=always. Reconcile must wait through that recovery,
+                # rather than inherit a permanent dependency failure.
+                wants = node.succeed(
+                    "systemctl show garm-reconcile.service -p Wants --value"
+                ).split()
+                requires = node.succeed(
+                    "systemctl show garm-reconcile.service -p Requires --value"
+                ).split()
+                assert "garm.service" in wants, f"reconcile does not want GARM: {wants}"
+                assert "garm.service" not in requires, \
+                    f"reconcile still hard-requires GARM and cannot span a startup restart: {requires}"
                 # The reconcile oneshot is wanted by multi-user.target.
                 node.wait_for_unit("garm-reconcile.service")
+
+            with subtest("(a0) STARTUP-RESTART: reconcile spans GARM's recovered first start"):
+                pruneon.succeed("test -e /var/lib/garm/test-failed-initial-start")
+                injected_failures = int(pruneon.succeed(
+                    "journalctl -u garm.service --no-pager "
+                    "| grep -c 'garm-test: deliberately failing first post-start check'"
+                ).strip())
+                assert injected_failures == 1, \
+                    f"expected exactly one injected GARM start failure, got {injected_failures}"
+                restarts = int(pruneon.succeed(
+                    "systemctl show garm.service -p NRestarts --value"
+                ).strip())
+                assert restarts >= 1, f"GARM did not take Restart=always path: {restarts}"
+                assert pruneon.succeed("systemctl is-active garm.service").strip() == "active"
+                assert pruneon.succeed(
+                    "systemctl show garm.service -p Result --value"
+                ).strip() == "success"
+                assert pruneon.succeed(
+                    "systemctl is-active garm-reconcile.service"
+                ).strip() == "active"
+                assert pruneon.succeed(
+                    "systemctl show garm-reconcile.service -p Result --value"
+                ).strip() == "success"
+
+                reconcile_started = int(pruneon.succeed(
+                    "systemctl show garm-reconcile.service "
+                    "-p ExecMainStartTimestampMonotonic --value"
+                ).strip())
+                garm_active = int(pruneon.succeed(
+                    "systemctl show garm.service -p ActiveEnterTimestampMonotonic --value"
+                ).strip())
+                assert 0 < reconcile_started < garm_active, \
+                    f"reconcile did not span GARM restart: reconcile={reconcile_started}, garm={garm_active}"
+
+                startup_journal = pruneon.succeed(
+                    "journalctl -u garm-reconcile.service --no-pager"
+                )
+                assert "controller API ready" in startup_journal, startup_journal
+                assert "reconcile complete" in startup_journal, startup_journal
 
             with subtest("(a) APPLY: reconcile created the declared cred/org/scale-set"):
                 for node in (pruneoff, pruneon):
