@@ -2295,18 +2295,24 @@
           };
 
           # ---- The declarative reconcile oneshot ----------------------------
-          # Runs AFTER garm.service is up, converges GARM's DB onto the declared
-          # github creds + orgs + scale sets, then exits (RemainAfterExit so a
-          # re-switch re-runs it). Idempotent: a second run with unchanged config
-          # makes no changes. It runs as the SAME user as garm (so it reads the
-          # module-staged PEM copies under stateDir + shares the garm-cli HOME)
-          # and, like garm, may stage an operator admin password via
-          # LoadCredential. Enabling it is OPT-IN (`reconcile.enable`).
+          # Ordered after garm.service's first start attempt, converges GARM's DB
+          # onto the declared github creds + orgs + scale sets, then exits
+          # (RemainAfterExit so a re-switch re-runs it). The dependency is a Want,
+          # not a Require: a startup bind-verification failure intentionally makes
+          # systemd restart GARM, and a hard Require would leave this oneshot in a
+          # permanent dependency-failed state even after that restart succeeds.
+          # The script's bounded API-readiness loop spans the restart and its own
+          # Restart=on-failure policy handles a genuinely unavailable controller.
+          # Idempotent: a second run with unchanged config makes no changes. It
+          # runs as the SAME user as garm (so it reads the module-staged PEM copies
+          # under stateDir + shares the garm-cli HOME) and, like garm, may stage an
+          # operator admin password via LoadCredential. Enabling it is OPT-IN
+          # (`reconcile.enable`).
           systemd.services.garm-reconcile = mkIf rcfg.enable {
             description = "Reconcile GARM DB state (orgs/credentials/scale sets) to the declared config";
             documentation = [ "https://github.com/cloudbase/garm" ];
             after = [ "garm.service" ];
-            requires = [ "garm.service" ];
+            wants = [ "garm.service" ];
             wantedBy = [ "multi-user.target" ];
 
             serviceConfig = {
