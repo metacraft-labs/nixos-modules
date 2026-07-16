@@ -86,6 +86,13 @@ top@{ ... }:
                 ).strip()
                 assert service_type == "simple", f"unexpected Type={service_type!r}"
 
+            with subtest("garm.service passes the config through the supported long flag"):
+                exec_start = server.succeed(
+                    "systemctl show -p ExecStart --value garm.service"
+                ).strip()
+                expected = " --config /var/lib/garm/config.toml"
+                assert expected in exec_start, f"garm.service ExecStart={exec_start!r}"
+
             with subtest("garm.service is active/running"):
                 server.wait_for_unit("garm.service")
                 active = server.succeed(
