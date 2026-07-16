@@ -504,13 +504,25 @@
           gcli() { garm-cli --format json "$@"; }
 
           # ---- (0) Wait for the API + ensure first-run admin exists -----------
+          # This endpoint requires authentication after first-run, so an existing
+          # controller correctly returns 401. Any HTTP response proves the local
+          # API is accepting requests; only curl's 000/no-response result means
+          # it is not ready yet. Keep each probe bounded so a broken listener
+          # cannot wedge the oneshot indefinitely.
+          api_code=""
           for _ in $(seq 1 60); do
-            if curl -fsS -o /dev/null "$api_url/api/v1/controller-info" 2>/dev/null; then break; fi
-            # 409 (init/urls required) also means the server is UP.
-            code="$(curl -s -o /dev/null -w '%{http_code}' "$api_url/api/v1/controller-info" || true)"
-            [ "$code" = "409" ] && break
+            api_code="$(curl --connect-timeout 1 --max-time 2 -sS -o /dev/null \
+              -w '%{http_code}' "$api_url/api/v1/controller-info" 2>/dev/null || true)"
+            if [ -n "$api_code" ] && [ "$api_code" != "000" ]; then
+              log "controller API ready (HTTP $api_code)"
+              break
+            fi
             sleep 1
           done
+          if [ -z "$api_code" ] || [ "$api_code" = "000" ]; then
+            log "ERROR: controller API did not respond after 60 attempts"
+            exit 1
+          fi
 
           # first-run is idempotent enough: 200 on fresh, 409 if already done.
           fr_code="$(curl -s -o /tmp/garm-fr.json -w '%{http_code}' \
