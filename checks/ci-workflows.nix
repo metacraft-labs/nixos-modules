@@ -230,6 +230,34 @@
             touch "$out"
           '';
 
+      checks.reusable-flake-checks-artifact-fallback =
+        pkgs.runCommand "reusable-flake-checks-artifact-fallback"
+          {
+            nativeBuildInputs = [ pkgs.python3 ];
+          }
+          ''
+            python3 - <<'PY'
+            import re
+            from pathlib import Path
+
+            workflow = Path("${flakeChecksWorkflow}").read_text()
+            merge_job = workflow.split("\n  merge-matrices:\n", 1)[1]
+            next_job = re.search(r"\n  [a-z0-9-]+:\n", merge_job)
+            assert next_job is not None, "job following merge-matrices disappeared"
+            merge_job = merge_job[: next_job.start()]
+
+            checkout = "uses: actions/checkout@v6.0.2"
+            fallback = "name: Regenerate CI matrix shards when artifacts are unavailable"
+            assert checkout in merge_job, "matrix artifact fallback requires a caller-repository checkout"
+            assert fallback in merge_job, "matrix artifact fallback step disappeared"
+            assert merge_job.index(checkout) < merge_job.index(fallback), (
+                "caller-repository checkout must precede matrix artifact regeneration"
+            )
+            PY
+
+            touch "$out"
+          '';
+
       checks.reusable-terraform-drift-workflow =
         pkgs.runCommand "reusable-terraform-drift-workflow"
           {
