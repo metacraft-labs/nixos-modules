@@ -595,8 +595,19 @@ top@{ ... }:
                 before_ids = {n: s["id"] for n, s in before_ss.items()}
 
                 # NOW run the reconcile for the first time — it must ADOPT.
+                # Isolate its readiness request from the periodic watchdog so we
+                # can prove an initialized controller does not incur 60 retries.
+                node.systemctl("stop garm-healthcheck.timer garm-healthcheck.service")
+                probe_count_cmd = (
+                    "journalctl -u garm.service -o cat --no-pager "
+                    "| grep -c 'access_log method=GET uri=/api/v1/controller-info user_agent=curl/' || true"
+                )
+                probes_before = int(node.succeed(probe_count_cmd).strip())
                 node.systemctl("start garm-reconcile.service")
                 node.wait_for_unit("garm-reconcile.service")
+                probes_after = int(node.succeed(probe_count_cmd).strip())
+                assert probes_after - probes_before == 1, \
+                    f"adopt readiness issued {probes_after - probes_before} HTTP probes instead of one"
                 assert "success" in node.succeed(
                     "systemctl show -p Result --value garm-reconcile.service"
                 ), "adopt reconcile did not succeed"
@@ -616,6 +627,8 @@ top@{ ... }:
                 # The reconcile log should show 'already converged', never 'created'.
                 # NB: don't shadow the driver's built-in `log` (AbstractLogger).
                 journal = node.succeed("journalctl -u garm-reconcile.service --no-pager")
+                assert "controller API ready (HTTP 401)" in journal, \
+                    f"adopt reconcile did not accept the initialized controller's 401 readiness response:\n{journal}"
                 assert "already converged" in journal, f"adopt did not report convergence:\n{journal}"
                 assert "created in org" not in journal, f"adopt CREATED a scale set:\n{journal}"
           '';
