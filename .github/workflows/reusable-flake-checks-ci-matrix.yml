@@ -272,6 +272,8 @@ jobs:
     if: needs.shard-matrix.outputs.eval_matrix != '{"include":[]}' &&
       needs.eval-matrix.result == 'success'
     steps:
+      - uses: actions/checkout@v6.0.2
+
       - name: Setup Nix
         uses: metacraft-labs/nixos-modules/.github/setup-nix@main
         with:
