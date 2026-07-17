@@ -125,7 +125,7 @@ jobs:
 
           {
             printf 'workflow_sha=%s\n' "$mcl_ref"
-            printf 'mcl_flake_cmd=nix run --accept-flake-config github:metacraft-labs/nixos-modules/%s#mcl\n' "$mcl_ref"
+            printf 'mcl_flake_cmd=nix --option download-attempts 5 run --accept-flake-config github:metacraft-labs/nixos-modules/%s#mcl\n' "$mcl_ref"
           } >> "$GITHUB_OUTPUT"
 
   post-initial-comment:
