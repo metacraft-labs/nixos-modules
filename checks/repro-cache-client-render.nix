@@ -66,6 +66,10 @@ top@{ ... }:
                 enable = true;
                 package = reproPkg;
                 inherit caches;
+                # Also gate the direnv-like shell-hook injection: with this on,
+                # the module must wire `repro shell hook <shell>` into the
+                # interactive shell init (asserted in /etc/bashrc below).
+                enableShellHook = true;
               };
             };
 
@@ -104,6 +108,15 @@ top@{ ... }:
                 assert (
                     "priority = ${toString cachePriority}" in conf
                 ), f"missing/wrong priority: {conf!r}"
+
+            with subtest("enableShellHook wires `repro shell hook` into interactive bash init"):
+                # NixOS writes programs.bash.interactiveShellInit into /etc/bashrc.
+                # NON-VACUITY: with enableShellHook = false this string is absent,
+                # so a regressed/removed injection fails here rather than passing.
+                bashrc = host.succeed("cat /etc/bashrc")
+                assert (
+                    "repro shell hook bash" in bashrc
+                ), f"shell hook not injected into /etc/bashrc: {bashrc!r}"
           '';
         };
       };

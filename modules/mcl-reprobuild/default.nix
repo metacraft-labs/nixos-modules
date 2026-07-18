@@ -106,6 +106,18 @@ let
       mkOptions = {
         enable = mkEnableOption "the reprobuild `repro` build CLI on PATH + rendered caches.conf";
 
+        enableShellHook = mkEnableOption ''
+          the direnv-like `repro shell hook` shell integration. Injects the
+          on-`cd` reprobuild dev-env activation hook into interactive bash,
+          zsh, and fish (the shells these modules manage; pwsh/nushell are
+          out of scope here and handled by reprobuild's Windows home profile).
+          The hook is a cheap upward walk for `reprobuild.nim` / `repro.nim` /
+          `.repro/dev-env.lock` that no-ops in trees with no reprobuild
+          dev-env, so it is safe to enable fleet-wide even where no `repro.nim`
+          exists yet. Requires `enable`; the hook shells out to `repro` from
+          this module's `package`
+        '';
+
         package = mkOption {
           type = types.package;
           default = defaultPackageFor pkgs.stdenv.hostPlatform.system;
@@ -166,6 +178,19 @@ in
         environment.etc."repro/caches.conf" = lib.mkIf (cfg.caches != { }) {
           text = shared.renderConfig cfg.caches;
         };
+        # Direnv-like on-`cd` dev-env activation, injected system-wide into the
+        # shells NixOS manages. bash/zsh source via `eval`, fish via `| source`
+        # (the sourcing idioms `repro shell hook <shell>` documents). A no-op
+        # walk where there is no reprobuild dev-env.
+        programs.bash.interactiveShellInit = lib.mkIf cfg.enableShellHook ''
+          eval "$(${cfg.package}/bin/repro shell hook bash)"
+        '';
+        programs.zsh.interactiveShellInit = lib.mkIf cfg.enableShellHook ''
+          eval "$(${cfg.package}/bin/repro shell hook zsh)"
+        '';
+        programs.fish.interactiveShellInit = lib.mkIf cfg.enableShellHook ''
+          ${cfg.package}/bin/repro shell hook fish | source
+        '';
       };
     };
 
@@ -191,6 +216,20 @@ in
         xdg.configFile."repro/caches.conf" = lib.mkIf (cfg.caches != { }) {
           text = shared.renderConfig cfg.caches;
         };
+        # Direnv-like on-`cd` dev-env activation, injected per-user into the
+        # shells home-manager manages. Uses each shell module's current init
+        # option (bash `initExtra`, zsh `initContent`, fish
+        # `interactiveShellInit`). A no-op walk where there is no reprobuild
+        # dev-env, so it coexists with an already-active direnv hook.
+        programs.bash.initExtra = lib.mkIf cfg.enableShellHook ''
+          eval "$(${cfg.package}/bin/repro shell hook bash)"
+        '';
+        programs.zsh.initContent = lib.mkIf cfg.enableShellHook ''
+          eval "$(${cfg.package}/bin/repro shell hook zsh)"
+        '';
+        programs.fish.interactiveShellInit = lib.mkIf cfg.enableShellHook ''
+          ${cfg.package}/bin/repro shell hook fish | source
+        '';
       };
     };
 }
