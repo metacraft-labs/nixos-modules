@@ -24,7 +24,12 @@
     # built against the same unstable package set as this repo. (There is no
     # lock cycle: reprobuild's `nixos-modules` input keeps its own pinned
     # revision; Nix resolves each flake's inputs independently.)
-    reprobuild.url = "github:metacraft-labs/reprobuild";
+    #
+    # PINNED to a specific rev (not a bare branch): we deploy reprobuild to
+    # servers through this input, so an explicit pin keeps the installed
+    # `repro` reproducible. Bump this SHA to roll forward (the mainline is the
+    # `dev` branch; `main` was retired).
+    reprobuild.url = "github:metacraft-labs/reprobuild/5b292184ee6724339922ba4566b5dc71aa7fce30";
 
     nixpkgs.follows = "nixos-2511";
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
