@@ -360,5 +360,33 @@
 
             touch "$out"
           '';
+
+      checks.reusable-terraform-policy-advisories =
+        pkgs.runCommand "reusable-terraform-policy-advisories"
+          {
+            nativeBuildInputs = [
+              pkgs.bash
+              pkgs.python3
+            ];
+          }
+          ''
+            python3 - <<'PY'
+            from pathlib import Path
+
+            workflow = Path("${terraformWorkflow}").read_text()
+            assert "POLICY_RUNNER_URL=" in workflow
+            assert "tofu-plan-policy-ci" in workflow
+            expected = (
+                'bash /tmp/tofu-plan-policy-ci /tmp/tofu-plan-policy.py "$PLAN_JSON" "'
+                + "$"
+                + '{POLICY_ARGS[@]}"'
+            )
+            assert expected in workflow
+            PY
+
+            cd ${../.}
+            python3 scripts/tests/test_policy.py
+            touch "$out"
+          '';
     };
 }

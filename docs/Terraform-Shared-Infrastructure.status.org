@@ -519,6 +519,9 @@
           cloudflare_ruleset with same phase per zone root module" — this check is a
           hard gate requirement for blocksense/infra before imports can start)
     - [X] Integration with reusable-terraform-ci.yml (M1) as a policy gate step
+    - [X] CI adapter preserves hard failures while converting the policy
+          engine's documented advisory exit code 2 into a successful GitHub
+          warning annotation
     - [X] Policy runs on tofu show -json output (structured JSON, not text parsing)
 
 *** Verification
@@ -555,7 +558,7 @@
     - test_name: verify_moved_blocks_advisory
       description: Policy warns when plan shows create+destroy of same type without corresponding moved blocks
       status: pass
-      notes: tests/test_policy.py test 8 (moved_blocks_missing.json gives exit code 2 advisory)
+      notes: tests/test_policy.py tests 8 and 14-16 (the engine gives exit code 2; the CI adapter annotates it successfully while preserving hard failure and clean-success semantics)
 
     - test_name: verify_pluggable_static_checks
       description: Consuming repo can register a custom static check that runs as part of the policy gate
