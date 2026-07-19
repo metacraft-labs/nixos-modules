@@ -4128,17 +4128,17 @@
         "stackable-hooks-src": "stackable-hooks-src"
       },
       "locked": {
-        "lastModified": 1784350073,
-        "narHash": "sha256-0Wx80shYmdU4TPVa1Tv5Ttj39eLZs2bTZUbnMWGTWMY=",
+        "lastModified": 1784449370,
+        "narHash": "sha256-rcZtr7OZ/hmP3HQ25LshsM9MoE9Nw2S8vUds6fM3Ww4=",
         "owner": "metacraft-labs",
         "repo": "reprobuild",
-        "rev": "5b292184ee6724339922ba4566b5dc71aa7fce30",
+        "rev": "4deae73e8e27435eb4ecd165498e007aadc0bdd0",
         "type": "github"
       },
       "original": {
         "owner": "metacraft-labs",
         "repo": "reprobuild",
-        "rev": "5b292184ee6724339922ba4566b5dc71aa7fce30",
+        "rev": "4deae73e8e27435eb4ecd165498e007aadc0bdd0",
         "type": "github"
       }
     },
