@@ -1,0 +1,12 @@
+{
+  "_comment": "Representative fixture of the shared branch-protection policy for the example/tests. The real policy is maintained in metacraft-dev-guidelines/policies/branch-protection-policy.json and passed in by consumers.",
+  "version": 1,
+  "baseline": { "allowForcePush": false, "allowDeletion": false },
+  "branchClasses": {
+    "stable": { "repoClass": "product", "requireStatusChecks": true, "requirePullRequestReview": true },
+    "dev": { "repoClass": "product", "requireStatusChecks": true, "requirePullRequestReview": true },
+    "agents": { "repoClass": "product", "requireStatusChecks": false, "requirePullRequestReview": false },
+    "latest": { "repoClass": "spec", "requireStatusChecks": true },
+    "live": { "repoClass": "infra", "requireStatusChecks": true }
+  }
+}
