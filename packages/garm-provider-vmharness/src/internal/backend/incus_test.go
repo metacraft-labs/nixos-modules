@@ -459,6 +459,13 @@ func TestIncusNestedKvmAttachesKvmDevice(t *testing.T) {
 	if !strings.Contains(string(config), "security.nesting\ttrue") {
 		t.Fatalf("expected security.nesting=true with nested-kvm on, got config:\n%s", string(config))
 	}
+	execs, err := os.ReadFile(filepath.Join(stateDir, "garm-kvm-1", "execs"))
+	if err != nil {
+		t.Fatalf("expected post-start nested KVM access setup, but no execs file: %v", err)
+	}
+	if !strings.Contains(string(execs), "-- chmod 0666 /dev/kvm") {
+		t.Fatalf("expected guest-local /dev/kvm mode convergence before Create returns, got: %q", string(execs))
+	}
 
 	// The plain (default-OFF) backend must NOT add a kvm device or set
 	// security.nesting: the existing live runners stay byte-unchanged.
