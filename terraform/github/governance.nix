@@ -391,10 +391,6 @@ in
     owner = githubOwner;
   };
 
-  data = optionalAttrs (teamDataSources != { }) {
-    github_team = teamDataSources;
-  };
-
   resource = resources;
 
   output = {
@@ -568,4 +564,9 @@ in
       description = "Environment GitHub Actions secret resources emitted by Terraform.";
     };
   };
+}
+# Only emit the `data` block when there are team data sources; an empty
+# `data = { }` is invalid Terraform JSON (relevant to a pre-inventory skeleton).
+// optionalAttrs (teamDataSources != { }) {
+  data.github_team = teamDataSources;
 }
