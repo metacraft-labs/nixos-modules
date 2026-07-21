@@ -1,8 +1,8 @@
 # Example caller for tf-bootstrap.nix. A real consumer's
 # bootstrap/aws/<name>/default.nix imports the module and passes its own values;
-# agent-harbor / blocksense / metacraft each supply independent identifiers
-# (blocksense and agent-harbor may point at the same AWS account today, but the
-# variables are per-repo so either can move to a separate account later).
+# each consumer supplies independent identifiers. Two consumers may point at the
+# same AWS account today, but the variables are per-repo so either can move to a
+# separate account later.
 import ./tf-bootstrap.nix {
   awsAccountId = "000000000000";
   awsRegion = "us-east-1";
