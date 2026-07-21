@@ -2,6 +2,7 @@
 {
   imports = [
     ./ci-workflows.nix
+    ./encrypted-s3-artifact.nix
     ./desktop-vms
     ./deployment-docs.nix
     ./deployment-cache.nix
