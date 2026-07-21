@@ -70,6 +70,37 @@ The example is validated against the real `integrations/github` provider
 schema (`tofu validate` → `Success`). A real consumer swaps the fixture for the
 shared policy file and its own repository list.
 
+## `tf-bootstrap.nix` — CI-enabling GitHub Layer-0 root
+
+The GitHub counterpart of the AWS `tf-bootstrap.nix`: a value-independent module
+rendering the minimal GitHub facts the CI/CD pipeline depends on to run — the
+reviewer team, the deploy Environment, the AWS OIDC role-ARN Actions variables,
+the Terraform safety labels, and branch protection for the deploy branch. Each
+consumer's `bootstrap/github/<name>/default.nix` is a thin caller:
+
+```nix
+{ ... }:
+import "${inputs.nixos-modules}/terraform/github/tf-bootstrap.nix" {
+  awsAccountId = "…";
+  namePrefix = "…-prod";               # state key derives: bootstrap/github/<namePrefix>.tfstate
+  githubOwner = "…";                   # githubRepo defaults to "infra", protectedBranch to "live"
+  reviewerTeam = {
+    name = "infra";
+    slug = "infra";
+    description = "Maintainers for … infrastructure.";
+    initialMaintainer = "…";           # the bootstrap admin username
+  };
+  requiredStatusCheckContexts = [ "…" ];   # the repo's real CI check contexts
+}
+```
+
+Broader org governance (repositories, memberships, org secrets) is the separate
+[`governance.nix`](#governancenix--github-governance-engine) engine — this module
+is only the per-repo settings that unblock the pipeline. See
+[`tf-bootstrap.example.nix`](./tf-bootstrap.example.nix) and
+[`tests/test-bootstrap-render.sh`](./tests/test-bootstrap-render.sh). Verifying an
+extraction is a no-op is the same `nix eval --json | jq -S` diff as the AWS module.
+
 ## `governance.nix` — GitHub governance engine
 
 Maps a declarative **governance model** (repositories, memberships, teams,
