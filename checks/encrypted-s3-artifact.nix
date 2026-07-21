@@ -80,6 +80,7 @@
               pkgs.coreutils
               pkgs.gnutar
               pkgs.jq
+              pkgs.openssh
             ];
           }
           ''
@@ -145,6 +146,32 @@
               echo 'conditional upload allowed an overwrite' >&2
               exit 1
             fi
+
+            mkdir -p fake-s3-ssh restored-ssh
+            ssh-keygen -q -t ed25519 -N "" -f ssh-identity
+            export FAKE_S3="$PWD/fake-s3-ssh"
+            export GITHUB_RUN_ID=123457
+            export GITHUB_OUTPUT="$PWD/upload-ssh.outputs"
+            ${pkgs.bash}/bin/bash ${../.github/encrypted-s3-artifact/encrypted-s3-artifact} upload \
+              --directory source \
+              --bucket test-bucket \
+              --object-key plans/123457/prod-001.tar.age \
+              --identity-file ssh-identity \
+              --kms-key-id alias/test \
+              --expected-bucket-owner 123456789012
+
+            export GITHUB_OUTPUT="$PWD/download-ssh.outputs"
+            ${pkgs.bash}/bin/bash ${../.github/encrypted-s3-artifact/encrypted-s3-artifact} download \
+              --directory restored-ssh \
+              --bucket test-bucket \
+              --object-key plans/123457/prod-001.tar.age \
+              --identity-file ssh-identity \
+              --expected-run-id 123457 \
+              --expected-bucket-owner 123456789012
+
+            cmp source/secret-values.tfplan restored-ssh/secret-values.tfplan
+            cmp source/metadata.json restored-ssh/metadata.json
+            grep -q '^source-run-id=123457$' download-ssh.outputs
 
             touch "$out"
           '';
