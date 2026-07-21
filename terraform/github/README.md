@@ -159,6 +159,37 @@ org — owner / root-config / repo-root are parameters.
   (`GOVERNANCE_ROOT_CONFIG`, `GOVERNANCE_ROOT`, `GOVERNANCE_RESULT_ROOT`,
   `BACKEND_CONFIG_FILE`, `GOVERNANCE_TOKEN_PATH`).
 
+## Secret adoption + rotation tooling (M3/M4)
+
+Company-agnostic tools for the secret side of governance — backing up, rendering,
+and rotating the GitHub Actions secrets the [governance engine](#governancenix--github-governance-engine)
+manages. All are parameterized by env: `GOVERNANCE_ROOT_CONFIG`
+(e.g. `github/<name>-governance-prod`) and `GOVERNANCE_REPO_ROOT` (default CWD).
+See the [import-phase methodology](../../docs/Terraform-Import-Phase.md) (M3/M4)
+and [secret-rotation methodology](../../docs/GitHub-Secret-Rotation.md).
+
+- **`github-governance-secrets-render`** — renders GitHub-encrypted (libsodium
+  sealed-box) payloads for the managed secrets from their agenix `.age` sources,
+  writing `secrets/{payloads,managed}.generated.nix`. Plaintext is decrypted only
+  into a private temp dir, never onto the command line. Select with `--secret`,
+  `--group`, `--all`, or `--set SET` (data-driven: matches the manifest secret's
+  `sets` field — no hardcoded credential sets).
+- **`github-secret-rotation-intake`** — creates/verifies the `.age` replacement
+  files for rotation; never writes to GitHub, never prints values.
+- **`github-secret-rotation-plan`** / **`github-secret-consumer-matrix`** —
+  read-only Markdown reports (rotation groups from the manifest; consumer matrix
+  from `secrets/consumers.nix`).
+- **`github-secret-rotate`** — issuer-aware dispatcher. Reads the matched
+  manifest secret's `rotationHandler` and execs the per-repo handler under
+  `$GOVERNANCE_SECRET_HANDLERS_DIR` (default `<root>/secret-handlers`); prints the
+  manifest entry and stops if none is declared. Issuer handlers stay per-repo.
+- **`github-governance-token`** — CI helper that mints a short-lived GitHub App
+  installation token (already org-agnostic).
+
+To adopt secrets, a consumer adds entries to `secrets/manifest.nix` (optionally
+with `sets` / `rotationHandler`), places `.age` sources under `secrets/actions/`,
+then runs render → reviewed governance plan/apply.
+
 ## `github-bootstrap` — GitHub Layer-0 driver
 
 Org-admin driver for the GitHub side of Layer 0: the CI-enabling repo settings
