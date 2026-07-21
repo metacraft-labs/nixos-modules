@@ -70,6 +70,44 @@ The example is validated against the real `integrations/github` provider
 schema (`tofu validate` → `Success`). A real consumer swaps the fixture for the
 shared policy file and its own repository list.
 
+## `governance.nix` — GitHub governance engine
+
+Maps a declarative **governance model** (repositories, memberships, teams,
+branch protection, Environments, Actions permissions/variables, issue labels)
+plus a **secret manifest** and the GitHub-encrypted **payloads** rendered by
+`github-governance-secrets-render` into `github_*` Terraform resources, and
+exposes the rich `output` block the bootstrap helper reads. It is the engine
+behind each org's `bootstrap/github/<name>-governance-prod` root.
+
+Everything company-specific is a parameter; the machinery (name sanitizers,
+list→resource mappers, the secret-manifest validation that throws on unknown or
+missing managed/payload ids) is org-agnostic. A consumer's `root.nix` becomes a
+thin caller that resolves its local generated documents and passes its own data:
+
+```nix
+{ managedFile ? ./secrets/managed.generated.nix, payloadFile ? ./secrets/payloads.generated.nix, ... }:
+{ ... }:
+import "${inputs.nixos-modules}/terraform/github/governance.nix" {
+  awsAccountId = "…";
+  awsRegion = "us-east-1";
+  githubOwner = "…";                                   # githubAccessCheckRepository defaults to <owner>/infra
+  githubBootstrapStateKey = "bootstrap/github/…-governance-prod.tfstate";
+  governance = import ./governance.nix;                 # the org inventory model (per-company data)
+  manifest = import ./secrets/manifest.nix;             # the secret registry (per-company data)
+  managedDoc = if builtins.pathExists managedFile then import managedFile else { providerIds = [ ]; };
+  payloadDoc = if builtins.pathExists payloadFile then import payloadFile else { payloads = { }; };
+}
+```
+
+The `governance` and `manifest` documents stay in each infra repo — they are the
+org's inventory and secret facts. Only the mapper is shared. See
+[`governance.example.nix`](./governance.example.nix) for a minimal renderable
+model and [`tests/test-render.sh`](./tests/test-render.sh) for the offline check.
+
+Verifying an extraction is a no-op is the same as for the AWS module: render the
+original `root.nix` and the thin caller with identical data and `diff` the
+`nix eval --json | jq -S` output — empty diff == zero plan diff == safe.
+
 ## `github-bootstrap` — GitHub Layer-0 driver
 
 Org-admin driver for the GitHub side of Layer 0: the CI-enabling repo settings
