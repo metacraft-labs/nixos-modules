@@ -117,6 +117,26 @@ write_output() {
   printf '%s=%s\n' "$key" "$value" >>"$GITHUB_OUTPUT"
 }
 
+derive_recipient() {
+  local recipient=""
+
+  if recipient="$(age-keygen -y "$identity_file" 2>/dev/null)"; then
+    [[ "$recipient" == age1* ]] || fail "derived an unsupported native age recipient"
+    printf '%s\n' "$recipient"
+    return 0
+  fi
+
+  command -v ssh-keygen >/dev/null 2>&1 ||
+    fail "ssh-keygen is required when --identity-file is an OpenSSH private key"
+  if ! recipient="$(ssh-keygen -y -f "$identity_file" 2>/dev/null)"; then
+    fail "could not derive an age or SSH recipient from the identity"
+  fi
+  case "$recipient" in
+    ssh-ed25519\ * | ssh-rsa\ *) printf '%s\n' "$recipient" ;;
+    *) fail "derived an SSH key type that age does not support" ;;
+  esac
+}
+
 if [[ "$mode" == "upload" ]]; then
   [[ -n "$kms_key_id" ]] || fail "--kms-key-id is required for upload"
   [[ -d "$directory" ]] || fail "upload directory does not exist: $directory"
@@ -127,8 +147,7 @@ if [[ "$mode" == "upload" ]]; then
     fail "upload directory may contain only regular files and directories"
   fi
 
-  recipient="$(age-keygen -y "$identity_file")"
-  [[ "$recipient" == age1* ]] || fail "could not derive an age recipient from the identity"
+  recipient="$(derive_recipient)"
 
   tar \
     --sort=name \
