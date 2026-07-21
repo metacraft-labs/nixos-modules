@@ -613,35 +613,6 @@
           touch "$out"
         '';
 
-        deployment-general-private-split = pkgs.runCommand "deployment-general-private-split" { } ''
-          forbidden='solunska|gpu-server|cache\.metacraft-labs\.com|metacraft-private-infrastructure'
-          generic_files=$(find ${docs} ${skills} -type f \
-            ! -path '${docs}/private-inventory.md' \
-            \( -name '*.md' -o -name '*.json' -o -name '*.jsonl' \))
-
-          if grep -Eni "$forbidden" $generic_files; then
-            echo "generic deployment docs contain private infrastructure details" >&2
-            exit 1
-          fi
-
-          private=${docs}/private-inventory.md
-          for term in \
-            solunska \
-            gpu-server \
-            cache.metacraft-labs.com \
-            metacraft-private-infrastructure \
-            /etc/cachix-agent.token \
-            cachix-deploy-metrics/auth-token
-          do
-            if ! grep -Fq "$term" "$private"; then
-              echo "private inventory is missing concrete detail: $term" >&2
-              exit 1
-            fi
-          done
-
-          touch "$out"
-        '';
-
         deployment-skill-doc-command-references =
           pkgs.runCommand "deployment-skill-doc-command-references" { }
             ''

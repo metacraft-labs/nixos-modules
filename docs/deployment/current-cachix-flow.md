@@ -84,7 +84,7 @@ The infrastructure service imports the shared NixOS module and enables
 on all addresses, reads the Cachix API token through `auth-token-path`, passes a
 Cachix Deploy `workspace`, and derives `agent-names` from the server machine
 directories under the infrastructure tree. Concrete private workspace and host
-names are recorded only in [private-inventory.md](private-inventory.md).
+names are kept in the private infrastructure repository, not in this shared repo.
 
 The shared NixOS module turns that configuration into the
 `cachix-deploy-metrics` systemd service. The service is a Prometheus exporter:
