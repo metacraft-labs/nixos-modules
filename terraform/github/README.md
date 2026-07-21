@@ -139,6 +139,26 @@ Verifying an extraction is a no-op is the same as for the AWS module: render the
 original `root.nix` and the thin caller with identical data and `diff` the
 `nix eval --json | jq -S` output — empty diff == zero plan diff == safe.
 
+## Import-phase tooling
+
+Company-agnostic tools for adopting an existing GitHub org into Terraform (the
+one-time [import phase](../../docs/Terraform-Import-Phase.md)). None hardcode an
+org — owner / root-config / repo-root are parameters.
+
+- **`github-inventory`** — read-only inventory of the org (repos, branch
+  protection, Environments, Actions vars/permissions, labels, team grants) into
+  `.result/` as raw JSON + a redacted `inventory.md`. Secret values are never
+  read. `--owner <org>` (or `GITHUB_OWNER`), `--all-repos`.
+- **`github-governance-import-blocks`** — credential-free generator that reads a
+  repo's reviewed `bootstrap/<root-config>/governance.nix` and emits OpenTofu
+  `import {}` blocks. `--owner`, `--root-config`, `--root-dir`, `--scope`. Output
+  stays under `.result/` and is never committed.
+- **`github-governance-import-ci`** — the CI harness (plan / gated apply) that
+  runs the generator + plan and **refuses any non-import action** (≥1 import, 0
+  add/change/destroy/replace; typed confirm for apply). Driven by env
+  (`GOVERNANCE_ROOT_CONFIG`, `GOVERNANCE_ROOT`, `GOVERNANCE_RESULT_ROOT`,
+  `BACKEND_CONFIG_FILE`, `GOVERNANCE_TOKEN_PATH`).
+
 ## `github-bootstrap` — GitHub Layer-0 driver
 
 Org-admin driver for the GitHub side of Layer 0: the CI-enabling repo settings
