@@ -120,12 +120,12 @@ validate_topology() {
     and any(.roles[]; .role == "attic-cache")
     and any(.roles[]; .role == "monitoring")
     and any(.roles[]; .targetGroup == "home-lab-gpu" and .avahi == true)
-    and any(.roles[]; .targetGroup == "solunska" and .avahi == true)
+    and any(.roles[]; .targetGroup == "example-site" and .avahi == true)
     and any(.roles[]; .targetGroup == "hetzner" and .avahi == false)
     and any(.roles[]; .targetGroup == "workstation" and .avahi == false)
     and all(.roles[]; . as $role | (.networks | type == "array" and length > 0 and all(. as $network | $networkNames | index($network))))
     and all(.roles[]; . as $role | ((has("targetGroup") | not) or ($targetGroupNames | index($role.targetGroup))))
-    and all(.roles[] | select(.targetGroup == "home-lab-gpu" or .targetGroup == "solunska"); (.networks | index("home-lab")))
+    and all(.roles[] | select(.targetGroup == "home-lab-gpu" or .targetGroup == "example-site"); (.networks | index("home-lab")))
     and all(.roles[] | select(.targetGroup == "hetzner"); (.networks | index("hetzner")))
     and all(.roles[] | select(.targetGroup == "workstation"); (.networks | index("workstation")))
     and (controlsText("full-topology") | contains("runner") and contains("attic") and contains("monitoring") and contains("hetzner") and contains("workstation") and contains("deploy"))
@@ -672,7 +672,7 @@ avahi="$(jq -r '.role.avahi // false' "$meta")"
 jq -e '.schemaVersion == 1 and (.role.name | length > 0) and (.role.role | length > 0)' "$meta" >/dev/null
 
 case "$target_group" in
-  home-lab-gpu | solunska)
+  home-lab-gpu | example-site)
     [[ "$avahi" == "true" ]] || {
       echo "expected Avahi enabled for target group $target_group" >&2
       exit 1
@@ -795,9 +795,9 @@ elif scenario == "full-topology-failures":
     event("cache-missing-object", cache="attic", storePath="/nix/store/synthetic-missing", exitCode=evidence["missingCacheObject"]["exitCode"])
     event("manifest-rejected", reason="invalid-signature", deploymentId=42, exitCode=evidence["invalidSignature"]["exitCode"])
     event("switch-failed", targetGroup="hetzner", deploymentId=43, exitCode=evidence["switchFailure"]["exitCode"])
-    event("healthcheck-failed", targetGroup="solunska", deploymentId=44, exitCode=evidence["healthCheckFailure"]["exitCode"])
-    event("rollback-started", targetGroup="solunska", fromDeploymentId=44)
-    event("rollback-complete", targetGroup="solunska", restoredDeploymentId=evidence["rollback"]["restoredDeploymentId"])
+    event("healthcheck-failed", targetGroup="example-site", deploymentId=44, exitCode=evidence["healthCheckFailure"]["exitCode"])
+    event("rollback-started", targetGroup="example-site", fromDeploymentId=44)
+    event("rollback-complete", targetGroup="example-site", restoredDeploymentId=evidence["rollback"]["restoredDeploymentId"])
     event("stale-desired-state-rejected", rejectedDeploymentId=evidence["staleDesiredState"]["rejectedDeploymentId"], currentDeploymentId=evidence["staleDesiredState"]["currentDeploymentId"])
     event("lock-contention", lock="controller", contender="second-reconciler", exitCode=evidence["lockContention"]["exitCode"])
     final = {

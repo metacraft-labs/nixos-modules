@@ -899,7 +899,7 @@ top@{ config, ... }:
                 controller.succeed("systemctl cat mcl-deployment-reconciler.timer | grep -q 'OnUnitActiveSec=4h'")
                 controller.succeed("systemctl cat mcl-deployment-reconciler.timer | grep -q 'RandomizedDelaySec=0'")
                 controller.succeed("test ! -e /var/lib/mcl-test/restore-runs")
-                controller.succeed("! grep -R -E 'gpu-server|solunska|hetzner|nedislav|eli' /var/lib/mcl/canary-deployments /var/log/mcl 2>/dev/null")
+                controller.succeed("! grep -R -E 'gpu-node|gpu-server|example-site|hetzner|app-node' /var/lib/mcl/canary-deployments /var/log/mcl 2>/dev/null")
 
             with subtest("scheduled canary service applies through the reconciler path"):
                 controller.succeed("systemctl start mcl-deployment-reconciler.service")
