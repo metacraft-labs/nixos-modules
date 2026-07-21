@@ -148,6 +148,14 @@ if [[ "$mode" == "upload" ]]; then
   fi
 
   recipient="$(derive_recipient)"
+  kms_key_arn="$(
+    aws kms describe-key \
+      --key-id "$kms_key_id" \
+      --query KeyMetadata.Arn \
+      --output text
+  )"
+  [[ "$kms_key_arn" =~ ^arn:[^:]+:kms:[^:]+:[0-9]{12}:key/[A-Za-z0-9-]+$ ]] ||
+    fail "could not resolve --kms-key-id to a canonical KMS key ARN"
 
   tar \
     --sort=name \
@@ -169,7 +177,7 @@ if [[ "$mode" == "upload" ]]; then
     --body "$ciphertext" \
     --if-none-match '*' \
     --server-side-encryption aws:kms \
-    --ssekms-key-id "$kms_key_id" \
+    --ssekms-key-id "$kms_key_arn" \
     --metadata "format=age-tar-v1,source-run-id=${GITHUB_RUN_ID},source-sha=${GITHUB_SHA,,},ciphertext-sha256=${ciphertext_sha256}" \
     "${owner_args[@]}" >"$put_result"
 

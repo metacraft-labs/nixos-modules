@@ -7,6 +7,11 @@
         let
           fakeAws = pkgs.writeShellScript "aws" ''
             set -euo pipefail
+            if [[ "$1" == "kms" && "$2" == "describe-key" ]]; then
+              [[ "$3" == "--key-id" && "$4" == "alias/test" ]] || exit 2
+              printf 'arn:aws:kms:us-east-1:123456789012:key/00000000-1111-2222-3333-444444444444\n'
+              exit 0
+            fi
             [[ "$1" == "s3api" ]] || exit 2
             operation="$2"
             shift 2
@@ -14,6 +19,7 @@
             output=""
             metadata=""
             key=""
+            sse_kms_key_id=""
             while [[ $# -gt 0 ]]; do
               case "$1" in
                 --body)
@@ -28,7 +34,11 @@
                   key="$2"
                   shift 2
                   ;;
-                --bucket | --ssekms-key-id | --expected-bucket-owner | --version-id | --if-none-match | --server-side-encryption)
+                --ssekms-key-id)
+                  sse_kms_key_id="$2"
+                  shift 2
+                  ;;
+                --bucket | --expected-bucket-owner | --version-id | --if-none-match | --server-side-encryption)
                   shift 2
                   ;;
                 *)
@@ -41,6 +51,7 @@
             head="$FAKE_S3/head.json"
             case "$operation" in
               put-object)
+                [[ "$sse_kms_key_id" == "arn:aws:kms:us-east-1:123456789012:key/00000000-1111-2222-3333-444444444444" ]] || exit 42
                 [[ ! -e "$object" ]] || exit 41
                 cp "$body" "$object"
                 run_id="$(sed -n "s/.*source-run-id=\([^,]*\).*/\1/p" <<<"$metadata")"
