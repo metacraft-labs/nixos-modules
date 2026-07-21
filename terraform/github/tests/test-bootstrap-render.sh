@@ -30,7 +30,9 @@ done
   || { echo "FAIL: expected required status checks"; fail=1; }
 
 # No company literals leak from the example.
-if jq -e '.. | strings | select(test("agent-harbor|555209622233"))' <<<"$json" >/dev/null 2>&1; then
+# The example must render only placeholder identifiers — flag any 12-digit AWS
+# account id other than the 000000000000 placeholder (no real value embedded here).
+if jq -e '.. | strings | select(test("[0-9]{12}") and (contains("000000000000") | not))' <<<"$json" >/dev/null 2>&1; then
   echo "FAIL: example rendered company-specific literals"; fail=1
 fi
 

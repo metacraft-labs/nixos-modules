@@ -2,7 +2,7 @@
 
 Company-agnostic **Layer-0** bootstrap for an AWS-backed Terraform operating
 layer. Human-applied once per account, out-of-band, and never part of the
-CI-managed state. Extracted verbatim from agent-harbor's production bootstrap;
+CI-managed state. Extracted verbatim from a production bootstrap;
 only the identifiers are parameters now.
 
 ## `tf-bootstrap.nix`

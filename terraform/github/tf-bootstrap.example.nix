@@ -1,7 +1,7 @@
 # Example caller for tf-bootstrap.nix (the CI-enabling GitHub Layer-0 root). A
 # real consumer's bootstrap/github/<name>/default.nix imports the module and
-# passes its own identifiers; agent-harbor / blocksense / metacraft each supply
-# independent values. No company literals here.
+# passes its own identifiers; each consumer supplies independent values. No
+# company literals here.
 import ./tf-bootstrap.nix {
   awsAccountId = "000000000000";
   awsRegion = "us-east-1";
