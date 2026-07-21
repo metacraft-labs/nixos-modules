@@ -69,3 +69,25 @@ cd example && tofu init -backend=false && tofu validate
 The example is validated against the real `integrations/github` provider
 schema (`tofu validate` → `Success`). A real consumer swaps the fixture for the
 shared policy file and its own repository list.
+
+## `github-bootstrap` — GitHub Layer-0 driver
+
+Org-admin driver for the GitHub side of Layer 0: the CI-enabling repo settings
+(the `production` Environment, deploy-branch protection, OIDC role-ARN Actions
+variables, CODEOWNERS) and the org governance root. Human-applied, out-of-band —
+never through the pipeline it enables, because the pipeline depends on these
+settings and secrets to run.
+
+Subcommands: `plan` / `apply` / `outputs`, plus the targeted
+`governance-app-secrets-{plan,apply}` (writes the two `GH_GOVERNANCE_APP_*` org
+secrets so governance CI can authenticate). Like `aws-bootstrap` it guards the
+AWS account owning the shared S3 state backend via STS, verifies the GitHub
+token can administer the target repo, and hardcodes nothing company-specific:
+
+```bash
+github-bootstrap plan github/<name> --root-dir <repo>
+```
+
+The backend file derives from the config (`backends/<config-slug>.hcl`,
+overridable via `GITHUB_BOOTSTRAP_BACKEND_FILE`); the org for the governance
+secret targets is read from the rendered outputs.
