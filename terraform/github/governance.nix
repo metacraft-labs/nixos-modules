@@ -111,6 +111,16 @@ let
   repositorySecrets = filter (secret: secret.scope == "repository") managedSecrets;
   environmentSecrets = filter (secret: secret.scope == "environment") managedSecrets;
 
+  # Resource emission is keyed on providerResource so Actions and Dependabot
+  # secrets map to their own resource types (both use scope "organization" /
+  # "repository"). Consumers with only github_actions_* secrets are unaffected.
+  byProviderResource = res: filter (secret: (secret.providerResource or "") == res) managedSecrets;
+  actionsOrganizationSecrets = byProviderResource "github_actions_organization_secret";
+  actionsRepositorySecrets = byProviderResource "github_actions_secret";
+  actionsEnvironmentSecrets = byProviderResource "github_actions_environment_secret";
+  dependabotRepositorySecrets = byProviderResource "github_dependabot_secret";
+  dependabotOrganizationSecrets = byProviderResource "github_dependabot_organization_secret";
+
   withPayload =
     secret: attrs:
     let
@@ -134,7 +144,7 @@ let
           selected_repository_ids = secret.selectedRepositoryIds;
         }
       );
-    }) organizationSecrets
+    }) actionsOrganizationSecrets
   );
 
   repositorySecretResources = listToAttrs (
@@ -144,7 +154,7 @@ let
         repository = secret.repository;
         secret_name = secret.name;
       };
-    }) repositorySecrets
+    }) actionsRepositorySecrets
   );
 
   environmentSecretResources = listToAttrs (
@@ -155,7 +165,32 @@ let
         environment = secret.environment;
         secret_name = secret.name;
       };
-    }) environmentSecrets
+    }) actionsEnvironmentSecrets
+  );
+
+  dependabotRepositorySecretResources = listToAttrs (
+    map (secret: {
+      name = resourceKey secret.providerId;
+      value = withPayload secret {
+        repository = secret.repository;
+        secret_name = secret.name;
+      };
+    }) dependabotRepositorySecrets
+  );
+
+  dependabotOrganizationSecretResources = listToAttrs (
+    map (secret: {
+      name = resourceKey secret.providerId;
+      value = withPayload secret (
+        {
+          secret_name = secret.name;
+          visibility = secret.visibility;
+        }
+        // optionalAttrs (secret ? selectedRepositoryIds) {
+          selected_repository_ids = secret.selectedRepositoryIds;
+        }
+      );
+    }) dependabotOrganizationSecrets
   );
 
   sortedRepoNames = sort (a: b: a < b) (map (repo: repo.name) governance.repositories);
@@ -549,6 +584,12 @@ let
     }
     // optionalAttrs (environmentSecretResources != { }) {
       github_actions_environment_secret = environmentSecretResources;
+    }
+    // optionalAttrs (dependabotRepositorySecretResources != { }) {
+      github_dependabot_secret = dependabotRepositorySecretResources;
+    }
+    // optionalAttrs (dependabotOrganizationSecretResources != { }) {
+      github_dependabot_organization_secret = dependabotOrganizationSecretResources;
     };
 in
 {
