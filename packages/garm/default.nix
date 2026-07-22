@@ -36,6 +36,17 @@ buildGo126Module rec {
 
   patches = [
     ./patches/allow-macos-runner-install-templates.patch
+    # Upstream cloudbase/garm bug: the v0.1.1 external-provider ListInstances
+    # path guards garmExec.Exec with an INVERTED `if err == nil` (every other
+    # command path uses `if err != nil`). On a SUCCESSFUL provider run it took
+    # the failure branch and formatted the nil error with %s — the recurring
+    #   provider binary <path> returned error: %!s(<nil>)
+    # ERROR — AND discarded the real instance list (returned an empty slice),
+    # so scale-set runner-state consolidation never saw the provider's runners.
+    # The provider (garm-provider-vmharness) is correct: it exits 0 with a valid
+    # JSON list per the external-provider contract. One-char fix inverts the
+    # check so the error branch fires only on genuine provider failure.
+    ./patches/fix-listinstances-inverted-error-check.patch
   ];
 
   # go-sqlite3 is a cgo module; the daemon needs cgo to link SQLite.
