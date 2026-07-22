@@ -612,7 +612,9 @@ jobs:
           # Fetch policy script from nixos-modules
           WORKFLOW_REF="${{ github.action_ref || 'main' }}"
           POLICY_SCRIPT_URL="https://raw.githubusercontent.com/metacraft-labs/nixos-modules/${WORKFLOW_REF}/scripts/tofu-plan-policy.py"
+          POLICY_RUNNER_URL="https://raw.githubusercontent.com/metacraft-labs/nixos-modules/${WORKFLOW_REF}/scripts/tofu-plan-policy-ci"
           curl -fsSL "$POLICY_SCRIPT_URL" -o /tmp/tofu-plan-policy.py
+          curl -fsSL "$POLICY_RUNNER_URL" -o /tmp/tofu-plan-policy-ci
 
           PLAN_JSON="${{ steps.plan.outputs.json_plan_path }}"
           POLICY_ARGS=()
@@ -630,7 +632,7 @@ jobs:
 
           # Run policy check
           nix shell --accept-flake-config --inputs-from "$GITHUB_WORKSPACE" nixpkgs#python3 --command \
-            python3 /tmp/tofu-plan-policy.py "$PLAN_JSON" "${POLICY_ARGS[@]}"
+            bash /tmp/tofu-plan-policy-ci /tmp/tofu-plan-policy.py "$PLAN_JSON" "${POLICY_ARGS[@]}"
 
       - name: Sensitive-change gate
         if: inputs.sensitive_change_label != '' && steps.plan.outputs.changes == 'true'
