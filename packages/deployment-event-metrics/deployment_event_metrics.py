@@ -14,13 +14,20 @@ import socketserver
 import sys
 import tempfile
 import threading
+import time
 from collections import Counter
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Iterator
 
 
 DEFAULT_EVENT_DIR = "/var/log/mcl/deployments"
 DEFAULT_PORT = 9161
+# The exporter re-derives every metric from the full on-disk log history on each
+# refresh. To keep that O(1) in the number of concurrent Prometheus scrapes (and
+# to decouple exporter cost from the scrape interval), a single cached snapshot
+# is served for this many seconds; concurrent scrapes reuse it instead of each
+# re-reading the logs. See ``MetricsHandler``.
+DEFAULT_REFRESH_SECONDS = 15.0
 
 
 @dataclass(frozen=True)
@@ -63,29 +70,39 @@ def event_log_paths(event_logs: list[str], event_dirs: list[str]) -> list[pathli
     return sorted(set(paths))
 
 
-def load_events(event_logs: list[str], event_dirs: list[str]) -> tuple[list[dict], Counter]:
-    events: list[dict] = []
-    parse_errors: Counter = Counter()
+def iter_jsonl(path: pathlib.Path, parse_errors: Counter) -> Iterator[dict]:
+    """Stream dict records from one JSONL file, counting parse errors.
+
+    Streaming (one line resident at a time) is what keeps the exporter's memory
+    bounded by metric cardinality rather than by the — unbounded, ever-growing —
+    size of the deployment/nginx log history. Do NOT accumulate the parsed
+    records into a list; the caller folds each record into bounded aggregates.
+    """
+    try:
+        if not path.exists():
+            return
+        with path.open() as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    parse_errors[str(path)] += 1
+                    continue
+                if isinstance(record, dict):
+                    yield record
+                else:
+                    parse_errors[str(path)] += 1
+    except OSError:
+        parse_errors[str(path)] += 1
+
+
+def stream_events(
+    event_logs: list[str], event_dirs: list[str], parse_errors: Counter
+) -> Iterator[dict]:
     for path in event_log_paths(event_logs, event_dirs):
-        try:
-            if not path.exists():
-                continue
-            with path.open() as handle:
-                for line_no, line in enumerate(handle, start=1):
-                    if not line.strip():
-                        continue
-                    try:
-                        event = json.loads(line)
-                    except json.JSONDecodeError:
-                        parse_errors[str(path)] += 1
-                        continue
-                    if isinstance(event, dict):
-                        events.append(event)
-                    else:
-                        parse_errors[str(path)] += 1
-        except OSError:
-            parse_errors[str(path)] += 1
-    return events, parse_errors
+        yield from iter_jsonl(path, parse_errors)
 
 
 def event_labels(event: dict) -> dict[str, object]:
@@ -119,12 +136,13 @@ def closure_summary(event: dict) -> dict:
 
 
 def deployment_metrics(
-    events: list[dict],
-    parse_errors: Counter,
+    event_logs: list[str],
+    event_dirs: list[str],
     expected_targets: list[str],
     now: float,
 ) -> dict[tuple[str, tuple[tuple[str, str], ...]], Metric]:
     metrics: dict[tuple[str, tuple[tuple[str, str], ...]], Metric] = {}
+    parse_errors: Counter = Counter()
     failure_counts: Counter = Counter()
     cache_upload_bytes: Counter = Counter()
     cache_restore_failures: Counter = Counter()
@@ -139,10 +157,9 @@ def deployment_metrics(
         key = metric_key(name, labels)
         metrics[key] = Metric(key[0], key[1], float(value))
 
-    for source, count in parse_errors.items():
-        set_metric("mcl_deployment_event_parse_errors_total", {"source": source}, count)
-
-    for event in events:
+    # Stream events straight into the bounded aggregates above — never hold the
+    # full event history in memory.
+    for event in stream_events(event_logs, event_dirs, parse_errors):
         labels = event_labels(event)
         target = str(labels["target"])
         phase = str(labels["phase"])
@@ -220,6 +237,9 @@ def deployment_metrics(
                 last_successful_complete[target] = max(
                     last_successful_complete.get(target, 0), finished
                 )
+
+    for source, count in parse_errors.items():
+        set_metric("mcl_deployment_event_parse_errors_total", {"source": source}, count)
 
     for _state_key, (_observed, status, labels, started) in latest_phase_state.items():
         if status in {"pending", "running"} and started is not None:
@@ -304,35 +324,9 @@ def classify_operation(method: str) -> str:
     return "other"
 
 
-def load_nginx_entries(nginx_logs: list[str]) -> tuple[list[dict], Counter]:
-    entries: list[dict] = []
-    parse_errors: Counter = Counter()
-    for path_text in nginx_logs:
-        path = pathlib.Path(path_text)
-        try:
-            if not path.exists():
-                continue
-            with path.open() as handle:
-                for line in handle:
-                    if not line.strip():
-                        continue
-                    try:
-                        entry = json.loads(line)
-                    except json.JSONDecodeError:
-                        parse_errors[path_text] += 1
-                        continue
-                    if isinstance(entry, dict):
-                        entries.append(entry)
-                    else:
-                        parse_errors[path_text] += 1
-        except OSError:
-            parse_errors[path_text] += 1
-    return entries, parse_errors
-
-
 def nginx_metrics(nginx_logs: list[str]) -> dict[tuple[str, tuple[tuple[str, str], ...]], Metric]:
     metrics: dict[tuple[str, tuple[tuple[str, str], ...]], Metric] = {}
-    entries, parse_errors = load_nginx_entries(nginx_logs)
+    parse_errors: Counter = Counter()
     request_counts: Counter = Counter()
     byte_counts: Counter = Counter()
     object_failures: Counter = Counter()
@@ -341,38 +335,41 @@ def nginx_metrics(nginx_logs: list[str]) -> dict[tuple[str, tuple[tuple[str, str
         key = metric_key(name, labels)
         metrics[key] = Metric(key[0], key[1], float(value))
 
+    # Stream the — potentially enormous, one-line-per-cache-request — Attic
+    # access logs into bounded Counters; never materialize the entries.
+    for path_text in nginx_logs:
+        for entry in iter_jsonl(pathlib.Path(path_text), parse_errors):
+            method = str(entry.get("method", "UNKNOWN"))
+            status = str(entry.get("status", "000"))
+            operation = classify_operation(method)
+            request_counts[(operation, method, status)] += 1
+
+            try:
+                status_int = int(status)
+            except ValueError:
+                status_int = 0
+
+            try:
+                request_length = int(entry.get("request_length") or 0)
+            except (TypeError, ValueError):
+                request_length = 0
+            try:
+                body_bytes_sent = int(entry.get("body_bytes_sent") or 0)
+            except (TypeError, ValueError):
+                body_bytes_sent = 0
+
+            if operation == "upload":
+                byte_counts[(operation, "request", status)] += request_length
+            elif operation == "download":
+                byte_counts[(operation, "response", status)] += body_bytes_sent
+            else:
+                byte_counts[(operation, "response", status)] += body_bytes_sent
+
+            if operation in {"upload", "download"} and status_int >= 400:
+                object_failures[(operation, method, status)] += 1
+
     for source, count in parse_errors.items():
         set_metric("mcl_attic_nginx_log_parse_errors_total", {"source": source}, count)
-
-    for entry in entries:
-        method = str(entry.get("method", "UNKNOWN"))
-        status = str(entry.get("status", "000"))
-        operation = classify_operation(method)
-        request_counts[(operation, method, status)] += 1
-
-        try:
-            status_int = int(status)
-        except ValueError:
-            status_int = 0
-
-        try:
-            request_length = int(entry.get("request_length") or 0)
-        except (TypeError, ValueError):
-            request_length = 0
-        try:
-            body_bytes_sent = int(entry.get("body_bytes_sent") or 0)
-        except (TypeError, ValueError):
-            body_bytes_sent = 0
-
-        if operation == "upload":
-            byte_counts[(operation, "request", status)] += request_length
-        elif operation == "download":
-            byte_counts[(operation, "response", status)] += body_bytes_sent
-        else:
-            byte_counts[(operation, "response", status)] += body_bytes_sent
-
-        if operation in {"upload", "download"} and status_int >= 400:
-            object_failures[(operation, method, status)] += 1
 
     for key, count in request_counts.items():
         operation, method, status = key
@@ -430,8 +427,7 @@ def render_metrics(
     now: float | None = None,
 ) -> str:
     now = dt.datetime.now(dt.timezone.utc).timestamp() if now is None else now
-    events, parse_errors = load_events(event_logs, event_dirs)
-    merged = deployment_metrics(events, parse_errors, expected_targets, now)
+    merged = deployment_metrics(event_logs, event_dirs, expected_targets, now)
     merged.update(nginx_metrics(nginx_logs))
 
     lines: list[str] = []
@@ -453,18 +449,38 @@ class MetricsHandler(http.server.BaseHTTPRequestHandler):
     event_dirs: list[str] = []
     nginx_logs: list[str] = []
     expected_targets: list[str] = []
+    refresh_seconds: float = DEFAULT_REFRESH_SECONDS
+
+    # A single cached snapshot shared across all handler threads. Rendering the
+    # metrics re-reads the whole log history, so we serialize it behind a lock
+    # and reuse the result for ``refresh_seconds``. Without this, a slow render
+    # (large logs) lets Prometheus scrapes pile up — every concurrent scrape
+    # re-reading the logs at once — which is how the exporter ballooned to
+    # hundreds of GB of RSS.
+    _cache_lock = threading.Lock()
+    _cache_text: str | None = None
+    _cache_at: float = 0.0
+
+    @classmethod
+    def cached_metrics(cls) -> str:
+        with cls._cache_lock:
+            now = time.monotonic()
+            if cls._cache_text is None or (now - cls._cache_at) >= cls.refresh_seconds:
+                cls._cache_text = render_metrics(
+                    cls.event_logs,
+                    cls.event_dirs,
+                    cls.nginx_logs,
+                    cls.expected_targets,
+                )
+                cls._cache_at = now
+            return cls._cache_text
 
     def do_GET(self) -> None:  # noqa: N802 - stdlib handler API
         if self.path != "/metrics":
             self.send_response(404)
             self.end_headers()
             return
-        body = render_metrics(
-            self.event_logs,
-            self.event_dirs,
-            self.nginx_logs,
-            self.expected_targets,
-        ).encode()
+        body = self.cached_metrics().encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -484,6 +500,7 @@ def serve(args: argparse.Namespace) -> None:
     MetricsHandler.event_dirs = args.event_dir
     MetricsHandler.nginx_logs = args.nginx_log
     MetricsHandler.expected_targets = args.expected_target
+    MetricsHandler.refresh_seconds = args.refresh_interval
 
     servers = []
     for bind_address in args.bind_addresses:
@@ -774,6 +791,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--expected-target", action="append", default=[], help="Target expected to emit deployment events")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--bind-addresses", default="127.0.0.1")
+    parser.add_argument(
+        "--refresh-interval",
+        type=float,
+        default=DEFAULT_REFRESH_SECONDS,
+        help=(
+            "Minimum seconds between full log re-reads; a cached snapshot is "
+            "served in between so concurrent scrapes don't pile up "
+            f"(default: {DEFAULT_REFRESH_SECONDS:g})"
+        ),
+    )
     parser.add_argument("--once", action="store_true", help="Print one metrics snapshot and exit")
     parser.add_argument("--self-test", action="store_true", help="Run deterministic parser/rendering self-test")
     return parser
