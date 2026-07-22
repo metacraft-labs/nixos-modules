@@ -356,6 +356,69 @@ func (b *VMHarnessRunBackend) cleanupTartEphemerals(ctx context.Context, prefix 
 	}
 }
 
+// pruneStem is the shared ephemeral-name prefix vm-harness stamps onto every
+// instance this backend starts. Per-instance Create prefixes extend it with
+// the runner name, so the stem matches all of a backend's ephemerals at once.
+// Empty means the backend has no vm-harness-managed ephemerals to reclaim.
+func (b *VMHarnessRunBackend) pruneStem() string {
+	switch b.BackendID {
+	case "tart-macos":
+		return "repro-vm-tart-macos"
+	case "tart-linux-arm":
+		return "repro-vm-tart-linux"
+	case "qemu-windows-arm":
+		// qemu-windows-arm Create passes no --ephemeral-prefix, so vm-harness
+		// uses its DefaultQemuWindowsArmPrefix for every instance.
+		return "repro-vm-qemu-windows-arm"
+	default:
+		return ""
+	}
+}
+
+func (b *VMHarnessRunBackend) pruneBackendArg() string {
+	switch b.BackendID {
+	case "tart-macos", "tart-linux-arm":
+		return "tart"
+	case "qemu-windows-arm":
+		return "qemu-windows-arm"
+	default:
+		return "all"
+	}
+}
+
+// Sweep reclaims ephemeral resources leaked by vm-harness launchers that were
+// hard-killed (host crash, OOM, service restart) before their own teardown —
+// and before Delete — could run: orphaned qemu overlay directories, stranded
+// Tart clones, and stale SSH-password/scratch files in the temp dir. It shells
+// `vm-harness prune`, scoped to this backend's shared ephemeral prefix so it
+// never touches another project's resources, and is safe to call at any time:
+// vm-harness refuses to remove any instance whose owner is still alive (advisory
+// lock held, or creator PID live). Best-effort — failures are swallowed.
+func (b *VMHarnessRunBackend) Sweep(ctx context.Context) {
+	stem := b.pruneStem()
+	if stem == "" {
+		return
+	}
+	argv := []string{
+		"prune",
+		"--ephemeral-prefix", stem,
+		"--backend", b.pruneBackendArg(),
+		"--sweep-tmp",
+		"--log-format", "json",
+	}
+	// qemu-windows-arm keeps its overlay instances under vm-harness' own state
+	// dir. Point prune at the same one the run path uses when it is overridden;
+	// otherwise both default off the shared HOME and agree implicitly.
+	if b.BackendID == "qemu-windows-arm" {
+		if sd := os.Getenv("VM_HARNESS_QEMU_WINDOWS_ARM_STATE_DIR"); sd != "" {
+			argv = append(argv, "--state-dir", sd)
+		}
+	}
+	cmd := exec.CommandContext(ctx, b.VMHarnessPath, argv...)
+	cmd.Env = vmHarnessChildEnv(b.BackendID)
+	_ = cmd.Run()
+}
+
 func (b *VMHarnessRunBackend) Get(ctx context.Context, idOrName string) (Instance, error) {
 	st, err := b.load(idOrName)
 	if err != nil {

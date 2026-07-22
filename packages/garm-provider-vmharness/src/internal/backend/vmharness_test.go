@@ -419,3 +419,85 @@ func TestVMHarnessRunBackendDoneMarkerOverridesLivePID(t *testing.T) {
 func shellSingleQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
 }
+
+// TestVMHarnessRunBackendSweepInvokesPrune asserts that Sweep shells
+// `vm-harness prune` scoped to the backend's shared ephemeral prefix, so a
+// hard-killed launcher's leaked orphans get reclaimed without ever touching a
+// live instance or another project's resources.
+func TestVMHarnessRunBackendSweepInvokesPrune(t *testing.T) {
+	cases := []struct {
+		backendID   string
+		wantStem    string
+		wantBackend string
+	}{
+		{"tart-macos", "repro-vm-tart-macos", "tart"},
+		{"tart-linux-arm", "repro-vm-tart-linux", "tart"},
+		{"qemu-windows-arm", "repro-vm-qemu-windows-arm", "qemu-windows-arm"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.backendID, func(t *testing.T) {
+			tmp := t.TempDir()
+			logPath := filepath.Join(tmp, "argv.log")
+			mock := filepath.Join(tmp, "vm-harness")
+			script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " +
+				shellSingleQuote(logPath) + "\n"
+			if err := os.WriteFile(mock, []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			b := &VMHarnessRunBackend{
+				VMHarnessPath: mock,
+				BackendID:     tc.backendID,
+				StateDir:      filepath.Join(tmp, "state"),
+			}
+			b.Sweep(context.Background())
+
+			data, err := os.ReadFile(logPath)
+			if err != nil {
+				t.Fatalf("mock vm-harness was not invoked: %v", err)
+			}
+			argv := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+			if len(argv) == 0 || argv[0] != "prune" {
+				t.Fatalf("expected first arg 'prune', got %v", argv)
+			}
+			assertFlag := func(flag, want string) {
+				for i, a := range argv {
+					if a == flag {
+						if i+1 < len(argv) && argv[i+1] == want {
+							return
+						}
+						t.Fatalf("%s: expected %s %q, got %v", tc.backendID, flag, want, argv)
+					}
+				}
+				t.Fatalf("%s: missing flag %s in %v", tc.backendID, flag, argv)
+			}
+			assertFlag("--ephemeral-prefix", tc.wantStem)
+			assertFlag("--backend", tc.wantBackend)
+			hasSweepTmp := false
+			for _, a := range argv {
+				if a == "--sweep-tmp" {
+					hasSweepTmp = true
+				}
+			}
+			if !hasSweepTmp {
+				t.Fatalf("%s: expected --sweep-tmp in %v", tc.backendID, argv)
+			}
+		})
+	}
+}
+
+// TestVMHarnessRunBackendSweepNoopForNonEphemeralBackend ensures Sweep does
+// nothing (and never shells out) for a backend with no vm-harness ephemerals.
+func TestVMHarnessRunBackendSweepNoopForNonEphemeralBackend(t *testing.T) {
+	tmp := t.TempDir()
+	logPath := filepath.Join(tmp, "argv.log")
+	mock := filepath.Join(tmp, "vm-harness")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + shellSingleQuote(logPath) + "\n"
+	if err := os.WriteFile(mock, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	b := &VMHarnessRunBackend{VMHarnessPath: mock, BackendID: "libvirt"}
+	b.Sweep(context.Background())
+	if _, err := os.Stat(logPath); err == nil {
+		t.Fatal("Sweep unexpectedly invoked vm-harness for a non-ephemeral backend")
+	}
+}
