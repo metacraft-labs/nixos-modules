@@ -596,6 +596,23 @@ write_metadata
 
 echo "Writing GitHub governance inventory to ${output_dir}" >&2
 
+# Ruleset list endpoints omit rules/conditions/bypass_actors; fetch each ruleset
+# by id and consolidate the details so the governance model can be built offline.
+fetch_ruleset_details() {
+  local list_file="$1" url_prefix="$2" out_file="$3"
+  [[ -s "$list_file" ]] || return 0
+  local tmpdir rid
+  tmpdir="$(mktemp -d)"
+  while IFS= read -r rid; do
+    [[ -n "$rid" ]] || continue
+    gh_request "${url_prefix}/${rid}" "${tmpdir}/${rid}.json" || true
+  done < <(jq -r '(.result // .) | if type=="array" then .[] else empty end | .id // empty' "$list_file" 2>/dev/null)
+  if compgen -G "${tmpdir}/*.json" >/dev/null 2>&1; then
+    jq -s '{result: [ .[] | (.result // .) ]}' "${tmpdir}"/*.json > "$out_file" 2>/dev/null || true
+  fi
+  rm -rf "$tmpdir"
+}
+
 gh_request "/orgs/${owner}" "${raw_dir}/org.json" || true
 gh_request "/orgs/${owner}/members?role=all&per_page=100" "${raw_dir}/members.json" paginate || true
 gh_request "/orgs/${owner}/members?role=admin&per_page=100" "${raw_dir}/members-admins.json" paginate || true
@@ -606,6 +623,7 @@ gh_request "/orgs/${owner}/actions/secrets?per_page=100" "${raw_dir}/org-actions
 gh_request "/orgs/${owner}/dependabot/secrets?per_page=100" "${raw_dir}/org-dependabot-secrets.json" paginate || true
 gh_request "/orgs/${owner}/actions/runner-groups?per_page=100" "${raw_dir}/org-runner-groups.json" paginate || true
 gh_request "/orgs/${owner}/rulesets?per_page=100" "${raw_dir}/org-rulesets.json" paginate || true
+fetch_ruleset_details "${raw_dir}/org-rulesets.json" "/orgs/${owner}/rulesets" "${raw_dir}/org-rulesets-detailed.json"
 gh_request "/orgs/${owner}/hooks?per_page=100" "${raw_dir}/org-hooks.json" paginate || true
 gh_request "/orgs/${owner}/actions/permissions" "${raw_dir}/org-actions-permissions.json" || true
 gh_request "/orgs/${owner}/actions/permissions/selected-actions" "${raw_dir}/org-actions-selected-actions.json" get 1 || true
@@ -657,6 +675,7 @@ while IFS= read -r repo; do
 
   gh_request "/repos/${owner}/${encoded_repo}/branches?protected=true&per_page=100" "${raw_dir}/protected-branches-${safe}.json" paginate || true
   gh_request "/repos/${owner}/${encoded_repo}/rulesets?per_page=100" "${raw_dir}/repo-rulesets-${safe}.json" paginate || true
+  fetch_ruleset_details "${raw_dir}/repo-rulesets-${safe}.json" "/repos/${owner}/${encoded_repo}/rulesets" "${raw_dir}/repo-rulesets-detailed-${safe}.json"
   gh_request "/repos/${owner}/${encoded_repo}/environments?per_page=100" "${raw_dir}/environments-${safe}.json" paginate || true
   gh_request "/repos/${owner}/${encoded_repo}/actions/variables?per_page=100" "${raw_dir}/repo-actions-variables-${safe}.json" paginate || true
   gh_request "/repos/${owner}/${encoded_repo}/actions/secrets?per_page=100" "${raw_dir}/repo-actions-secrets-${safe}.json" paginate || true
