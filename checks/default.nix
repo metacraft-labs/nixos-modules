@@ -21,6 +21,7 @@
     ./repro-binary-cache-systemd.nix
     ./repro-binary-cache-cross-host.nix
     ./repro-cache-client-render.nix
+    ./repro-lease-reaper-eval.nix
     ./repro-deploy-agent-https.nix
     ./consumer-flake-attic.nix
     ./linux-vm-cloud-init
