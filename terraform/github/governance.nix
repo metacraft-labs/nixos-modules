@@ -401,6 +401,92 @@ let
         // optionalField label "description"
       );
 
+  # --- rulesets (repository + organization) ---
+  rulesetRules =
+    rules:
+    optionalAttrs (rules ? creation) { creation = rules.creation; }
+    // optionalAttrs (rules ? deletion) { deletion = rules.deletion; }
+    // optionalAttrs (rules ? update) { update = rules.update; }
+    // optionalAttrs (rules ? nonFastForward) { non_fast_forward = rules.nonFastForward; }
+    // optionalAttrs (rules ? requiredLinearHistory) {
+      required_linear_history = rules.requiredLinearHistory;
+    }
+    // optionalAttrs (rules ? requiredSignatures) { required_signatures = rules.requiredSignatures; }
+    // optionalAttrs (rules ? pullRequest) {
+      pull_request = [
+        {
+          required_approving_review_count = rules.pullRequest.requiredApprovingReviewCount;
+          dismiss_stale_reviews_on_push = rules.pullRequest.dismissStaleReviewsOnPush;
+          require_code_owner_review = rules.pullRequest.requireCodeOwnerReview;
+          require_last_push_approval = rules.pullRequest.requireLastPushApproval;
+          required_review_thread_resolution = rules.pullRequest.requiredReviewThreadResolution;
+        }
+      ];
+    };
+
+  rulesetConditions = cond: [
+    (
+      {
+        ref_name = [
+          {
+            include = cond.refNameInclude;
+            exclude = cond.refNameExclude;
+          }
+        ];
+      }
+      // optionalAttrs (cond ? repositoryNameInclude) {
+        repository_name = [
+          {
+            include = cond.repositoryNameInclude;
+            exclude = cond.repositoryNameExclude;
+          }
+        ];
+      }
+    )
+  ];
+
+  rulesetBypassActors =
+    actors:
+    map (a: {
+      actor_id = a.actorId;
+      actor_type = a.actorType;
+      bypass_mode = a.bypassMode;
+    }) actors;
+
+  repositoryRulesetResources =
+    listToResourceAttrs (governance.repositoryRulesets or [ ])
+      (rs: "repository-ruleset:${rs.repository}:${rs.name}")
+      (
+        rs:
+        {
+          repository = rs.repository;
+          name = rs.name;
+          target = rs.target;
+          enforcement = rs.enforcement;
+          conditions = rulesetConditions rs.conditions;
+          rules = [ (rulesetRules rs.rules) ];
+        }
+        // optionalAttrs ((rs.bypassActors or [ ]) != [ ]) {
+          bypass_actors = rulesetBypassActors rs.bypassActors;
+        }
+      );
+
+  organizationRulesetResources =
+    listToResourceAttrs (governance.organizationRulesets or [ ]) (rs: "organization-ruleset:${rs.name}")
+      (
+        rs:
+        {
+          name = rs.name;
+          target = rs.target;
+          enforcement = rs.enforcement;
+          conditions = rulesetConditions rs.conditions;
+          rules = [ (rulesetRules rs.rules) ];
+        }
+        // optionalAttrs ((rs.bypassActors or [ ]) != [ ]) {
+          bypass_actors = rulesetBypassActors rs.bypassActors;
+        }
+      );
+
   organizationResources = {
     github_actions_organization_permissions.default = {
       enabled_repositories = governance.organization.actionsPermissions.enabledRepositories;
@@ -442,7 +528,13 @@ let
     // optionalAttrs (actionsVariableResources != { }) {
       github_actions_variable = actionsVariableResources;
     }
-    // optionalAttrs (issueLabelResources != { }) { github_issue_label = issueLabelResources; };
+    // optionalAttrs (issueLabelResources != { }) { github_issue_label = issueLabelResources; }
+    // optionalAttrs (repositoryRulesetResources != { }) {
+      github_repository_ruleset = repositoryRulesetResources;
+    }
+    // optionalAttrs (organizationRulesetResources != { }) {
+      github_organization_ruleset = organizationRulesetResources;
+    };
 
   countAttrs = attrs: length (attrNames attrs);
   countTopics = foldl' (sum: repo: sum + length (repo.topics or [ ])) 0 governance.repositories;
