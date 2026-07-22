@@ -428,7 +428,7 @@ let
       github_actions_runner_group = runnerGroupResources;
     }
     // optionalAttrs (customRoleResources != { }) {
-      github_organization_custom_repository_role = customRoleResources;
+      github_organization_custom_role = customRoleResources;
     }
     // optionalAttrs (branchProtectionResources != { }) {
       github_branch_protection = branchProtectionResources;
