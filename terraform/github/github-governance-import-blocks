@@ -26,6 +26,8 @@ SCOPES = {
     "all",
     "organization",
     "memberships",
+    "teams",
+    "team-memberships",
     "repositories",
     "branch-defaults",
     "collaborators",
@@ -170,6 +172,28 @@ def generate_blocks(governance: dict, scope: str, owner: str, root_config: str) 
                     "github_repository_collaborator."
                     f"{resource_key(f'repo-collaborator:{repository}:{username}')}",
                     f"{repository}:{username}",
+                )
+            )
+
+    if include_scope(scope, "teams"):
+        for team in governance.get("teams", []):
+            slug = team["slug"]
+            blocks.append(
+                import_block(
+                    f"github_team.{resource_key(f'team:{slug}')}",
+                    slug,
+                )
+            )
+
+    if include_scope(scope, "team-memberships"):
+        for m in governance.get("teamMemberships", []):
+            team_slug = m["teamSlug"]
+            username = m["username"]
+            blocks.append(
+                import_block(
+                    "github_team_membership."
+                    f"{resource_key(f'team-membership:{team_slug}:{username}')}",
+                    f"{team_slug}:{username}",
                 )
             )
 
