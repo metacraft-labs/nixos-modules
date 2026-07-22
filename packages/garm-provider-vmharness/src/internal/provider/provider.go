@@ -928,6 +928,15 @@ func (p *Provider) CreateInstance(ctx context.Context, bootstrapParams commonPar
 // DeleteInstance destroys + undefines the domain. Idempotent: returns
 // garmErrors.ErrNotFound (=> exit 30) only when the harness should signal
 // not-found; a genuinely-absent domain is treated as success.
+// sweeper is implemented by backends that can reclaim ephemeral resources
+// leaked by hard-killed launchers (see VMHarnessRunBackend.Sweep). Delete is
+// per-instance and self-cleaning; the sweep opportunistically mops up orphans
+// from prior runs that crashed before their own Delete could fire, so leaks do
+// not accumulate across the fleet without needing a separate daemon.
+type sweeper interface {
+	Sweep(ctx context.Context)
+}
+
 func (p *Provider) DeleteInstance(ctx context.Context, instance string) error {
 	if err := p.backend.Delete(ctx, instance); err != nil {
 		if errors.Is(err, garmErrors.ErrNotFound) {
@@ -935,6 +944,11 @@ func (p *Provider) DeleteInstance(ctx context.Context, instance string) error {
 			return nil
 		}
 		return err
+	}
+	// After a successful delete, opportunistically reclaim any leaked orphans
+	// from previously crashed runs. Best-effort; never affects the delete result.
+	if s, ok := p.backend.(sweeper); ok {
+		s.Sweep(ctx)
 	}
 	return nil
 }
