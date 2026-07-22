@@ -37,6 +37,10 @@ SCOPES = {
     "actions-repository-permissions",
     "actions-variables",
     "issue-labels",
+    "runner-groups",
+    "custom-roles",
+    "repository-rulesets",
+    "organization-rulesets",
 }
 
 
@@ -266,6 +270,34 @@ def generate_blocks(governance: dict, scope: str, owner: str, root_config: str) 
                     f"{repository}:{name}",
                 )
             )
+
+    if include_scope(scope, "runner-groups"):
+        for rg in governance.get("runnerGroups", []):
+            if rg.get("id") is None:
+                continue
+            addr = "github_actions_runner_group." + resource_key("runner-group:" + rg["name"])
+            blocks.append(import_block(addr, str(rg["id"])))
+
+    if include_scope(scope, "custom-roles"):
+        for role in governance.get("customRepositoryRoles", []):
+            if role.get("id") is None:
+                continue
+            addr = "github_organization_custom_role." + resource_key("custom-role:" + role["name"])
+            blocks.append(import_block(addr, str(role["id"])))
+
+    if include_scope(scope, "repository-rulesets"):
+        for rs in governance.get("repositoryRulesets", []):
+            if rs.get("id") is None:
+                continue
+            addr = "github_repository_ruleset." + resource_key("repository-ruleset:" + rs["repository"] + ":" + rs["name"])
+            blocks.append(import_block(addr, rs["repository"] + ":" + str(rs["id"])))
+
+    if include_scope(scope, "organization-rulesets"):
+        for rs in governance.get("organizationRulesets", []):
+            if rs.get("id") is None:
+                continue
+            addr = "github_organization_ruleset." + resource_key("organization-ruleset:" + rs["name"])
+            blocks.append(import_block(addr, str(rs["id"])))
 
     return blocks
 
