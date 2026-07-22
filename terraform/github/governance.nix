@@ -198,22 +198,94 @@ let
         branch = repo.defaultBranch;
       });
 
-  teamSlugs = attrNames (
-    listToAttrs (
-      map (grant: {
-        name = grant.teamSlug;
-        value = true;
-      }) governance.teamRepositories
-    )
+  # Teams are managed as resources when governance.teams is provided; otherwise
+  # they are referenced as data sources (backward-compatible with consumers that
+  # only grant to pre-existing teams).
+  managedTeams = governance.teams or [ ];
+  managedTeamSlugs = listToAttrs (
+    map (team: {
+      name = team.slug;
+      value = true;
+    }) managedTeams
+  );
+  teamKey = teamSlug: governanceResourceKey "team:${teamSlug}";
+  teamRef =
+    teamSlug:
+    if managedTeamSlugs ? ${teamSlug} then
+      terraformRef "github_team.${teamKey teamSlug}.id"
+    else
+      terraformRef "data.github_team.${teamDataName teamSlug}.id";
+
+  teamResources = listToAttrs (
+    map (team: {
+      name = teamKey team.slug;
+      value = {
+        name = team.name;
+        privacy = team.privacy;
+      }
+      // optionalField team "description"
+      // optionalAttrs (team ? parentTeamSlug) { parent_team_id = teamRef team.parentTeamSlug; };
+    }) managedTeams
   );
 
+  teamMembershipResources =
+    listToResourceAttrs (governance.teamMemberships or [ ])
+      (m: "team-membership:${m.teamSlug}:${m.username}")
+      (m: {
+        team_id = teamRef m.teamSlug;
+        username = m.username;
+        role = m.role;
+      });
+
+  runnerGroupResources =
+    listToResourceAttrs (governance.runnerGroups or [ ]) (rg: "runner-group:${rg.name}")
+      (
+        rg:
+        {
+          name = rg.name;
+          visibility = rg.visibility;
+        }
+        // optionalAttrs (rg ? allowsPublicRepositories) {
+          allows_public_repositories = rg.allowsPublicRepositories;
+        }
+        // optionalAttrs (rg ? restrictedToWorkflows) {
+          restricted_to_workflows = rg.restrictedToWorkflows;
+        }
+      );
+
+  customRoleResources =
+    listToResourceAttrs (governance.customRepositoryRoles or [ ]) (role: "custom-role:${role.name}")
+      (
+        role:
+        {
+          name = role.name;
+          base_role = role.baseRole;
+          permissions = role.permissions;
+        }
+        // optionalField role "description"
+      );
+
+  # Referenced team slugs that are not managed still need a data source.
+  referencedTeamSlugs = attrNames (
+    listToAttrs (
+      map
+        (slug: {
+          name = slug;
+          value = true;
+        })
+        (
+          (map (grant: grant.teamSlug) governance.teamRepositories)
+          ++ (map (m: m.teamSlug) (governance.teamMemberships or [ ]))
+        )
+    )
+  );
   teamDataSources = listToAttrs (
     map (teamSlug: {
       name = teamDataName teamSlug;
       value = {
         slug = teamSlug;
       };
-    }) teamSlugs
+    }) (filter (slug: !(managedTeamSlugs ? ${slug})) referencedTeamSlugs)
   );
 
   membershipResources =
@@ -236,7 +308,7 @@ let
     listToResourceAttrs governance.teamRepositories
       (grant: "team-repository:${grant.teamSlug}:${grant.repository}")
       (grant: {
-        team_id = terraformRef "data.github_team.${teamDataName grant.teamSlug}.id";
+        team_id = teamRef grant.teamSlug;
         repository = grant.repository;
         permission = grant.permission;
       });
@@ -345,8 +417,18 @@ let
     // optionalAttrs (repositoryCollaboratorResources != { }) {
       github_repository_collaborator = repositoryCollaboratorResources;
     }
+    // optionalAttrs (teamResources != { }) { github_team = teamResources; }
+    // optionalAttrs (teamMembershipResources != { }) {
+      github_team_membership = teamMembershipResources;
+    }
     // optionalAttrs (teamRepositoryResources != { }) {
       github_team_repository = teamRepositoryResources;
+    }
+    // optionalAttrs (runnerGroupResources != { }) {
+      github_actions_runner_group = runnerGroupResources;
+    }
+    // optionalAttrs (customRoleResources != { }) {
+      github_organization_custom_repository_role = customRoleResources;
     }
     // optionalAttrs (branchProtectionResources != { }) {
       github_branch_protection = branchProtectionResources;
