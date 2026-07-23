@@ -634,6 +634,31 @@ func (b *IncusBackend) Create(ctx context.Context, args CreateArgs) (Instance, e
 		return Instance{}, fmt.Errorf("incus start %s: %w: %s", args.Name, err, strings.TrimSpace(out))
 	}
 
+	// Incus' unix-char device is requested with mode=0666 above, but the
+	// container's device setup can still settle /dev/kvm to the host udev mode
+	// (0660 root:kvm). Cloud-init also reapplies the default runner groups and
+	// can remove the image-baked kvm membership. Converge the guest-local mode
+	// after start, before Create returns and GARM can assign a job. This affects
+	// only the dedicated NestedKvm class; the plain runner remains unchanged.
+	if b.NestedKvm {
+		ready := false
+		for i := 0; i < 30; i++ {
+			if _, err := b.run(ctx, "", "exec", args.Name, "--", "true"); err == nil {
+				ready = true
+				break
+			}
+			time.Sleep(time.Second)
+		}
+		if !ready {
+			_ = b.forceDelete(ctx, args.Name)
+			return Instance{}, fmt.Errorf("incus container %s did not become ready for nested KVM setup", args.Name)
+		}
+		if out, err := b.run(ctx, "", "exec", args.Name, "--", "chmod", "0666", "/dev/kvm"); err != nil {
+			_ = b.forceDelete(ctx, args.Name)
+			return Instance{}, fmt.Errorf("nested KVM access setup on %s failed: %w: %s", args.Name, err, strings.TrimSpace(out))
+		}
+	}
+
 	// 6. Shared Nix client onto STANDARD paths (post-start). Mounting the host
 	//    store + daemon socket is not sufficient when the Debian runner image
 	//    has no Nix client of its own: setup-nix otherwise tries a single-user
