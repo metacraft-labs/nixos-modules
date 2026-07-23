@@ -827,13 +827,13 @@ unittest
 unittest
 {
     const deploymentTargetNames = [
-        "Hetzner-FSN1-DC11-i7-4770-16-512-001",
-        "gpu-server-001",
-        "gpu-server-002",
-        "gpu-server-003",
-        "hetzner-002",
-        "hetzner-003",
-        "solunska-server",
+        "bare-metal-001",
+        "gpu-node-001",
+        "gpu-node-002",
+        "gpu-node-003",
+        "app-node-002",
+        "app-node-003",
+        "example-site-server",
     ];
 
     assert(isDeployableServerMachineAttr(
@@ -847,22 +847,22 @@ unittest
     ));
     assert(isDeployableServerMachineAttr(
         "mcl.shard-matrix.result.shards.shard-42",
-        "machine/gpu-server-001/x86_64-linux",
+        "machine/gpu-node-001/x86_64-linux",
         deploymentTargetNames,
     ));
     assert(isDeployableServerMachineAttr(
         "mcl.shard-matrix.result.shards.shard-42",
-        "machine/solunska-server/x86_64-linux",
+        "machine/example-site-server/x86_64-linux",
         deploymentTargetNames,
     ));
     assert(isDeployableServerMachineAttr(
         "mcl.shard-matrix.result.shards.shard-42",
-        "machine/hetzner-002/x86_64-linux",
+        "machine/app-node-002/x86_64-linux",
         deploymentTargetNames,
     ));
     assert(isDeployableServerMachineAttr(
         "mcl.shard-matrix.result.shards.shard-42",
-        "machine/Hetzner-FSN1-DC11-i7-4770-16-512-001/x86_64-linux",
+        "machine/bare-metal-001/x86_64-linux",
         deploymentTargetNames,
     ));
     assert(!isDeployableServerMachineAttr(
@@ -877,12 +877,12 @@ unittest
     ));
     assert(!isDeployableServerMachineAttr(
         "legacyPackages.x86_64-linux.checks",
-        "machine/gpu-server-001/x86_64-linux",
+        "machine/gpu-node-001/x86_64-linux",
         deploymentTargetNames,
     ));
 
     auto server = `{
-        "attr": "machine/gpu-server-001/x86_64-linux",
+        "attr": "machine/gpu-node-001/x86_64-linux",
         "drvPath": "/nix/store/server.drv",
         "outputs": { "out": "/nix/store/11111111111111111111111111111111-server" },
         "system": "x86_64-linux"

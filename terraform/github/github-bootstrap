@@ -1,0 +1,231 @@
+#!/usr/bin/env bash
+# Company-agnostic GitHub Layer-0 bootstrap driver.
+#
+# Renders a consumer repo's bootstrap/<config>/default.nix (a Terranix GitHub
+# root — the CI-enabling repo settings and/or the org governance root), guards
+# the AWS account that owns the shared S3 state backend via STS, verifies the
+# GitHub token can administer the target repo, and runs plan/apply/outputs plus
+# the targeted governance-app-secrets bootstrap. Nothing company-specific is
+# hardcoded: the consumer supplies --root-dir and the config; the backend file
+# derives from the config (override via GITHUB_BOOTSTRAP_BACKEND_FILE), and the
+# org for the governance secret targets is read from the rendered outputs.
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage:
+  github-bootstrap <plan|apply|outputs|governance-app-secrets-plan|governance-app-secrets-apply> <github/<name>> [--root-dir DIR]
+
+Environment:
+  AWS_PROFILE                    AWS profile for the S3 state backend (set by the dev shell).
+  GITHUB_TOKEN                   GitHub token; falls back to `gh auth token`.
+  GITHUB_BOOTSTRAP_BACKEND_FILE  Repo-relative backend file. Defaults to backends/<config-slug>.hcl.
+
+Deployment facts live in the tracked Terraform/Nix files, not in operator
+environment variables.
+EOF
+}
+
+action="${1:-}"
+config="${2:-}"
+shift $(( $# >= 2 ? 2 : $# )) || true
+root="$PWD"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --root-dir)
+      [[ $# -ge 2 ]] || { echo "--root-dir requires a directory." >&2; exit 2; }
+      root="$(cd -- "$2" && pwd)"; shift 2 ;;
+    *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+if [[ -z "$action" || "$action" == "-h" || "$action" == "--help" ]]; then
+  usage; exit 0
+fi
+case "$action" in
+  plan | apply | outputs | governance-app-secrets-plan | governance-app-secrets-apply) ;;
+  *) usage >&2; exit 2 ;;
+esac
+[[ -n "$config" ]] || { echo "A bootstrap config (e.g. github/<name>) is required." >&2; usage >&2; exit 2; }
+
+src="${root}/bootstrap/${config}"
+dst="${root}/.result/bootstrap/${config}"
+config_slug="$(printf '%s' "$config" | tr '/' '-')"
+backend="${root}/${GITHUB_BOOTSTRAP_BACKEND_FILE:-backends/${config_slug}.hcl}"
+profile="${AWS_PROFILE:-}"
+identity_json=""
+expected_account_id=""
+actual_account_id=""
+aws_region=""
+github_access_check_repository=""
+
+render_config() {
+  terranix "${src}/default.nix" > "${dst}/config.tf.json"
+  jq . "${dst}/config.tf.json" >/dev/null
+}
+
+if [[ -z "$profile" ]]; then
+  cat >&2 <<'EOF'
+AWS_PROFILE is not set.
+Enter the repo dev shell or export the profile explicitly, for example:
+
+  export AWS_PROFILE=<your-admin-profile>
+
+EOF
+  exit 1
+fi
+
+if [[ ! -f "$backend" ]]; then
+  cat >&2 <<EOF
+Missing GitHub bootstrap backend config: ${backend}
+Run the AWS bootstrap first so the shared S3 state backend exists.
+EOF
+  exit 1
+fi
+
+if [[ ! -f "${src}/default.nix" ]]; then
+  echo "Bootstrap root '${config}' does not exist at ${src}" >&2
+  exit 1
+fi
+
+mkdir -p "$dst"
+render_config
+expected_account_id="$(jq -r '.output.expected_aws_account_id.value // ""' "${dst}/config.tf.json")"
+aws_region="$(jq -r '.output.aws_region.value // ""' "${dst}/config.tf.json")"
+github_access_check_repository="$(jq -r '
+  .output.github_access_check_repository.value
+  // .output.github_repository.value
+  // ""
+' "${dst}/config.tf.json")"
+
+if [[ -z "$expected_account_id" || -z "$aws_region" || -z "$github_access_check_repository" ]]; then
+  echo "GitHub bootstrap config is missing required deployment facts." >&2
+  exit 1
+fi
+
+if ! identity_json="$(aws --region "$aws_region" sts get-caller-identity --profile "$profile" --output json 2>/dev/null)"; then
+  echo "AWS profile '${profile}' is not authenticated. Run your dev shell's aws-login for ${profile}." >&2
+  exit 1
+fi
+
+actual_account_id="$(jq -r '.Account' <<<"$identity_json")"
+if [[ "$actual_account_id" != "$expected_account_id" ]]; then
+  cat >&2 <<EOF
+AWS profile '${profile}' is authenticated to account ${actual_account_id}, but
+GitHub bootstrap is pinned to backend account ${expected_account_id}.
+Refusing to use the wrong Terraform state backend.
+EOF
+  exit 1
+fi
+
+export AWS_PROFILE="$profile"
+export AWS_REGION="$aws_region"
+export AWS_DEFAULT_REGION="$aws_region"
+export AWS_SDK_LOAD_CONFIG=1
+unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN
+unset AWS_ROLE_ARN AWS_WEB_IDENTITY_TOKEN_FILE
+eval "$(aws --region "$aws_region" configure export-credentials --profile "$profile" --format env)"
+
+if [[ -n "${GH_TOKEN:-}" && -z "${GITHUB_TOKEN:-}" ]]; then
+  export GITHUB_TOKEN="$GH_TOKEN"
+fi
+
+if [[ -z "${GITHUB_TOKEN:-}" ]]; then
+  if ! gh auth status --hostname github.com >/dev/null 2>&1; then
+    cat >&2 <<'EOF'
+GitHub CLI is not authenticated and GITHUB_TOKEN is not set.
+Run `gh auth login` with repository administration permissions, then retry.
+EOF
+    exit 1
+  fi
+  export GITHUB_TOKEN
+  GITHUB_TOKEN="$(gh auth token --hostname github.com)"
+fi
+
+export GH_TOKEN="${GH_TOKEN:-$GITHUB_TOKEN}"
+
+if ! gh repo view "$github_access_check_repository" --json nameWithOwner >/dev/null 2>&1; then
+  cat >&2 <<EOF
+GitHub token cannot access ${github_access_check_repository}.
+Use a token or gh login with repository administration permissions.
+EOF
+  exit 1
+fi
+
+cp "${src}"/*.tftest.hcl "$dst"/ 2>/dev/null || true
+if [[ -f "${src}/.terraform.lock.hcl" ]]; then
+  cp "${src}/.terraform.lock.hcl" "$dst"/
+fi
+
+cd "$dst"
+tofu init -input=false -reconfigure -backend-config="$backend"
+tofu fmt -check -recursive .
+tofu validate
+
+# The governance App credential secrets are named secret_<owner>_GH_GOVERNANCE_APP_*
+# by the governance root; derive <owner> from the access-check repository.
+governance_owner="${github_access_check_repository%%/*}"
+governance_app_secret_targets=(
+  "github_actions_organization_secret.secret_${governance_owner}_GH_GOVERNANCE_APP_ID"
+  "github_actions_organization_secret.secret_${governance_owner}_GH_GOVERNANCE_APP_PRIVATE_KEY"
+)
+
+plan_governance_app_secrets() {
+  if [[ ! -f "${src}/root.nix" && ! "$config" == *governance* ]]; then
+    cat >&2 <<EOF
+The governance app secret bootstrap target is only valid for a governance root,
+not '${config}'.
+EOF
+    exit 2
+  fi
+
+  # Import blocks are intentionally excluded from this one-time targeted
+  # bootstrap. The only side effect should be writing the two app credentials
+  # that let normal governance CI authenticate with the dedicated GitHub App.
+  rm -f imports.tf
+
+  tofu plan -input=false -no-color -lock=false \
+    -target="${governance_app_secret_targets[0]}" \
+    -target="${governance_app_secret_targets[1]}" \
+    -out=github-governance-app-secrets.tfplan
+
+  cat <<'EOF'
+
+Saved targeted plan:
+  github-governance-app-secrets.tfplan
+
+Review it with:
+  tofu show -no-color github-governance-app-secrets.tfplan
+
+It should only create or update:
+  GH_GOVERNANCE_APP_ID
+  GH_GOVERNANCE_APP_PRIVATE_KEY
+EOF
+}
+
+case "$action" in
+  plan)
+    tofu plan -out=github-bootstrap.tfplan
+    ;;
+  apply)
+    tofu plan -out=github-bootstrap.tfplan
+    tofu apply github-bootstrap.tfplan
+    ;;
+  governance-app-secrets-plan)
+    plan_governance_app_secrets
+    ;;
+  governance-app-secrets-apply)
+    plan_governance_app_secrets
+    tofu show -no-color github-governance-app-secrets.tfplan
+    echo
+    read -r -p "Type 'apply-governance-app-secrets' to apply this targeted plan: " confirmation
+    if [[ "$confirmation" != "apply-governance-app-secrets" ]]; then
+      echo "Aborted."
+      exit 1
+    fi
+    tofu apply github-governance-app-secrets.tfplan
+    ;;
+  outputs)
+    tofu output
+    ;;
+esac
