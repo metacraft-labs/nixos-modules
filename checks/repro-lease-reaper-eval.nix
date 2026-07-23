@@ -56,8 +56,7 @@ top@{ inputs, ... }:
       # so the assertions below are transport-agnostic.
       toExecStr = v: if builtins.isList v then lib.concatStringsSep " " (map toString v) else toString v;
 
-      systemReaperExec = toExecStr
-        nixosEval.config.systemd.services.repro-lease-reaper.serviceConfig.ExecStart;
+      systemReaperExec = toExecStr nixosEval.config.systemd.services.repro-lease-reaper.serviceConfig.ExecStart;
 
       # ---- Evaluate the home-manager class (user daemon). home-manager is a
       # flake input; its `lib.homeManagerConfiguration` renders a standalone HM
@@ -66,25 +65,26 @@ top@{ inputs, ... }:
       hmLib = (inputs.home-manager or { }).lib or null;
       userDaemonExec =
         if hmLib != null && hmLib ? homeManagerConfiguration then
-          toExecStr (hmLib.homeManagerConfiguration {
-            inherit pkgs;
-            modules = [
-              flake.modules.homeManager.mcl-reprobuild
-              (
-                { ... }:
-                {
-                  home.username = "reprotest";
-                  home.homeDirectory = "/home/reprotest";
-                  home.stateVersion = "24.05";
-                  programs.reprobuild = {
-                    enable = true;
-                    package = reproPkg;
-                    enableUserDaemon = true;
-                  };
-                }
-              )
-            ];
-          }).config.systemd.user.services.repro-daemon.Service.ExecStart
+          toExecStr
+            (hmLib.homeManagerConfiguration {
+              inherit pkgs;
+              modules = [
+                flake.modules.homeManager.mcl-reprobuild
+                (
+                  { ... }:
+                  {
+                    home.username = "reprotest";
+                    home.homeDirectory = "/home/reprotest";
+                    home.stateVersion = "24.05";
+                    programs.reprobuild = {
+                      enable = true;
+                      package = reproPkg;
+                      enableUserDaemon = true;
+                    };
+                  }
+                )
+              ];
+            }).config.systemd.user.services.repro-daemon.Service.ExecStart
         else
           "";
     in
