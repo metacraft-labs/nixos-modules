@@ -142,6 +142,57 @@ Production integrations should wire private source URLs, trust material, target
 selection, and any approval policy in the infrastructure repository. The
 generic module should remain opt-in.
 
+## nix-darwin Module
+
+The opt-in Darwin module is
+`flake.modules.darwin.deployment-pull-agent`. It uses the same
+`services.mcl-deploy-agent` target, manifest trust, source, state, event,
+timeout, and retry options where their platform semantics match. Darwin uses
+`intervalSeconds` for launchd's integer `StartInterval`, and adds
+`systemProfile`, `preSwitchHook`, `postSwitchHook`, `standardOutLog`, and
+`standardErrorLog`.
+
+The module installs a root LaunchDaemon with `RunAtLoad` and periodic polling.
+Its plist deliberately contains `/run/current-system/sw/bin/mcl-deploy-agent`
+instead of a Nix store path. That stable wrapper is exported through
+`environment.systemPackages`; only after launch does it resolve the current
+generation's `mcl`, trust file, and lifecycle hooks. A nix-darwin activation
+can therefore replace the system environment without unloading the process
+that is applying it.
+
+Every invocation takes a non-blocking `flock` supplied by the wrapper's Darwin
+runtime closure. State and deployment JSONL events remain under
+`/var/lib/mcl/deployments` and `/var/log/mcl/deployments` by default, while
+launchd stdout and stderr use durable files beside the event log. The module's
+pre-activation fragment creates those root-owned paths before launchd loads
+the daemon. No `sudo` or passwordless privilege rule is involved: launchd runs
+the system daemon directly as `root:wheel`.
+
+Example:
+
+```nix
+{
+  imports = [ inputs.nixos-modules.modules.darwin.deployment-pull-agent ];
+
+  services.mcl-deploy-agent = {
+    enable = true;
+    targetName = config.networking.hostName;
+    manifestPublicKeys = [ "ssh-ed25519 ..." ];
+    manifestSources = [ "https://example.invalid/deployments/m3/latest.json" ];
+    intervalSeconds = 15 * 60;
+    maxAttempts = 3;
+    preSwitchHook = pkgs.writeShellScript "deployment-ready" ''
+      # Exit 75 to defer without spending an attempt.
+    '';
+    postSwitchHook = pkgs.writeShellScript "deployment-cleanup" ''
+      # Receives DESIRED PREVIOUS OUTCOME.
+    '';
+  };
+}
+```
+
+Like the NixOS module, importing the Darwin module does not enable it.
+
 ## Verification
 
 Implemented M5 coverage:
@@ -156,6 +207,11 @@ Implemented M5 coverage:
   rejected without restore or switch.
 - NixOS VM test proving the service-held lock rejects a concurrent contender
   and releases after the service exits.
+- Darwin module contract checks for its root LaunchDaemon, stable entrypoint,
+  polling interval, durable paths, real activation arguments, and retry bound.
+- Darwin public-entrypoint integration coverage for a trusted activation,
+  unavailable desired state, wrong-target and invalid-signature rejection,
+  JSON-schema-valid events, and non-destructive lock contention.
 
 Still required before production enablement:
 

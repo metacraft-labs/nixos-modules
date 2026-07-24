@@ -11,6 +11,7 @@
     ./deployment-monitoring.nix
     ./deployment-production-cutover.nix
     ./deployment-pull-agent.nix
+    ./deployment-pull-agent-darwin.nix
     ./deployment-reconciler.nix
     ./garm-service-boot.nix
     ./garm-api-watchdog.nix
