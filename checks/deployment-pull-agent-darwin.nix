@@ -26,9 +26,16 @@ top@{ config, inputs, ... }:
         pkgs.writeShellApplication {
           name = "mcl";
           text = ''
+            if [[ -n "''${MCL_DARWIN_PREREQUISITE_MARKER:-}" ]]; then
+              touch "$MCL_DARWIN_PREREQUISITE_MARKER"
+            fi
             printf '%s\n' ${lib.escapeShellArg generation}
           '';
         };
+      failingRuntimePrerequisite = pkgs.writeShellApplication {
+        name = "mcl-deploy-runtime-prerequisite";
+        text = "exit 75";
+      };
 
       staticSystem =
         package:
@@ -57,6 +64,7 @@ top@{ config, inputs, ... }:
                 systemProfile = "/nix/var/nix/profiles/system";
                 preSwitchHook = "/run/current-system/sw/bin/mcl-deploy-pre-switch";
                 postSwitchHook = "/run/current-system/sw/bin/mcl-deploy-post-switch";
+                runtimePrerequisite = lib.getExe failingRuntimePrerequisite;
               };
             }
           ];
@@ -77,6 +85,34 @@ top@{ config, inputs, ... }:
       staticSystemEntrypoint = "${staticA.config.system.path}/bin/mcl-deploy-agent";
       staticSystemEntrypointB = "${staticB.config.system.path}/bin/mcl-deploy-agent";
       staticActivation = staticA.config.system.activationScripts.preActivation.text;
+      prerequisiteRoot = "/tmp/mcl-darwin-pull-agent-prerequisite";
+      prerequisiteSystem = inputs.nix-darwin.lib.darwinSystem {
+        system = pkgs.stdenv.hostPlatform.system;
+        modules = [
+          flake.modules.darwin.deployment-pull-agent
+          {
+            networking.hostName = "m3-prerequisite";
+            system.stateVersion = 6;
+            services.mcl-deploy-agent = {
+              enable = true;
+              package = fakeMcl "prerequisite-must-not-run";
+              targetName = "m3-prerequisite";
+              manifestPublicKeys = [ manifestPublicKey ];
+              manifestSources = [ "https://deployments.example.invalid/m3/latest.json" ];
+              stateDir = "${prerequisiteRoot}/state";
+              eventLog = "${prerequisiteRoot}/events.jsonl";
+              standardOutLog = "${prerequisiteRoot}/stdout.log";
+              standardErrorLog = "${prerequisiteRoot}/stderr.log";
+              lockFile = "${prerequisiteRoot}/agent.lock";
+              runtimePrerequisite = lib.getExe failingRuntimePrerequisite;
+            };
+          }
+        ];
+      };
+      prerequisiteEntrypointPackage =
+        lib.findFirst (package: lib.getName package == "mcl-deploy-agent")
+          (throw "prerequisite Darwin pull-agent entrypoint package is absent")
+          prerequisiteSystem.config.environment.systemPackages;
 
       disabledSystem = inputs.nix-darwin.lib.darwinSystem {
         system = pkgs.stdenv.hostPlatform.system;
@@ -149,8 +185,24 @@ top@{ config, inputs, ... }:
         grep -F -- '--system-profile /nix/var/nix/profiles/system' "$entrypoint" >/dev/null
         grep -F -- '--pre-switch-hook /run/current-system/sw/bin/mcl-deploy-pre-switch' "$entrypoint" >/dev/null
         grep -F -- '--post-switch-hook /run/current-system/sw/bin/mcl-deploy-post-switch' "$entrypoint" >/dev/null
+        prerequisite_line=$(grep -nF -- ${lib.escapeShellArg (lib.getExe failingRuntimePrerequisite)} "$entrypoint" | head -n1 | cut -d: -f1)
+        flock_line=$(grep -nF -- 'flock -n /var/run/mcl-test-pull-agent.lock' "$entrypoint" | head -n1 | cut -d: -f1)
+        test -n "$prerequisite_line"
+        test -n "$flock_line"
+        test "$prerequisite_line" -lt "$flock_line"
         grep -F -- 'flock -n /var/run/mcl-test-pull-agent.lock' "$entrypoint" >/dev/null
         ! grep -F -- 'sudo' "$entrypoint"
+
+        prerequisite_entrypoint=${lib.escapeShellArg (lib.getExe prerequisiteEntrypointPackage)}
+        rm -rf ${lib.escapeShellArg prerequisiteRoot}
+        export MCL_DARWIN_PREREQUISITE_MARKER=${lib.escapeShellArg prerequisiteRoot}/mcl-ran
+        if "$prerequisite_entrypoint"; then
+          echo 'failing runtime prerequisite was ignored' >&2
+          exit 1
+        else
+          test "$?" -eq 75
+        fi
+        test ! -e ${lib.escapeShellArg prerequisiteRoot}
         mkdir -p "$out"
         printf '%s\n' 'test_darwin_pull_agent_launchd_contract: passed' > "$out/result"
       '';

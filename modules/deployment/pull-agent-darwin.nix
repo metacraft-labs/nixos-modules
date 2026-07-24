@@ -76,6 +76,9 @@
           pkgs.util-linux
         ];
         text = ''
+          ${lib.optionalString (cfg.runtimePrerequisite != "") ''
+            ${escapeShellArg cfg.runtimePrerequisite}
+          ''}
           exec flock -n ${escapeShellArg cfg.lockFile} ${
             escapeShellArgs (
               [
@@ -203,6 +206,15 @@
           type = types.coercedTo types.package toString types.str;
           default = "";
           description = "Optional executable cleanup hook called with DESIRED PREVIOUS OUTCOME.";
+        };
+
+        runtimePrerequisite = mkOption {
+          type = types.coercedTo types.package toString types.str;
+          default = "";
+          description = ''
+            Optional executable invoked before every poll. A non-zero exit
+            fails closed before manifest retrieval or closure restoration.
+          '';
         };
 
         dryRun = mkOption {

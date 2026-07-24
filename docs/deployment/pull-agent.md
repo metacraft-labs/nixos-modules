@@ -150,7 +150,10 @@ The opt-in Darwin module is
 timeout, and retry options where their platform semantics match. Darwin uses
 `intervalSeconds` for launchd's integer `StartInterval`, and adds
 `systemProfile`, `preSwitchHook`, `postSwitchHook`, `standardOutLog`, and
-`standardErrorLog`.
+`standardErrorLog`. An optional `runtimePrerequisite` executable runs before
+each poll and fails closed before manifest retrieval or closure restoration;
+infrastructure integrations can use it to require runtime-only credentials
+without embedding those credentials in the Nix store.
 
 The module installs a root LaunchDaemon with `RunAtLoad` and periodic polling.
 Its plist deliberately contains `/run/current-system/sw/bin/mcl-deploy-agent`
