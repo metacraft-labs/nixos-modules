@@ -36,7 +36,7 @@ jobs:
     runs-on: ${{ fromJSON(inputs.runner || '["eph-linux-x64"]') }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@v7.0.1
 
       - name: Setup Nix
         uses: metacraft-labs/nixos-modules/.github/setup-nix@main
