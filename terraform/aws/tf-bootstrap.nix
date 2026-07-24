@@ -9,6 +9,10 @@
   lockTableName,
   namePrefix,
   orgLabel,
+  # Cost-allocation tags and Cost Categories can only be managed from the AWS
+  # Organizations management/payer account. Set false for member-account
+  # bootstraps (e.g. a dedicated per-org prod account) to skip them.
+  manageCostAllocation ? true,
   ...
 }:
 let
@@ -413,19 +417,25 @@ in
         }
       ];
     };
+  }
+  // (
+    if manageCostAllocation then
+      {
+        aws_ce_cost_allocation_tag = builtins.mapAttrs (_name: tagKey: {
+          tag_key = tagKey;
+          status = "Active";
+        }) costAllocationTags;
 
-    aws_ce_cost_allocation_tag = builtins.mapAttrs (_name: tagKey: {
-      tag_key = tagKey;
-      status = "Active";
-    }) costAllocationTags;
-
-    aws_ce_cost_category = {
-      agent_harbor_cost_layer = mkInheritedCostCategory "${orgLabel}CostLayer" "CostLayer";
-      agent_harbor_workload = mkInheritedCostCategory "${orgLabel}Workload" "Workload";
-      agent_harbor_platform_layer = mkInheritedCostCategory "${orgLabel}PlatformLayer" "PlatformLayer";
-      agent_harbor_component = mkInheritedCostCategory "${orgLabel}Component" "Component";
-    };
-  };
+        aws_ce_cost_category = {
+          agent_harbor_cost_layer = mkInheritedCostCategory "${orgLabel}CostLayer" "CostLayer";
+          agent_harbor_workload = mkInheritedCostCategory "${orgLabel}Workload" "Workload";
+          agent_harbor_platform_layer = mkInheritedCostCategory "${orgLabel}PlatformLayer" "PlatformLayer";
+          agent_harbor_component = mkInheritedCostCategory "${orgLabel}Component" "Component";
+        };
+      }
+    else
+      { }
+  );
 
   data.aws_iam_policy_document = {
     state_bucket_tls.statement = [
@@ -656,17 +666,21 @@ in
     };
 
     cost_allocation_tag_keys = {
-      value = costAllocationTags;
+      value = if manageCostAllocation then costAllocationTags else { };
       description = "User-defined AWS cost allocation tag keys activated by the bootstrap root.";
     };
 
     cost_category_names = {
-      value = [
-        "\${aws_ce_cost_category.agent_harbor_cost_layer.name}"
-        "\${aws_ce_cost_category.agent_harbor_workload.name}"
-        "\${aws_ce_cost_category.agent_harbor_platform_layer.name}"
-        "\${aws_ce_cost_category.agent_harbor_component.name}"
-      ];
+      value =
+        if manageCostAllocation then
+          [
+            "\${aws_ce_cost_category.agent_harbor_cost_layer.name}"
+            "\${aws_ce_cost_category.agent_harbor_workload.name}"
+            "\${aws_ce_cost_category.agent_harbor_platform_layer.name}"
+            "\${aws_ce_cost_category.agent_harbor_component.name}"
+          ]
+        else
+          [ ];
       description = "AWS Cost Categories managed by the bootstrap root for Agent Harbor cost reporting.";
     };
 
