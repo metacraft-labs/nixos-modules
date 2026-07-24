@@ -179,6 +179,7 @@ JSONValue deploymentEventJson(
     string errorCode = "command_failed",
     string errorDetails = "",
     JSONValue[string] metadata = null,
+    bool errorRetryable = false,
 )
 {
     JSONValue[string] event;
@@ -245,7 +246,7 @@ JSONValue deploymentEventJson(
         event["error"] = JSONValue([
             "code": JSONValue(errorCode),
             "message": JSONValue(errorMessage == "" ? "Deployment phase failed" : errorMessage),
-            "retryable": JSONValue(false),
+            "retryable": JSONValue(errorRetryable),
             "details": JSONValue(details),
         ]);
     }

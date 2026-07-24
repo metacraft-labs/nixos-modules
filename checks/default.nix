@@ -6,6 +6,7 @@
     ./desktop-vms
     ./deployment-docs.nix
     ./deployment-cache.nix
+    ./deployment-darwin-activation.nix
     ./deployment-incus-rehearsal.nix
     ./deployment-monitoring.nix
     ./deployment-production-cutover.nix

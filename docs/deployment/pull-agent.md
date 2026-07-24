@@ -66,9 +66,54 @@ Retry handling is bounded:
 
 - Source read or fetch failures are retryable.
 - Apply failures are retryable until `maxAttempts` is reached.
+- A pre-switch readiness hook that exits with status 75 records `deferred`,
+  remains retryable, and does not increment `attempts`. Other hook failures are
+  ordinary apply failures and consume an attempt.
 - Wrong target, invalid signature, ambiguous latest sequence, and exhausted
   retry budget are explicit non-retryable states.
 - Already converged deployments short-circuit without another apply attempt.
+
+## Platform Activation And Lifecycle Hooks
+
+`mcl deploy-apply` and `mcl deploy-agent` default to
+`--activation-mode nixos`. That mode retains the existing detached
+`systemd-run` invocation of `switch-to-configuration`; existing callers do not
+need new arguments.
+
+`--activation-mode nix-darwin` uses the native nix-darwin transaction:
+
+1. Resolve the generation currently selected by `--system-profile` (default
+   `/nix/var/nix/profiles/system`).
+2. Atomically select the desired generation with `nix-env --profile ... --set`.
+3. Execute the desired generation's `activate` directly, without
+   `systemd-run`.
+4. If activation fails, atomically restore the previous profile and execute
+   the previous generation's `activate` before reporting failure. Automatic
+   health-check rollback uses the same pair of operations.
+
+The optional lifecycle hooks are executable paths, not shell fragments. The
+agent invokes them with separate arguments so generation values cannot be
+reinterpreted as shell syntax:
+
+```text
+PRE_SWITCH_HOOK  DESIRED_GENERATION PREVIOUS_GENERATION
+POST_SWITCH_HOOK DESIRED_GENERATION PREVIOUS_GENERATION OUTCOME
+```
+
+The pre-switch hook runs after closure restoration and generation discovery,
+but before any profile or system switch. Exit 75 means “not ready yet” and is
+the only deferred result. Once readiness succeeds, the post-switch hook runs
+after success, activation failure, health-check failure, and rollback. Its
+`OUTCOME` is one of `succeeded`, `switch-failed`, `healthcheck-failed`, or
+`rolled-back`. A failed post-switch hook prevents a successful deployment from
+being marked converged.
+
+Lifecycle events remain within the checked-in deployment event schema: hook
+execution uses the existing `switch` phase and distinguishes `pre-switch` from
+`post-switch` with `metadata.lifecycleStage`. Readiness deferral uses command
+status `skipped`, exit code 75, error code `deployment_deferred`, and
+`error.retryable = true`; it does not introduce a new phase or status value.
+Darwin activation events report target kind `darwin`.
 
 ## NixOS Module
 

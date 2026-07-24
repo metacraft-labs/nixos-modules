@@ -15,8 +15,8 @@ import std.uuid : randomUUID;
 
 import argparse : Command, Description, EnvFallback, NamedArgument, Placeholder;
 
-import mcl.commands.deploy_apply : DeployApplyArgs, DeployApplyDependencies,
-    deployApplyImpl;
+import mcl.commands.deploy_apply : DeploymentActivationMode, DeployApplyArgs,
+    DeployApplyDependencies, deployApplyDeferredExitCode, deployApplyImpl;
 import mcl.utils.deploy_manifest : manifestDeploymentId, manifestDesiredSystemPath,
     manifestSequence, manifestSystem, manifestTarget, verifyManifestSignature;
 import mcl.utils.deploy_state : ensureDeployStateDirs, manifestStatePath,
@@ -59,6 +59,26 @@ struct DeployAgentArgs
         .Description("Durable target-local deployment state directory"))
     string stateDir = "/var/lib/mcl/deployments";
 
+    @(NamedArgument(["activation-mode"])
+        .Placeholder("nixos|nix-darwin")
+        .Description("System activation contract; nixos remains the default"))
+    DeploymentActivationMode activationMode = DeploymentActivationMode.nixos;
+
+    @(NamedArgument(["system-profile"])
+        .Placeholder("PATH")
+        .Description("nix-darwin system profile updated atomically before activation"))
+    string systemProfile = "/nix/var/nix/profiles/system";
+
+    @(NamedArgument(["pre-switch-hook"])
+        .Placeholder("PATH")
+        .Description("Executable readiness hook called with DESIRED PREVIOUS; exit 75 defers deployment"))
+    string preSwitchHook;
+
+    @(NamedArgument(["post-switch-hook"])
+        .Placeholder("PATH")
+        .Description("Executable cleanup hook called with DESIRED PREVIOUS OUTCOME"))
+    string postSwitchHook;
+
     @(NamedArgument(["event-log"])
         .Placeholder("events.jsonl")
         .Description("Write deployment events as JSONL")
@@ -99,9 +119,9 @@ struct DeployAgentArgs
 
     @(NamedArgument(["generation-command"])
         .Placeholder("COMMAND")
-        .Description("Command that prints the current system generation path")
+        .Description("Override command that prints the current generation path")
         .EnvFallback("MCL_DEPLOY_GENERATION_COMMAND"))
-    string generationCommand = "readlink -f /run/current-system";
+    string generationCommand;
 
     @(NamedArgument(["no-detach-switch"])
         .Description("Run switch-to-configuration in-process instead of a detached systemd-run scope. "
@@ -389,6 +409,10 @@ int deployAgentImpl(DeployAgentArgs args, DeployAgentDependencies deps)
     applyArgs.trustedManifestPublicKey = args.trustedManifestPublicKey;
     applyArgs.allowedSigners = args.allowedSigners;
     applyArgs.stateDir = args.stateDir;
+    applyArgs.activationMode = args.activationMode;
+    applyArgs.systemProfile = args.systemProfile;
+    applyArgs.preSwitchHook = args.preSwitchHook;
+    applyArgs.postSwitchHook = args.postSwitchHook;
     applyArgs.eventLog = eventLogPath;
     applyArgs.dryRun = args.dryRun;
     applyArgs.restoreCommand = args.restoreCommand;
@@ -403,6 +427,16 @@ int deployAgentImpl(DeployAgentArgs args, DeployAgentDependencies deps)
         runProcess: deps.runProcess,
         queryProcess: deps.queryProcess,
     ));
+
+    if (result == deployApplyDeferredExitCode)
+    {
+        auto status = writeAgentStatus(args.stateDir, args.target, deploymentId, sequence,
+            "deferred", previousAttempts, args.maxAttempts, true,
+            "Deployment readiness conditions are not met; retry budget was not consumed.",
+            "deployment_deferred");
+        writeln(status.toString(JSONOptions.doNotEscapeSlashes));
+        return 0;
+    }
 
     auto attempts = previousAttempts + 1;
     auto succeeded = result == 0;
@@ -645,4 +679,80 @@ unittest
     assert(status["attempts"].integer == 2);
     assert(status["errorCode"].str == "retry_budget_exhausted");
     assert(restoreRuns == 2);
+}
+
+@("test_deploy_agent_deferred_pre_switch_does_not_consume_retry_budget")
+unittest
+{
+    import std.file : rmdirRecurse;
+    import mcl.utils.deploy_manifest : ManifestBuildRequest, ManifestSigningRequest,
+        buildManifest, signManifest;
+
+    auto base = deleteme ~ ".deploy-agent-deferred";
+    auto keyPath = base ~ ".ed25519";
+    auto stateDir = base ~ ".state";
+    auto manifestPath = base ~ ".manifest.json";
+    scope(exit)
+    {
+        foreach (path; [base, keyPath, keyPath ~ ".pub", manifestPath])
+            if (path.exists) path.remove;
+        if (stateDir.exists) stateDir.rmdirRecurse;
+    }
+
+    auto keygen = runProcessCapture([
+        "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", keyPath,
+    ]);
+    assert(keygen.succeeded, keygen.stderr);
+    auto desired = "/nix/store/77777777777777777777777777777777-system";
+    auto previous = "/nix/store/88888888888888888888888888888888-system";
+    auto manifest = signManifest(buildManifest(ManifestBuildRequest(
+        deploymentId: "deploy-deferred",
+        target: "target",
+        gitRevision: "0123456789abcdef0123456789abcdef01234567",
+        sequence: 1,
+        desiredSystemPath: desired,
+    )), ManifestSigningRequest(keyPath: keyPath, keyId: "mcl-deployment"));
+    manifestPath.write(manifest.toString(JSONOptions.doNotEscapeSlashes));
+
+    uint readinessRuns;
+    ProcessResult fakeRun(string[] command)
+    {
+        if (command == ["/hooks/readiness", desired, previous])
+        {
+            readinessRuns++;
+            return ProcessResult(deployApplyDeferredExitCode, "", "host is busy");
+        }
+        return ProcessResult(0, "", "");
+    }
+    ProcessResult fakeQuery(string[] command)
+    {
+        if (command == ["/bin/sh", "-c", "current-generation"])
+            return ProcessResult(0, previous ~ "\n", "");
+        return ProcessResult(0, "{}", "");
+    }
+
+    DeployAgentArgs args;
+    args.target = "target";
+    args.manifests = [manifestPath];
+    args.trustedManifestPublicKey = (keyPath ~ ".pub").readText.strip;
+    args.stateDir = stateDir;
+    args.maxAttempts = 1;
+    args.restoreCommand = "restore";
+    args.generationCommand = "current-generation";
+    args.preSwitchHook = "/hooks/readiness";
+
+    foreach (_; 0 .. 3)
+        assert(deployAgentImpl(args, DeployAgentDependencies(
+            runProcess: &fakeRun,
+            queryProcess: &fakeQuery,
+        )) == 0);
+
+    auto status = agentStatusPath(stateDir, "target").readText.parseJSON;
+    assert(status["currentState"].str == "deferred");
+    assert(status["attempts"].integer == 0);
+    assert(status["maxAttempts"].integer == 1);
+    assert(status["retryable"].boolean is true);
+    assert(status["errorCode"].str == "deployment_deferred");
+    assert(readinessRuns == 3);
+    assert(!manifestStatePath(stateDir, "converged", "deploy-deferred").exists);
 }
