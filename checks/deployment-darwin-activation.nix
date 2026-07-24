@@ -17,12 +17,29 @@
         -----END OPENSSH PRIVATE KEY-----
       '';
       manifestPublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOG+pZMFoVf9csQhyja7HjubzInPvGX69OyIHYsaTuHt mcl-manifest-test";
-      generation =
+      eventLogValidator = pkgs.writeText "mcl-validate-deployment-events.py" ''
+        import json
+        import pathlib
+        import sys
+
+        from jsonschema import Draft202012Validator, FormatChecker
+
+        event_log = pathlib.Path(sys.argv[1])
+        schema = json.loads(pathlib.Path(sys.argv[2]).read_text())
+        Draft202012Validator.check_schema(schema)
+        validator = Draft202012Validator(schema, format_checker=FormatChecker())
+        events = [json.loads(line) for line in event_log.read_text().splitlines() if line.strip()]
+        if not events:
+            raise AssertionError(f"event log is empty: {event_log}")
+        for index, event in enumerate(events, start=1):
+            errors = sorted(validator.iter_errors(event), key=lambda error: list(error.path))
+            if errors:
+                rendered = "; ".join(error.message for error in errors)
+                raise AssertionError(f"{event_log}:{index}: {rendered}")
+      '';
+      generationActivation =
         name: shouldFail:
-        pkgs.runCommand "mcl-darwin-generation-${name}" { } ''
-          mkdir -p "$out"
-          cat > "$out/activate" <<'EOF'
-          #!${pkgs.runtimeShell}
+        pkgs.writeShellScript "mcl-darwin-generation-${name}-activate" ''
           set -eu
           generation=$(dirname "$0")
           printf '%s\n' "$generation" >> "$MCL_DARWIN_TEST_ROOT/activation-runs"
@@ -37,8 +54,12 @@
                 printf '%s\n' "$generation" > "$MCL_DARWIN_TEST_ROOT/active-generation"
               ''
           }
-          EOF
-          chmod +x "$out/activate"
+        '';
+      generation =
+        name: shouldFail:
+        pkgs.runCommand "mcl-darwin-generation-${name}" { } ''
+          mkdir -p "$out"
+          cp ${generationActivation name shouldFail} "$out/activate"
         '';
       previousGeneration = generation "previous" false;
       desiredGeneration = generation "desired" false;
@@ -62,6 +83,11 @@
       postSwitchHook = pkgs.writeShellScript "mcl-darwin-post-switch-test" ''
         set -eu
         printf '%s\n%s\n%s\n' "$1" "$2" "$3" > "$MCL_DARWIN_TEST_ROOT/$MCL_TEST_SCENARIO.post"
+      '';
+      fatalLifecycleHook = pkgs.writeShellScript "mcl-darwin-fatal-lifecycle-test" ''
+        set -eu
+        printf '%s\n' "$*" >> "$MCL_DARWIN_TEST_ROOT/unexpected-lifecycle-hook"
+        exit 97
       '';
     in
     {
@@ -117,26 +143,7 @@
             }
 
             validate_event_log() {
-              python - "$1" ${../docs/deployment/event-schema.json} <<'PY'
-            import json
-            import pathlib
-            import sys
-
-            from jsonschema import Draft202012Validator, FormatChecker
-
-            event_log = pathlib.Path(sys.argv[1])
-            schema = json.loads(pathlib.Path(sys.argv[2]).read_text())
-            Draft202012Validator.check_schema(schema)
-            validator = Draft202012Validator(schema, format_checker=FormatChecker())
-            events = [json.loads(line) for line in event_log.read_text().splitlines() if line.strip()]
-            if not events:
-                raise AssertionError(f"event log is empty: {event_log}")
-            for index, event in enumerate(events, start=1):
-                errors = sorted(validator.iter_errors(event), key=lambda error: list(error.path))
-                if errors:
-                    rendered = "; ".join(error.message for error in errors)
-                    raise AssertionError(f"{event_log}:{index}: {rendered}")
-            PY
+              python ${eventLogValidator} "$1" ${../docs/deployment/event-schema.json}
             }
 
             profile="$MCL_DARWIN_TEST_ROOT/system profile"
@@ -297,6 +304,316 @@
               jq -s . "$deferred_events" >&2
               exit 1
             }
+
+            # A dry-run records only the authenticated desired/current/converged
+            # state and its two events. Every activation surface is populated
+            # with a command that leaves evidence and fails if it is reached.
+            dry_profile="$MCL_DARWIN_TEST_ROOT/dry-run profile"
+            nix-env --profile "$dry_profile" --set ${previousGeneration}
+            dry_profile_link=$(readlink "$dry_profile")
+            dry_generation_link=$(readlink "$dry_profile-1-link")
+            dry_active_before=$(cat "$MCL_DARWIN_TEST_ROOT/active-generation")
+            dry_manifest="$MCL_DARWIN_TEST_ROOT/dry-run.json"
+            dry_state="$MCL_DARWIN_TEST_ROOT/dry-run-state"
+            dry_events="$MCL_DARWIN_TEST_ROOT/dry-run-events.jsonl"
+            make_manifest ${desiredGeneration} 5 "$dry_manifest" \
+              --health-command 'fatal-health|5|printf health > "$MCL_DARWIN_TEST_ROOT/unexpected-health"; exit 97' \
+              --rollback-mode automatic \
+              --rollback-max-attempts 1 \
+              --on-health-check-failure rollback
+            fatal_restore='printf restore > "$MCL_DARWIN_TEST_ROOT/unexpected-restore"; exit 97'
+            fatal_generation='printf generation > "$MCL_DARWIN_TEST_ROOT/unexpected-generation"; exit 97'
+            fatal_switch='printf switch > "$MCL_DARWIN_TEST_ROOT/unexpected-switch"; exit 97'
+            fatal_rollback='printf rollback > "$MCL_DARWIN_TEST_ROOT/unexpected-rollback"; exit 97'
+            mcl deploy-apply \
+              --manifest "$dry_manifest" \
+              --target m3 \
+              --trusted-manifest-public-key ${pkgs.lib.escapeShellArg manifestPublicKey} \
+              --state-dir "$dry_state" \
+              --event-log "$dry_events" \
+              --activation-mode nix-darwin \
+              --system-profile "$dry_profile" \
+              --pre-switch-hook ${fatalLifecycleHook} \
+              --post-switch-hook ${fatalLifecycleHook} \
+              --restore-command "$fatal_restore" \
+              --generation-command "$fatal_generation" \
+              --switch-command "$fatal_switch" \
+              --rollback-command "$fatal_rollback" \
+              --dry-run
+            test "$(readlink "$dry_profile")" = "$dry_profile_link"
+            test "$(readlink "$dry_profile-1-link")" = "$dry_generation_link"
+            test "$(cat "$MCL_DARWIN_TEST_ROOT/active-generation")" = "$dry_active_before"
+            for marker in \
+              unexpected-lifecycle-hook \
+              unexpected-restore \
+              unexpected-generation \
+              unexpected-switch \
+              unexpected-rollback \
+              unexpected-health
+            do
+              test ! -e "$MCL_DARWIN_TEST_ROOT/$marker"
+            done
+            dry_id=$(jq -r .deploymentId "$dry_manifest")
+            cmp -s "$dry_manifest" "$dry_state/desired/$dry_id.json"
+            cmp -s "$dry_manifest" "$dry_state/targets/m3.json"
+            jq -e '.currentState == "accepted" and .sequence == 5' \
+              "$dry_state/current/$dry_id.json" >/dev/null
+            jq -e \
+              '.currentState == "succeeded"
+                and .message == "Dry-run verified signed manifest."' \
+              "$dry_state/converged/$dry_id.json" >/dev/null
+            test ! -e "$dry_state/failed/$dry_id.json"
+            test ! -e "$dry_state/superseded/$dry_id.json"
+            validate_event_log "$dry_events"
+            jq -e -s \
+              'length == 2
+                and .[0].phase == "activate-requested"
+                and .[0].command.status == "succeeded"
+                and .[0].metadata.sequence == 5
+                and .[0].metadata.dryRun == true
+                and .[1].phase == "complete"
+                and .[1].command.name == "mcl deploy-apply --dry-run"
+                and .[1].command.status == "succeeded"' \
+              "$dry_events" >/dev/null
+
+            # The forced-command stdin transport is byte preserving. JSON
+            # whitespace is not part of signature verification, but it is part
+            # of the equal-sequence protocol identity stored in targets/.
+            stdin_source="$MCL_DARWIN_TEST_ROOT/stdin-source.json"
+            stdin_compact="$MCL_DARWIN_TEST_ROOT/stdin-compact-no-eol.json"
+            stdin_compact_lf="$MCL_DARWIN_TEST_ROOT/stdin-compact-lf.json"
+            stdin_crlf="$MCL_DARWIN_TEST_ROOT/stdin-crlf-no-eol.json"
+            stdin_crlf_lf="$MCL_DARWIN_TEST_ROOT/stdin-crlf-lf.json"
+            make_manifest ${desiredGeneration} 6 "$stdin_source"
+            python - \
+              "$stdin_source" \
+              "$stdin_compact" \
+              "$stdin_compact_lf" \
+              "$stdin_crlf" \
+              "$stdin_crlf_lf" <<'PY'
+            import json
+            import pathlib
+            import sys
+
+            source, compact, compact_lf, crlf, crlf_lf = map(pathlib.Path, sys.argv[1:])
+            compact_bytes = source.read_bytes().rstrip(b"\r\n")
+            compact.write_bytes(compact_bytes)
+            compact_lf.write_bytes(compact_bytes + b"\n")
+
+            parsed = json.loads(compact_bytes)
+            pretty = json.dumps(
+                parsed,
+                ensure_ascii=False,
+                indent=2,
+                separators=(",", ": "),
+            ).encode().replace(b"\n", b"\r\n")
+            crlf.write_bytes(pretty)
+            crlf_lf.write_bytes(pretty + b"\n")
+            PY
+            python - \
+              "$stdin_compact" \
+              "$stdin_compact_lf" \
+              "$stdin_crlf" \
+              "$stdin_crlf_lf" <<'PY'
+            import pathlib
+            import sys
+
+            compact, compact_lf, crlf, crlf_lf = (
+                pathlib.Path(path).read_bytes() for path in sys.argv[1:]
+            )
+            assert compact
+            assert not compact.endswith((b"\n", b"\r"))
+            assert compact_lf == compact + b"\n"
+            assert b"\r\n" in crlf
+            assert not crlf.endswith((b"\n", b"\r"))
+            assert crlf_lf == crlf + b"\n"
+            PY
+
+            assert_stdin_equal_sequence_identity() {
+              local label=$1
+              local accepted=$2
+              local rejected=$3
+              local state="$MCL_DARWIN_TEST_ROOT/stdin-$label-state"
+              local events="$MCL_DARWIN_TEST_ROOT/stdin-$label-events.jsonl"
+              local status="$state/agent-status/m3.json"
+              local deployment_id
+              local target
+              local desired
+              local current
+              local converged
+              local target_sha
+              local desired_sha
+              local current_sha
+              local converged_sha
+              local events_sha
+              local status_sha
+              local activation_sha
+              local active_sha
+              local success_pre_sha
+              local success_post_sha
+              local profile_link
+              local generation_link
+              local exit_code
+
+              mkdir -p "$state/agent-status"
+              printf '%s' \
+                '{"target":"m3","deploymentId":"prior-status","sequence":4,"currentState":"succeeded","attempts":41,"maxAttempts":42,"retryable":false}' \
+                > "$status"
+              status_sha=$(sha256sum "$status" | cut -d' ' -f1)
+              activation_sha=$(sha256sum "$MCL_DARWIN_TEST_ROOT/activation-runs" | cut -d' ' -f1)
+              active_sha=$(sha256sum "$MCL_DARWIN_TEST_ROOT/active-generation" | cut -d' ' -f1)
+              success_pre_sha=$(sha256sum "$MCL_DARWIN_TEST_ROOT/success.pre" | cut -d' ' -f1)
+              success_post_sha=$(sha256sum "$MCL_DARWIN_TEST_ROOT/success.post" | cut -d' ' -f1)
+              profile_link=$(readlink "$dry_profile")
+              generation_link=$(readlink "$dry_profile-1-link")
+
+              SSH_ORIGINAL_COMMAND= mcl deploy-apply \
+                --manifest - \
+                --target m3 \
+                --trusted-manifest-public-key ${pkgs.lib.escapeShellArg manifestPublicKey} \
+                --state-dir "$state" \
+                --event-log "$events" \
+                --activation-mode nix-darwin \
+                --system-profile "$dry_profile" \
+                --pre-switch-hook ${fatalLifecycleHook} \
+                --post-switch-hook ${fatalLifecycleHook} \
+                --restore-command "$fatal_restore" \
+                --generation-command "$fatal_generation" \
+                --switch-command "$fatal_switch" \
+                --rollback-command "$fatal_rollback" \
+                --reject-ssh-original-command \
+                --dry-run < "$accepted"
+
+              deployment_id=$(jq -r .deploymentId "$accepted")
+              target="$state/targets/m3.json"
+              desired="$state/desired/$deployment_id.json"
+              current="$state/current/$deployment_id.json"
+              converged="$state/converged/$deployment_id.json"
+              cmp -s "$accepted" "$target"
+              diff -u <(jq -S . "$accepted") <(jq -S . "$desired")
+              jq -e '.currentState == "accepted" and .sequence == 6' "$current" >/dev/null
+              jq -e \
+                '.currentState == "succeeded"
+                  and .sequence == 6
+                  and .message == "Dry-run verified signed manifest."' \
+                "$converged" >/dev/null
+              validate_event_log "$events"
+              jq -e -s \
+                'length == 2
+                  and .[0].phase == "activate-requested"
+                  and .[1].phase == "complete"' \
+                "$events" >/dev/null
+              test "$(sha256sum "$status" | cut -d' ' -f1)" = "$status_sha"
+              jq -e '.attempts == 41 and .maxAttempts == 42' "$status" >/dev/null
+              test "$(sha256sum "$MCL_DARWIN_TEST_ROOT/activation-runs" | cut -d' ' -f1)" = "$activation_sha"
+              test "$(sha256sum "$MCL_DARWIN_TEST_ROOT/active-generation" | cut -d' ' -f1)" = "$active_sha"
+              test "$(sha256sum "$MCL_DARWIN_TEST_ROOT/success.pre" | cut -d' ' -f1)" = "$success_pre_sha"
+              test "$(sha256sum "$MCL_DARWIN_TEST_ROOT/success.post" | cut -d' ' -f1)" = "$success_post_sha"
+              test "$(readlink "$dry_profile")" = "$profile_link"
+              test "$(readlink "$dry_profile-1-link")" = "$generation_link"
+
+              target_sha=$(sha256sum "$target" | cut -d' ' -f1)
+              desired_sha=$(sha256sum "$desired" | cut -d' ' -f1)
+              current_sha=$(sha256sum "$current" | cut -d' ' -f1)
+              converged_sha=$(sha256sum "$converged" | cut -d' ' -f1)
+              events_sha=$(sha256sum "$events" | cut -d' ' -f1)
+
+              set +e
+              SSH_ORIGINAL_COMMAND= mcl deploy-apply \
+                --manifest - \
+                --target m3 \
+                --trusted-manifest-public-key ${pkgs.lib.escapeShellArg manifestPublicKey} \
+                --state-dir "$state" \
+                --event-log "$events" \
+                --activation-mode nix-darwin \
+                --system-profile "$dry_profile" \
+                --pre-switch-hook ${fatalLifecycleHook} \
+                --post-switch-hook ${fatalLifecycleHook} \
+                --restore-command "$fatal_restore" \
+                --generation-command "$fatal_generation" \
+                --switch-command "$fatal_switch" \
+                --rollback-command "$fatal_rollback" \
+                --reject-ssh-original-command \
+                --dry-run < "$rejected"
+              exit_code=$?
+              set -e
+              if [ "$exit_code" -ne 76 ]; then
+                echo "stdin $label equal-sequence collision exited $exit_code instead of 76" >&2
+                exit 1
+              fi
+
+              test "$(sha256sum "$target" | cut -d' ' -f1)" = "$target_sha"
+              test "$(sha256sum "$desired" | cut -d' ' -f1)" = "$desired_sha"
+              test "$(sha256sum "$current" | cut -d' ' -f1)" = "$current_sha"
+              test "$(sha256sum "$converged" | cut -d' ' -f1)" = "$converged_sha"
+              test "$(sha256sum "$events" | cut -d' ' -f1)" = "$events_sha"
+              test "$(sha256sum "$status" | cut -d' ' -f1)" = "$status_sha"
+              jq -e '.attempts == 41 and .maxAttempts == 42' "$status" >/dev/null
+              test "$(sha256sum "$MCL_DARWIN_TEST_ROOT/activation-runs" | cut -d' ' -f1)" = "$activation_sha"
+              test "$(sha256sum "$MCL_DARWIN_TEST_ROOT/active-generation" | cut -d' ' -f1)" = "$active_sha"
+              test "$(sha256sum "$MCL_DARWIN_TEST_ROOT/success.pre" | cut -d' ' -f1)" = "$success_pre_sha"
+              test "$(sha256sum "$MCL_DARWIN_TEST_ROOT/success.post" | cut -d' ' -f1)" = "$success_post_sha"
+              test "$(readlink "$dry_profile")" = "$profile_link"
+              test "$(readlink "$dry_profile-1-link")" = "$generation_link"
+              test ! -e "$state/failed/$deployment_id.json"
+              test ! -e "$state/superseded/$deployment_id.json"
+              for marker in \
+                unexpected-lifecycle-hook \
+                unexpected-restore \
+                unexpected-generation \
+                unexpected-switch \
+                unexpected-rollback \
+                unexpected-health
+              do
+                test ! -e "$MCL_DARWIN_TEST_ROOT/$marker"
+              done
+            }
+
+            # Both possible first arrivals own sequence 6 by their exact bytes.
+            assert_stdin_equal_sequence_identity \
+              no-final-newline-first \
+              "$stdin_compact" \
+              "$stdin_compact_lf"
+            assert_stdin_equal_sequence_identity \
+              final-newline-first \
+              "$stdin_crlf_lf" \
+              "$stdin_crlf"
+
+            # The same poison configuration without --dry-run is invalid for
+            # native Darwin activation and must fail before state or events.
+            non_dry_state="$MCL_DARWIN_TEST_ROOT/non-dry-poison-state"
+            non_dry_events="$MCL_DARWIN_TEST_ROOT/non-dry-poison-events.jsonl"
+            if mcl deploy-apply \
+              --manifest "$dry_manifest" \
+              --target m3 \
+              --trusted-manifest-public-key ${pkgs.lib.escapeShellArg manifestPublicKey} \
+              --state-dir "$non_dry_state" \
+              --event-log "$non_dry_events" \
+              --activation-mode nix-darwin \
+              --system-profile "$dry_profile" \
+              --pre-switch-hook ${fatalLifecycleHook} \
+              --post-switch-hook ${fatalLifecycleHook} \
+              --restore-command "$fatal_restore" \
+              --generation-command "$fatal_generation" \
+              --switch-command "$fatal_switch" \
+              --rollback-command "$fatal_rollback"; then
+              echo "non-dry Darwin poison configuration unexpectedly ran" >&2
+              exit 1
+            fi
+            test ! -e "$non_dry_state"
+            test ! -e "$non_dry_events"
+            test "$(readlink "$dry_profile")" = "$dry_profile_link"
+            test "$(readlink "$dry_profile-1-link")" = "$dry_generation_link"
+            for marker in \
+              unexpected-lifecycle-hook \
+              unexpected-restore \
+              unexpected-generation \
+              unexpected-switch \
+              unexpected-rollback \
+              unexpected-health
+            do
+              test ! -e "$MCL_DARWIN_TEST_ROOT/$marker"
+            done
 
             mkdir -p "$out"
             printf '%s\n' 'deployment-darwin-activation-integration: passed' > "$out/result"

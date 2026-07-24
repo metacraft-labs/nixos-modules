@@ -16,10 +16,13 @@ import std.uuid : randomUUID;
 import argparse : Command, Description, EnvFallback, NamedArgument, Placeholder;
 
 import mcl.commands.deploy_apply : DeploymentActivationMode, DeployApplyArgs,
-    DeployApplyDependencies, deployApplyDeferredExitCode, deployApplyImpl;
+    DeployApplyDependencies, deployApplyDeferredExitCode,
+    deployApplyManifestConflictExitCode, deployApplyImpl, validateDurableManifest;
 import mcl.utils.deploy_manifest : manifestDeploymentId, manifestDesiredSystemPath,
     manifestSequence, manifestSystem, manifestTarget, verifyManifestSignature;
-import mcl.utils.deploy_state : ensureDeployStateDirs, manifestStatePath,
+import mcl.utils.deploy_state : acquireDeployTargetStateLock,
+    DurableManifestSnapshot, enforceDurableManifestSnapshotCurrent,
+    ensureDeployStateDirs, loadDurableManifestSnapshot, manifestStatePath,
     safeTargetName;
 import mcl.utils.deployment_events : deploymentEventLogPathFromEnv, utcTimestamp;
 import mcl.utils.process : ProcessResult, ProcessRunner, runProcessCapture;
@@ -135,11 +138,13 @@ struct DeployAgentDependencies
     ProcessRunner fetchProcess;
     ProcessRunner runProcess;
     ProcessRunner queryProcess;
+    void delegate() afterDurableValidation;
 }
 
 struct AgentCandidate
 {
     string source;
+    string bytes;
     JSONValue manifest;
 }
 
@@ -163,16 +168,55 @@ Nullable!JSONValue loadAgentStatus(string stateDir, string target)
     return path.exists ? Nullable!JSONValue(path.readText.parseJSON) : Nullable!JSONValue.init;
 }
 
-ulong statusAttempts(Nullable!JSONValue status, string deploymentId)
+ulong statusAttempts(
+    Nullable!JSONValue status,
+    string deploymentId,
+    ulong sequence,
+)
 {
     if (status.isNull || status.get.type != JSONType.object)
         return 0;
     if (auto id = "deploymentId" in status.get.object)
         if (id.str != deploymentId)
             return 0;
+    if (auto observedSequence = "sequence" in status.get.object)
+        if (observedSequence.integer.to!ulong != sequence)
+            return 0;
     if (auto attempts = "attempts" in status.get.object)
         return attempts.integer.to!ulong;
     return 0;
+}
+
+JSONValue agentStatusJson(
+    string target,
+    string deploymentId,
+    ulong sequence,
+    string state,
+    ulong attempts,
+    ulong maxAttempts,
+    bool retryable,
+    string message,
+    string errorCode = "",
+    string observedTarget = "",
+)
+{
+    JSONValue[string] status = [
+        "target": JSONValue(target),
+        "deploymentId": JSONValue(deploymentId),
+        "sequence": JSONValue(cast(long) sequence),
+        "currentState": JSONValue(state),
+        "attempts": JSONValue(cast(long) attempts),
+        "maxAttempts": JSONValue(cast(long) maxAttempts),
+        "retryable": JSONValue(retryable),
+        "updatedAt": JSONValue(utcTimestamp()),
+        "message": JSONValue(message),
+    ];
+    if (errorCode != "")
+        status["errorCode"] = JSONValue(errorCode);
+    if (observedTarget != "")
+        status["observedTarget"] = JSONValue(observedTarget);
+
+    return JSONValue(status);
 }
 
 JSONValue writeAgentStatus(
@@ -190,27 +234,23 @@ JSONValue writeAgentStatus(
 )
 {
     ensureDeployStateDirs(stateDir);
-    JSONValue[string] status = [
-        "target": JSONValue(target),
-        "deploymentId": JSONValue(deploymentId),
-        "sequence": JSONValue(cast(long) sequence),
-        "currentState": JSONValue(state),
-        "attempts": JSONValue(cast(long) attempts),
-        "maxAttempts": JSONValue(cast(long) maxAttempts),
-        "retryable": JSONValue(retryable),
-        "updatedAt": JSONValue(utcTimestamp()),
-        "message": JSONValue(message),
-    ];
-    if (errorCode != "")
-        status["errorCode"] = JSONValue(errorCode);
-    if (observedTarget != "")
-        status["observedTarget"] = JSONValue(observedTarget);
-
+    auto status = agentStatusJson(
+        target,
+        deploymentId,
+        sequence,
+        state,
+        attempts,
+        maxAttempts,
+        retryable,
+        message,
+        errorCode,
+        observedTarget,
+    );
     auto path = agentStatusPath(stateDir, target);
     if (path.dirName != "" && !path.dirName.exists)
         path.dirName.mkdirRecurse;
-    path.write(JSONValue(status).toString(JSONOptions.doNotEscapeSlashes));
-    return JSONValue(status);
+    path.write(status.toString(JSONOptions.doNotEscapeSlashes));
+    return status;
 }
 
 bool isUrlSource(string source)
@@ -272,6 +312,7 @@ AgentCandidate[] loadAgentCandidates(DeployAgentArgs args, ProcessRunner fetchRu
             continue;
         candidates ~= AgentCandidate(
             source: source,
+            bytes: content.get,
             manifest: content.get.parseJSON,
         );
     }
@@ -289,10 +330,10 @@ AgentCandidate latestCandidate(AgentCandidate[] candidates)
     {
         if (
             manifestSequence(candidate.manifest) == manifestSequence(latest.manifest)
-            && manifestDeploymentId(candidate.manifest) != manifestDeploymentId(latest.manifest)
+            && candidate.bytes != latest.bytes
         )
             throw new Exception(
-                "Ambiguous desired state: multiple deployments share sequence "
+                "Ambiguous desired state: different signed manifests share sequence "
                 ~ manifestSequence(latest.manifest).to!string
             );
     }
@@ -301,7 +342,22 @@ AgentCandidate latestCandidate(AgentCandidate[] candidates)
 
 bool isConverged(string stateDir, JSONValue manifest)
 {
-    return manifestStatePath(stateDir, "converged", manifestDeploymentId(manifest)).exists;
+    auto path = manifestStatePath(stateDir, "converged", manifestDeploymentId(manifest));
+    if (!path.exists)
+        return false;
+    try
+    {
+        auto status = path.readText.parseJSON;
+        return status["target"].str == manifestTarget(manifest)
+            && status["deploymentId"].str == manifestDeploymentId(manifest)
+            && status["sequence"].integer.to!ulong == manifestSequence(manifest)
+            && status["desiredSystemPath"].str == manifestDesiredSystemPath(manifest)
+            && status["currentState"].str == "succeeded";
+    }
+    catch (Exception)
+    {
+        return false;
+    }
 }
 
 int deployAgentImpl(DeployAgentArgs args, DeployAgentDependencies deps)
@@ -313,6 +369,12 @@ int deployAgentImpl(DeployAgentArgs args, DeployAgentDependencies deps)
     enforce(args.manifests.length > 0 || args.manifestDirs.length > 0,
         "At least one --manifest or --manifest-dir source is required.");
 
+    // This internal lock is the correctness boundary for every agent entry
+    // point, including direct CLI invocation without a service-wrapper flock.
+    // Keep it through durable-state validation, all decisions, apply, and the
+    // final agent status write.
+    auto stateLock = acquireDeployTargetStateLock(args.stateDir, args.target);
+    scope(exit) stateLock.release();
     auto eventLogPath = args.eventLog != "" ? args.eventLog : deploymentEventLogPathFromEnv();
 
     AgentCandidate[] candidates;
@@ -376,12 +438,89 @@ int deployAgentImpl(DeployAgentArgs args, DeployAgentDependencies deps)
     auto manifest = selected.manifest;
     auto deploymentId = manifestDeploymentId(manifest);
     auto sequence = manifestSequence(manifest);
-    auto previousStatus = loadAgentStatus(args.stateDir, args.target);
-    auto previousAttempts = statusAttempts(previousStatus, deploymentId);
-
-    if (isConverged(args.stateDir, manifest))
+    // A convergence marker is evidence for one deployment identity, but the
+    // durable targets/<target>.json record is authoritative for which identity
+    // is still latest. It is allowed to affect high-water decisions only after
+    // its complete signed payload has been validated with the same trust roots
+    // as incoming manifests. Classify an older replay through deploy-apply's
+    // supersession path before the convergence shortcut so old convergence
+    // evidence cannot make a stale deployment appear current again.
+    DurableManifestSnapshot durableLatest;
+    try
+    {
+        durableLatest = loadDurableManifestSnapshot(
+            args.stateDir,
+            args.target,
+            (JSONValue current) => validateDurableManifest(
+                current,
+                args.target,
+                args.trustedManifestPublicKey,
+                args.allowedSigners,
+            ),
+        );
+        if (deps.afterDurableValidation !is null)
+            deps.afterDurableValidation();
+        enforceDurableManifestSnapshotCurrent(
+            args.stateDir, args.target, durableLatest);
+    }
+    catch (Exception e)
     {
         auto status = writeAgentStatus(args.stateDir, args.target, deploymentId, sequence,
+            "non-retryable", 0, args.maxAttempts, false,
+            "Durable latest-target state is invalid; refusing deployment.",
+            "invalid_durable_state");
+        writeln(status.toString(JSONOptions.doNotEscapeSlashes));
+        return 1;
+    }
+    auto previousStatus = loadAgentStatus(args.stateDir, args.target);
+    auto previousAttempts = statusAttempts(previousStatus, deploymentId, sequence);
+    auto supersededByDurableLatest = durableLatest.present
+        && manifestSequence(durableLatest.manifest) > sequence;
+    auto conflictsWithDurableLatest = durableLatest.present
+        && manifestSequence(durableLatest.manifest) == sequence
+        && durableLatest.bytes != selected.bytes;
+    auto isDurableLatest = durableLatest.present
+        && manifestSequence(durableLatest.manifest) == sequence
+        && durableLatest.bytes == selected.bytes;
+
+    if (supersededByDurableLatest)
+    {
+        // The durable high-water decision is observable on stdout, but it must
+        // not overwrite the newer deployment's status or any retry accounting.
+        auto status = agentStatusJson(args.target, deploymentId, sequence,
+            "superseded", previousAttempts, args.maxAttempts, false,
+            "A newer deployment is already accepted for this target.",
+            "deployment_superseded");
+        writeln(status.toString(JSONOptions.doNotEscapeSlashes));
+        return 0;
+    }
+
+    if (conflictsWithDurableLatest)
+    {
+        // An equal sequence is a protocol identity: only the exact same signed
+        // bytes may be retried. Never overwrite durable state or agent status
+        // with a conflicting payload.
+        auto status = agentStatusJson(args.target, deploymentId, sequence,
+            "non-retryable", previousAttempts, args.maxAttempts, false,
+            "A different signed manifest already owns this target sequence.",
+            "manifest_sequence_conflict");
+        writeln(status.toString(JSONOptions.doNotEscapeSlashes));
+        return 1;
+    }
+
+    if (isConverged(args.stateDir, manifest) && !durableLatest.present)
+    {
+        auto status = writeAgentStatus(args.stateDir, args.target, deploymentId, sequence,
+            "non-retryable", previousAttempts, args.maxAttempts, false,
+            "Convergence evidence has no durable latest-target identity; refusing shortcut.",
+            "missing_durable_state");
+        writeln(status.toString(JSONOptions.doNotEscapeSlashes));
+        return 1;
+    }
+
+    if (isDurableLatest && isConverged(args.stateDir, manifest))
+    {
+        auto status = agentStatusJson(args.target, deploymentId, sequence,
             "succeeded", previousAttempts, args.maxAttempts, false,
             "Deployment already converged.");
         writeln(status.toString(JSONOptions.doNotEscapeSlashes));
@@ -401,7 +540,7 @@ int deployAgentImpl(DeployAgentArgs args, DeployAgentDependencies deps)
     temp.mkdir;
     auto manifestPath = temp.buildPath("manifest.json");
     scope(exit) if (temp.exists) temp.rmdirRecurse;
-    manifestPath.write(manifest.toString(JSONOptions.doNotEscapeSlashes));
+    manifestPath.write(selected.bytes);
 
     DeployApplyArgs applyArgs;
     applyArgs.manifest = manifestPath;
@@ -426,6 +565,10 @@ int deployAgentImpl(DeployAgentArgs args, DeployAgentDependencies deps)
     auto result = deployApplyImpl(applyArgs, DeployApplyDependencies(
         runProcess: deps.runProcess,
         queryProcess: deps.queryProcess,
+        stateLock: stateLock,
+        durableLatest: durableLatest,
+        durableLatestBound: true,
+        retryIdempotentManifest: true,
     ));
 
     if (result == deployApplyDeferredExitCode)
@@ -436,6 +579,16 @@ int deployAgentImpl(DeployAgentArgs args, DeployAgentDependencies deps)
             "deployment_deferred");
         writeln(status.toString(JSONOptions.doNotEscapeSlashes));
         return 0;
+    }
+
+    if (result == deployApplyManifestConflictExitCode)
+    {
+        auto status = agentStatusJson(args.target, deploymentId, sequence,
+            "non-retryable", previousAttempts, args.maxAttempts, false,
+            "A different signed manifest already owns this target sequence.",
+            "manifest_sequence_conflict");
+        writeln(status.toString(JSONOptions.doNotEscapeSlashes));
+        return 1;
     }
 
     auto attempts = previousAttempts + 1;
@@ -452,6 +605,509 @@ int deployAgentImpl(DeployAgentArgs args, DeployAgentDependencies deps)
         succeeded ? "" : exhausted ? "retry_budget_exhausted" : "apply_failed");
     writeln(status.toString(JSONOptions.doNotEscapeSlashes));
     return result;
+}
+
+@("test_deploy_agent_reports_superseded_without_consuming_retry_budget")
+unittest
+{
+    import mcl.utils.deploy_manifest : ManifestBuildRequest, ManifestSigningRequest,
+        buildManifest, signManifest;
+    import mcl.utils.deploy_state : targetLatestPath;
+
+    auto base = deleteme ~ ".deploy-agent-superseded";
+    auto keyPath = base ~ ".ed25519";
+    auto stateDir = base ~ ".state";
+    auto manifestPath = base ~ ".manifest.json";
+    auto eventLog = base ~ ".events.jsonl";
+    scope(exit)
+    {
+        foreach (path; [base, keyPath, keyPath ~ ".pub", manifestPath, eventLog])
+            if (path.exists) path.remove;
+        if (stateDir.exists) stateDir.rmdirRecurse;
+    }
+
+    auto keygen = runProcessCapture([
+        "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", keyPath,
+    ]);
+    assert(keygen.succeeded, keygen.stderr);
+    auto publicKey = (keyPath ~ ".pub").readText.strip;
+
+    JSONValue signedManifest(string id, ulong sequence, string storeHash)
+    {
+        return signManifest(buildManifest(ManifestBuildRequest(
+            deploymentId: id,
+            target: "target",
+            gitRevision: "0123456789abcdef0123456789abcdef01234567",
+            sequence: sequence,
+            desiredSystemPath: "/nix/store/" ~ storeHash ~ "-system",
+        )), ManifestSigningRequest(keyPath: keyPath, keyId: "mcl-deployment"));
+    }
+
+    auto sequence11 = signedManifest("stable-deployment-id", 11,
+        "11111111111111111111111111111111");
+    manifestPath.write(sequence11.toString(JSONOptions.doNotEscapeSlashes));
+
+    DeployAgentArgs args;
+    args.target = "target";
+    args.manifests = [manifestPath];
+    args.trustedManifestPublicKey = publicKey;
+    args.stateDir = stateDir;
+    args.eventLog = eventLog;
+    args.maxAttempts = 3;
+    args.dryRun = true;
+
+    uint mutations;
+    ProcessResult fatalRun(string[] command)
+    {
+        mutations++;
+        return ProcessResult(99, "", "unexpected mutating command");
+    }
+    ProcessResult fakeQuery(string[] command)
+    {
+        return ProcessResult(0, "{}", "");
+    }
+
+    assert(deployAgentImpl(args, DeployAgentDependencies(
+        runProcess: &fatalRun,
+        queryProcess: &fakeQuery,
+    )) == 0);
+    auto sequence11Converged = manifestStatePath(
+        stateDir, "converged", "stable-deployment-id").readText;
+    auto sequence11Events = eventLog.readText;
+
+    // Replaying the durable latest converged identity is still an idempotent
+    // convergence shortcut: no apply event or mutation is added.
+    assert(deployAgentImpl(args, DeployAgentDependencies(
+        runProcess: &fatalRun,
+        queryProcess: &fakeQuery,
+    )) == 0);
+    auto sameLatestStatus = agentStatusPath(stateDir, "target").readText.parseJSON;
+    assert(sameLatestStatus["deploymentId"].str == "stable-deployment-id");
+    assert(sameLatestStatus["sequence"].integer == 11);
+    assert(sameLatestStatus["currentState"].str == "succeeded");
+    assert(sameLatestStatus["attempts"].integer == 1);
+    assert(eventLog.readText == sequence11Events);
+    assert(mutations == 0);
+
+    // Convergence evidence alone is insufficient: a missing or corrupt
+    // durable latest-target record fails closed without apply/event mutation.
+    auto sequence11Target = targetLatestPath(stateDir, "target").readText;
+    targetLatestPath(stateDir, "target").remove;
+    assert(deployAgentImpl(args, DeployAgentDependencies(
+        runProcess: &fatalRun,
+        queryProcess: &fakeQuery,
+    )) == 1);
+    auto missingStatus = agentStatusPath(stateDir, "target").readText.parseJSON;
+    assert(missingStatus["currentState"].str == "non-retryable");
+    assert(missingStatus["attempts"].integer == 1);
+    assert(missingStatus["errorCode"].str == "missing_durable_state");
+    assert(eventLog.readText == sequence11Events);
+    assert(mutations == 0);
+
+    targetLatestPath(stateDir, "target").write("{not-json");
+    assert(deployAgentImpl(args, DeployAgentDependencies(
+        runProcess: &fatalRun,
+        queryProcess: &fakeQuery,
+    )) == 1);
+    auto corruptStatus = agentStatusPath(stateDir, "target").readText.parseJSON;
+    assert(corruptStatus["currentState"].str == "non-retryable");
+    assert(corruptStatus["attempts"].integer == 0);
+    assert(corruptStatus["errorCode"].str == "invalid_durable_state");
+    assert(eventLog.readText == sequence11Events);
+    assert(mutations == 0);
+    targetLatestPath(stateDir, "target").write(sequence11Target);
+
+    auto sequence12 = signedManifest("stable-deployment-id", 12,
+        "22222222222222222222222222222222");
+    manifestPath.write(sequence12.toString(JSONOptions.doNotEscapeSlashes));
+    assert(deployAgentImpl(args, DeployAgentDependencies(
+        runProcess: &fatalRun,
+        queryProcess: &fakeQuery,
+    )) == 0);
+    auto desiredBefore = manifestStatePath(
+        stateDir, "desired", "stable-deployment-id").readText;
+    auto currentBefore = manifestStatePath(
+        stateDir, "current", "stable-deployment-id").readText;
+    auto convergedBefore = manifestStatePath(
+        stateDir, "converged", "stable-deployment-id").readText;
+    auto supersededBefore = manifestStatePath(
+        stateDir, "superseded", "stable-deployment-id").readText;
+    auto targetBefore = targetLatestPath(stateDir, "target").readText;
+    auto statusBefore = agentStatusPath(stateDir, "target").readText;
+    auto eventsBefore = eventLog.readText;
+
+    // Exact-byte equality is a convergence no-op, including status/events.
+    assert(deployAgentImpl(args, DeployAgentDependencies(
+        runProcess: &fatalRun,
+        queryProcess: &fakeQuery,
+    )) == 0);
+    assert(agentStatusPath(stateDir, "target").readText == statusBefore);
+    assert(eventLog.readText == eventsBefore);
+
+    // Sequence 11 has the same deploymentId and historical convergence
+    // evidence, but sequence 12 is durably latest. The replay must be
+    // superseded without consuming attempts or mutating any durable surface.
+    manifestPath.write(sequence11.toString(JSONOptions.doNotEscapeSlashes));
+    assert(deployAgentImpl(args, DeployAgentDependencies(
+        runProcess: &fatalRun,
+        queryProcess: &fakeQuery,
+    )) == 0);
+
+    assert(agentStatusPath(stateDir, "target").readText == statusBefore);
+    assert(targetLatestPath(stateDir, "target").readText == targetBefore);
+    assert(manifestStatePath(stateDir, "desired", "stable-deployment-id").readText
+        == desiredBefore);
+    assert(manifestStatePath(stateDir, "current", "stable-deployment-id").readText
+        == currentBefore);
+    assert(manifestStatePath(stateDir, "converged", "stable-deployment-id").readText
+        == convergedBefore);
+    assert(manifestStatePath(stateDir, "superseded", "stable-deployment-id").readText
+        == supersededBefore);
+    assert(convergedBefore != sequence11Converged);
+    assert(mutations == 0);
+    assert(eventLog.readText == eventsBefore);
+
+    // Same ID and sequence with another valid signed payload is a collision.
+    auto sequence12Conflict = signedManifest("stable-deployment-id", 12,
+        "abababababababababababababababab");
+    manifestPath.write(sequence12Conflict.toString(JSONOptions.doNotEscapeSlashes));
+    assert(deployAgentImpl(args, DeployAgentDependencies(
+        runProcess: &fatalRun,
+        queryProcess: &fakeQuery,
+    )) == 1);
+    assert(agentStatusPath(stateDir, "target").readText == statusBefore);
+    assert(targetLatestPath(stateDir, "target").readText == targetBefore);
+    assert(manifestStatePath(stateDir, "desired", "stable-deployment-id").readText
+        == desiredBefore);
+    assert(manifestStatePath(stateDir, "current", "stable-deployment-id").readText
+        == currentBefore);
+    assert(manifestStatePath(stateDir, "converged", "stable-deployment-id").readText
+        == convergedBefore);
+    assert(manifestStatePath(stateDir, "superseded", "stable-deployment-id").readText
+        == supersededBefore);
+    assert(eventLog.readText == eventsBefore);
+    assert(mutations == 0);
+
+    // A higher sequence may reuse the deploymentId and starts a fresh retry
+    // budget instead of inheriting the previous sequence's attempt count.
+    auto sequence13 = signedManifest("stable-deployment-id", 13,
+        "13131313131313131313131313131313");
+    manifestPath.write(sequence13.toString(JSONOptions.doNotEscapeSlashes));
+    assert(deployAgentImpl(args, DeployAgentDependencies(
+        runProcess: &fatalRun,
+        queryProcess: &fakeQuery,
+    )) == 0);
+    auto sequence13Status = agentStatusPath(stateDir, "target").readText.parseJSON;
+    assert(sequence13Status["deploymentId"].str == "stable-deployment-id");
+    assert(sequence13Status["sequence"].integer == 13);
+    assert(sequence13Status["currentState"].str == "succeeded");
+    assert(sequence13Status["attempts"].integer == 1);
+    assert(manifestSequence(
+        targetLatestPath(stateDir, "target").readText.parseJSON) == 13);
+    assert(manifestStatePath(stateDir, "converged", "stable-deployment-id")
+        .readText.parseJSON["sequence"].integer == 13);
+    assert(mutations == 0);
+}
+
+@("test_deploy_agent_rejects_invalid_durable_latest_state_without_applying")
+unittest
+{
+    import mcl.utils.deploy_manifest : ManifestBuildRequest, ManifestSigningRequest,
+        buildManifest, signManifest;
+    import mcl.utils.deploy_state : targetLatestPath;
+
+    auto base = deleteme ~ ".deploy-agent-invalid-durable";
+    auto keyPath = base ~ ".ed25519";
+    scope(exit)
+    {
+        foreach (path; [base, keyPath, keyPath ~ ".pub"])
+            if (path.exists) path.remove;
+        foreach (variant; [
+            "parse-invalid",
+            "wrong-types",
+            "missing-fields",
+            "wrong-target",
+            "tampered-sequence",
+            "tampered-signature",
+        ])
+        {
+            auto root = base ~ "." ~ variant;
+            foreach (suffix; [".manifest.json", ".events.jsonl"])
+                if ((root ~ suffix).exists) (root ~ suffix).remove;
+            if ((root ~ ".state").exists) (root ~ ".state").rmdirRecurse;
+        }
+    }
+
+    auto keygen = runProcessCapture([
+        "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", keyPath,
+    ]);
+    assert(keygen.succeeded, keygen.stderr);
+    auto publicKey = (keyPath ~ ".pub").readText.strip;
+
+    JSONValue signedManifest(string id, string target, ulong sequence, string storeHash)
+    {
+        return signManifest(buildManifest(ManifestBuildRequest(
+            deploymentId: id,
+            target: target,
+            gitRevision: "0123456789abcdef0123456789abcdef01234567",
+            sequence: sequence,
+            desiredSystemPath: "/nix/store/" ~ storeHash ~ "-system",
+        )), ManifestSigningRequest(keyPath: keyPath, keyId: "mcl-deployment"));
+    }
+
+    auto sequence11 = signedManifest("deploy-11", "target", 11,
+        "11111111111111111111111111111111");
+    auto sequence12 = signedManifest("deploy-12", "target", 12,
+        "22222222222222222222222222222222");
+    auto otherTarget = signedManifest("deploy-other", "other-target", 999,
+        "99999999999999999999999999999999");
+
+    foreach (variant; [
+        "parse-invalid",
+        "wrong-types",
+        "missing-fields",
+        "wrong-target",
+        "tampered-sequence",
+        "tampered-signature",
+    ])
+    {
+        auto root = base ~ "." ~ variant;
+        auto stateDir = root ~ ".state";
+        auto manifestPath = root ~ ".manifest.json";
+        auto eventLog = root ~ ".events.jsonl";
+        manifestPath.write(sequence11.toString(JSONOptions.doNotEscapeSlashes));
+
+        DeployAgentArgs args;
+        args.target = "target";
+        args.manifests = [manifestPath];
+        args.trustedManifestPublicKey = publicKey;
+        args.stateDir = stateDir;
+        args.eventLog = eventLog;
+        args.maxAttempts = 3;
+        args.dryRun = true;
+
+        uint mutations;
+        ProcessResult fatalRun(string[] command)
+        {
+            mutations++;
+            return ProcessResult(99, "", "unexpected mutating command");
+        }
+        ProcessResult fakeQuery(string[] command)
+        {
+            return ProcessResult(0, "{}", "");
+        }
+
+        assert(deployAgentImpl(args, DeployAgentDependencies(
+            runProcess: &fatalRun,
+            queryProcess: &fakeQuery,
+        )) == 0);
+        assert(mutations == 0);
+
+        auto targetBefore = targetLatestPath(stateDir, "target").readText;
+        auto desiredBefore = manifestStatePath(stateDir, "desired", "deploy-11").readText;
+        auto currentBefore = manifestStatePath(stateDir, "current", "deploy-11").readText;
+        auto convergedBefore = manifestStatePath(stateDir, "converged", "deploy-11").readText;
+        auto eventsBefore = eventLog.readText;
+
+        switch (variant)
+        {
+            case "parse-invalid":
+                targetLatestPath(stateDir, "target").write("{not-json");
+                break;
+            case "wrong-types":
+                targetLatestPath(stateDir, "target").write(
+                    `{"deploymentId":42,"sequence":"bad","target":{"name":"target"}}`);
+                break;
+            case "missing-fields":
+                targetLatestPath(stateDir, "target").write(`{}`);
+                break;
+            case "wrong-target":
+                targetLatestPath(stateDir, "target").write(
+                    otherTarget.toString(JSONOptions.doNotEscapeSlashes));
+                break;
+            case "tampered-sequence":
+                auto tampered = targetBefore.parseJSON;
+                tampered.object["sequence"] = JSONValue(999);
+                targetLatestPath(stateDir, "target").write(
+                    tampered.toString(JSONOptions.doNotEscapeSlashes));
+                break;
+            case "tampered-signature":
+                auto tampered = targetBefore.parseJSON;
+                auto signature = tampered["manifestSignature"];
+                signature.object["signature"] = JSONValue("not-an-openssh-signature");
+                tampered.object["manifestSignature"] = signature;
+                targetLatestPath(stateDir, "target").write(
+                    tampered.toString(JSONOptions.doNotEscapeSlashes));
+                break;
+            default:
+                assert(false, "Unhandled durable-state fixture: " ~ variant);
+        }
+
+        manifestPath.write(sequence12.toString(JSONOptions.doNotEscapeSlashes));
+        assert(deployAgentImpl(args, DeployAgentDependencies(
+            runProcess: &fatalRun,
+            queryProcess: &fakeQuery,
+        )) == 1);
+
+        auto status = agentStatusPath(stateDir, "target").readText.parseJSON;
+        assert(status["deploymentId"].str == "deploy-12");
+        assert(status["sequence"].integer == 12);
+        assert(status["currentState"].str == "non-retryable");
+        assert(status["attempts"].integer == 0);
+        assert(status["maxAttempts"].integer == 3);
+        assert(status["retryable"].boolean is false);
+        assert(status["errorCode"].str == "invalid_durable_state");
+        assert(eventLog.readText == eventsBefore);
+        assert(manifestStatePath(stateDir, "desired", "deploy-11").readText == desiredBefore);
+        assert(manifestStatePath(stateDir, "current", "deploy-11").readText == currentBefore);
+        assert(manifestStatePath(stateDir, "converged", "deploy-11").readText
+            == convergedBefore);
+        assert(!manifestStatePath(stateDir, "desired", "deploy-12").exists);
+        assert(!manifestStatePath(stateDir, "current", "deploy-12").exists);
+        assert(!manifestStatePath(stateDir, "converged", "deploy-12").exists);
+        assert(!manifestStatePath(stateDir, "superseded", "deploy-12").exists);
+        assert(mutations == 0);
+
+        // Restoring the last authentic durable record must let the same later
+        // signed candidate proceed. A forged high-water sequence can never
+        // permanently suppress a legitimate deployment.
+        targetLatestPath(stateDir, "target").write(targetBefore);
+        assert(deployAgentImpl(args, DeployAgentDependencies(
+            runProcess: &fatalRun,
+            queryProcess: &fakeQuery,
+        )) == 0);
+        auto recoveredStatus = agentStatusPath(stateDir, "target").readText.parseJSON;
+        assert(recoveredStatus["deploymentId"].str == "deploy-12");
+        assert(recoveredStatus["sequence"].integer == 12);
+        assert(recoveredStatus["currentState"].str == "succeeded");
+        assert(recoveredStatus["attempts"].integer == 1);
+        auto latest = targetLatestPath(stateDir, "target").readText.parseJSON;
+        assert(manifestDeploymentId(latest) == "deploy-12");
+        assert(latest.verifyManifestSignature(publicKey, ""));
+        assert(mutations == 0);
+    }
+}
+
+@("test_deploy_agent_binds_verified_durable_bytes_before_state_or_apply")
+unittest
+{
+    import mcl.utils.deploy_manifest : ManifestBuildRequest, ManifestSigningRequest,
+        buildManifest, signManifest;
+    import mcl.utils.deploy_state : targetLatestPath;
+
+    auto base = deleteme ~ ".deploy-agent-bind-durable";
+    auto keyPath = base ~ ".ed25519";
+    auto stateDir = base ~ ".state";
+    auto manifestPath = base ~ ".manifest.json";
+    auto eventLog = base ~ ".events.jsonl";
+    scope(exit)
+    {
+        foreach (path; [base, keyPath, keyPath ~ ".pub", manifestPath, eventLog])
+            if (path.exists) path.remove;
+        if (stateDir.exists) stateDir.rmdirRecurse;
+    }
+
+    auto keygen = runProcessCapture([
+        "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", keyPath,
+    ]);
+    assert(keygen.succeeded, keygen.stderr);
+    auto publicKey = (keyPath ~ ".pub").readText.strip;
+
+    JSONValue signedManifest(string id, ulong sequence, string hash)
+    {
+        return signManifest(buildManifest(ManifestBuildRequest(
+            deploymentId: id,
+            target: "target",
+            gitRevision: "0123456789abcdef0123456789abcdef01234567",
+            sequence: sequence,
+            desiredSystemPath: "/nix/store/" ~ hash ~ "-system",
+        )), ManifestSigningRequest(keyPath: keyPath, keyId: "mcl-deployment"));
+    }
+
+    auto oldManifest = signedManifest("deploy-11", 11,
+        "11111111111111111111111111111111");
+    auto newManifest = signedManifest("deploy-12", 12,
+        "22222222222222222222222222222222");
+    manifestPath.write(oldManifest.toString(JSONOptions.doNotEscapeSlashes));
+
+    DeployAgentArgs args;
+    args.target = "target";
+    args.manifests = [manifestPath];
+    args.trustedManifestPublicKey = publicKey;
+    args.stateDir = stateDir;
+    args.eventLog = eventLog;
+    args.maxAttempts = 3;
+    args.dryRun = true;
+
+    uint mutations;
+    uint queries;
+    // These dependency runners are poison counters, not state mocks: the test
+    // uses real files and OpenSSH signatures and must fail before apply/query.
+    ProcessResult poisonMutation(string[] command)
+    {
+        mutations++;
+        return ProcessResult(99, "", "unexpected mutation");
+    }
+    ProcessResult countedQuery(string[] command)
+    {
+        queries++;
+        return ProcessResult(1, "", "closure metadata unavailable");
+    }
+
+    assert(deployAgentImpl(args, DeployAgentDependencies(
+        runProcess: &poisonMutation,
+        queryProcess: &countedQuery,
+    )) == 0);
+    auto authenticTarget = targetLatestPath(stateDir, "target").readText;
+    auto desiredBefore = manifestStatePath(stateDir, "desired", "deploy-11").readText;
+    auto currentBefore = manifestStatePath(stateDir, "current", "deploy-11").readText;
+    auto convergedBefore = manifestStatePath(stateDir, "converged", "deploy-11").readText;
+    auto eventsBefore = eventLog.readText;
+    auto queriesBefore = queries;
+
+    auto forged = authenticTarget.parseJSON;
+    forged.object["sequence"] = JSONValue(999);
+    auto forgedBytes = forged.toString(JSONOptions.doNotEscapeSlashes);
+    manifestPath.write(newManifest.toString(JSONOptions.doNotEscapeSlashes));
+
+    bool seamCalled;
+    assert(deployAgentImpl(args, DeployAgentDependencies(
+        runProcess: &poisonMutation,
+        queryProcess: &countedQuery,
+        afterDurableValidation: {
+            seamCalled = true;
+            targetLatestPath(stateDir, "target").write(forgedBytes);
+        },
+    )) == 1);
+
+    assert(seamCalled);
+    auto status = agentStatusPath(stateDir, "target").readText.parseJSON;
+    assert(status["deploymentId"].str == "deploy-12");
+    assert(status["sequence"].integer == 12);
+    assert(status["currentState"].str == "non-retryable");
+    assert(status["attempts"].integer == 0);
+    assert(status["errorCode"].str == "invalid_durable_state");
+    assert(targetLatestPath(stateDir, "target").readText == forgedBytes);
+    assert(manifestStatePath(stateDir, "desired", "deploy-11").readText == desiredBefore);
+    assert(manifestStatePath(stateDir, "current", "deploy-11").readText == currentBefore);
+    assert(manifestStatePath(stateDir, "converged", "deploy-11").readText
+        == convergedBefore);
+    assert(!manifestStatePath(stateDir, "desired", "deploy-12").exists);
+    assert(!manifestStatePath(stateDir, "current", "deploy-12").exists);
+    assert(!manifestStatePath(stateDir, "converged", "deploy-12").exists);
+    assert(!manifestStatePath(stateDir, "superseded", "deploy-12").exists);
+    assert(eventLog.readText == eventsBefore);
+    assert(queries == queriesBefore);
+    assert(mutations == 0);
+
+    targetLatestPath(stateDir, "target").write(authenticTarget);
+    assert(deployAgentImpl(args, DeployAgentDependencies(
+        runProcess: &poisonMutation,
+        queryProcess: &countedQuery,
+    )) == 0);
+    auto recovered = targetLatestPath(stateDir, "target").readText.parseJSON;
+    assert(manifestDeploymentId(recovered) == "deploy-12");
+    assert(recovered.verifyManifestSignature(publicKey, ""));
 }
 
 @("test_deploy_agent_filters_to_latest_signed_target")

@@ -17,7 +17,9 @@ import argparse : AllowedValues, Command, Description, EnvFallback, NamedArgumen
 import mcl.utils.deploy_manifest : ManifestBuildRequest, buildManifest,
     manifestDeploymentId, manifestDesiredSystemPath, manifestSequence, manifestSystem,
     manifestTarget, verifyManifestSignature;
-import mcl.utils.deploy_state : markDeploymentState, recordDesiredManifest;
+import mcl.utils.deploy_state : acquireDeployTargetStateLock, DeployTargetStateLock,
+    DesiredManifestDecision, DurableManifestSnapshot, loadDurableManifestSnapshot,
+    markDeploymentState, recordDesiredManifestBound;
 import mcl.utils.deployment_events : ClosureSummary, DeploymentEventContext,
     appendDeploymentEvent, deploymentEventJson, deploymentEventLogPathFromEnv,
     queryClosureSummary, stderrSummary;
@@ -32,6 +34,7 @@ enum DeploymentActivationMode
 }
 
 enum deployApplyDeferredExitCode = 75;
+enum deployApplyManifestConflictExitCode = 76;
 
 @(Command("deploy-apply")
     .Description("Target-side signed deployment apply wrapper"))
@@ -142,6 +145,12 @@ struct DeployApplyDependencies
 {
     ProcessRunner runProcess;
     ProcessRunner queryProcess;
+    DeployTargetStateLock stateLock;
+    DurableManifestSnapshot durableLatest;
+    bool durableLatestBound;
+    bool retryIdempotentManifest;
+    void delegate() beforeStateLock;
+    void delegate() afterDurableValidation;
 }
 
 export int deploy_apply(DeployApplyArgs args)
@@ -155,7 +164,16 @@ export int deploy_apply(DeployApplyArgs args)
 string readManifestText(string path)
 {
     if (path == "-")
-        return stdin.byLine.join("\n").to!string;
+    {
+        // The signed JSON value is also the protocol identity for an accepted
+        // sequence.  Read stdin as an uninterpreted byte stream: line ranges
+        // discard terminators and would make distinct wire payloads compare
+        // equal after validation.
+        ubyte[] bytes;
+        foreach (chunk; stdin.byChunk(64 * 1024))
+            bytes ~= chunk;
+        return cast(string) bytes;
+    }
     return path.readText;
 }
 
@@ -282,6 +300,22 @@ ProcessResult activateDarwinGeneration(ProcessRunner runner, string generation)
     return runner([generation ~ "/activate"]);
 }
 
+void validateDurableManifest(
+    JSONValue manifest,
+    string target,
+    string trustedManifestPublicKey,
+    string allowedSigners,
+)
+{
+    enforce(manifestTarget(manifest) == target,
+        "Durable latest-target state belongs to a different target.");
+    manifestDeploymentId(manifest);
+    manifestSequence(manifest);
+    enforce(manifest.verifyManifestSignature(
+            trustedManifestPublicKey, allowedSigners),
+        "Durable latest-target state failed signature verification.");
+}
+
 int deployApplyImpl(DeployApplyArgs args, DeployApplyDependencies deps)
 {
     import std.json : JSONOptions;
@@ -292,10 +326,16 @@ int deployApplyImpl(DeployApplyArgs args, DeployApplyDependencies deps)
     if (args.activationMode == DeploymentActivationMode.nixDarwin)
     {
         enforce(args.systemProfile != "", "--system-profile must not be empty for nix-darwin activation.");
-        enforce(args.switchCommand == "",
-            "--switch-command is incompatible with explicit nix-darwin activation.");
-        enforce(args.rollbackCommand == "",
-            "--rollback-command is incompatible with explicit nix-darwin activation.");
+        // Dry-run exits before restore, generation lookup, switch, health
+        // checks, and rollback.  Accepting deliberately fatal test overrides
+        // in that mode lets the public wrapper prove those paths are inert.
+        if (!args.dryRun)
+        {
+            enforce(args.switchCommand == "",
+                "--switch-command is incompatible with explicit nix-darwin activation.");
+            enforce(args.rollbackCommand == "",
+                "--rollback-command is incompatible with explicit nix-darwin activation.");
+        }
     }
 
     if (args.rejectSshOriginalCommand)
@@ -305,13 +345,54 @@ int deployApplyImpl(DeployApplyArgs args, DeployApplyDependencies deps)
     ProcessResult defaultRunner(string[] command) { return runProcessCapture(command); }
     auto runner = deps.runProcess is null ? &defaultRunner : deps.runProcess;
     auto queryRunner = deps.queryProcess is null ? runner : deps.queryProcess;
-    auto manifest = readManifestText(args.manifest).parseJSON;
+    auto manifestBytes = readManifestText(args.manifest);
+    auto manifest = manifestBytes.parseJSON;
     enforce(manifestTarget(manifest) == args.target,
         "Manifest target '" ~ manifestTarget(manifest) ~ "' does not match expected target '" ~ args.target ~ "'.");
     enforce(manifest.verifyManifestSignature(args.trustedManifestPublicKey, args.allowedSigners),
         "Manifest signature verification failed.");
 
-    auto accepted = recordDesiredManifest(args.stateDir, manifest);
+    auto stateLock = deps.stateLock;
+    auto ownsStateLock = false;
+    scope(exit)
+        if (ownsStateLock)
+            stateLock.release();
+    auto durableLatest = deps.durableLatest;
+    if (!deps.durableLatestBound)
+    {
+        if (deps.beforeStateLock !is null)
+            deps.beforeStateLock();
+        stateLock = acquireDeployTargetStateLock(args.stateDir, args.target);
+        ownsStateLock = true;
+        durableLatest = loadDurableManifestSnapshot(
+            args.stateDir,
+            args.target,
+            (JSONValue current) => validateDurableManifest(
+                current,
+                args.target,
+                args.trustedManifestPublicKey,
+                args.allowedSigners,
+            ),
+        );
+        if (deps.afterDurableValidation !is null)
+            deps.afterDurableValidation();
+    }
+    else
+    {
+        enforce(stateLock !is null,
+            "A bound durable deployment snapshot requires its held target state lock.");
+    }
+
+    auto desiredDecision = recordDesiredManifestBound(
+        args.stateDir, manifest, manifestBytes, durableLatest);
+    if (desiredDecision == DesiredManifestDecision.superseded)
+        return 0;
+    if (desiredDecision == DesiredManifestDecision.conflict)
+        return deployApplyManifestConflictExitCode;
+    if (desiredDecision == DesiredManifestDecision.idempotent
+        && !deps.retryIdempotentManifest)
+        return 0;
+
     auto eventLogPath = args.eventLog != "" ? args.eventLog : deploymentEventLogPathFromEnv();
     auto context = DeploymentEventContext(
         eventLogPath: eventLogPath,
@@ -355,16 +436,6 @@ int deployApplyImpl(DeployApplyArgs args, DeployApplyDependencies deps)
             metadata,
             errorRetryable,
         ));
-    }
-
-    if (!accepted)
-    {
-        emit("activate-requested", "mcl deploy-apply", ["mcl", "deploy-apply"], "skipped", 0,
-            "", "superseded", "", [
-                "sequence": JSONValue(cast(long) manifestSequence(manifest)),
-                "reason": JSONValue("A newer deployment is already accepted for this target."),
-            ]);
-        return 0;
     }
 
     emit("activate-requested", "mcl deploy-apply", ["mcl", "deploy-apply"], "succeeded", 0,
@@ -712,6 +783,599 @@ unittest
     args.trustedManifestPublicKey = "ssh-ed25519 AAAATEST test";
 
     assertThrown!Exception(deployApplyImpl(args, DeployApplyDependencies()));
+}
+
+@("test_deploy_apply_rejects_post_validation_durable_state_replacement_without_partial_state")
+unittest
+{
+    import std.file : getAttributes, rmdirRecurse;
+    import std.json : JSONOptions;
+    import mcl.utils.deploy_manifest : ManifestSigningRequest, signManifest;
+    import mcl.utils.deploy_state : manifestStatePath, targetLatestPath;
+
+    auto base = deleteme ~ ".deploy-apply-post-validation-swap";
+    auto keyPath = base ~ ".ed25519";
+    scope(exit)
+    {
+        foreach (path; [base, keyPath, keyPath ~ ".pub"])
+            if (path.exists) path.remove;
+        foreach (variant; ["parse-invalid", "forged-high-water"])
+        {
+            auto stateDir = base ~ "." ~ variant ~ ".state";
+            auto eventLog = base ~ "." ~ variant ~ ".events.jsonl";
+            auto oldPath = base ~ "." ~ variant ~ ".old.json";
+            auto newPath = base ~ "." ~ variant ~ ".new.json";
+            if (stateDir.exists) stateDir.rmdirRecurse;
+            foreach (path; [eventLog, oldPath, newPath])
+                if (path.exists) path.remove;
+        }
+    }
+
+    auto keygen = runProcessCapture([
+        "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", keyPath,
+    ]);
+    assert(keygen.succeeded, keygen.stderr);
+    auto publicKey = (keyPath ~ ".pub").readText.strip;
+
+    JSONValue signedManifest(string id, ulong sequence, string hash)
+    {
+        return signManifest(buildManifest(ManifestBuildRequest(
+            deploymentId: id,
+            target: "target",
+            gitRevision: "0123456789abcdef0123456789abcdef01234567",
+            sequence: sequence,
+            desiredSystemPath: "/nix/store/" ~ hash ~ "-system",
+        )), ManifestSigningRequest(keyPath: keyPath, keyId: "mcl-deployment"));
+    }
+
+    foreach (variant; ["parse-invalid", "forged-high-water"])
+    {
+        auto stateDir = base ~ "." ~ variant ~ ".state";
+        auto eventLog = base ~ "." ~ variant ~ ".events.jsonl";
+        auto oldPath = base ~ "." ~ variant ~ ".old.json";
+        auto newPath = base ~ "." ~ variant ~ ".new.json";
+        auto oldManifest = signedManifest("deploy-11", 11,
+            "11111111111111111111111111111111");
+        auto newManifest = signedManifest("deploy-12", 12,
+            "22222222222222222222222222222222");
+        oldPath.write(oldManifest.toString(JSONOptions.doNotEscapeSlashes));
+        newPath.write(newManifest.toString(JSONOptions.doNotEscapeSlashes));
+
+        uint mutationCalls;
+        uint queryCalls;
+        // Process runners are deliberately inert: this test exercises real
+        // parsing, OpenSSH signature verification, locking, and filesystem
+        // state while proving no activation surface is reached.
+        ProcessResult poisonMutation(string[] command)
+        {
+            mutationCalls++;
+            return ProcessResult(99, "", "unexpected mutation");
+        }
+        ProcessResult countedQuery(string[] command)
+        {
+            queryCalls++;
+            return ProcessResult(1, "", "closure metadata unavailable");
+        }
+
+        DeployApplyArgs args;
+        args.manifest = oldPath;
+        args.target = "target";
+        args.trustedManifestPublicKey = publicKey;
+        args.stateDir = stateDir;
+        args.eventLog = eventLog;
+        args.dryRun = true;
+
+        assert(deployApplyImpl(args, DeployApplyDependencies(
+            runProcess: &poisonMutation,
+            queryProcess: &countedQuery,
+        )) == 0);
+        auto authenticTarget = targetLatestPath(stateDir, "target").readText;
+        assert((targetLatestPath(stateDir, "target").getAttributes & 511) == 416);
+        auto desiredBefore = manifestStatePath(stateDir, "desired", "deploy-11").readText;
+        auto currentBefore = manifestStatePath(stateDir, "current", "deploy-11").readText;
+        auto convergedBefore = manifestStatePath(stateDir, "converged", "deploy-11").readText;
+        auto eventsBefore = eventLog.readText;
+        auto queriesBefore = queryCalls;
+
+        string replacement;
+        if (variant == "parse-invalid")
+            replacement = "{not-json";
+        else
+        {
+            auto forged = authenticTarget.parseJSON;
+            forged.object["sequence"] = JSONValue(999);
+            replacement = forged.toString(JSONOptions.doNotEscapeSlashes);
+        }
+
+        args.manifest = newPath;
+        bool seamCalled;
+        bool rejected;
+        try
+        {
+            deployApplyImpl(args, DeployApplyDependencies(
+                runProcess: &poisonMutation,
+                queryProcess: &countedQuery,
+                afterDurableValidation: {
+                    seamCalled = true;
+                    targetLatestPath(stateDir, "target").write(replacement);
+                },
+            ));
+        }
+        catch (Exception)
+        {
+            rejected = true;
+        }
+
+        assert(seamCalled);
+        assert(rejected);
+        assert(targetLatestPath(stateDir, "target").readText == replacement);
+        assert(manifestStatePath(stateDir, "desired", "deploy-11").readText == desiredBefore);
+        assert(manifestStatePath(stateDir, "current", "deploy-11").readText == currentBefore);
+        assert(manifestStatePath(stateDir, "converged", "deploy-11").readText
+            == convergedBefore);
+        assert(!manifestStatePath(stateDir, "desired", "deploy-12").exists);
+        assert(!manifestStatePath(stateDir, "current", "deploy-12").exists);
+        assert(!manifestStatePath(stateDir, "converged", "deploy-12").exists);
+        assert(!manifestStatePath(stateDir, "superseded", "deploy-12").exists);
+        assert(eventLog.readText == eventsBefore);
+        assert(queryCalls == queriesBefore);
+        assert(mutationCalls == 0);
+    }
+}
+
+@("test_deploy_apply_target_lock_prevents_stale_writer_from_overtaking_newer_state")
+unittest
+{
+    import core.sync.semaphore : Semaphore;
+    import core.thread.osthread : Thread;
+    import std.file : rmdirRecurse;
+    import std.json : JSONOptions;
+    import mcl.utils.deploy_manifest : ManifestSigningRequest, signManifest;
+    import mcl.utils.deploy_state : manifestStatePath, targetLatestPath;
+    import mcl.utils.deployment_events : readDeploymentEvents;
+
+    auto base = deleteme ~ ".deploy-apply-concurrent-writers";
+    auto keyPath = base ~ ".ed25519";
+    auto oldPath = base ~ ".old.json";
+    auto newPath = base ~ ".new.json";
+    auto stateDir = base ~ ".state";
+    auto eventLog = base ~ ".events.jsonl";
+    scope(exit)
+    {
+        foreach (path; [base, keyPath, keyPath ~ ".pub", oldPath, newPath, eventLog])
+            if (path.exists) path.remove;
+        if (stateDir.exists) stateDir.rmdirRecurse;
+    }
+
+    auto keygen = runProcessCapture([
+        "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", keyPath,
+    ]);
+    assert(keygen.succeeded, keygen.stderr);
+    auto publicKey = (keyPath ~ ".pub").readText.strip;
+
+    JSONValue signedManifest(string id, ulong sequence, string hash)
+    {
+        return signManifest(buildManifest(ManifestBuildRequest(
+            deploymentId: id,
+            target: "target",
+            gitRevision: "0123456789abcdef0123456789abcdef01234567",
+            sequence: sequence,
+            desiredSystemPath: "/nix/store/" ~ hash ~ "-system",
+        )), ManifestSigningRequest(keyPath: keyPath, keyId: "mcl-deployment"));
+    }
+
+    auto oldManifest = signedManifest("stable-deployment-id", 11,
+        "11111111111111111111111111111111");
+    auto newManifest = signedManifest("stable-deployment-id", 12,
+        "22222222222222222222222222222222");
+    auto oldBytes = oldManifest.toString(JSONOptions.doNotEscapeSlashes);
+    auto newBytes = newManifest.toString(JSONOptions.doNotEscapeSlashes);
+    oldPath.write(oldBytes);
+    newPath.write(newBytes);
+
+    ProcessResult poisonMutation(string[] command)
+    {
+        return ProcessResult(99, "", "unexpected mutation");
+    }
+    ProcessResult metadataUnavailable(string[] command)
+    {
+        return ProcessResult(1, "", "closure metadata unavailable");
+    }
+
+    DeployApplyArgs commonArgs(string path)
+    {
+        DeployApplyArgs args;
+        args.manifest = path;
+        args.target = "target";
+        args.trustedManifestPublicKey = publicKey;
+        args.stateDir = stateDir;
+        args.eventLog = eventLog;
+        args.dryRun = true;
+        return args;
+    }
+
+    auto oldPaused = new Semaphore(0);
+    auto releaseOld = new Semaphore(0);
+    int oldResult = -1;
+    Exception oldError;
+    auto oldThread = new Thread({
+        try
+        {
+            oldResult = deployApplyImpl(
+                commonArgs(oldPath),
+                DeployApplyDependencies(
+                    runProcess: &poisonMutation,
+                    queryProcess: &metadataUnavailable,
+                    beforeStateLock: {
+                        oldPaused.notify();
+                        releaseOld.wait();
+                    },
+                ),
+            );
+        }
+        catch (Exception e)
+        {
+            oldError = e;
+        }
+    });
+
+    oldThread.start();
+    oldPaused.wait();
+    assert(deployApplyImpl(
+        commonArgs(newPath),
+        DeployApplyDependencies(
+            runProcess: &poisonMutation,
+            queryProcess: &metadataUnavailable,
+        ),
+    ) == 0);
+    auto targetAfterNew = targetLatestPath(stateDir, "target").readText;
+    auto desiredAfterNew = manifestStatePath(
+        stateDir, "desired", "stable-deployment-id").readText;
+    auto currentAfterNew = manifestStatePath(
+        stateDir, "current", "stable-deployment-id").readText;
+    auto convergedAfterNew = manifestStatePath(
+        stateDir, "converged", "stable-deployment-id").readText;
+    auto eventsAfterNew = eventLog.readText;
+
+    releaseOld.notify();
+    oldThread.join();
+    assert(oldError is null, oldError is null ? "" : oldError.msg);
+    assert(oldResult == 0);
+    assert(targetLatestPath(stateDir, "target").readText == targetAfterNew);
+    assert(targetAfterNew == newBytes);
+    assert(manifestDeploymentId(targetAfterNew.parseJSON) == "stable-deployment-id");
+    assert(manifestSequence(targetAfterNew.parseJSON) == 12);
+    assert(manifestStatePath(stateDir, "desired", "stable-deployment-id").readText
+        == desiredAfterNew);
+    assert(manifestStatePath(stateDir, "current", "stable-deployment-id").readText
+        == currentAfterNew);
+    assert(manifestStatePath(stateDir, "converged", "stable-deployment-id").readText
+        == convergedAfterNew);
+    assert(!manifestStatePath(
+        stateDir, "superseded", "stable-deployment-id").exists);
+    assert(eventLog.readText == eventsAfterNew);
+
+    auto events = readDeploymentEvents(eventLog);
+    assert(events.length == 2);
+    assert(events[0]["deploymentId"].str == "stable-deployment-id");
+    assert(events[0]["command"]["status"].str == "succeeded");
+    assert(events[1]["deploymentId"].str == "stable-deployment-id");
+    assert(events[1]["phase"].str == "complete");
+}
+
+@("test_deploy_apply_dry_run_does_not_touch_any_activation_surface")
+unittest
+{
+    import std.exception : assertThrown;
+    import std.file : dirEntries, rmdirRecurse, SpanMode;
+    import std.json : JSONOptions;
+    import std.path : buildPath;
+    import mcl.utils.deploy_manifest : ManifestHealthCheck, ManifestSigningRequest,
+        signManifest;
+    import mcl.utils.deploy_state : manifestStatePath, targetLatestPath;
+    import mcl.utils.deployment_events : readDeploymentEvents;
+
+    auto base = deleteme ~ ".deploy-apply-dry-run-surfaces";
+    auto keyPath = base ~ ".ed25519";
+    auto manifestPath = base ~ ".manifest.json";
+    auto stateDir = base ~ ".state";
+    auto nonDryStateDir = base ~ ".non-dry.state";
+    auto eventLog = base ~ ".events.jsonl";
+    auto nonDryEventLog = base ~ ".non-dry.events.jsonl";
+    auto mutationMarker = base ~ ".mutation-ran";
+    auto queryMarker = base ~ ".query-ran";
+    auto profilePath = base ~ ".system-profile";
+    auto preHook = base ~ ".pre-hook";
+    auto postHook = base ~ ".post-hook";
+    scope(exit)
+    {
+        foreach (path; [
+            base,
+            keyPath,
+            keyPath ~ ".pub",
+            manifestPath,
+            eventLog,
+            nonDryEventLog,
+            mutationMarker,
+            queryMarker,
+            profilePath,
+            preHook,
+            postHook,
+        ])
+            if (path.exists) path.remove;
+        foreach (path; [stateDir, nonDryStateDir])
+            if (path.exists) path.rmdirRecurse;
+    }
+
+    auto keygen = runProcessCapture([
+        "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", keyPath,
+    ]);
+    assert(keygen.succeeded, keygen.stderr);
+    auto desired = "/nix/store/77777777777777777777777777777777-darwin-system";
+    auto manifest = signManifest(buildManifest(ManifestBuildRequest(
+        deploymentId: "deploy-darwin-dry-run",
+        target: "m3",
+        system: "aarch64-darwin",
+        gitRevision: "0123456789abcdef0123456789abcdef01234567",
+        sequence: 77,
+        desiredSystemPath: desired,
+        healthChecks: [ManifestHealthCheck(
+            name: "fatal health surface",
+            target: "fatal-health-command",
+            timeoutSeconds: 5,
+        )],
+        rollbackMode: "automatic",
+        rollbackMaxAttempts: 1,
+        onHealthCheckFailure: "rollback",
+    )), ManifestSigningRequest(keyPath: keyPath, keyId: "mcl-deployment"));
+    auto signedText = manifest.toString(JSONOptions.doNotEscapeSlashes);
+    manifestPath.write(signedText);
+
+    uint mutationCalls;
+    uint queryCalls;
+    uint closureQueries;
+    ProcessResult poisonMutation(string[] command)
+    {
+        mutationCalls++;
+        mutationMarker.write(command.join("\n"));
+        return ProcessResult(91, "", "poison mutation surface ran");
+    }
+    ProcessResult poisonQuery(string[] command)
+    {
+        if (command == ["nix", "path-info", "--json", "--recursive", desired])
+        {
+            closureQueries++;
+            return ProcessResult(92, "", "closure metadata unavailable");
+        }
+        queryCalls++;
+        queryMarker.write(command.join("\n"));
+        return ProcessResult(93, "", "poison generation query surface ran");
+    }
+
+    DeployApplyArgs args;
+    args.manifest = manifestPath;
+    args.target = "m3";
+    args.trustedManifestPublicKey = (keyPath ~ ".pub").readText.strip;
+    args.stateDir = stateDir;
+    args.activationMode = DeploymentActivationMode.nixDarwin;
+    args.systemProfile = profilePath;
+    args.preSwitchHook = preHook;
+    args.postSwitchHook = postHook;
+    args.eventLog = eventLog;
+    args.dryRun = true;
+    args.restoreCommand = "fatal-restore";
+    args.switchCommand = "fatal-switch";
+    args.rollbackCommand = "fatal-rollback";
+    args.generationCommand = "fatal-generation-query";
+
+    assert(deployApplyImpl(args, DeployApplyDependencies(
+        runProcess: &poisonMutation,
+        queryProcess: &poisonQuery,
+    )) == 0);
+
+    // Every command-bearing surface is populated, including both lifecycle
+    // hooks, restore, generation lookup, Darwin profile/activation, health,
+    // and both rollback representations. Dry-run must reach none of them.
+    assert(mutationCalls == 0);
+    assert(queryCalls == 0);
+    assert(closureQueries == 1);
+    assert(!mutationMarker.exists);
+    assert(!queryMarker.exists);
+    assert(!profilePath.exists);
+    assert(!preHook.exists);
+    assert(!postHook.exists);
+
+    assert(manifestStatePath(stateDir, "desired", "deploy-darwin-dry-run").readText
+        == signedText);
+    assert(targetLatestPath(stateDir, "m3").readText == signedText);
+    auto current = manifestStatePath(
+        stateDir, "current", "deploy-darwin-dry-run").readText.parseJSON;
+    assert(current["currentState"].str == "accepted");
+    assert(current["sequence"].integer == 77);
+    auto converged = manifestStatePath(
+        stateDir, "converged", "deploy-darwin-dry-run").readText.parseJSON;
+    assert(converged["currentState"].str == "succeeded");
+    assert(converged["message"].str == "Dry-run verified signed manifest.");
+    assert(!manifestStatePath(stateDir, "failed", "deploy-darwin-dry-run").exists);
+    assert(!manifestStatePath(stateDir, "superseded", "deploy-darwin-dry-run").exists);
+    auto targetEntries = dirEntries(
+        stateDir.buildPath("targets"), SpanMode.shallow).array;
+    assert(targetEntries.length == 1);
+
+    auto events = readDeploymentEvents(eventLog);
+    assert(events.length == 2);
+    assert(events[0]["deploymentId"].str == "deploy-darwin-dry-run");
+    assert(events[0]["phase"].str == "activate-requested");
+    assert(events[0]["command"]["status"].str == "succeeded");
+    assert(events[0]["metadata"]["sequence"].integer == 77);
+    assert(events[0]["metadata"]["dryRun"].boolean);
+    assert(events[1]["deploymentId"].str == "deploy-darwin-dry-run");
+    assert(events[1]["phase"].str == "complete");
+    assert(events[1]["command"]["name"].str == "mcl deploy-apply --dry-run");
+    assert(events[1]["command"]["status"].str == "succeeded");
+
+    // The otherwise-identical non-dry invocation must fail closed during
+    // argument validation because Darwin never accepts generic switch/rollback
+    // command overrides. It may not create state, events, or markers.
+    args.dryRun = false;
+    args.stateDir = nonDryStateDir;
+    args.eventLog = nonDryEventLog;
+    assertThrown!Exception(deployApplyImpl(args, DeployApplyDependencies(
+        runProcess: &poisonMutation,
+        queryProcess: &poisonQuery,
+    )));
+    assert(!nonDryStateDir.exists);
+    assert(!nonDryEventLog.exists);
+    assert(mutationCalls == 0);
+    assert(queryCalls == 0);
+    assert(closureQueries == 1);
+    assert(!mutationMarker.exists);
+    assert(!queryMarker.exists);
+}
+
+@("test_deploy_apply_same_id_sequence_high_water_is_signed_exact_and_monotonic")
+unittest
+{
+    import std.file : rmdirRecurse;
+    import std.json : JSONOptions;
+    import mcl.utils.deploy_manifest : ManifestSigningRequest, signManifest;
+    import mcl.utils.deploy_state : manifestStatePath, targetLatestPath;
+
+    auto base = deleteme ~ ".deploy-apply-same-id-high-water";
+    auto keyPath = base ~ ".ed25519";
+    auto manifestPath = base ~ ".manifest.json";
+    auto stateDir = base ~ ".state";
+    auto eventLog = base ~ ".events.jsonl";
+    scope(exit)
+    {
+        foreach (path; [base, keyPath, keyPath ~ ".pub", manifestPath, eventLog])
+            if (path.exists)
+                path.remove;
+        if (stateDir.exists)
+            stateDir.rmdirRecurse;
+    }
+
+    auto keygen = runProcessCapture([
+        "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", keyPath,
+    ]);
+    assert(keygen.succeeded, keygen.stderr);
+    auto publicKey = (keyPath ~ ".pub").readText.strip;
+
+    string signedBytes(ulong sequence, string revision, string hash)
+    {
+        auto manifest = signManifest(buildManifest(ManifestBuildRequest(
+            deploymentId: "stable-deployment-id",
+            target: "target",
+            gitRevision: revision,
+            sequence: sequence,
+            desiredSystemPath: "/nix/store/" ~ hash ~ "-system",
+        )), ManifestSigningRequest(keyPath: keyPath, keyId: "mcl-deployment"));
+        return manifest.toString(JSONOptions.doNotEscapeSlashes);
+    }
+
+    auto sequence11 = signedBytes(11,
+        "1123456789abcdef0123456789abcdef01234567",
+        "11111111111111111111111111111111");
+    auto sequence12 = signedBytes(12,
+        "1223456789abcdef0123456789abcdef01234567",
+        "12121212121212121212121212121212");
+    auto sequence12Conflict = signedBytes(12,
+        "2223456789abcdef0123456789abcdef01234567",
+        "abababababababababababababababab");
+    auto sequence13 = signedBytes(13,
+        "1323456789abcdef0123456789abcdef01234567",
+        "13131313131313131313131313131313");
+
+    DeployApplyArgs args;
+    args.manifest = manifestPath;
+    args.target = "target";
+    args.trustedManifestPublicKey = publicKey;
+    args.stateDir = stateDir;
+    args.eventLog = eventLog;
+    args.dryRun = true;
+    args.preSwitchHook = base ~ ".must-not-run-pre";
+    args.postSwitchHook = base ~ ".must-not-run-post";
+
+    uint activationCalls;
+    uint queryCalls;
+    ProcessResult fatalActivation(string[] command)
+    {
+        activationCalls++;
+        return ProcessResult(99, "", "unexpected activation");
+    }
+    ProcessResult queryUnavailable(string[] command)
+    {
+        queryCalls++;
+        return ProcessResult(1, "", "metadata unavailable");
+    }
+    auto deps = DeployApplyDependencies(
+        runProcess: &fatalActivation,
+        queryProcess: &queryUnavailable,
+    );
+
+    manifestPath.write(sequence12);
+    assert(deployApplyImpl(args, deps) == 0);
+    assert(targetLatestPath(stateDir, "target").readText == sequence12);
+    auto desiredBefore = manifestStatePath(
+        stateDir, "desired", "stable-deployment-id").readText;
+    auto currentBefore = manifestStatePath(
+        stateDir, "current", "stable-deployment-id").readText;
+    auto convergedBefore = manifestStatePath(
+        stateDir, "converged", "stable-deployment-id").readText;
+    auto eventsBefore = eventLog.readText;
+    auto queryCallsBefore = queryCalls;
+
+    // Equal sequence and exact signed bytes are an idempotent no-op.
+    assert(deployApplyImpl(args, deps) == 0);
+    assert(targetLatestPath(stateDir, "target").readText == sequence12);
+    assert(manifestStatePath(stateDir, "desired", "stable-deployment-id").readText
+        == desiredBefore);
+    assert(manifestStatePath(stateDir, "current", "stable-deployment-id").readText
+        == currentBefore);
+    assert(manifestStatePath(stateDir, "converged", "stable-deployment-id").readText
+        == convergedBefore);
+    assert(eventLog.readText == eventsBefore);
+    assert(queryCalls == queryCallsBefore);
+
+    // A lower sequence is superseded regardless of deployment ID equality.
+    manifestPath.write(sequence11);
+    assert(deployApplyImpl(args, deps) == 0);
+    assert(targetLatestPath(stateDir, "target").readText == sequence12);
+    assert(manifestStatePath(stateDir, "desired", "stable-deployment-id").readText
+        == desiredBefore);
+    assert(manifestStatePath(stateDir, "current", "stable-deployment-id").readText
+        == currentBefore);
+    assert(manifestStatePath(stateDir, "converged", "stable-deployment-id").readText
+        == convergedBefore);
+    assert(eventLog.readText == eventsBefore);
+    assert(queryCalls == queryCallsBefore);
+
+    // The same sequence with different signed payload bytes is a collision.
+    manifestPath.write(sequence12Conflict);
+    assert(deployApplyImpl(args, deps) == deployApplyManifestConflictExitCode);
+    assert(targetLatestPath(stateDir, "target").readText == sequence12);
+    assert(manifestStatePath(stateDir, "desired", "stable-deployment-id").readText
+        == desiredBefore);
+    assert(manifestStatePath(stateDir, "current", "stable-deployment-id").readText
+        == currentBefore);
+    assert(manifestStatePath(stateDir, "converged", "stable-deployment-id").readText
+        == convergedBefore);
+    assert(eventLog.readText == eventsBefore);
+    assert(queryCalls == queryCallsBefore);
+
+    // A higher sequence is legitimate even when deploymentId is reused.
+    manifestPath.write(sequence13);
+    assert(deployApplyImpl(args, deps) == 0);
+    assert(targetLatestPath(stateDir, "target").readText == sequence13);
+    assert(manifestSequence(targetLatestPath(stateDir, "target").readText.parseJSON) == 13);
+    assert(manifestSequence(
+        manifestStatePath(stateDir, "current", "stable-deployment-id")
+            .readText.parseJSON) == 13);
+    assert(manifestStatePath(stateDir, "converged", "stable-deployment-id")
+        .readText.parseJSON["sequence"].integer == 13);
+    assert(eventLog.readText != eventsBefore);
+    assert(queryCalls == queryCallsBefore + 1);
+    assert(activationCalls == 0);
 }
 
 @("test_deploy_apply_nix_darwin_switches_profile_and_activates")

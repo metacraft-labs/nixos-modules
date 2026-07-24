@@ -31,9 +31,15 @@ The agent is intentionally strict:
   configured `targetName`; a manifest for any other target is non-retryable.
 - Every manifest must verify against the configured OpenSSH allowed-signers
   file or trusted public key before any state change or apply attempt.
-- If multiple manifests share the highest sequence but have different
-  deployment IDs, the result is non-retryable because the desired state is
-  ambiguous.
+- A target's sequence is its monotonic high-water mark, independently of
+  `deploymentId`. A lower sequence is a mutation-free superseded no-op. At an
+  equal sequence, only the exact same trusted signed manifest bytes are
+  idempotent; any different payload (including one that reuses the same
+  `deploymentId`) is a non-retryable `manifest_sequence_conflict`.
+- A higher sequence is accepted even when it legitimately reuses the same
+  `deploymentId`. Retry accounting and convergence evidence include the
+  sequence and desired system path, so evidence from the older sequence cannot
+  satisfy or exhaust the newer one.
 - Only the highest valid sequence is applied.
 
 Publishers should therefore expose per-target manifest paths or pre-filtered
@@ -47,6 +53,25 @@ The pull agent reuses the M4 deployment state directory and event stream:
   `/var/lib/mcl/deployments`.
 - Agent status is written only to
   `/var/lib/mcl/deployments/agent-status/<target>.json`.
+- `targets/<target>.json` is the complete signed desired-state manifest and is
+  replaced atomically with mode `0640`. Before its deployment identity or
+  sequence is used as a high-water mark, the agent binds the exact durable
+  bytes in memory, validates required identity fields, confirms the target,
+  and verifies the full payload against the configured manifest trust roots.
+  The bound bytes and values are carried into `deploy-apply`; they are not
+  reread for a later high-water or supersession decision. A path replacement
+  between validation and recording fails closed before desired/current state,
+  events, attempts, lifecycle hooks, activation, or rollback can change.
+  Malformed, mismatched, unsigned, or tampered durable state likewise fails as
+  `invalid_durable_state` without consuming an attempt or entering
+  `deploy-apply`.
+- Sequence refusal is decided before desired/current/superseded state or
+  deployment events are written. A stale or equal-sequence conflicting
+  manifest therefore cannot regress the durable target bytes, convergence
+  evidence, agent status/attempts, lifecycle hooks, profile, or activation.
+  The direct apply command returns `76` for an equal-sequence conflict; the
+  pull agent reports the stable non-retryable error code
+  `manifest_sequence_conflict` on stdout without overwriting durable status.
 - Target-side deployment events are emitted by the existing `deploy-apply`
   path with `target.transport = "pull-agent"` and
   `backend.controller = "mcl-deploy-agent"`.
@@ -58,9 +83,31 @@ rehearsal defines the operator artifact format.
 
 ## Locking And Retries
 
-The NixOS module wraps the agent in `flock -n` using a per-target lock file.
-Concurrent agent or apply attempts for the same host fail instead of
-overlapping.
+The NixOS and nix-darwin modules wrap scheduled polls in `flock -n` using a
+per-target runtime lock file, so an overlapping timer invocation exits without
+starting another poll. Independently of those wrappers, `mcl deploy-agent`,
+`mcl deploy-apply`, and desired-state recording take a shared internal
+per-target state lock under `stateDir/locks`. The internal lock is held from
+durable snapshot validation through the state transition, activation, events,
+and final status. Direct CLI callers therefore cannot bypass serialization,
+and a stale signed writer that began first but acquires the lock after a newer
+writer is reclassified against the newer signed high-water state instead of
+overwriting it.
+
+The application-owned `stateDir/locks` directory must be owned by the
+effective deployment user with exact mode `0700`; existing `0750`, `0500`, or
+otherwise mismatched directories are rejected rather than silently accepted
+or repaired. Lock leaves must be regular, singly-linked, same-owner files with
+exact mode `0600`.
+
+On NixOS, the service's `ExecStartPre` is the sole upgrade migration boundary:
+inside the declaratively protected root-owned state directory it creates an
+absent `locks` child as `root:root` mode `0700`, or narrows a legitimate
+root-owned legacy `0750`/`0755` directory to `0700`. It binds the child with
+no-follow directory descriptors, refuses symlinks, non-directories, unexpected
+owners/groups or modes, and revalidates the inode after migration before `mcl`
+can execute. Generic CLI callers remain fail-closed and never repair unsafe
+existing state.
 
 Retry handling is bounded:
 
@@ -69,8 +116,9 @@ Retry handling is bounded:
 - A pre-switch readiness hook that exits with status 75 records `deferred`,
   remains retryable, and does not increment `attempts`. Other hook failures are
   ordinary apply failures and consume an attempt.
-- Wrong target, invalid signature, ambiguous latest sequence, and exhausted
-  retry budget are explicit non-retryable states.
+- Wrong target, invalid manifest signature, invalid durable state, ambiguous
+  source sequence, conflicting durable sequence identity, and exhausted retry
+  budget are explicit non-retryable states.
 - Already converged deployments short-circuit without another apply attempt.
 
 ## Platform Activation And Lifecycle Hooks
@@ -164,12 +212,28 @@ can therefore replace the system environment without unloading the process
 that is applying it.
 
 Every invocation takes a non-blocking `flock` supplied by the wrapper's Darwin
-runtime closure. State and deployment JSONL events remain under
-`/var/lib/mcl/deployments` and `/var/log/mcl/deployments` by default, while
-launchd stdout and stderr use durable files beside the event log. The module's
-pre-activation fragment creates those root-owned paths before launchd loads
-the daemon. No `sudo` or passwordless privilege rule is involved: launchd runs
-the system daemon directly as `root:wheel`.
+runtime closure and applies umask `0027`. Darwin uses canonical
+`/private/var/lib/mcl/deployments`, `/private/var/log/mcl/deployments`, and a
+nested `/private/var/run/mcl/deployments/<target>.lock` by default; spelling
+these paths through `/var` would traverse macOS's `/var` symlink and is rejected.
+Launchd stdout and stderr use durable files beside the event log.
+
+The pre-activation fragment invokes a dedicated path-preparation executable
+before launchd loads the daemon. It rejects non-normalized or non-dedicated
+configuration, refuses every symlink component and linked/non-regular log,
+never chmods or chowns `/private/var`, `/private/var/{lib,log,run}`, or another
+shared root, and post-verifies exact root:wheel ownership with 0750 directories
+and 0640 logs. Preparation is transactional: after validating the complete
+existing set, it records each pre-existing inode's identity and original mode
+and separately records every inode it creates. A later create, ownership,
+revalidation, or chmod failure restores original modes and removes only
+identity-stable invocation-created objects, child-first. A replaced, linked,
+remoded, or otherwise raced object is preserved and makes rollback explicitly
+incomplete and nonzero. Production roots and UID/GID are fixed by module
+assertions; deterministic failure seams are selected only while evaluating the
+module's test configuration and their variable names are absent from production
+scripts. No `sudo` or passwordless privilege rule is involved: launchd runs the
+system daemon directly as `root:wheel`.
 
 Example:
 
@@ -200,21 +264,36 @@ Like the NixOS module, importing the Darwin module does not enable it.
 
 Implemented M5 coverage:
 
-- Focused D unit tests for latest-only selection, wrong-target rejection, and
-  retry budget behavior.
-- Static NixOS module rendering check for service, timer, source, lock, and
-  retry options.
+- Focused D unit tests for latest-only selection, wrong-target rejection,
+  retry budget behavior, authenticated durable high-water validation, and
+  dry-run isolation from every activation lifecycle surface.
+- Static NixOS module rendering check for service, timer, source, lock,
+  pre-execution lock migration, and retry options.
 - NixOS VM test proving the agent applies only the latest signed manifest for
   its own host.
 - NixOS VM test proving wrong-target and invalid-signature manifests are
   rejected without restore or switch.
 - NixOS VM test proving the service-held lock rejects a concurrent contender
   and releases after the service exits.
+- NixOS VM test proving absent and legitimate legacy lock directories become
+  exact `root:root` `0700` before `mcl`, while symlink, non-directory,
+  hardlinked, wrong-owner, and wrong-group objects fail closed without mutation
+  or deployment.
+- Darwin activation integration populates every restore, generation, lifecycle
+  hook, profile/activation, health, and rollback surface with fatal markers and
+  proves `deploy-apply --dry-run` reaches none of them; the equivalent non-dry
+  override configuration fails before creating state or events.
 - Darwin module contract checks for its root LaunchDaemon, stable entrypoint,
-  polling interval, durable paths, real activation arguments, and retry bound.
+  polling interval, canonical dedicated paths, root:wheel preparation commands,
+  transactional late-failure rollback, exact original-mode restoration,
+  invocation-created cleanup, rollback-time race preservation, mode repair,
+  wrong-owner rejection, symlink refusal, shared-root invariance, real
+  activation arguments, and retry bound.
 - Darwin public-entrypoint integration coverage for a trusted activation,
   unavailable desired state, wrong-target and invalid-signature rejection,
-  JSON-schema-valid events, and non-destructive lock contention.
+  parse/type/shape/target/signature durable-state corruption, recovery of a
+  later authentic deployment, JSON-schema-valid events, and non-destructive
+  lock contention.
 
 Still required before production enablement:
 

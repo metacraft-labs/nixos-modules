@@ -49,6 +49,141 @@
       ];
 
       agentCommand = concatMapStringsSep " " (x: x) ([ "${getExe cfg.package} deploy-agent" ] ++ args);
+      prepareLocksDirectory = pkgs.writeTextFile {
+        name = "mcl-deploy-agent-prepare-locks";
+        executable = true;
+        text = ''
+          #!${pkgs.python3}/bin/python3
+          import os
+          import stat
+          import sys
+
+
+          def refuse(message):
+              print(
+                  "mcl-deploy-agent lock preparation refused: " + message,
+                  file=sys.stderr,
+              )
+              raise SystemExit(1)
+
+
+          if len(sys.argv) != 2:
+              refuse("expected exactly one deployment state directory argument")
+
+          state_path = sys.argv[1]
+          directory_flags = (
+              os.O_RDONLY
+              | os.O_DIRECTORY
+              | os.O_NOFOLLOW
+              | os.O_CLOEXEC
+          )
+
+          try:
+              state_fd = os.open(state_path, directory_flags)
+          except OSError as error:
+              refuse("cannot securely open state directory %s: %s" % (state_path, error))
+
+          try:
+              state_metadata = os.fstat(state_fd)
+              if not stat.S_ISDIR(state_metadata.st_mode):
+                  refuse("state path is not a directory: " + state_path)
+              if state_metadata.st_uid != 0 or state_metadata.st_gid != 0:
+                  refuse(
+                      "state directory must be owned by root:root: " + state_path
+                  )
+              if stat.S_IMODE(state_metadata.st_mode) & 0o022:
+                  refuse(
+                      "state directory must not be writable by group or other: "
+                      + state_path
+                  )
+
+              try:
+                  locks_fd = os.open("locks", directory_flags, dir_fd=state_fd)
+              except FileNotFoundError:
+                  try:
+                      os.mkdir("locks", 0o700, dir_fd=state_fd)
+                  except FileExistsError:
+                      # A root-only race is outside the threat model, but still
+                      # bind and validate the winner instead of replacing it.
+                      pass
+                  except OSError as error:
+                      refuse(
+                          "cannot create locks directory in %s: %s"
+                          % (state_path, error)
+                      )
+                  try:
+                      locks_fd = os.open("locks", directory_flags, dir_fd=state_fd)
+                  except OSError as error:
+                      refuse(
+                          "new locks path is not a safe directory in %s: %s"
+                          % (state_path, error)
+                      )
+              except OSError as error:
+                  try:
+                      leaf = os.stat(
+                          "locks",
+                          dir_fd=state_fd,
+                          follow_symlinks=False,
+                      )
+                      leaf_kind = (
+                          "symlink"
+                          if stat.S_ISLNK(leaf.st_mode)
+                          else "non-directory"
+                      )
+                  except OSError:
+                      leaf_kind = "unsafe or inaccessible object"
+                  refuse(
+                      "locks path in %s is a %s: %s"
+                      % (state_path, leaf_kind, error)
+                  )
+
+              try:
+                  metadata = os.fstat(locks_fd)
+                  mode = stat.S_IMODE(metadata.st_mode)
+                  if not stat.S_ISDIR(metadata.st_mode):
+                      refuse("locks path is not a directory in " + state_path)
+                  if metadata.st_uid != 0 or metadata.st_gid != 0:
+                      refuse(
+                          "locks directory must be owned by root:root in "
+                          + state_path
+                      )
+                  if mode not in (0o700, 0o750, 0o755):
+                      refuse(
+                          "locks directory has unsupported mode %04o in %s"
+                          % (mode, state_path)
+                      )
+
+                  # Only two known-safe legacy modes are migrated. fchmod acts
+                  # on the already-bound descriptor and cannot follow a leaf
+                  # symlink. The protected root-owned state directory prevents
+                  # an unprivileged user from replacing its `locks` entry.
+                  if mode != 0o700:
+                      os.fchmod(locks_fd, 0o700)
+
+                  verified = os.fstat(locks_fd)
+                  named = os.stat(
+                      "locks",
+                      dir_fd=state_fd,
+                      follow_symlinks=False,
+                  )
+                  if (
+                      not stat.S_ISDIR(verified.st_mode)
+                      or verified.st_uid != 0
+                      or verified.st_gid != 0
+                      or stat.S_IMODE(verified.st_mode) != 0o700
+                      or named.st_dev != verified.st_dev
+                      or named.st_ino != verified.st_ino
+                  ):
+                      refuse(
+                          "locks directory failed post-migration verification in "
+                          + state_path
+                      )
+              finally:
+                  os.close(locks_fd)
+          finally:
+              os.close(state_fd)
+        '';
+      };
     in
     {
       options.services.mcl-deploy-agent = {
@@ -214,6 +349,9 @@
           restartIfChanged = false;
           serviceConfig = {
             Type = "oneshot";
+            ExecStartPre = [
+              "${prepareLocksDirectory} ${escapeShellArg cfg.stateDir}"
+            ];
             ExecStart = "${pkgs.util-linux}/bin/flock -n ${escapeShellArg cfg.lockFile} ${agentCommand}";
             CacheDirectory = "mcl-deploy-agent";
             Environment = [
