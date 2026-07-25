@@ -199,6 +199,13 @@ runs:
           fallback = true
           download-attempts = 2
           connect-timeout = 5
+          # Persistent self-hosted runners have observed a group of multiplexed
+          # cache.nixos.org NAR transfers make no progress until the job ceiling.
+          # Bound silent transfers and prefer a smaller HTTP/1.1 pool so Nix can
+          # retry an individual object instead of wedging the whole substitution.
+          stalled-download-timeout = 30
+          http2 = false
+          http-connections = 8
           narinfo-cache-negative-ttl = 120
           allow-import-from-derivation = true
           experimental-features = nix-command flakes pipe-operators
