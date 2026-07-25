@@ -30,5 +30,6 @@
     ./packages-ci-matrix.nix
     ./pre-commit.nix
     ./secret-integration
+    ./setup-nix-transfer-resilience.nix
   ];
 }
