@@ -356,6 +356,27 @@
                 script_path = Path(temp) / "detect-drift.sh"
                 script_path.write_text(script)
                 subprocess.run(["${pkgs.bash}/bin/bash", "-n", str(script_path)], check=True)
+
+            issue_script = extract_run_script(drift_job, "Open drift issue")
+            label_view = issue_script.find("gh label view drift")
+            label_create = issue_script.find("gh label create drift")
+            issue_create = issue_script.find(
+                'gh issue create "' + "$" + '{issue_args[@]}"'
+            )
+            assert label_view != -1, "drift notification must probe for its label"
+            assert label_create != -1, "drift notification must create a missing label"
+            assert issue_create != -1, "drift notification issue creation disappeared"
+            assert label_view < label_create < issue_create, (
+                "the reusable workflow must ensure its optional label before opening the issue"
+            )
+            assert "opening the drift issue without it" in issue_script, (
+                "label failure must not suppress the drift issue"
+            )
+
+            with tempfile.TemporaryDirectory() as temp:
+                script_path = Path(temp) / "open-drift-issue.sh"
+                script_path.write_text(issue_script)
+                subprocess.run(["${pkgs.bash}/bin/bash", "-n", str(script_path)], check=True)
             PY
 
             touch "$out"

@@ -984,14 +984,24 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           PLAN_OUTPUT="$(cat /tmp/drift-plan.txt)"
-          gh issue create \
-            --title "Infrastructure drift detected in ${{ inputs.working_directory }}" \
+          issue_args=(
+            --title "Infrastructure drift detected in ${{ inputs.working_directory }}"
             --body "Scheduled drift detection found changes. Review the plan output and reconcile.
 
           \`\`\`
           $PLAN_OUTPUT
-          \`\`\`" \
-            --label "drift"
+          \`\`\`"
+          )
+
+          if gh label view drift >/dev/null 2>&1 \
+            || gh label create drift --color d73a4a --description "Automated Terraform drift detection" \
+            || gh label view drift >/dev/null 2>&1; then
+            issue_args+=(--label drift)
+          else
+            echo "::warning::Unable to create the drift label; opening the drift issue without it"
+          fi
+
+          gh issue create "${issue_args[@]}"
 
       - name: Cleanup credentials
         if: always()
