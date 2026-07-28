@@ -58,9 +58,9 @@ inputs:
     required: false
     default: false
   nix-cache-key:
-    description: The primary key to use for the Nix GHA cache
+    description: The primary key to use for the Nix GHA cache; defaults to the current commit so disabled caching does not eagerly evaluate hashFiles()
     required: false
-    default: nix-${{ runner.os }}-${{ hashFiles('**/flake.lock') }}
+    default: nix-${{ runner.os }}-${{ github.sha }}
   nix-cache-restore-prefixes:
     description: The fallback restore prefixes for the Nix GHA cache
     required: false
