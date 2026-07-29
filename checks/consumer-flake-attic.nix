@@ -198,6 +198,9 @@
                   "nix build",
                   "--print-out-paths",
                   "attic push",
+                  "push_with_retry",
+                  "push-attempts",
+                  "push-retry-delay-seconds",
                   "missing required input",
               ]
               for needle in required:
@@ -227,6 +230,7 @@
                   fake_bin = temp_path / "bin"
                   fake_bin.mkdir()
                   fake_attic_log = temp_path / "attic.log"
+                  fake_attic_counter = temp_path / "attic-counter"
                   fake_nix_log = temp_path / "nix.log"
 
                   (fake_bin / "attic").write_text("""#!${pkgs.bash}/bin/bash
@@ -235,8 +239,16 @@
               if [ "''${FAKE_ATTIC_FAIL_PATH:-}" != "" ] && [ "$1" = "push" ]; then
                 last="''${!#}"
                 if [ "$last" = "$FAKE_ATTIC_FAIL_PATH" ]; then
-                  echo "fake attic push failed for $last" >&2
-                  exit 23
+                  count=0
+                  if [ -s "$FAKE_ATTIC_COUNTER" ]; then
+                    count=$(cat "$FAKE_ATTIC_COUNTER")
+                  fi
+                  if [ "$count" -lt "''${FAKE_ATTIC_FAIL_COUNT:-999}" ]; then
+                    count=$((count + 1))
+                    printf '%s\\n' "$count" > "$FAKE_ATTIC_COUNTER"
+                    echo "fake attic push failed for $last" >&2
+                    exit 23
+                  fi
                 fi
               fi
               """)
@@ -273,6 +285,7 @@
                   base_env.update({
                       "PATH": f"{fake_bin}:{base_env['PATH']}",
                       "FAKE_ATTIC_LOG": str(fake_attic_log),
+                      "FAKE_ATTIC_COUNTER": str(fake_attic_counter),
                       "FAKE_NIX_LOG": str(fake_nix_log),
                       "INPUT_ENDPOINT": "https://cache.metacraft-labs.test",
                       "INPUT_CACHE": "metacraft-private-infrastructure",
@@ -281,6 +294,8 @@
                       "INPUT_ATTRIBUTES": "packages.x86_64-linux.foo, checks.x86_64-linux.bar\ngithub:metacraft/example#prebuilt packages.x86_64-linux.foo",
                       "INPUT_EXTRA_NIX_ARGS": "",
                       "INPUT_EXTRA_ATTIC_PUSH_ARGS": "--jobs 2",
+                      "INPUT_PUSH_ATTEMPTS": "3",
+                      "INPUT_PUSH_RETRY_DELAY_SECONDS": "0",
                       "ATTIC_TOKEN": "test-token",
                   })
 
@@ -295,6 +310,17 @@
                   )
                   assert result.returncode == 64, result
                   assert "missing required input(s): token or ATTIC_TOKEN" in result.stderr, result.stderr
+
+                  invalid_attempts_env = base_env.copy()
+                  invalid_attempts_env["INPUT_PUSH_ATTEMPTS"] = "0"
+                  result = subprocess.run(
+                      ["${pkgs.bash}/bin/bash", str(script_paths[0])],
+                      env=invalid_attempts_env,
+                      text=True,
+                      capture_output=True,
+                  )
+                  assert result.returncode == 64, result
+                  assert "push-attempts must be a positive integer" in result.stderr, result.stderr
 
                   subprocess.run(["${pkgs.bash}/bin/bash", str(script_paths[0])], env=base_env, check=True)
                   subprocess.run(["${pkgs.bash}/bin/bash", str(script_paths[1])], env=base_env, check=True)
@@ -317,6 +343,24 @@
                       assert f"--print-out-paths {attr}" in nix_log.replace("\n", " "), nix_log
 
                   fake_attic_log.write_text("")
+                  fake_attic_counter.write_text("")
+                  fake_nix_log.write_text("")
+                  transient_env = base_env.copy()
+                  transient_env["INPUT_ATTRIBUTES"] = "packages.x86_64-linux.foo"
+                  transient_env["FAKE_ATTIC_FAIL_PATH"] = "/nix/store/foo-two"
+                  transient_env["FAKE_ATTIC_FAIL_COUNT"] = "2"
+                  subprocess.run(
+                      ["${pkgs.bash}/bin/bash", str(script_paths[1])],
+                      env=transient_env,
+                      check=True,
+                  )
+                  transient_log = fake_attic_log.read_text().splitlines()
+                  assert transient_log.count(
+                      "push --jobs 2 metacraft-private-infrastructure /nix/store/foo-two"
+                  ) == 3, transient_log
+
+                  fake_attic_log.write_text("")
+                  fake_attic_counter.write_text("")
                   fake_nix_log.write_text("")
                   fail_env = base_env.copy()
                   fail_env["INPUT_ATTRIBUTES"] = "packages.x86_64-linux.foo"
@@ -329,6 +373,11 @@
                   )
                   assert result.returncode == 23, result
                   assert "fake attic push failed for /nix/store/foo-two" in result.stderr, result.stderr
+                  fail_log = fake_attic_log.read_text().splitlines()
+                  assert fail_log.count(
+                      "push --jobs 2 metacraft-private-infrastructure /nix/store/foo-two"
+                  ) == 3, fail_log
+                  assert "after 3 attempts" in result.stdout, result.stdout
               PY
 
               touch "$out"

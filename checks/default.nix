@@ -2,6 +2,7 @@
 {
   imports = [
     ./ci-workflows.nix
+    ./encrypted-s3-artifact.nix
     ./desktop-vms
     ./deployment-docs.nix
     ./deployment-cache.nix
@@ -29,5 +30,6 @@
     ./packages-ci-matrix.nix
     ./pre-commit.nix
     ./secret-integration
+    ./setup-nix-transfer-resilience.nix
   ];
 }

@@ -58,9 +58,9 @@ inputs:
     required: false
     default: false
   nix-cache-key:
-    description: The primary key to use for the Nix GHA cache
+    description: The primary key to use for the Nix GHA cache; defaults to the current commit so disabled caching does not eagerly evaluate hashFiles()
     required: false
-    default: nix-${{ runner.os }}-${{ hashFiles('**/flake.lock') }}
+    default: nix-${{ runner.os }}-${{ github.sha }}
   nix-cache-restore-prefixes:
     description: The fallback restore prefixes for the Nix GHA cache
     required: false
@@ -199,6 +199,13 @@ runs:
           fallback = true
           download-attempts = 2
           connect-timeout = 5
+          # Persistent self-hosted runners have observed a group of multiplexed
+          # cache.nixos.org NAR transfers make no progress until the job ceiling.
+          # Bound silent transfers and prefer a smaller HTTP/1.1 pool so Nix can
+          # retry an individual object instead of wedging the whole substitution.
+          stalled-download-timeout = 30
+          http2 = false
+          http-connections = 8
           narinfo-cache-negative-ttl = 120
           allow-import-from-derivation = true
           experimental-features = nix-command flakes pipe-operators
