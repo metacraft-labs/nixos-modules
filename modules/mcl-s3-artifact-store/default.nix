@@ -155,6 +155,20 @@
               owner) mcl-garage bucket allow "$bucket" --read --write --owner --key "$keyId" >&2 ;;
             esac
           done
+          # Prune older keys that share this name. Garage keys never expire, and
+          # every invocation mints a brand-new one, so without this each
+          # re-provisioning (and each boot, for the bootstrap key) would leak a
+          # permanent, still-valid credential under the same label. We delete
+          # AFTER creating + granting the new key, so the name is never left
+          # without a working credential. The just-minted keyId is preserved.
+          # ``key list`` columns vary across Garage versions, so match any line
+          # whose final field is exactly this name and pull the GK id from it.
+          mcl-garage key list 2>/dev/null \
+            | awk -v n="$name" '$NF == n { for (i = 1; i <= NF; i++) if ($i ~ /^GK[0-9a-f]+$/) print $i }' \
+            | while read -r oldKey; do
+                [[ "$oldKey" == "$keyId" ]] && continue
+                mcl-garage key delete "$oldKey" --yes >&2 || true
+              done
           jq -cn --arg k "$keyId" --arg s "$secret" '{keyId:$k, secretKey:$s}'
         '';
       };
