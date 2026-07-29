@@ -38,7 +38,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout first to use locally defined actions
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@v7.0.1
 
       - name: Setup Nix
         uses: ./.github/setup-nix
@@ -62,7 +62,7 @@ jobs:
     runs-on: eph-linux-x64
     steps:
       - name: Checkout first to use locally defined actions
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@v7.0.1
 
       - name: Stage the devShell test fixture as the workspace flake
         run: |
@@ -108,7 +108,7 @@ jobs:
     runs-on: eph-linux-x64
     steps:
       - name: Checkout first to use locally defined actions
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@v7.0.1
 
       - name: Setup Nix
         uses: ./.github/setup-nix
@@ -150,7 +150,7 @@ jobs:
     runs-on: eph-linux-x64-nested
     steps:
       - name: Checkout first to use locally defined actions
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@v7.0.1
 
       - name: Setup Nix
         uses: ./.github/setup-nix
