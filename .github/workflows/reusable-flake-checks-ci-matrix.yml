@@ -727,16 +727,18 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.MCL_S3_ARTIFACTS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.MCL_S3_ARTIFACTS_SECRET_ACCESS_KEY }}
           AWS_EC2_METADATA_DISABLED: 'true'
+          AWS_REQUEST_CHECKSUM_CALCULATION: WHEN_REQUIRED
+          AWS_RESPONSE_CHECKSUM_VALIDATION: WHEN_REQUIRED
           S3_OBJECT_PREFIX: deployment-cache-push/${{ github.run_id }}/${{ strategy.job-index }}
         run: |
           set -u
-          if [[ -z "''${AWS_ACCESS_KEY_ID:-}" || -z "''${AWS_SECRET_ACCESS_KEY:-}" || -z "''${MCL_S3_ARTIFACTS_ENDPOINT:-}" ]]; then
+          if [[ -z "${AWS_ACCESS_KEY_ID:-}" || -z "${AWS_SECRET_ACCESS_KEY:-}" || -z "${MCL_S3_ARTIFACTS_ENDPOINT:-}" ]]; then
             echo "S3 artifact store not configured for this repo; skipping mirror."
             exit 0
           fi
           [[ -f .result/deployment-cache-push-events.jsonl ]] || { echo "no artifact to mirror."; exit 0; }
-          region="''${MCL_S3_ARTIFACTS_REGION:-garage}"
-          bucket="''${MCL_S3_ARTIFACTS_BUCKET:-ci-artifacts}"
+          region="${MCL_S3_ARTIFACTS_REGION:-garage}"
+          bucket="${MCL_S3_ARTIFACTS_BUCKET:-ci-artifacts}"
           if nix shell nixpkgs#awscli2 -c \
               aws --endpoint-url "$MCL_S3_ARTIFACTS_ENDPOINT" --region "$region" \
                   s3 cp .result/deployment-cache-push-events.jsonl \
