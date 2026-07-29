@@ -258,6 +258,220 @@
             touch "$out"
           '';
 
+      checks.reusable-flake-checks-s3-mirror-compat =
+        pkgs.runCommand "reusable-flake-checks-s3-mirror-compat"
+          {
+            nativeBuildInputs = [
+              pkgs.bash
+              pkgs.python3
+            ];
+          }
+          ''
+            python3 - <<'PY'
+            import os
+            import subprocess
+            import tempfile
+            from pathlib import Path
+
+            workflow = Path("${flakeChecksWorkflow}").read_text()
+            lines = workflow.splitlines()
+            step_name = "Upload CI artifacts to S3 (non-blocking mirror)"
+
+            step_indexes = [
+                index
+                for index, line in enumerate(lines)
+                if line.strip() == f"- name: {step_name}"
+            ]
+            assert len(step_indexes) == 1, (
+                f"expected exactly one {step_name!r} step, got {len(step_indexes)}"
+            )
+
+            step_start = step_indexes[0]
+            step_indent = len(lines[step_start]) - len(lines[step_start].lstrip())
+            step_end = len(lines)
+            for index in range(step_start + 1, len(lines)):
+                if lines[index].strip() and (
+                    len(lines[index]) - len(lines[index].lstrip())
+                ) <= step_indent:
+                    step_end = index
+                    break
+            step_lines = lines[step_start:step_end]
+            step = "\n".join(step_lines)
+
+            env_index = next(
+                (
+                    index
+                    for index, line in enumerate(step_lines)
+                    if line.strip() == "env:"
+                    and len(line) - len(line.lstrip()) == step_indent + 2
+                ),
+                None,
+            )
+            assert env_index is not None, "S3 mirror step has no step-scoped env block"
+            env_indent = step_indent + 4
+            step_env = {}
+            step_env_line_indexes = {}
+            for step_line_index, line in enumerate(
+                step_lines[env_index + 1:], start=env_index + 1
+            ):
+                if not line.strip():
+                    continue
+                indent = len(line) - len(line.lstrip())
+                if indent < env_indent:
+                    break
+                if indent != env_indent:
+                    continue
+                key, separator, value = line.strip().partition(":")
+                assert separator, f"invalid S3 mirror env entry: {line!r}"
+                step_env[key] = value.strip().strip("'\"")
+                step_env_line_indexes[key] = step_start + step_line_index
+
+            compatibility_env = {
+                "AWS_REQUEST_CHECKSUM_CALCULATION": "WHEN_REQUIRED",
+                "AWS_RESPONSE_CHECKSUM_VALIDATION": "WHEN_REQUIRED",
+            }
+            for key, expected_value in compatibility_env.items():
+                assert step_env.get(key) == expected_value, (
+                    f"{key} must equal {expected_value} in the S3 mirror step env"
+                )
+                occurrences = [
+                    index
+                    for index, line in enumerate(lines)
+                    if line.strip().startswith(f"{key}:")
+                ]
+                assert occurrences == [step_env_line_indexes[key]], (
+                    f"{key} must be declared exactly once and only in the credentialed "
+                    f"S3 mirror step; found workflow lines {[index + 1 for index in occurrences]}"
+                )
+
+            assert "secrets.MCL_S3_ARTIFACTS_ACCESS_KEY_ID" in step_env.get(
+                "AWS_ACCESS_KEY_ID", ""
+            ), "checksum compatibility must stay scoped to the credentialed mirror step"
+            assert "secrets.MCL_S3_ARTIFACTS_SECRET_ACCESS_KEY" in step_env.get(
+                "AWS_SECRET_ACCESS_KEY", ""
+            ), "checksum compatibility must stay scoped to the credentialed mirror step"
+            assert chr(39) * 2 + "$" + "{" not in step, (
+                "raw YAML run block must use shell parameter expansion without Nix escaping"
+            )
+
+            run_index = next(
+                (
+                    index
+                    for index, line in enumerate(step_lines)
+                    if line.strip() == "run: |"
+                    and len(line) - len(line.lstrip()) == step_indent + 2
+                ),
+                None,
+            )
+            assert run_index is not None, "S3 mirror run block not found"
+            run_indent = len(step_lines[run_index]) - len(
+                step_lines[run_index].lstrip()
+            )
+            block_indent = run_indent + 2
+            script_lines = []
+            for line in step_lines[run_index + 1:]:
+                if not line.strip():
+                    script_lines.append("")
+                    continue
+                indent = len(line) - len(line.lstrip())
+                assert indent >= block_indent, (
+                    f"unexpected S3 mirror run-block indentation: {line!r}"
+                )
+                script_lines.append(line[block_indent:])
+            script = "\n".join(script_lines) + "\n"
+
+            with tempfile.TemporaryDirectory() as temp:
+                temp_path = Path(temp)
+                bin_path = temp_path / "bin"
+                result_path = temp_path / ".result"
+                bin_path.mkdir()
+                result_path.mkdir()
+                (result_path / "deployment-cache-push-events.jsonl").write_text(
+                    '{"event":"compatibility-test"}\n'
+                )
+
+                script_path = temp_path / "s3-mirror.sh"
+                script_path.write_text(script)
+                subprocess.run(
+                    ["${pkgs.bash}/bin/bash", "-n", str(script_path)], check=True
+                )
+
+                nix_mock = bin_path / "nix"
+                nix_mock.write_text(
+                    "#!${pkgs.bash}/bin/bash\n"
+                    "set -euo pipefail\n"
+                    '[[ "$1" == shell && "$2" == nixpkgs#awscli2 && "$3" == -c ]]\n'
+                    "shift 3\n"
+                    'exec "$@"\n'
+                )
+                nix_mock.chmod(0o755)
+
+                aws_mock = bin_path / "aws"
+                aws_mock.write_text(
+                    "#!${pkgs.bash}/bin/bash\n"
+                    "set -euo pipefail\n"
+                    '{ printf "request=%s\\n" "$AWS_REQUEST_CHECKSUM_CALCULATION"; '
+                    'printf "response=%s\\n" "$AWS_RESPONSE_CHECKSUM_VALIDATION"; '
+                    'printf "arg=%s\\n" "$@"; } >"$MOCK_AWS_CAPTURE"\n'
+                )
+                aws_mock.chmod(0o755)
+
+                capture_path = temp_path / "aws.capture"
+                env = os.environ.copy()
+                env.update(step_env)
+                env.update(
+                    {
+                        "AWS_ACCESS_KEY_ID": "test-access-key",
+                        "AWS_SECRET_ACCESS_KEY": "test-secret-key",
+                        "MCL_S3_ARTIFACTS_ENDPOINT": "https://garage.example.test",
+                        "MCL_S3_ARTIFACTS_BUCKET": "compat-bucket",
+                        "MCL_S3_ARTIFACTS_REGION": "garage",
+                        "S3_OBJECT_PREFIX": "deployment-cache-push/123/0",
+                        "MOCK_AWS_CAPTURE": str(capture_path),
+                        "PATH": str(bin_path) + os.pathsep + env["PATH"],
+                    }
+                )
+                result = subprocess.run(
+                    ["${pkgs.bash}/bin/bash", str(script_path)],
+                    cwd=temp_path,
+                    env=env,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                assert result.returncode == 0, (
+                    f"S3 mirror mock exited {result.returncode}\n"
+                    f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+                )
+                assert capture_path.exists(), (
+                    "mock aws was not invoked; non-blocking error handling must not hide "
+                    "a pre-upload regression\n"
+                    f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+                )
+                capture = capture_path.read_text().splitlines()
+                assert capture[:2] == [
+                    "request=WHEN_REQUIRED",
+                    "response=WHEN_REQUIRED",
+                ], f"mock aws received wrong checksum environment: {capture[:2]!r}"
+                assert capture[2:] == [
+                    "arg=--endpoint-url",
+                    "arg=https://garage.example.test",
+                    "arg=--region",
+                    "arg=garage",
+                    "arg=s3",
+                    "arg=cp",
+                    "arg=.result/deployment-cache-push-events.jsonl",
+                    (
+                        "arg=s3://compat-bucket/deployment-cache-push/123/0/"
+                        "deployment-cache-push-events.jsonl"
+                    ),
+                ], f"mock aws received unexpected argv: {capture[2:]!r}"
+                assert "Mirrored deployment-cache-push-events.jsonl" in result.stdout
+            PY
+
+            touch "$out"
+          '';
+
       checks.reusable-terraform-drift-workflow =
         pkgs.runCommand "reusable-terraform-drift-workflow"
           {
