@@ -20,10 +20,14 @@ name: recorder-ci
 on:
   workflow_call:
     inputs:
-      runner:
-        description: 'runs-on value as a JSON array string.'
+      runners:
+        description: >
+          JSON array of runner labels to run the lint-and-test job across, as a
+          matrix. Each element is a `runs-on` value (a label string like
+          "eph-linux-x64", or a JSON array of labels). Defaults to the standard
+          three self-hosted Nix classes.
         type: string
-        default: '["self-hosted", "nixos"]'
+        default: '["eph-linux-x64", "eph-linux-arm64", "eph-macos-arm64"]'
       prepare-recipe:
         description: >
           Optional `just` recipe run after setup-dev-env, before lint/test, for
@@ -52,8 +56,12 @@ on:
 
 jobs:
   lint-and-test:
-    name: Lint and test
-    runs-on: ${{ fromJSON(inputs.runner) }}
+    name: Lint and test (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: ${{ fromJSON(inputs.runners) }}
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
@@ -86,7 +94,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: test-logs
+          name: test-logs-${{ matrix.runner }}
           path: ${{ inputs.log-path }}
           retention-days: 1
 
@@ -96,7 +104,7 @@ jobs:
         uses: metacraft-labs/metacraft-github-actions/mirror-artifacts-s3@main
         with:
           path: ${{ inputs.log-path }}
-          prefix: test-logs/${{ github.run_id }}
+          prefix: test-logs-${{ matrix.runner }}/${{ github.run_id }}
           endpoint: ${{ vars.MCL_S3_ARTIFACTS_ENDPOINT }}
           bucket: ${{ vars.MCL_S3_ARTIFACTS_BUCKET }}
           region: ${{ vars.MCL_S3_ARTIFACTS_REGION }}
