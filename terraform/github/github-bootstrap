@@ -173,9 +173,11 @@ mapfile -t governance_app_secret_targets < <(
   nix eval --json --file "$governance_manifest" 2>/dev/null | jq -r '
     .secrets[]
     | select((.rotationGroup // "") == "github-governance-app")
-    | (if .providerResource == "github_actions_secret" then "github_actions_secret"
-       elif .providerResource == "github_actions_organization_secret" then "github_actions_organization_secret"
-       else .providerResource end) as $type
+    | (
+        if .providerResource == "github_actions_secret" then "github_actions_secret"
+        elif .providerResource == "github_actions_organization_secret" then "github_actions_organization_secret"
+        else .providerResource end
+      ) as $type
     | "\($type).secret_" + (.providerId | gsub("[/:.]"; "_"))
   '
 )
