@@ -29,7 +29,7 @@
     # servers through this input, so an explicit pin keeps the installed
     # `repro` reproducible. Bump this SHA to roll forward (the mainline is the
     # `dev` branch; `main` was retired).
-    reprobuild.url = "github:metacraft-labs/reprobuild/941b8c240e1c3fb0621823796d63c73912c90cd9";
+    reprobuild.url = "github:metacraft-labs/reprobuild/a483b238e9149e68f81c0c400651026cd7e753f8";
 
     nixpkgs.follows = "nixos-2511";
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
