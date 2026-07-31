@@ -16,15 +16,25 @@ let
   # one package here and the cache-client behaviour is purely the rendered
   # `caches.conf` config.
   #
-  # Two module classes are exported from ONE definition (shared option schema +
-  # renderer):
+  # Three module classes are exported from ONE definition (shared option schema
+  # + renderer):
   #   * flake.modules.nixos.mcl-reprobuild        — installs `repro` on the
   #     system PATH (`environment.systemPackages`) + system-wide
   #     `/etc/repro/caches.conf`. Wired into the infra fleet via
   #     `default-server-config` so every server gets it.
+  #   * flake.modules.darwin.mcl-reprobuild       — the same system-wide install
+  #     for nix-darwin hosts (macOS workstations), with the two lease daemons
+  #     expressed as launchd jobs instead of systemd units. Wired into the infra
+  #     fleet via `default-darwin-config`.
   #   * flake.modules.homeManager.mcl-reprobuild  — installs `repro` on the user
   #     PATH (`home.packages`) + per-user `~/.config/repro/caches.conf`. Wired
   #     into ~/dotfiles for workstations.
+  #
+  # The nixos and darwin classes are kept as separate bodies rather than one
+  # shared body with `optionalAttrs`: they agree on the package/etc/shell-hook
+  # surface (nix-darwin has all four of those options) but diverge completely on
+  # service management, and a merged body would have to name `systemd.*` options
+  # that do not exist on darwin.
   #
   # The R1 client (caches_config.nim) reads INI: system /etc/repro/caches.conf
   # first, then ~/.config/repro/caches.conf (user OVERRIDES/EXTENDS by name).
@@ -264,6 +274,88 @@ in
             # runtime state-dir (logs/status/lock). Both under /var/lib/repro.
             StateDirectory = "repro repro/state repro/daemon";
             DynamicUser = false;
+          };
+        };
+      };
+    };
+
+  # ── System-wide (nix-darwin): repro on PATH + /etc/repro/caches.conf ─────────
+  flake.modules.darwin.mcl-reprobuild =
+    {
+      config,
+      lib,
+      pkgs,
+      ...
+    }:
+    let
+      cfg = config.programs.reprobuild;
+      shared = mkShared { inherit lib pkgs; };
+      systemStateRoot = "${cfg.systemLeaseStateDir}/state";
+      systemDaemonStateDir = "${cfg.systemLeaseStateDir}/daemon";
+      systemEndpoint = "/var/run/repro/repro-system-daemon.sock";
+    in
+    {
+      options.programs.reprobuild = shared.mkOptions;
+
+      config = lib.mkIf cfg.enable {
+        # Identical surface to the NixOS class: nix-darwin provides
+        # `environment.systemPackages`, `environment.etc` (materialised through
+        # /etc/static), and `programs.{bash,zsh,fish}.interactiveShellInit`, so
+        # the R1 client finds /etc/repro/caches.conf at the same path it reads
+        # on Linux and the dev-env hook lands in the same shells.
+        environment.systemPackages = [ cfg.package ];
+        environment.etc."repro/caches.conf" = lib.mkIf (cfg.caches != { }) {
+          text = shared.renderConfig cfg.caches;
+        };
+        programs.bash.interactiveShellInit = lib.mkIf cfg.enableShellHook ''
+          eval "$(${cfg.package}/bin/repro shell hook bash)"
+        '';
+        programs.zsh.interactiveShellInit = lib.mkIf cfg.enableShellHook ''
+          eval "$(${cfg.package}/bin/repro shell hook zsh)"
+        '';
+        programs.fish.interactiveShellInit = lib.mkIf cfg.enableShellHook ''
+          ${cfg.package}/bin/repro shell hook fish | source
+        '';
+
+        # Ephemeral-State-Leases L4 (§4.1), darwin edition — the SYSTEM-scope
+        # lease reaper as a launchd daemon rather than a systemd unit. launchd
+        # has no `StateDirectory` equivalent, so the store directories are
+        # created by the job's own script before exec (the same shape the
+        # netbird darwin daemon uses). `KeepAlive` + `ThrottleInterval` stand in
+        # for `Restart=on-failure` / `RestartSec`.
+        launchd.daemons.repro-lease-reaper = lib.mkIf cfg.enableSystemLeaseReaper {
+          script = ''
+            mkdir -p ${lib.escapeShellArg systemStateRoot} \
+                     ${lib.escapeShellArg systemDaemonStateDir} \
+                     /var/run/repro
+            exec ${cfg.package}/bin/repro daemon serve \
+              --foreground \
+              --system \
+              --endpoint ${lib.escapeShellArg systemEndpoint} \
+              --state-dir ${lib.escapeShellArg systemDaemonStateDir} \
+              --state-root ${lib.escapeShellArg systemStateRoot}
+          '';
+          serviceConfig = {
+            Label = "org.metacraft.repro-lease-reaper";
+            RunAtLoad = true;
+            KeepAlive = true;
+            ThrottleInterval = 5;
+            StandardOutPath = "/var/log/repro-lease-reaper.out.log";
+            StandardErrorPath = "/var/log/repro-lease-reaper.err.log";
+          };
+        };
+
+        # The per-user daemon as a launchd LaunchAgent (nix-darwin's
+        # `launchd.user.agents`, the `systemd.user` analogue). Like the
+        # home-manager class it pins no endpoint: the daemon self-discovers its
+        # per-user socket + state-dir from `$XDG_*`.
+        launchd.user.agents.repro-daemon = lib.mkIf cfg.enableUserDaemon {
+          command = "${cfg.package}/bin/repro daemon serve --foreground";
+          serviceConfig = {
+            Label = "org.metacraft.repro-daemon";
+            RunAtLoad = true;
+            KeepAlive = true;
+            ThrottleInterval = 5;
           };
         };
       };
