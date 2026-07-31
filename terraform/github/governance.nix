@@ -224,6 +224,12 @@ let
     // optionalAttrs (repo ? allowSquashMerge) { allow_squash_merge = repo.allowSquashMerge; }
     // optionalAttrs (repo ? allowUpdateBranch) { allow_update_branch = repo.allowUpdateBranch; }
     // optionalAttrs (repo ? deleteBranchOnMerge) { delete_branch_on_merge = repo.deleteBranchOnMerge; }
+    // optionalAttrs (repo ? allowRebaseMerge) { allow_rebase_merge = repo.allowRebaseMerge; }
+    // optionalAttrs (repo ? mergeCommitTitle) { merge_commit_title = repo.mergeCommitTitle; }
+    // optionalAttrs (repo ? mergeCommitMessage) { merge_commit_message = repo.mergeCommitMessage; }
+    // optionalAttrs (repo ? squashMergeCommitTitle) { squash_merge_commit_title = repo.squashMergeCommitTitle; }
+    // optionalAttrs (repo ? squashMergeCommitMessage) { squash_merge_commit_message = repo.squashMergeCommitMessage; }
+    // optionalAttrs (repo ? ignoreVulnerabilityAlertsDuringRead) { ignore_vulnerability_alerts_during_read = repo.ignoreVulnerabilityAlertsDuringRead; }
   );
 
   branchDefaultResources =
