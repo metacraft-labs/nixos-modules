@@ -215,7 +215,29 @@ let
           "has_downloads"
           # Read-only/deprecated; the API returns null, so it can't be matched.
           "ignore_vulnerability_alerts_during_read"
-        ];
+        ]
+        ++ (
+          # Archived repos freeze their settings: the API returns null for the
+          # mutable options, so any managed value is a spurious, unappliable
+          # diff (you can't modify an archived repo). Ignore them there.
+          if (repo.archived or false) then
+            [
+              "allow_auto_merge"
+              "allow_forking"
+              "allow_merge_commit"
+              "allow_rebase_merge"
+              "allow_squash_merge"
+              "allow_update_branch"
+              "delete_branch_on_merge"
+              "merge_commit_message"
+              "merge_commit_title"
+              "squash_merge_commit_message"
+              "squash_merge_commit_title"
+              "web_commit_signoff_required"
+            ]
+          else
+            [ ]
+        );
       };
     }
     // optionalField repo "description"
