@@ -213,6 +213,8 @@ let
           # GitHub no longer uses this provider field, but imported state can
           # still contain the historical value.
           "has_downloads"
+          # Read-only/deprecated; the API returns null, so it can't be matched.
+          "ignore_vulnerability_alerts_during_read"
         ];
       };
     }
@@ -229,7 +231,6 @@ let
     // optionalAttrs (repo ? mergeCommitMessage) { merge_commit_message = repo.mergeCommitMessage; }
     // optionalAttrs (repo ? squashMergeCommitTitle) { squash_merge_commit_title = repo.squashMergeCommitTitle; }
     // optionalAttrs (repo ? squashMergeCommitMessage) { squash_merge_commit_message = repo.squashMergeCommitMessage; }
-    // optionalAttrs (repo ? ignoreVulnerabilityAlertsDuringRead) { ignore_vulnerability_alerts_during_read = repo.ignoreVulnerabilityAlertsDuringRead; }
   );
 
   branchDefaultResources =
