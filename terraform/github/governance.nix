@@ -288,6 +288,7 @@ let
         privacy = team.privacy;
       }
       // optionalField team "description"
+      // optionalAttrs (team ? notificationSetting) { notification_setting = team.notificationSetting; }
       // optionalAttrs (team ? parentTeamSlug) { parent_team_id = teamRef team.parentTeamSlug; };
     }) managedTeams
   );
@@ -308,6 +309,9 @@ let
         {
           name = rg.name;
           visibility = rg.visibility;
+        }
+        // optionalAttrs (rg ? selectedRepositoryIds) {
+          selected_repository_ids = rg.selectedRepositoryIds;
         }
         // optionalAttrs (rg ? allowsPublicRepositories) {
           allows_public_repositories = rg.allowsPublicRepositories;
@@ -403,12 +407,17 @@ let
         }
         // optionalAttrs (branch ? requiredPullRequestReviews) {
           required_pull_request_reviews = [
-            {
-              dismiss_stale_reviews = branch.requiredPullRequestReviews.dismissStaleReviews;
-              require_code_owner_reviews = branch.requiredPullRequestReviews.requireCodeOwnerReviews;
-              require_last_push_approval = branch.requiredPullRequestReviews.requireLastPushApproval;
-              required_approving_review_count = branch.requiredPullRequestReviews.requiredApprovingReviewCount;
-            }
+            (
+              {
+                dismiss_stale_reviews = branch.requiredPullRequestReviews.dismissStaleReviews;
+                require_code_owner_reviews = branch.requiredPullRequestReviews.requireCodeOwnerReviews;
+                require_last_push_approval = branch.requiredPullRequestReviews.requireLastPushApproval;
+                required_approving_review_count = branch.requiredPullRequestReviews.requiredApprovingReviewCount;
+              }
+              // optionalAttrs (branch.requiredPullRequestReviews ? pullRequestBypassers) {
+                pull_request_bypassers = branch.requiredPullRequestReviews.pullRequestBypassers;
+              }
+            )
           ];
         }
       );
@@ -440,8 +449,10 @@ let
       (permissions: {
         repository = permissions.repository;
         enabled = permissions.enabled;
-        allowed_actions = permissions.allowedActions;
         sha_pinning_required = permissions.shaPinningRequired;
+      }
+      // optionalAttrs (permissions ? allowedActions) {
+        allowed_actions = permissions.allowedActions;
       });
 
   actionsVariableResources =
