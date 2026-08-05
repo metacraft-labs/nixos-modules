@@ -323,8 +323,22 @@ int deployApplyImpl(DeployApplyArgs args, DeployApplyDependencies deps)
     }
 
     auto previous = shell(queryRunner, args.generationCommand).stdout.strip;
+
+    // Activate the desired closure. The production default first registers it as
+    // a NixOS system-profile generation (`nix-env --set`) and only then runs
+    // switch-to-configuration -- exactly what `nixos-rebuild switch` does around
+    // switch-to-configuration. This `--set` is REQUIRED for the deployment to
+    // survive a reboot: switch-to-configuration installs the boot loader from the
+    // system-profile generations, so a bare `switch-to-configuration switch` on a
+    // store path activates at runtime but leaves the boot default on the previous
+    // generation -- the host then silently reverts to its old configuration on
+    // the next reboot. Folding the `--set` into the default command (rather than
+    // a separate step) means a test that overrides --switch-command transparently
+    // bypasses the profile mutation too.
+    auto desiredPath = manifestDesiredSystemPath(manifest);
     auto switchCommand = args.switchCommand == ""
-        ? manifestDesiredSystemPath(manifest) ~ "/bin/switch-to-configuration switch"
+        ? "nix-env -p /nix/var/nix/profiles/system --set " ~ desiredPath
+            ~ " && " ~ desiredPath ~ "/bin/switch-to-configuration switch"
         : args.switchCommand;
     auto switched = detachedSwitch(runner, switchCommand, !args.noDetachSwitch);
     auto current = shell(queryRunner, args.generationCommand).stdout.strip;
@@ -376,8 +390,13 @@ int deployApplyImpl(DeployApplyArgs args, DeployApplyDependencies deps)
     {
         if (automaticRollbackRequested(manifest) && previous != "")
         {
+            // Roll back: revert the system-profile generation to the previously-
+            // current system and reactivate it, so the boot loader default rolls
+            // back together with the runtime activation. As with the forward
+            // switch, overriding --rollback-command bypasses the profile mutation.
             auto rollbackCommand = args.rollbackCommand == ""
-                ? previous ~ "/bin/switch-to-configuration switch"
+                ? "nix-env -p /nix/var/nix/profiles/system --set " ~ previous
+                    ~ " && " ~ previous ~ "/bin/switch-to-configuration switch"
                 : args.rollbackCommand;
             auto rollback = detachedSwitch(runner, rollbackCommand, !args.noDetachSwitch);
             emit("rollback", "switch-to-configuration rollback", ["sh", "-c", rollbackCommand],
