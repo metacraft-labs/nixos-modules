@@ -100,6 +100,14 @@ otherwise mismatched directories are rejected rather than silently accepted
 or repaired. Lock leaves must be regular, singly-linked, same-owner files with
 exact mode `0600`.
 
+Before a direct CLI invocation creates a missing state directory, it walks and
+pins every ancestor with no-follow directory descriptors. Ancestors must be
+owned by root or the effective deployment user and must not be group- or
+world-writable; root-owned sticky shared directories such as `/tmp` are the
+only exception. Darwin's fixed `/var` and `/tmp` aliases are normalized to
+their `/private` paths before the walk. Any other symlink or unsafe ancestor
+fails before the filesystem is mutated.
+
 On NixOS, the service's `ExecStartPre` is the sole upgrade migration boundary:
 inside the declaratively protected root-owned state directory it creates an
 absent `locks` child as `root:root` mode `0700`, or narrows a legitimate

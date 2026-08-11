@@ -8,7 +8,7 @@ import std.file : dirEntries, exists, mkdirRecurse, readText, remove, rename,
     setAttributes, SpanMode, write;
 import std.json : JSONOptions, JSONValue, parseJSON;
 import std.path : baseName, buildPath, dirName;
-import std.string : endsWith, split, toStringz;
+import std.string : endsWith, startsWith, split, toStringz;
 import std.typecons : Nullable;
 import std.uuid : randomUUID;
 
@@ -18,6 +18,7 @@ import mcl.utils.deployment_events : utcTimestamp;
 
 version (Posix)
 {
+    import core.stdc.errno : EEXIST, ENOENT, errno;
     import core.sys.posix.fcntl : FD_CLOEXEC, F_GETFD, F_SETFD, O_CREAT,
         O_NOFOLLOW, O_NONBLOCK, O_RDONLY, O_RDWR, fcntl, open;
     import core.sys.posix.sys.stat : fstat, mode_t, S_ISDIR, S_ISREG, stat, stat_t;
@@ -119,6 +120,7 @@ version (Posix)
     private enum lockFileMode = cast(mode_t) 384; // 0600
     private enum permissionBits = cast(mode_t) 511; // 0777
     private enum groupOrOtherWriteBits = cast(mode_t) 18; // 0022
+    private enum stickyBit = cast(mode_t) 512; // 01000
 
     private void ensureCloseOnExec(int fd, string description)
     {
@@ -177,6 +179,25 @@ version (Posix)
             description ~ " does not have mode 0600.");
     }
 
+    private string normalizeStatePathForDescriptorWalk(string path)
+    {
+        version (OSX)
+        {
+            // These are fixed macOS filesystem aliases.  Normalize only the
+            // operating-system-owned aliases before the no-follow walk; every
+            // other symlink remains forbidden.
+            if (path == "/var")
+                return "/private/var";
+            if (path.startsWith("/var/"))
+                return "/private" ~ path;
+            if (path == "/tmp")
+                return "/private/tmp";
+            if (path.startsWith("/tmp/"))
+                return "/private" ~ path;
+        }
+        return path;
+    }
+
     private string[] securePathComponents(string path)
     {
         enforce(path != "", "Deployment state directory must not be empty.");
@@ -191,29 +212,119 @@ version (Posix)
         return components;
     }
 
+    private void validateTrustedAncestorDescriptor(
+        int fd,
+        string description,
+        uid_t expectedOwner,
+    )
+    {
+        auto metadata = descriptorMetadata(fd, description);
+        enforce(S_ISDIR(metadata.st_mode), description ~ " is not a directory.");
+        enforce(metadata.st_uid == expectedOwner || metadata.st_uid == 0,
+            description ~ " is not owned by root or the effective deployment user.");
+        auto safeRootStickyDirectory = metadata.st_uid == 0
+            && (metadata.st_mode & stickyBit) != 0;
+        enforce((metadata.st_mode & groupOrOtherWriteBits) == 0
+                || safeRootStickyDirectory,
+            description ~ " is writable by its group or other users.");
+    }
+
+    private int openOrCreateTrustedParentDirectory(
+        string parentPath,
+        uid_t expectedOwner,
+    )
+    {
+        auto normalized = normalizeStatePathForDescriptorWalk(parentPath);
+        auto absolute = normalized.startsWith("/");
+        auto components = normalized
+            .split("/")
+            .filter!(component => component != "" && component != ".")
+            .array;
+        enforce(!components.canFind(".."),
+            "Deployment state directory parent must not contain '..' path components.");
+        auto currentFd = open(
+            (absolute ? "/" : ".").toStringz,
+            O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC,
+        );
+        enforce(currentFd >= 0,
+            "Could not securely open deployment state directory walk anchor.");
+        scope(failure)
+            if (currentFd >= 0)
+                close(currentFd);
+        ensureCloseOnExec(currentFd, "deployment state directory walk anchor");
+        validateTrustedAncestorDescriptor(
+            currentFd,
+            "Deployment state directory walk anchor",
+            expectedOwner,
+        );
+
+        string walked = absolute ? "" : ".";
+        foreach (component; components)
+        {
+            walked ~= "/" ~ component;
+            auto nextFd = openat(
+                currentFd,
+                component.toStringz,
+                O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC,
+            );
+            if (nextFd < 0)
+            {
+                auto openError = errno;
+                enforce(openError == ENOENT,
+                    "Could not securely open deployment state ancestor " ~ walked ~ ".");
+                if (mkdirat(currentFd, component.toStringz, stateDirectoryCreateMode) != 0)
+                    enforce(errno == EEXIST,
+                        "Could not securely create deployment state ancestor " ~ walked ~ ".");
+                nextFd = openat(
+                    currentFd,
+                    component.toStringz,
+                    O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC,
+                );
+            }
+            if (nextFd < 0)
+                throw new Exception(
+                    "Could not securely open deployment state ancestor " ~ walked ~ ".");
+            try
+            {
+                ensureCloseOnExec(nextFd, "deployment state ancestor " ~ walked);
+                validateTrustedAncestorDescriptor(
+                    nextFd,
+                    "Deployment state ancestor " ~ walked,
+                    expectedOwner,
+                );
+            }
+            catch (Exception error)
+            {
+                close(nextFd);
+                throw error;
+            }
+            close(currentFd);
+            currentFd = nextFd;
+        }
+        return currentFd;
+    }
+
     private int openOrCreateStateDirectory(string stateDir, uid_t expectedOwner)
     {
-        securePathComponents(stateDir);
-        auto parentPath = stateDir.dirName;
-        auto childName = stateDir.baseName;
+        auto normalizedStateDir = normalizeStatePathForDescriptorWalk(stateDir);
+        securePathComponents(normalizedStateDir);
+        auto parentPath = normalizedStateDir.dirName;
+        auto childName = normalizedStateDir.baseName;
         enforce(childName != "" && childName != "." && childName != ".."
                 && !childName.canFind("/"),
             "Deployment state directory has an unsafe final path component.");
 
-        // The state directory is application-owned, but its conventional
-        // ancestors may contain platform-managed symlinks (for example
-        // Darwin's /var -> /private/var). Bind the immediate parent after
-        // creating any missing ancestors, then create/open only the final
-        // state component relative to that descriptor.
-        mkdirRecurse(parentPath);
-        auto parentFd = open(
-            parentPath.toStringz,
-            O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC,
-        );
-        enforce(parentFd >= 0,
-            "Could not securely open deployment state directory parent: " ~ parentPath);
+        // Walk and create ancestors relative to retained directory descriptors.
+        // This forbids attacker-controlled symlink traversal before the final
+        // ownership check and prevents a privileged direct CLI invocation from
+        // creating state through an unsafe ancestor.
+        auto parentFd = openOrCreateTrustedParentDirectory(parentPath, expectedOwner);
         scope(exit) close(parentFd);
-        ensureCloseOnExec(parentFd, "deployment state directory parent " ~ parentPath);
+        validateDirectoryDescriptor(
+            parentFd,
+            "Deployment state directory parent " ~ parentPath,
+            expectedOwner,
+        );
 
         auto stateFd = openat(
             parentFd,
@@ -647,6 +758,59 @@ version (Posix)
     }
 }
 
+@("test_deploy_state_lock_rejects_unsafe_ancestor_chain_before_mutation")
+unittest
+{
+    version (Posix)
+    {
+        import std.file : deleteme, mkdirRecurse, remove,
+            rmdirRecurse, setAttributes, symlink, write;
+
+        auto root = deleteme ~ ".deploy-lock-unsafe-ancestors";
+        auto trusted = root.buildPath("trusted");
+        auto outside = root.buildPath("outside");
+        auto ancestorLink = trusted.buildPath("redirect");
+        scope(exit)
+        {
+            if (ancestorLink.exists)
+                ancestorLink.remove;
+            if (root.exists)
+                root.rmdirRecurse;
+        }
+
+        trusted.mkdirRecurse;
+        outside.mkdirRecurse;
+        outside.buildPath("sentinel").write("outside-bytes");
+        outside.symlink(ancestorLink);
+
+        auto redirectedState = ancestorLink.buildPath("created-parent", "state");
+        assertLockAcquireRejectedWithoutFdLeak(
+            redirectedState,
+            "target",
+            geteuid(),
+            geteuid(),
+        );
+        assert(!outside.buildPath("created-parent").exists,
+            "Deployment state acquisition created directories through an ancestor symlink.");
+
+        ancestorLink.remove;
+        auto writableAncestor = root.buildPath("writable");
+        auto safeImmediateParent = writableAncestor.buildPath("safe-parent");
+        safeImmediateParent.mkdirRecurse;
+        writableAncestor.setAttributes(511); // 0777
+        safeImmediateParent.setAttributes(488); // 0750
+        auto writableState = safeImmediateParent.buildPath("state");
+        assertLockAcquireRejectedWithoutFdLeak(
+            writableState,
+            "target",
+            geteuid(),
+            geteuid(),
+        );
+        assert(!writableState.exists,
+            "Deployment state acquisition mutated through a writable ancestor.");
+    }
+}
+
 @("test_deploy_state_lock_rejects_locks_parent_symlink_without_mutating_target")
 unittest
 {
@@ -685,6 +849,27 @@ unittest
         assert(sentinel.readText == "outside-bytes");
         assert((sentinel.getAttributes & 511) == sentinelMode);
         assert(!outside.buildPath("target.state.lock").exists);
+    }
+}
+
+@("test_deploy_state_lock_accepts_pinned_root_sticky_temp_ancestor")
+unittest
+{
+    version (Posix)
+    {
+        import std.file : rmdirRecurse;
+
+        auto root = "/tmp".buildPath(
+            "mcl-deploy-lock-sticky-" ~ randomUUID.toString,
+        );
+        auto stateDir = root.buildPath("nested", "state");
+        scope(exit)
+            if (root.exists)
+                root.rmdirRecurse;
+
+        auto stateLock = acquireDeployTargetStateLock(stateDir, "target");
+        scope(exit) stateLock.release();
+        assert(targetStateLockPath(stateDir, "target").exists);
     }
 }
 
