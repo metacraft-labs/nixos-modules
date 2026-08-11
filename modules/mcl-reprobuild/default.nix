@@ -326,8 +326,8 @@ in
         launchd.daemons.repro-lease-reaper = lib.mkIf cfg.enableSystemLeaseReaper {
           script = ''
             mkdir -p ${lib.escapeShellArg systemStateRoot} \
-                     ${lib.escapeShellArg systemDaemonStateDir} \
-                     /var/run/repro
+                      ${lib.escapeShellArg systemDaemonStateDir} \
+                      /var/run/repro
             exec ${cfg.package}/bin/repro daemon serve \
               --foreground \
               --system \
