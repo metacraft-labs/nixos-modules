@@ -21,6 +21,11 @@ import mcl.utils.deployment_events : ClosureSummary, deploymentIdFor,
     queryClosureSummary;
 import mcl.utils.process : ProcessRunner, runProcessCapture;
 
+version (unittest)
+{
+    import mcl.utils.deploy_state : uniqueDeployStateTestPath;
+}
+
 @(Command("deploy-plan")
     .Description("Create a signed desired-state deployment manifest"))
 struct DeployPlanArgs
@@ -195,12 +200,12 @@ int deployPlanImpl(DeployPlanArgs args, ProcessRunner runProcess)
 @("test_deploy_plan_creates_verifiable_signed_manifest")
 unittest
 {
-    import std.file : deleteme, remove, rmdirRecurse;
+    import std.file : remove, rmdirRecurse;
     import std.json : parseJSON;
     import mcl.utils.deploy_manifest : verifyManifestSignature;
     import mcl.utils.process : runProcessCapture;
 
-    auto base = deleteme ~ ".deploy-plan-sign";
+    auto base = uniqueDeployStateTestPath("deploy-plan-sign");
     auto keyPath = base ~ ".ed25519";
     auto manifestPath = base ~ ".manifest.json";
     auto stateDir = base ~ ".state";

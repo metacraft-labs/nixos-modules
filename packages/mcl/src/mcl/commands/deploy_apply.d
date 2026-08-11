@@ -25,6 +25,52 @@ import mcl.utils.deployment_events : ClosureSummary, DeploymentEventContext,
     queryClosureSummary, stderrSummary;
 import mcl.utils.process : ProcessResult, ProcessRunner, runProcessCapture;
 
+version (unittest)
+{
+    import core.sync.semaphore : Semaphore;
+    import core.thread.osthread : Thread;
+    import mcl.utils.deploy_state : uniqueDeployStateTestPath;
+
+    // Assertions before a manual notify/join used to strand the blocked writer,
+    // causing the unittest runner itself to hang while tearing down threads.
+    private struct ReleaseJoinThreadGuard
+    {
+        private Semaphore release;
+        private Thread thread;
+        private bool started;
+        private bool joined;
+
+        @disable this(this);
+
+        this(Semaphore release, Thread thread)
+        {
+            this.release = release;
+            this.thread = thread;
+        }
+
+        void start()
+        {
+            thread.start();
+            started = true;
+        }
+
+        void releaseAndJoin()
+        {
+            if (started && !joined)
+            {
+                release.notify();
+                thread.join();
+                joined = true;
+            }
+        }
+
+        ~this()
+        {
+            releaseAndJoin();
+        }
+    }
+}
+
 enum DeploymentActivationMode
 {
     nixos,
@@ -793,7 +839,7 @@ unittest
     import mcl.utils.deploy_manifest : ManifestSigningRequest, signManifest;
     import mcl.utils.deploy_state : manifestStatePath, targetLatestPath;
 
-    auto base = deleteme ~ ".deploy-apply-post-validation-swap";
+    auto base = uniqueDeployStateTestPath("deploy-apply-post-validation-swap");
     auto keyPath = base ~ ".ed25519";
     scope(exit)
     {
@@ -923,18 +969,50 @@ unittest
     }
 }
 
+@("test_deploy_apply_stale_writer_fixture_releases_and_joins_during_failure_unwind")
+unittest
+{
+    import core.time : seconds;
+
+    auto workerPaused = new Semaphore(0);
+    auto releaseWorker = new Semaphore(0);
+    bool workerObservedRelease;
+    auto worker = new Thread({
+        workerPaused.notify();
+        workerObservedRelease = releaseWorker.wait(30.seconds);
+    });
+
+    bool controlledFailureObserved;
+    try
+    {
+        auto guard = ReleaseJoinThreadGuard(releaseWorker, worker);
+        guard.start();
+        assert(workerPaused.wait(30.seconds),
+            "Blocked-writer teardown regression worker did not reach its pause handshake.");
+        throw new Exception("controlled pre-release fixture failure");
+    }
+    catch (Exception error)
+    {
+        controlledFailureObserved = error.msg == "controlled pre-release fixture failure";
+    }
+
+    assert(controlledFailureObserved,
+        "Blocked-writer teardown regression did not observe its controlled failure.");
+    assert(workerObservedRelease,
+        "Blocked-writer teardown did not release and join the worker during failure unwind.");
+}
+
 @("test_deploy_apply_target_lock_prevents_stale_writer_from_overtaking_newer_state")
 unittest
 {
-    import core.sync.semaphore : Semaphore;
-    import core.thread.osthread : Thread;
+    import core.time : seconds;
     import std.file : rmdirRecurse;
     import std.json : JSONOptions;
     import mcl.utils.deploy_manifest : ManifestSigningRequest, signManifest;
     import mcl.utils.deploy_state : manifestStatePath, targetLatestPath;
     import mcl.utils.deployment_events : readDeploymentEvents;
 
-    auto base = deleteme ~ ".deploy-apply-concurrent-writers";
+    auto base = uniqueDeployStateTestPath("deploy-apply-concurrent-writers");
     auto keyPath = base ~ ".ed25519";
     auto oldPath = base ~ ".old.json";
     auto newPath = base ~ ".new.json";
@@ -1008,7 +1086,9 @@ unittest
                     queryProcess: &metadataUnavailable,
                     beforeStateLock: {
                         oldPaused.notify();
-                        releaseOld.wait();
+                        if (!releaseOld.wait(30.seconds))
+                            throw new Exception(
+                                "Stale-writer test fixture was not released before its safety ceiling.");
                     },
                 ),
             );
@@ -1019,8 +1099,10 @@ unittest
         }
     });
 
-    oldThread.start();
-    oldPaused.wait();
+    auto oldThreadGuard = ReleaseJoinThreadGuard(releaseOld, oldThread);
+    oldThreadGuard.start();
+    assert(oldPaused.wait(30.seconds),
+        "Stale writer did not reach its pre-lock pause handshake.");
     assert(deployApplyImpl(
         commonArgs(newPath),
         DeployApplyDependencies(
@@ -1037,8 +1119,7 @@ unittest
         stateDir, "converged", "stable-deployment-id").readText;
     auto eventsAfterNew = eventLog.readText;
 
-    releaseOld.notify();
-    oldThread.join();
+    oldThreadGuard.releaseAndJoin();
     assert(oldError is null, oldError is null ? "" : oldError.msg);
     assert(oldResult == 0);
     assert(targetLatestPath(stateDir, "target").readText == targetAfterNew);
@@ -1075,7 +1156,7 @@ unittest
     import mcl.utils.deploy_state : manifestStatePath, targetLatestPath;
     import mcl.utils.deployment_events : readDeploymentEvents;
 
-    auto base = deleteme ~ ".deploy-apply-dry-run-surfaces";
+    auto base = uniqueDeployStateTestPath("deploy-apply-dry-run-surfaces");
     auto keyPath = base ~ ".ed25519";
     auto manifestPath = base ~ ".manifest.json";
     auto stateDir = base ~ ".state";
@@ -1241,7 +1322,7 @@ unittest
     import mcl.utils.deploy_manifest : ManifestSigningRequest, signManifest;
     import mcl.utils.deploy_state : manifestStatePath, targetLatestPath;
 
-    auto base = deleteme ~ ".deploy-apply-same-id-high-water";
+    auto base = uniqueDeployStateTestPath("deploy-apply-same-id-high-water");
     auto keyPath = base ~ ".ed25519";
     auto manifestPath = base ~ ".manifest.json";
     auto stateDir = base ~ ".state";
@@ -1387,7 +1468,7 @@ unittest
     import mcl.utils.deploy_manifest : ManifestSigningRequest, signManifest;
     import mcl.utils.deploy_state : manifestStatePath;
 
-    auto base = deleteme ~ ".deploy-apply-darwin-success";
+    auto base = uniqueDeployStateTestPath("deploy-apply-darwin-success");
     auto keyPath = base ~ ".ed25519";
     auto manifestPath = base ~ ".manifest.json";
     auto stateDir = base ~ ".state";
@@ -1460,7 +1541,7 @@ unittest
     import mcl.utils.deploy_manifest : ManifestSigningRequest, signManifest;
     import mcl.utils.deploy_state : manifestStatePath;
 
-    auto base = deleteme ~ ".deploy-apply-darwin-rollback";
+    auto base = uniqueDeployStateTestPath("deploy-apply-darwin-rollback");
     auto keyPath = base ~ ".ed25519";
     auto manifestPath = base ~ ".manifest.json";
     auto stateDir = base ~ ".state";
@@ -1539,7 +1620,7 @@ unittest
     import mcl.utils.deploy_state : manifestStatePath;
     import mcl.utils.deployment_events : readDeploymentEvents;
 
-    auto base = deleteme ~ ".deploy-apply-post-hook";
+    auto base = uniqueDeployStateTestPath("deploy-apply-post-hook");
     auto keyPath = base ~ ".ed25519";
     auto scenarios = [
         "success",

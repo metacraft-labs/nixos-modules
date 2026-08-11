@@ -20,6 +20,11 @@ import mcl.utils.deployment_events : DeploymentEventContext, appendDeploymentEve
 import mcl.utils.process : ProcessInputRunner, ProcessResult, ProcessRunner,
     runProcessCapture, runProcessWithInputCapture;
 
+version (unittest)
+{
+    import mcl.utils.deploy_state : uniqueDeployStateTestPath;
+}
+
 @(Command("deploy-reconcile")
     .Description("Converge signed desired-state deployments with latest-only semantics"))
 struct DeployReconcileArgs
@@ -230,10 +235,10 @@ int deployReconcileImpl(DeployReconcileArgs args, DeployReconcileDependencies de
 @("test_deploy_reconcile_sends_only_latest_manifest")
 unittest
 {
-    import std.file : deleteme, rmdirRecurse;
+    import std.file : rmdirRecurse;
     import mcl.utils.deploy_manifest : ManifestBuildRequest, buildManifest;
 
-    auto stateDir = deleteme ~ ".deploy-reconcile.state";
+    auto stateDir = uniqueDeployStateTestPath("deploy-reconcile");
     scope(exit)
     {
         import std.file : exists;

@@ -4,7 +4,7 @@ import std.algorithm : canFind, filter, map, sort;
 import std.array : array, join;
 import std.conv : to;
 import std.exception : enforce;
-import std.file : SpanMode, deleteme, dirEntries, exists, mkdir, mkdirRecurse,
+import std.file : SpanMode, dirEntries, exists, mkdir, mkdirRecurse,
     readText, remove, rmdirRecurse, tempDir, write;
 import std.json : JSONOptions, JSONType, JSONValue, parseJSON;
 import std.path : buildPath, dirName;
@@ -26,6 +26,11 @@ import mcl.utils.deploy_state : acquireDeployTargetStateLock,
     safeTargetName;
 import mcl.utils.deployment_events : deploymentEventLogPathFromEnv, utcTimestamp;
 import mcl.utils.process : ProcessResult, ProcessRunner, runProcessCapture;
+
+version (unittest)
+{
+    import mcl.utils.deploy_state : uniqueDeployStateTestPath;
+}
 
 @(Command("deploy-agent")
     .Description("Target-side pull agent for signed desired-state manifests"))
@@ -614,7 +619,7 @@ unittest
         buildManifest, signManifest;
     import mcl.utils.deploy_state : targetLatestPath;
 
-    auto base = deleteme ~ ".deploy-agent-superseded";
+    auto base = uniqueDeployStateTestPath("deploy-agent-superseded");
     auto keyPath = base ~ ".ed25519";
     auto stateDir = base ~ ".state";
     auto manifestPath = base ~ ".manifest.json";
@@ -816,7 +821,7 @@ unittest
         buildManifest, signManifest;
     import mcl.utils.deploy_state : targetLatestPath;
 
-    auto base = deleteme ~ ".deploy-agent-invalid-durable";
+    auto base = uniqueDeployStateTestPath("deploy-agent-invalid-durable");
     auto keyPath = base ~ ".ed25519";
     scope(exit)
     {
@@ -995,7 +1000,7 @@ unittest
         buildManifest, signManifest;
     import mcl.utils.deploy_state : targetLatestPath;
 
-    auto base = deleteme ~ ".deploy-agent-bind-durable";
+    auto base = uniqueDeployStateTestPath("deploy-agent-bind-durable");
     auto keyPath = base ~ ".ed25519";
     auto stateDir = base ~ ".state";
     auto manifestPath = base ~ ".manifest.json";
@@ -1116,7 +1121,7 @@ unittest
     import mcl.utils.deploy_manifest : ManifestBuildRequest, ManifestSigningRequest,
         buildManifest, signManifest;
 
-    auto base = deleteme ~ ".deploy-agent-latest";
+    auto base = uniqueDeployStateTestPath("deploy-agent-latest");
     auto keyPath = base ~ ".ed25519";
     auto stateDir = base ~ ".state";
     auto manifestDir = base ~ ".manifests";
@@ -1177,7 +1182,7 @@ unittest
     import mcl.utils.deploy_manifest : ManifestBuildRequest, ManifestSigningRequest,
         buildManifest, signManifest;
 
-    auto base = deleteme ~ ".deploy-agent-wrong-target";
+    auto base = uniqueDeployStateTestPath("deploy-agent-wrong-target");
     auto keyPath = base ~ ".ed25519";
     auto stateDir = base ~ ".state";
     auto manifestPath = base ~ ".manifest.json";
@@ -1221,7 +1226,7 @@ unittest
 @("test_deploy_agent_waits_when_http_manifest_is_missing")
 unittest
 {
-    auto stateDir = deleteme ~ ".deploy-agent-missing-http.state";
+    auto stateDir = uniqueDeployStateTestPath("deploy-agent-missing-http");
     scope(exit) if (stateDir.exists) stateDir.rmdirRecurse;
 
     ProcessResult missingFetch(string[] command)
@@ -1251,7 +1256,7 @@ unittest
 @("test_deploy_agent_fails_on_non_missing_http_fetch_error")
 unittest
 {
-    auto stateDir = deleteme ~ ".deploy-agent-http-error.state";
+    auto stateDir = uniqueDeployStateTestPath("deploy-agent-http-error");
     scope(exit) if (stateDir.exists) stateDir.rmdirRecurse;
 
     ProcessResult failingFetch(string[] command)
@@ -1283,7 +1288,7 @@ unittest
     import mcl.utils.deploy_manifest : ManifestBuildRequest, ManifestSigningRequest,
         buildManifest, signManifest;
 
-    auto base = deleteme ~ ".deploy-agent-retry";
+    auto base = uniqueDeployStateTestPath("deploy-agent-retry");
     auto keyPath = base ~ ".ed25519";
     auto stateDir = base ~ ".state";
     auto manifestPath = base ~ ".manifest.json";
@@ -1344,7 +1349,7 @@ unittest
     import mcl.utils.deploy_manifest : ManifestBuildRequest, ManifestSigningRequest,
         buildManifest, signManifest;
 
-    auto base = deleteme ~ ".deploy-agent-deferred";
+    auto base = uniqueDeployStateTestPath("deploy-agent-deferred");
     auto keyPath = base ~ ".ed25519";
     auto stateDir = base ~ ".state";
     auto manifestPath = base ~ ".manifest.json";

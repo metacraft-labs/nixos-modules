@@ -12,6 +12,14 @@ import std.string : endsWith, startsWith, split, toStringz;
 import std.typecons : Nullable;
 import std.uuid : randomUUID;
 
+version (unittest)
+{
+    import std.array : join;
+    import std.file : tempDir;
+    import std.process : environment;
+    import std.uuid : parseUUID;
+}
+
 import mcl.utils.deploy_manifest : manifestDeploymentId, manifestDesiredSystemPath,
     manifestSequence, manifestTarget;
 import mcl.utils.deployment_events : utcTimestamp;
@@ -66,6 +74,151 @@ enum DesiredManifestDecision
     idempotent,
     superseded,
     conflict,
+}
+
+// Linux Nix sandboxes expose / and /tmp as overflow-owned even though the
+// per-build directory is owned by the effective test user. Keep the exception
+// test-only and tie it to a UUID marker below NIX_BUILD_TOP: the marker itself
+// and every descendant still go through the production ownership checks.
+version (unittest)
+private enum deployStateTestBoundaryPrefix = "mcl-deployment-state-test-";
+
+version (unittest)
+private string canonicalDeployStateTestRoot(string path)
+{
+    auto normalized = normalizeStatePathForDescriptorWalk(path);
+    enforce(normalized.startsWith("/"),
+        "Deployment state test root must be absolute.");
+    return "/" ~ securePathComponents(normalized).join("/");
+}
+
+version (unittest)
+package(mcl) string uniqueDeployStateTestPath(string label)
+{
+    auto nixBuildTop = environment.get("NIX_BUILD_TOP", "");
+    auto testRoot = canonicalDeployStateTestRoot(
+        nixBuildTop != "" ? nixBuildTop : tempDir,
+    );
+    return testRoot.buildPath(
+        deployStateTestBoundaryPrefix ~ randomUUID.toString ~ "-" ~ label,
+    );
+}
+
+version (unittest)
+private bool isDeployStateTestBoundaryComponent(string component)
+{
+    auto uuidStart = deployStateTestBoundaryPrefix.length;
+    enum uuidLength = 36;
+    if (!component.startsWith(deployStateTestBoundaryPrefix)
+        || component.length <= uuidStart + uuidLength + 1
+        || component[uuidStart + uuidLength] != '-')
+        return false;
+
+    try
+    {
+        parseUUID(component[uuidStart .. uuidStart + uuidLength]);
+        return true;
+    }
+    catch (Exception)
+    {
+        return false;
+    }
+}
+
+version (unittest)
+private string deployStateTestBoundaryForRoot(
+    string normalizedStateDir,
+    string testRoot,
+)
+{
+    auto normalizedBuildTop = canonicalDeployStateTestRoot(testRoot);
+    auto canonicalStateDir = canonicalDeployStateTestRoot(normalizedStateDir);
+    if (!isStrictPathAncestor(normalizedBuildTop, canonicalStateDir))
+        return "";
+
+    auto belowBuildTop = canonicalStateDir[normalizedBuildTop.length .. $];
+    auto walked = normalizedBuildTop;
+    foreach (component; securePathComponents(belowBuildTop))
+    {
+        walked ~= "/" ~ component;
+        if (isDeployStateTestBoundaryComponent(component))
+            return walked;
+    }
+    return "";
+}
+
+version (unittest)
+private string deployStateTestBoundary(string normalizedStateDir)
+{
+    auto nixBuildTop = environment.get("NIX_BUILD_TOP", "");
+    return deployStateTestBoundaryForRoot(
+        normalizedStateDir,
+        nixBuildTop != "" ? nixBuildTop : tempDir,
+    );
+}
+
+@("test_deploy_state_unittest_boundary_is_exact_and_cannot_escape_build_root")
+unittest
+{
+    import std.exception : assertThrown;
+
+    enum uuid = "8ab3060e-2cba-4f23-b74c-b52db3bdfb46";
+    enum secondUuid = "7f9af242-95c0-48f0-b598-f7604a8dbd3e";
+    auto boundary = "/sandbox/build/" ~ deployStateTestBoundaryPrefix
+        ~ uuid ~ "-fixture";
+    auto secondBoundary = "/sandbox/build/" ~ deployStateTestBoundaryPrefix
+        ~ secondUuid ~ "-second";
+
+    assert(deployStateTestBoundaryForRoot(boundary, "/sandbox/build/.") == boundary);
+    assert(deployStateTestBoundaryForRoot(
+        boundary ~ "/nested/state",
+        "/sandbox/build",
+    ) == boundary);
+    assert(deployStateTestBoundaryForRoot("/sandbox/build", "/sandbox/build") == "");
+    assert(deployStateTestBoundaryForRoot(
+        "/sandbox/build-other/" ~ boundary.baseName,
+        "/sandbox/build",
+    ) == "");
+    assert(deployStateTestBoundaryForRoot(
+        "/sandbox/build/" ~ deployStateTestBoundaryPrefix ~ "not-a-uuid-fixture",
+        "/sandbox/build",
+    ) == "");
+    assert(deployStateTestBoundaryForRoot(
+        "/sandbox/build/" ~ deployStateTestBoundaryPrefix ~ uuid,
+        "/sandbox/build",
+    ) == "");
+    assert(deployStateTestBoundaryForRoot(
+        "/sandbox/build/" ~ deployStateTestBoundaryPrefix ~ uuid ~ "-",
+        "/sandbox/build",
+    ) == "");
+    assert(deployStateTestBoundaryForRoot(
+        "/sandbox/build/extra-" ~ deployStateTestBoundaryPrefix ~ uuid ~ "-fixture",
+        "/sandbox/build",
+    ) == "");
+    assert(deployStateTestBoundaryForRoot(
+        "/outside/build/" ~ boundary.baseName,
+        "/sandbox/build",
+    ) == "");
+    auto lookalikeParent = "/sandbox/build/lookalike-"
+        ~ deployStateTestBoundaryPrefix ~ uuid;
+    assert(deployStateTestBoundaryForRoot(
+        lookalikeParent ~ "/" ~ secondBoundary.baseName ~ "/state",
+        "/sandbox/build",
+    ) == lookalikeParent ~ "/" ~ secondBoundary.baseName);
+    assert(deployStateTestBoundaryForRoot(
+        boundary ~ "/" ~ secondBoundary.baseName ~ "/state",
+        "/sandbox/build",
+    ) == boundary);
+    auto markerInBuildRoot = "/sandbox/" ~ deployStateTestBoundaryPrefix
+        ~ uuid ~ "-build-root";
+    assert(deployStateTestBoundaryForRoot(
+        markerInBuildRoot ~ "/build/" ~ secondBoundary.baseName ~ "/state",
+        markerInBuildRoot ~ "/build",
+    ) == markerInBuildRoot ~ "/build/" ~ secondBoundary.baseName);
+    assertThrown!Exception(deployStateTestBoundaryForRoot(
+        "/sandbox/build/../" ~ boundary.baseName,
+        "/sandbox/build",
+    ));
 }
 
 final class DeployTargetStateLock
@@ -229,9 +382,70 @@ version (Posix)
             description ~ " is writable by its group or other users.");
     }
 
+    version (unittest)
+    private void validateDeployStateTestFixtureAncestorDescriptor(
+        int fd,
+        string description,
+    )
+    {
+        // Only strict ancestors above the UUID fixture boundary use this path.
+        // O_NOFOLLOW and write/sticky checks remain mandatory while the sandbox
+        // ownership mismatch is ignored.
+        auto metadata = descriptorMetadata(fd, description);
+        enforce(S_ISDIR(metadata.st_mode), description ~ " is not a directory.");
+        enforce((metadata.st_mode & groupOrOtherWriteBits) == 0
+                || (metadata.st_mode & stickyBit) != 0,
+            description ~ " is writable by its group or other users.");
+    }
+
+    version (unittest)
+    private bool isStrictPathAncestor(string ancestor, string path)
+    {
+        if (!ancestor.startsWith("/") || !path.startsWith("/"))
+            return false;
+        if (ancestor == "/")
+            return path != "/" && path.startsWith("/");
+        return path.startsWith(ancestor ~ "/");
+    }
+
+    version (unittest)
+    private bool shouldRelaxDeployStateTestFixtureOwner(
+        string walkedPath,
+        string trustedTestFixtureBoundary,
+    )
+    {
+        return trustedTestFixtureBoundary != ""
+            && isStrictPathAncestor(walkedPath, trustedTestFixtureBoundary);
+    }
+
+    @("test_deploy_state_unittest_owner_relaxation_is_strictly_above_exact_boundary")
+    unittest
+    {
+        enum boundary = "/sandbox/build/mcl-deployment-state-test-"
+            ~ "8ab3060e-2cba-4f23-b74c-b52db3bdfb46-fixture";
+
+        assert(shouldRelaxDeployStateTestFixtureOwner("/", boundary));
+        assert(shouldRelaxDeployStateTestFixtureOwner("/sandbox", boundary));
+        assert(shouldRelaxDeployStateTestFixtureOwner("/sandbox/build", boundary));
+
+        assert(!shouldRelaxDeployStateTestFixtureOwner(boundary, boundary));
+        assert(!shouldRelaxDeployStateTestFixtureOwner(boundary ~ "/state", boundary));
+        assert(!shouldRelaxDeployStateTestFixtureOwner("/sandbox/build-other", boundary));
+        assert(!shouldRelaxDeployStateTestFixtureOwner("/sandbox/buil", boundary));
+        assert(!shouldRelaxDeployStateTestFixtureOwner(
+            "/sandbox/build/mcl-deployment-state-test", boundary));
+        assert(!shouldRelaxDeployStateTestFixtureOwner("/unrelated", boundary));
+        assert(!shouldRelaxDeployStateTestFixtureOwner("", boundary));
+        assert(!shouldRelaxDeployStateTestFixtureOwner(".", boundary));
+        assert(!shouldRelaxDeployStateTestFixtureOwner("/sandbox/build", ""));
+        assert(!shouldRelaxDeployStateTestFixtureOwner(
+            "/sandbox/build", "relative/boundary"));
+    }
+
     private int openOrCreateTrustedParentDirectory(
         string parentPath,
         uid_t expectedOwner,
+        string trustedTestFixtureBoundary = "",
     )
     {
         auto normalized = normalizeStatePathForDescriptorWalk(parentPath);
@@ -252,11 +466,30 @@ version (Posix)
             if (currentFd >= 0)
                 close(currentFd);
         ensureCloseOnExec(currentFd, "deployment state directory walk anchor");
-        validateTrustedAncestorDescriptor(
-            currentFd,
-            "Deployment state directory walk anchor",
-            expectedOwner,
-        );
+        version (unittest)
+        {
+            auto anchor = absolute ? "/" : ".";
+            if (shouldRelaxDeployStateTestFixtureOwner(
+                anchor,
+                trustedTestFixtureBoundary,
+            ))
+                validateDeployStateTestFixtureAncestorDescriptor(
+                    currentFd,
+                    "Deployment state directory walk anchor",
+                );
+            else
+                validateTrustedAncestorDescriptor(
+                    currentFd,
+                    "Deployment state directory walk anchor",
+                    expectedOwner,
+                );
+        }
+        else
+            validateTrustedAncestorDescriptor(
+                currentFd,
+                "Deployment state directory walk anchor",
+                expectedOwner,
+            );
 
         string walked = absolute ? "" : ".";
         foreach (component; components)
@@ -287,11 +520,29 @@ version (Posix)
             try
             {
                 ensureCloseOnExec(nextFd, "deployment state ancestor " ~ walked);
-                validateTrustedAncestorDescriptor(
-                    nextFd,
-                    "Deployment state ancestor " ~ walked,
-                    expectedOwner,
-                );
+                version (unittest)
+                {
+                    if (shouldRelaxDeployStateTestFixtureOwner(
+                        walked,
+                        trustedTestFixtureBoundary,
+                    ))
+                        validateDeployStateTestFixtureAncestorDescriptor(
+                            nextFd,
+                            "Deployment state ancestor " ~ walked,
+                        );
+                    else
+                        validateTrustedAncestorDescriptor(
+                            nextFd,
+                            "Deployment state ancestor " ~ walked,
+                            expectedOwner,
+                        );
+                }
+                else
+                    validateTrustedAncestorDescriptor(
+                        nextFd,
+                        "Deployment state ancestor " ~ walked,
+                        expectedOwner,
+                    );
             }
             catch (Exception error)
             {
@@ -318,7 +569,14 @@ version (Posix)
         // This forbids attacker-controlled symlink traversal before the final
         // ownership check and prevents a privileged direct CLI invocation from
         // creating state through an unsafe ancestor.
-        auto parentFd = openOrCreateTrustedParentDirectory(parentPath, expectedOwner);
+        version (unittest)
+            auto parentFd = openOrCreateTrustedParentDirectory(
+                parentPath,
+                expectedOwner,
+                deployStateTestBoundary(normalizedStateDir),
+            );
+        else
+            auto parentFd = openOrCreateTrustedParentDirectory(parentPath, expectedOwner);
         scope(exit) close(parentFd);
         validateDirectoryDescriptor(
             parentFd,
@@ -763,10 +1021,10 @@ unittest
 {
     version (Posix)
     {
-        import std.file : deleteme, mkdirRecurse, remove,
+        import std.file : mkdirRecurse, remove,
             rmdirRecurse, setAttributes, symlink, write;
 
-        auto root = deleteme ~ ".deploy-lock-unsafe-ancestors";
+        auto root = uniqueDeployStateTestPath("unsafe-ancestors");
         auto trusted = root.buildPath("trusted");
         auto outside = root.buildPath("outside");
         auto ancestorLink = trusted.buildPath("redirect");
@@ -816,10 +1074,10 @@ unittest
 {
     version (Posix)
     {
-        import std.file : deleteme, getAttributes, isSymlink, mkdirRecurse,
+        import std.file : getAttributes, isSymlink, mkdirRecurse,
             readText, remove, rmdirRecurse, setAttributes, symlink, write;
 
-        auto root = deleteme ~ ".deploy-lock-parent-symlink";
+        auto root = uniqueDeployStateTestPath("parent-symlink");
         auto stateDir = root.buildPath("state");
         auto locksPath = stateDir.buildPath("locks");
         auto outside = root.buildPath("outside");
@@ -857,18 +1115,24 @@ unittest
 {
     version (Posix)
     {
-        import std.file : rmdirRecurse;
+        import std.file : getAttributes, mkdirRecurse, rmdirRecurse, setAttributes;
 
-        auto root = "/tmp".buildPath(
-            "mcl-deploy-lock-sticky-" ~ randomUUID.toString,
+        auto generatedBoundary = uniqueDeployStateTestPath("sticky-boundary");
+        auto root = generatedBoundary.dirName.buildPath(
+            "mcl-deploy-lock-sticky-container-" ~ randomUUID.toString,
         );
-        auto stateDir = root.buildPath("nested", "state");
+        auto boundary = root.buildPath(generatedBoundary.baseName);
+        auto stateDir = boundary.buildPath("safe-child", "state");
         scope(exit)
             if (root.exists)
                 root.rmdirRecurse;
 
+        root.mkdirRecurse;
+        root.setAttributes(1023); // 01777: writable only while sticky.
         auto stateLock = acquireDeployTargetStateLock(stateDir, "target");
         scope(exit) stateLock.release();
+        assert((root.getAttributes & 1023) == 1023);
+        assert((boundary.getAttributes & permissionBits) == stateDirectoryCreateMode);
         assert(targetStateLockPath(stateDir, "target").exists);
     }
 }
@@ -878,10 +1142,10 @@ unittest
 {
     version (Posix)
     {
-        import std.file : deleteme, getAttributes, isSymlink, mkdirRecurse,
+        import std.file : getAttributes, isSymlink, mkdirRecurse,
             readText, remove, rmdirRecurse, setAttributes, symlink, write;
 
-        auto root = deleteme ~ ".deploy-lock-leaf-symlink";
+        auto root = uniqueDeployStateTestPath("leaf-symlink");
         auto stateDir = root.buildPath("state");
         auto locksDir = stateDir.buildPath("locks");
         auto lockPath = targetStateLockPath(stateDir, "target");
@@ -920,10 +1184,10 @@ unittest
     {
         import core.sys.posix.sys.stat : mkfifo;
         import core.sys.posix.unistd : link;
-        import std.file : deleteme, getAttributes, mkdirRecurse, remove,
+        import std.file : getAttributes, mkdirRecurse, remove,
             rmdirRecurse, setAttributes, write;
 
-        auto root = deleteme ~ ".deploy-lock-invalid-inodes";
+        auto root = uniqueDeployStateTestPath("invalid-inodes");
         auto stateDir = root.buildPath("state");
         auto locksDir = stateDir.buildPath("locks");
         scope(exit)
@@ -1008,9 +1272,9 @@ unittest
 {
     version (Posix)
     {
-        import std.file : deleteme, rmdirRecurse;
+        import std.file : rmdirRecurse;
 
-        auto stateDir = deleteme ~ ".deploy-lock-cloexec.state";
+        auto stateDir = uniqueDeployStateTestPath("cloexec");
         scope(exit)
             if (stateDir.exists)
                 stateDir.rmdirRecurse;
@@ -1033,9 +1297,9 @@ unittest
     version (Posix)
     {
         import core.sys.posix.sys.stat : umask;
-        import std.file : deleteme, getAttributes, rmdirRecurse;
+        import std.file : getAttributes, rmdirRecurse;
 
-        auto stateDir = deleteme ~ ".deploy-lock-default-umask.state";
+        auto stateDir = uniqueDeployStateTestPath("default-umask");
         scope(exit)
             if (stateDir.exists)
                 stateDir.rmdirRecurse;
@@ -1062,9 +1326,9 @@ unittest
 {
     version (Posix)
     {
-        import std.file : deleteme, rmdirRecurse;
+        import std.file : rmdirRecurse;
 
-        auto stateDir = deleteme ~ ".deploy-lock-serialization.state";
+        auto stateDir = uniqueDeployStateTestPath("serialization");
         scope(exit)
             if (stateDir.exists)
                 stateDir.rmdirRecurse;
@@ -1101,10 +1365,10 @@ unittest
 @("test_latest_only_state_supersedes_older_deployment")
 unittest
 {
-    import std.file : deleteme, rmdirRecurse;
+    import std.file : rmdirRecurse;
     import mcl.utils.deploy_manifest : ManifestBuildRequest, buildManifest;
 
-    auto stateDir = deleteme ~ ".state.supersede";
+    auto stateDir = uniqueDeployStateTestPath("supersede");
     scope(exit)
     {
         if (stateDir.exists) stateDir.rmdirRecurse;
@@ -1134,10 +1398,10 @@ unittest
 @("test_deploy_state_sanitizes_deployment_id_paths")
 unittest
 {
-    import std.file : deleteme, rmdirRecurse;
+    import std.file : rmdirRecurse;
     import mcl.utils.deploy_manifest : ManifestBuildRequest, buildManifest;
 
-    auto stateDir = deleteme ~ ".state.sanitize-deployment-id";
+    auto stateDir = uniqueDeployStateTestPath("sanitize-deployment-id");
     scope(exit)
     {
         if (stateDir.exists) stateDir.rmdirRecurse;
@@ -1160,10 +1424,10 @@ unittest
 @("test_latest_only_state_rejects_stale_deployment")
 unittest
 {
-    import std.file : deleteme, rmdirRecurse;
+    import std.file : rmdirRecurse;
     import mcl.utils.deploy_manifest : ManifestBuildRequest, buildManifest;
 
-    auto stateDir = deleteme ~ ".state.reject";
+    auto stateDir = uniqueDeployStateTestPath("reject-stale");
     scope(exit)
     {
         if (stateDir.exists) stateDir.rmdirRecurse;
@@ -1201,10 +1465,10 @@ unittest
 @("test_latest_only_state_rejects_same_sequence_different_deployment")
 unittest
 {
-    import std.file : deleteme, rmdirRecurse;
+    import std.file : rmdirRecurse;
     import mcl.utils.deploy_manifest : ManifestBuildRequest, buildManifest;
 
-    auto stateDir = deleteme ~ ".state.same-sequence";
+    auto stateDir = uniqueDeployStateTestPath("same-sequence");
     scope(exit)
     {
         if (stateDir.exists) stateDir.rmdirRecurse;
@@ -1242,10 +1506,10 @@ unittest
 @("test_latest_only_state_same_id_is_idempotent_only_for_exact_bytes_and_advances_sequence")
 unittest
 {
-    import std.file : deleteme, rmdirRecurse;
+    import std.file : rmdirRecurse;
     import mcl.utils.deploy_manifest : ManifestBuildRequest, buildManifest;
 
-    auto stateDir = deleteme ~ ".state.same-id";
+    auto stateDir = uniqueDeployStateTestPath("same-id");
     scope(exit)
         if (stateDir.exists)
             stateDir.rmdirRecurse;
