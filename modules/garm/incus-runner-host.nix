@@ -284,6 +284,41 @@
           };
         in
         {
+          # (1) FUSE on the HOST kernel. Incus bind-mounts `/dev/fuse` into
+          # every container from its own static device set — NOT from LXC's
+          # config templates, which only carry the `c 10:229 rwm` cgroup allow.
+          # The bind is in Incus itself,
+          # internal/server/instance/drivers/driver_lxc.go, where "/dev/fuse"
+          # heads an unconditional `bindMounts` list emitted as
+          #   lxc.mount.entry = /dev/fuse dev/fuse none bind,create=file,optional 0 0
+          # The surrounding privilege branches only affect binfmt_misc and
+          # mqueue, so a per-job container gets the device with NO
+          # container-side config — unprivileged and idmapped included, and
+          # FUSE mounts from inside a user namespace have been permitted since
+          # Linux 4.18. (Confirmed on a live per-job container:
+          # `crw-rw-rw- 1 nobody nogroup 10, 229 /dev/fuse`, uid_map
+          # `0 1000000 1000000000`, no security.privileged/nesting.)
+          #
+          # But the loop skips any path that `!PathExists()` on the HOST, and
+          # the entry is `optional` besides. So a host without `/dev/fuse`
+          # produces containers with no device and NO error anywhere — nothing
+          # fails, nothing logs. Nothing in a minimal NixOS closure guarantees
+          # the module is loaded: `/dev/fuse` appears on demand via module
+          # autoload, and on a host where no service ever opens it the device
+          # is simply absent — and then every per-job container
+          # silently lacks it too, which surfaces to CI as
+          #   tup error: Unable to mount FUSE on .tup/mnt
+          # in a job that has no way to fix it. Declare the dependency here,
+          # where the runner class is declared, so it holds from boot rather
+          # than by luck of what else the host happens to run.
+          #
+          # This is the runner class's HALF of the requirement. The other half
+          # is guest-side: the image must ship a SETUID `fusermount3`
+          # (Debian's `fuse3` package), because libfuse spawns that helper to
+          # obtain the `/dev/fuse` descriptor and nothing in a Nix store can be
+          # setuid. That half lives in the vm-harness runner-image recipe.
+          boot.kernelModules = [ "fuse" ];
+
           # (2) The full host triple — managed incusbr0 bridge + a `dir` storage
           # pool + the `default` profile's root/eth0 devices — declared via
           # incus.preseed. nixpkgs' incus module renders an idempotent

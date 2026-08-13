@@ -91,6 +91,39 @@ top@{ ... }:
             host.wait_for_unit("incus.service")
             host.wait_for_unit("incus-preseed.service")
 
+            with subtest("(1) the host provides /dev/fuse for per-job containers"):
+                # Incus bind-mounts the host's /dev/fuse into EVERY container
+                # (internal/server/instance/drivers/driver_lxc.go puts
+                # "/dev/fuse" in the unconditional `bindMounts` list, emitted as
+                # `lxc.mount.entry = /dev/fuse dev/fuse none bind,create=file,
+                # optional 0 0`), so a per-job eph-linux-x64 container gets FUSE
+                # with no container-side config — unprivileged and idmapped
+                # included (FUSE mounts in a user namespace have been permitted
+                # since Linux 4.18). But that entry is emitted only `if
+                # PathExists("/dev/fuse")` on the HOST and carries `optional`,
+                # so a host without the `fuse` module produces containers with
+                # no device and NO error anywhere. Hence
+                # boot.kernelModules = [ "fuse" ].
+                #
+                # When this regresses, the symptom lands far away and reads as
+                # someone else's bug: codetracer's cross-process-linux job
+                # fails with `tup error: Unable to mount FUSE on .tup/mnt`,
+                # inside a container, with nothing to point at the host.
+                #
+                # NOTE ON WHAT IS ASSERTED. The runtime facts below are NOT
+                # sufficient on their own: `virtualisation.incus.enable` pulls
+                # in `virtualisation.lxc.lxcfs.enable`, and lxcfs is itself a
+                # FUSE filesystem, so it autoloads the module at boot and
+                # /dev/fuse exists on this node whether or not the option is
+                # declared. Verified by building this test with the
+                # boot.kernelModules line deleted: it still passed. So the
+                # DECLARATION is asserted too — that is the part that is ours,
+                # and the part that keeps holding if incus ever stops dragging
+                # lxcfs in.
+                host.succeed("grep -qxF fuse /etc/modules-load.d/nixos.conf")
+                host.succeed("test -c /dev/fuse")
+                host.succeed("grep -qw fuse /proc/filesystems")
+
             with subtest("(2) preseed created incusbr0 on the declared subnet"):
                 host.succeed("incus network show incusbr0")
                 addr = host.succeed(
