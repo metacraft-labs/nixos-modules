@@ -14,7 +14,7 @@ top@{ ... }:
   #   * node `server` runs the M7-extended `services.mcl-repro-binary-cache`
   #     over HTTPS (self-signed ECDSA-P256 cert via LoadCredential) with an
   #     `--allowed-signers` allowlist, PLUS an nginx TLS vhost serving the
-  #     signed RDM1 manifest fixture at https://server/latest.rdm.
+  #     signed RDMF manifest fixture at https://server/latest.rdm.
   #   * node `agent` runs `services.mcl-repro-deploy-agent` targeting
   #     `deploy-target-001`, pointed at the HTTPS manifest source, trusting the
   #     server's self-signed CA (REPRO_BINARY_CACHE_CA_FILE) and the manifest
@@ -24,7 +24,7 @@ top@{ ... }:
   # Nim helper against reprobuild's own `repro_deploy_agent` +
   # `repro_peer_cache/auth` libraries (see :fixture-provenance: in the check
   # body), so the signature the agent verifies is a genuine ECDSA-P256 signature
-  # over the genuine RDM1 envelope, and the trusted anchor is the matching
+  # over the genuine RDMF envelope, and the trusted anchor is the matching
   # 130-char-hex uncompressed public key.
   perSystem =
     {
@@ -59,11 +59,22 @@ top@{ ... }:
       # for target=deploy-target-001 sequence=1. `untrusted.rdm` is signed by a
       # SECOND keypair whose pubkey is NOT in `trustedAnchorHex` — a
       # cryptographically-valid signature the allowlist must still reject.
-      trustedAnchorHex = "0483ae14da1ddec939b260d364f29232e97538f73589ffc184809dd1f232391f0195e6e685524225798957695cae979fef21b347e4bc7ecf9af969f3e5f832f8d8";
-      trustedManifestB64 = "UkRNMQEAAAARAAAAZGVwbG95LXRhcmdldC0wMDEBAAAAAAAAAAgAAABkZXBsb3ktMQAAAAAAAAAABIOuFNod3sk5smDTZPKSMul1OPc1if/BhICd0fIyOR8BlebmhVJCJXmJV2lcrpef7yGzR+S8fs+a+Wnz5fgy+NhjgA+dXsKdE3xIJfNINDGZtetIMvVa6gJWko94c+X35N7xmeugHXFpYsypx0+9t1ityzQUF51bCi6IKkFVnsV4";
-      untrustedManifestB64 = "UkRNMQEAAAARAAAAZGVwbG95LXRhcmdldC0wMDEBAAAAAAAAAAoAAABkZXBsb3ktYmFkAAAAAAAAAAAEDGh4x8YZ23F/qXIe8WlwnwCKMNn1ZkirtG6Qr7aCKQxOLI81KmVtsTlKjXnHrruypyqOEE8Xohay7E1zmRoyPKQW5eW1SKDlG73f3u1oDgOQqIVRUcaYM7oBBxrnbcgpZ4bxnvkAIAAGyTUrUeFvqyRoFIt1cmvtgdAW7SEs0Xg=";
+      #
+      # RE-MINTED when the envelope magic became `RDMF` (it was `RDM1`, whose
+      # trailing digit read as a version and then contradicted a v2 envelope
+      # that still began with those bytes). Same content as before — target,
+      # sequence, deploymentIds, empty profileText, no build actions — so every
+      # assertion below still means what it meant; only the magic differs. The
+      # re-mint used infra's `render-deploy-manifest.py`, which is the other
+      # implementation of this format, and each envelope was then verified with
+      # the real `repro deploy-agent`: trusted → exit 0 / aoConverged,
+      # untrusted → exit 2 / aoRejected, with the monotonic floor seeded at
+      # u64 max so the trust gate is what is being observed and not the apply.
+      trustedAnchorHex = "048bc8d2f7ff0824b8aa2f0b3bebef478c97a122121a3a98d85274d58c1faa7881764fb7d02aea0ff3baf0c2eec3741ad4865dc1795da2768f3884e037a53fa28e";
+      trustedManifestB64 = "UkRNRgEAAAARAAAAZGVwbG95LXRhcmdldC0wMDEBAAAAAAAAAAgAAABkZXBsb3ktMQAAAAAAAAAABIvI0vf/CCS4qi8LO+vvR4yXoSISGjqY2FJ01YwfqniBdk+30CrqD/O68MLuw3Qa1IZdwXldonaPOITgN6U/oo4nv4/clnraQz4LLnK6y1TrZRkChcKFhyNx+YzJtreCGQugPjeGrY/Q54FPWvjhd/k0wUMteYrtNCzW5aazRGAS";
+      untrustedManifestB64 = "UkRNRgEAAAARAAAAZGVwbG95LXRhcmdldC0wMDEBAAAAAAAAAAoAAABkZXBsb3ktYmFkAAAAAAAAAAAEL/7EVR3dklcGnxK9KHIghcO/yOEiTB/N9d1PkmftEfU0RBA7Yof9I0ulbaTnKfD7OmYtyeyonrWdmLZf8vWGs/Iq2S1MHACAkTZyHhuByJj6BRLS07Z1/zxziMqbecf453pyjRrkIeq5BPp0Na4Mj/GZ65LYbNBqcPoM+ziTi/8=";
 
-      # Real RDM1 manifest bytes on disk (base64-decoded at build time).
+      # Real RDMF manifest bytes on disk (base64-decoded at build time).
       manifestFixtures =
         pkgs.runCommand "repro-deploy-agent-manifest-fixtures" { nativeBuildInputs = [ pkgs.coreutils ]; }
           ''
@@ -113,7 +124,7 @@ top@{ ... }:
                 allowedSignersFile = "${manifestFixtures}/allowed-signers";
               };
 
-              # Serve the signed RDM1 manifest over HTTPS (a separate vhost — the
+              # Serve the signed RDMF manifest over HTTPS (a separate vhost — the
               # cache daemon only serves /manifests/<hex> + /payloads/<hex>).
               services.nginx = {
                 enable = true;
@@ -254,7 +265,7 @@ top@{ ... }:
                 assert "deploy-target-001" in execstart, execstart
 
             with subtest("REAL signed-manifest fetch over HTTPS: the agent accepts the trusted manifest"):
-                # Trigger one tick. The agent fetches the RDM1 manifest over TLS
+                # Trigger one tick. The agent fetches the RDMF manifest over TLS
                 # from https://server/latest.rdm (verifying the server cert
                 # against REPRO_BINARY_CACHE_CA_FILE), decodes it, and verifies
                 # its ECDSA-P256 signature against the allowed-signers set. The
