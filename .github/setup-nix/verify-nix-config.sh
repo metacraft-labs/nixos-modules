@@ -118,15 +118,24 @@ fi
 # No `--extra-experimental-features` here, on purpose: that flag would grant
 # the feature being tested and turn this into a tautology.
 # ---------------------------------------------------------------------------
+# stderr is captured SEPARATELY, never merged into the value. Nix writes
+# warnings there routinely -- on these runners the CI user is not a trusted
+# Nix user, so every restricted setting in nix.conf produces one -- and folding
+# them into stdout would make the literal comparison below fail on a perfectly
+# healthy runner. That mistake turns this guard into the false-alarm half of
+# the very problem it exists to solve.
+probe_stderr="$(mktemp)"
+trap 'rm -f "$probe_stderr"' EXIT
+
 probe_output=""
-if ! probe_output="$(nix eval --raw --expr '"setup-nix-probe-ok"' 2>&1)"; then
+if ! probe_output="$(nix eval --raw --expr '"setup-nix-probe-ok"' 2>"$probe_stderr")"; then
   echo "setup-nix: the nix-command probe failed:" >&2
-  printf '%s\n' "$probe_output" >&2
+  cat "$probe_stderr" >&2
   fail "experimental feature 'nix-command' is not enabled by configuration"
 fi
 if [ "$probe_output" != "setup-nix-probe-ok" ]; then
-  echo "setup-nix: unexpected probe output:" >&2
-  printf '%s\n' "$probe_output" >&2
+  echo "setup-nix: unexpected probe output: '$probe_output'" >&2
+  cat "$probe_stderr" >&2
   fail "the nix-command probe did not return its expected literal"
 fi
 
@@ -137,20 +146,35 @@ fi
 # ---------------------------------------------------------------------------
 if printf '%s' "$required_features" | grep -qw flakes; then
   probe_dir="$(mktemp -d)"
-  # shellcheck disable=SC2064 # expand probe_dir now, at trap-set time
-  trap "rm -rf '$probe_dir'" EXIT
+  # shellcheck disable=SC2064 # expand both paths now, at trap-set time
+  trap "rm -rf '$probe_dir'; rm -f '$probe_stderr'" EXIT
   printf '{ outputs = _: { probe = "setup-nix-flake-ok"; }; }\n' >"$probe_dir/flake.nix"
 
   flake_output=""
-  if ! flake_output="$(nix eval --raw --no-write-lock-file "path:$probe_dir#probe" 2>&1)"; then
+  if ! flake_output="$(nix eval --raw --no-write-lock-file "path:$probe_dir#probe" 2>"$probe_stderr")"; then
     echo "setup-nix: the flakes probe failed:" >&2
-    printf '%s\n' "$flake_output" >&2
+    cat "$probe_stderr" >&2
     fail "experimental feature 'flakes' is not enabled by configuration"
   fi
   if [ "$flake_output" != "setup-nix-flake-ok" ]; then
-    echo "setup-nix: unexpected flake probe output:" >&2
-    printf '%s\n' "$flake_output" >&2
+    echo "setup-nix: unexpected flake probe output: '$flake_output'" >&2
+    cat "$probe_stderr" >&2
     fail "the flakes probe did not return its expected literal"
+  fi
+
+  # Not a failure, but worth naming rather than leaving buried in stderr: when
+  # the CI user is not in Nix's `trusted-users`, the daemon DISCARDS restricted
+  # settings from the nix.conf this action just wrote -- `trusted-public-keys`
+  # and `netrc-file` among them, which is what makes a private substituter
+  # usable. That is the same "written but not in effect" gap as the one this
+  # script guards, applied to a different class of setting. It is reported, not
+  # enforced, because enforcing it here would fail every job on the current
+  # images and that is an infrastructure decision, not this action's to make.
+  if grep -q 'restricted setting and you are not a trusted user' "$probe_stderr" 2>/dev/null; then
+    echo "setup-nix: NOTE — this runner's user is not a trusted Nix user, so the following"
+    echo "setup-nix:        settings written to nix.conf were IGNORED by the daemon:"
+    sed -n "s/.*ignoring the client-specified setting '\([^']*\)'.*/setup-nix:          - \1/p" "$probe_stderr" | sort -u
+    echo "setup-nix:        Fix by adding the runner user to Nix's trusted-users on the image."
   fi
 fi
 

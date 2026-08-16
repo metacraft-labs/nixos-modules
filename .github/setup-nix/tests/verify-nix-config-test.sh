@@ -102,6 +102,38 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 2b. The guard must not be fooled by Nix writing WARNINGS to stderr.
+#
+# This case exists because the guard originally captured the probe with `2>&1`,
+# folding Nix's warnings into the value it then compared against a literal. On
+# the real `eph-*` runners the CI user is not in Nix's `trusted-users`, so every
+# restricted setting in nix.conf emits a warning, the comparison failed, and a
+# perfectly healthy runner was reported broken.
+#
+# A false alarm is not a harmless failure mode here: a guard that cries wolf
+# gets disabled, and then the real defect it was added for goes back to being
+# invisible. The healthy-path case above did not catch it because a quiet Nix
+# emits nothing on stderr.
+# ---------------------------------------------------------------------------
+noisy_config="experimental-features = nix-command flakes
+setup-nix-bogus-setting = 1"
+noisy_probe=""
+noisy_probe="$(NIX_CONFIG="$noisy_config" nix eval --raw --expr '"x"' 2>&1 >/dev/null || true)"
+if [ -z "$noisy_probe" ]; then
+  fail "FIXTURE BROKEN: the noisy fixture produced no stderr output, so it cannot prove the guard tolerates warnings"
+else
+  pass "fixture makes Nix emit a warning on stderr while the features still work"
+
+  if NIX_CONFIG="$noisy_config" \
+    SETUP_NIX_REQUIRED_EXPERIMENTAL_FEATURES="nix-command flakes" \
+    bash "$guard" >/dev/null 2>&1; then
+    pass "guard tolerates Nix warnings on stderr instead of misreading them as the probe value"
+  else
+    fail "guard failed on a HEALTHY Nix that merely wrote a warning to stderr — a false alarm, which gets guards switched off"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # 3. THE REGRESSION CASE — a pre-installed Nix with no experimental-features.
 #
 # This is the exact state `cachix/install-nix-action` leaves behind when it
