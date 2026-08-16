@@ -610,6 +610,125 @@ function Send-SystemInfo {
 	}
 }
 
+# The eph-win-x64 golden ships neither git nor bash. That breaks two
+# separate things, and only one of them can be fixed by a workflow step:
+#
+#   * every 'shell: bash' step dies with "bash: command not found";
+#   * actions/checkout finds no git and silently degrades to a REST-API zip
+#     download, which has no submodules, no history, and no LFS.
+#
+# The second is why this belongs HERE rather than in a workflow. actions/
+# checkout is normally the first step of a job, so no action of ours runs
+# before it -- but this template does. It executes in the guest during
+# provisioning, before Runner.Listener is started, so the PATH it sets is
+# inherited by the runner process and therefore by every step of the job,
+# including checkout.
+#
+# The image itself remains the right long-term home for these tools (see
+# guest-recipes/windows-x64-base/cloudbase-init-golden.md); this template
+# stays correct either way, because it installs only when the tools are
+# absent and otherwise just verifies. When a golden that ships git lands,
+# this becomes a cheap assertion rather than a download.
+#
+# The pin below is the same PortableGit the persistent win-ci-vm-001 runner
+# already uses (infra machines/server/_win-ci-vm-001/system_windows_runner.nim);
+# keeping one pin for both Windows runner classes means one thing to bump.
+# PortableGit rather than MinGit: MinGit satisfies actions/checkout and still
+# leaves every bash step dead, which is exactly the half-fix to avoid.
+$PortableGitVersion = '2.47.1'
+$PortableGitName = "PortableGit-$PortableGitVersion-64-bit.7z.exe"
+$PortableGitUrl = "https://github.com/git-for-windows/git/releases/download/v$PortableGitVersion.windows.1/$PortableGitName"
+$PortableGitSha256 = '4f3f21f4effcb659566883ee1ed3ae403e5b3d7a0699cee455f6cd765e1ac39c'
+$PortableGitInstallDir = 'C:\PortableGit'
+
+function Test-RunnerToolchain {
+	$git = Get-Command git -ErrorAction SilentlyContinue
+	if ($null -eq $git) {
+		return $false
+	}
+	$bash = Get-Command bash -ErrorAction SilentlyContinue
+	if ($null -eq $bash) {
+		return $false
+	}
+	# A bash.exe that is the WSL stub in System32 is worse than none: it is on
+	# PATH, it launches, and it fails only once a step tries to use it.
+	if ($bash.Source -like "$env:SystemRoot\System32\*") {
+		return $false
+	}
+	return $true
+}
+
+function Add-RunnerPathEntry {
+	param([string]$Entry)
+	if (-not (Test-Path -LiteralPath $Entry -PathType Container)) {
+		Fail-Install "refusing to add a non-directory to PATH: $Entry"
+	}
+	$machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+	$entries = @()
+	if (-not [string]::IsNullOrWhiteSpace($machinePath)) {
+		$entries = $machinePath.Split(';') | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+	}
+	if ($entries -notcontains $Entry) {
+		$updated = (@($Entry) + $entries) -join ';'
+		[Environment]::SetEnvironmentVariable('Path', $updated, 'Machine')
+	}
+	# The machine PATH alone does not reach this already-running process, and
+	# run.cmd inherits from this process. Set both.
+	$env:PATH = "$Entry;$env:PATH"
+}
+
+function Install-RunnerToolchain {
+	Send-Status -Status 'installing' -Message 'installing git and Git Bash'
+	$archive = Join-Path $env:TEMP $PortableGitName
+	Invoke-FileDownload -Uri $PortableGitUrl -Destination $archive
+	$actualHash = (Get-FileHash -Algorithm SHA256 -Path $archive).Hash.ToLowerInvariant()
+	if ($actualHash -ne $PortableGitSha256.ToLowerInvariant()) {
+		Remove-Item -Force $archive -ErrorAction SilentlyContinue
+		Fail-Install "PortableGit checksum mismatch: expected $PortableGitSha256 got $actualHash"
+	}
+	Remove-Item -Recurse -Force $PortableGitInstallDir -ErrorAction SilentlyContinue
+	# PortableGit ships as a 7-Zip self-extractor; -y -o<dir> extracts silently.
+	$process = Start-Process -FilePath $archive -ArgumentList '-y', "-o$PortableGitInstallDir" -Wait -PassThru -NoNewWindow
+	Remove-Item -Force $archive -ErrorAction SilentlyContinue
+	if ($process.ExitCode -ne 0) {
+		Fail-Install "PortableGit extraction failed with exit code $($process.ExitCode)"
+	}
+	foreach ($sub in @('cmd', 'bin')) {
+		Add-RunnerPathEntry (Join-Path $PortableGitInstallDir $sub)
+	}
+}
+
+function Initialize-RunnerToolchain {
+	if (-not (Test-RunnerToolchain)) {
+		Install-RunnerToolchain
+	}
+	# Verify what is actually present rather than trusting either branch above.
+	# An install that reported success but left the tools unusable is the same
+	# silent-no-op class this whole block exists to end, so prove both tools
+	# RUN -- Get-Command only proves a file was found.
+	if (-not (Test-RunnerToolchain)) {
+		Fail-Install 'git and Git Bash are still not on PATH after provisioning'
+	}
+	try {
+		$gitVersion = (& git --version 2>&1 | Out-String).Trim()
+	} catch {
+		Fail-Install "git is on PATH but not executable: $($_.Exception.Message)"
+	}
+	try {
+		$bashVersion = (& bash --version 2>&1 | Select-Object -First 1 | Out-String).Trim()
+	} catch {
+		Fail-Install "bash is on PATH but not executable: $($_.Exception.Message)"
+	}
+	if ([string]::IsNullOrWhiteSpace($gitVersion)) {
+		Fail-Install 'git --version produced no output'
+	}
+	if ([string]::IsNullOrWhiteSpace($bashVersion)) {
+		Fail-Install 'bash --version produced no output'
+	}
+	Write-Host "runner toolchain verified: $gitVersion"
+	Write-Host "runner toolchain verified: $bashVersion"
+}
+
 if ([string]::IsNullOrWhiteSpace($MetadataURL)) {
 	Fail-Install 'missing metadata URL'
 }
@@ -619,6 +738,11 @@ if ([string]::IsNullOrWhiteSpace($CallbackURL)) {
 
 New-Item -ItemType Directory -Force -Path $RunHome | Out-Null
 Set-Location $RunHome
+
+# Before the runner exists, and therefore before any job step -- including
+# actions/checkout, which runs before any action of ours and is the reason this
+# cannot be solved by a workflow step.
+Initialize-RunnerToolchain
 
 if (-not (Test-Path (Join-Path $RunHome 'run.cmd'))) {
 	Send-Status -Status 'installing' -Message "downloading tools from {{ .DownloadURL }}"

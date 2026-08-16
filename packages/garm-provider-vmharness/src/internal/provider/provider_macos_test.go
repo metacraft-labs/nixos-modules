@@ -18,6 +18,32 @@ import (
 
 func strptr(v string) *string { return &v }
 
+// assertNothingDetached enforces what the old blanket ban on the substring
+// "Start-Process" was standing in for: nothing in a FOREGROUND bootstrap
+// template may be launched and left running.
+//
+// The blanket ban was a proxy, and it became a false positive the moment the
+// template legitimately needed to run a synchronous helper process (extracting
+// the pinned PortableGit self-extractor, which PowerShell's call operator does
+// not wait for because the extractor is a GUI subsystem binary). Banning a
+// cmdlet name is not the same as forbidding detachment, so assert the actual
+// property: every Start-Process is waited on.
+//
+// The runner's own foreground launch stays pinned independently, by the
+// positive assertions on the ComSpec/run.cmd line, $LASTEXITCODE capture, and
+// the non-zero-exit Fail-Install, all of which remain unchanged.
+func assertNothingDetached(t *testing.T, text string) {
+	t.Helper()
+	for _, line := range strings.Split(text, "\n") {
+		if !strings.Contains(line, "Start-Process") {
+			continue
+		}
+		if !strings.Contains(line, "-Wait") {
+			t.Fatalf("bootstrap starts a process without -Wait (detached):\n%s", line)
+		}
+	}
+}
+
 func shellSingleQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
 }
@@ -145,7 +171,6 @@ func TestQemuWindowsArmBootstrapUsesWindowsPath(t *testing.T) {
 		"New-Service",
 		"RunnerService.exe",
 		"Get-MetadataFile -Path 'credentials/credentials_rsaparams'",
-		"Start-Process",
 		"$encodedBytes",
 		"[Text.Encoding]::UTF8.GetBytes($rsaResponse.Content)",
 		"[System.Text.Encoding]::UTF8.GetBytes($rsaResponse.Content)",
@@ -222,9 +247,7 @@ func TestQemuWindowsArmBootstrapUsesGuestURLOverrides(t *testing.T) {
 			t.Fatalf("qemu Windows ARM bootstrap missing override %q:\n%s", want, text)
 		}
 	}
-	if strings.Contains(text, "Start-Process") {
-		t.Fatalf("qemu Windows ARM bootstrap detaches runner instead of running it in foreground:\n%s", text)
-	}
+	assertNothingDetached(t, text)
 	if strings.Contains(text, "/metadata/install-script/") {
 		t.Fatalf("qemu Windows ARM bootstrap still relies on GARM second-stage install script:\n%s", text)
 	}
@@ -392,9 +415,7 @@ powershell.exe -Sta -NonInteractive -ExecutionPolicy RemoteSigned -File $install
 			t.Fatalf("CreateInstance bootstrap missing override %q:\n%s", want, text)
 		}
 	}
-	if strings.Contains(text, "Start-Process") {
-		t.Fatalf("CreateInstance bootstrap detaches runner instead of running it in foreground:\n%s", text)
-	}
+	assertNothingDetached(t, text)
 	if strings.Contains(text, "/metadata/install-script/") {
 		t.Fatalf("CreateInstance bootstrap still relies on GARM second-stage install script:\n%s", text)
 	}
