@@ -43,6 +43,13 @@ inputs:
     description: Deprecated compatibility input; ignored by the Determinate Nix installer.
     default: ''
     required: false
+  experimental-features:
+    description: >-
+      Space-separated experimental features to enable. The action writes these
+      into nix.conf and then VERIFIES they are actually in effect, failing the
+      job if they are not (see `verify-nix-config.sh`).
+    required: false
+    default: 'nix-command flakes pipe-operators'
   use-direnv:
     description: Whether to use direnv to load the environment
     type: boolean
@@ -208,7 +215,7 @@ runs:
           http-connections = 8
           narinfo-cache-negative-ttl = 120
           allow-import-from-derivation = true
-          experimental-features = nix-command flakes pipe-operators
+          experimental-features = ${{ inputs.experimental-features }}
 
           substituters = https://cache.nixos.org ${{inputs.substituters}}
           trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= ${{inputs.trusted-public-keys}}
@@ -221,6 +228,24 @@ runs:
 
         touch "$HOME/.config/nix/netrc"
         chmod 0600 "$HOME/.config/nix/netrc"
+
+    # Writing nix.conf is not the same as the setting being IN EFFECT, and the
+    # gap between those two is where the `cachix/install-nix-action` defect
+    # lives: on the `eph-*` images Nix is already installed, that action aborts
+    # with "Nix is already installed" and exit 0, never applies
+    # `experimental-features`, and the job dies much later in an unrelated step
+    # with "nix-command is disabled".
+    #
+    # This action writes nix.conf unconditionally so it does not no-op that way,
+    # but it should not merely CLAIM to have configured Nix either. Prove it, by
+    # functional probe, before any step that depends on it. See the header of
+    # verify-nix-config.sh for why the probes deliberately do not pass
+    # `--extra-experimental-features`.
+    - name: Verify the Nix configuration took effect
+      shell: bash
+      env:
+        SETUP_NIX_REQUIRED_EXPERIMENTAL_FEATURES: ${{ inputs.experimental-features }}
+      run: bash "${{ github.action_path }}/verify-nix-config.sh"
 
     - name: Start Attic watch-store
       if: ${{ inputs.attic-token != '' && inputs.attic-cache != '' }}
