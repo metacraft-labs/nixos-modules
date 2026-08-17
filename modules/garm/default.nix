@@ -2007,6 +2007,29 @@
               lib.filterAttrs (_: g: g.appKeyFile != null) enabledGithub
             );
 
+          # The bare on-disk SOURCE paths behind `loadCredential` (the `path`
+          # halves, without the `id:` prefixes). On the real hosts the App-PEM
+          # entries resolve through the agenix symlink farm
+          # (`/run/agenix/github-runners/*-app-key`), which agenix (re)materialises
+          # from an ACTIVATION SCRIPT — there is no `agenix-install-secrets.service`
+          # to order against on these hosts (sysusers/userborn are off; agenix runs
+          # `system.activationScripts.agenix*`, not a systemd unit). systemd sets up
+          # `LoadCredential=` in PID 1 BEFORE any Exec*, so a source that is briefly
+          # absent when a start job runs fails the unit opaquely with
+          # `status=243/CREDENTIALS`. We ASSERT these same paths below: an assertion
+          # is evaluated one phase earlier still (before credential setup), so a
+          # missing source now fails fast with an explicit, greppable
+          # `AssertPathExists=… failed` in the journal — same self-heal (Restart=
+          # always retries until the activation script finishes), clearer signal.
+          # This is a strict superset of `LoadCredential`'s own precondition, so it
+          # cannot reject any start that `LoadCredential` would have accepted.
+          credentialSourcePaths =
+            lib.optional (cfg.jwtSecretFile != null) (toString cfg.jwtSecretFile)
+            ++ lib.optional (cfg.dbPassphraseFile != null) (toString cfg.dbPassphraseFile)
+            ++ lib.mapAttrsToList (_: g: toString g.appKeyFile) (
+              lib.filterAttrs (_: g: g.appKeyFile != null) enabledGithub
+            );
+
           # The dedicated-user base (shared by both provider postures).
           userBaseServiceConfig = {
             User = cfg.user;
@@ -2204,11 +2227,28 @@
             restartTriggers = [ configTemplate ];
             after = [
               "network.target"
+              # Forward-compatible ordering edge against agenix's systemd-unit
+              # mode. On the current garm hosts agenix installs secrets from an
+              # ACTIVATION SCRIPT (sysusers/userborn off), so this unit does not
+              # exist and the edge is an inert no-op (`After=` never pulls a unit
+              # in, and imposes no ordering when the target is absent from the
+              # transaction). If a host ever adopts `systemd.sysusers.enable` /
+              # `services.userborn.enable`, agenix switches to
+              # `agenix-install-secrets.service` and this becomes the REAL
+              # ordering guarantee that garm starts only once the App-PEM sources
+              # are staged. Costs nothing today; correct the moment it applies.
+              "agenix-install-secrets.service"
             ]
             ++ lib.optional anyLibvirt "libvirtd.service"
             ++ lib.optional anyIncus "incus.service";
             wants = lib.optional anyLibvirt "libvirtd.service" ++ lib.optional anyIncus "incus.service";
             wantedBy = [ "multi-user.target" ];
+
+            # Fail fast + legibly (before PID 1 credential setup) if any
+            # LoadCredential source is momentarily absent, instead of the opaque
+            # 243/CREDENTIALS. See `credentialSourcePaths` above for the rationale
+            # and why this cannot reject a start LoadCredential would have taken.
+            unitConfig.AssertPathExists = credentialSourcePaths;
 
             # The provider child inherits the unit PATH (GARM forwards PATH via
             # environment_variables). libvirt: cdrkit(genisoimage)+qemu+libvirt
