@@ -230,11 +230,20 @@ runs:
         chmod 0600 "$HOME/.config/nix/netrc"
 
     # Writing nix.conf is not the same as the setting being IN EFFECT, and the
-    # gap between those two is where the `cachix/install-nix-action` defect
-    # lives: on the `eph-*` images Nix is already installed, that action aborts
-    # with "Nix is already installed" and exit 0, never applies
-    # `experimental-features`, and the job dies much later in an unrelated step
-    # with "nix-command is disabled".
+    # gap between those two is where the defect of the third-party installer
+    # action this repo migrated away from lives: on the `eph-*` images Nix is
+    # already installed, that action aborts with "Nix is already installed" and
+    # exit 0, never applies `experimental-features`, and the job dies much later
+    # in an unrelated step with "nix-command is disabled".
+    #
+    # That action is named, with the full story, in the header of
+    # verify-nix-config.sh. It is deliberately NOT named in this file:
+    # checks/deployment-production-cutover.nix asserts that action.yml contains
+    # no occurrence of that vendor's name at all, to prove the migration to the
+    # Determinate installer is complete. That guard is a plain substring ban and
+    # cannot tell code from comments, so spelling the name here — even in a
+    # comment — fails the check. Keep the name in verify-nix-config.sh, which
+    # the guard does not read.
     #
     # This action writes nix.conf unconditionally so it does not no-op that way,
     # but it should not merely CLAIM to have configured Nix either. Prove it, by
