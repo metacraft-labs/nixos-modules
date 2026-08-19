@@ -413,6 +413,7 @@
         minIdleRunners = ss.minIdleRunners;
         runnerBootstrapTimeout = ss.runnerBootstrapTimeout;
         enabled = ss.enabled;
+        runnerGroup = ss.runnerGroup;
       }) cfg.scaleSets;
 
       # DESIRED orgs — the DISTINCT (org, credentials) pairs referenced by the
@@ -657,6 +658,18 @@
             smin="$(echo "$s" | jq -r '.minIdleRunners')"
             sboot="$(echo "$s" | jq -r '.runnerBootstrapTimeout')"
             senabled="$(echo "$s" | jq -r '.enabled')"
+            # Runner group: empty (the default) means "do not pass the flag", so
+            # GARM/GitHub keep placing the scale set in `Default` exactly as
+            # before. Only honoured on CREATE — see the option's description for
+            # why an existing scale set is not moved between groups.
+            sgroup="$(echo "$s" | jq -r '.runnerGroup // ""')"
+            if [ -n "$sgroup" ] && [ "$sgroup" != "null" ]; then
+              group_flag="--runner-group=$sgroup"
+              sgroup_log="$sgroup"
+            else
+              group_flag=""
+              sgroup_log="Default"
+            fi
             oid="$(org_id_for "$sorg")"
             if [ -z "$oid" ]; then
               log "WARNING: scale set '$sname' org '$sorg' has no id; skipping"
@@ -678,9 +691,9 @@
               garm-cli scaleset add --org "$oid" --provider-name "$sprov" \
                 --image "$simage" --name "$sname" --flavor default $enabled_flag \
                 --min-idle-runners "$smin" --max-runners "$smax" \
-                --os-type "$sos" --os-arch "$sarch" \
+                --os-type "$sos" --os-arch "$sarch" $group_flag \
                 --runner-bootstrap-timeout "$sboot" >/dev/null
-              log "scale set '$sname' created in org '$sorg' (max=$smax min=$smin)"
+              log "scale set '$sname' created in org '$sorg' (max=$smax min=$smin group=$sgroup_log)"
             else
               sid="$(echo "$cur" | jq -r '.id')"
               # Drift check: max/min/image/bootstrap/enabled.
@@ -1936,6 +1949,49 @@
                     default = name;
                     defaultText = lib.literalMD "the attribute name";
                     description = "The scale-set name (defaults to the attribute name).";
+                  };
+                  runnerGroup = mkOption {
+                    type = types.str;
+                    default = "";
+                    example = "gpu-hosts";
+                    description = ''
+                      The GitHub **runner group** this scale set's runners are
+                      created in (`garm-cli scaleset add --runner-group`). Empty
+                      (the default) leaves it unset, so GARM/GitHub place the
+                      scale set in the `Default` group — the historical
+                      behaviour, byte-unchanged for every existing caller.
+
+                      Runner groups are an ACCESS-CONTROL primitive: they scope
+                      which repositories may use a set of runners. They are not
+                      a job-targeting mechanism, and workflows do not normally
+                      name them — `runs-on:` still takes the scale-set name.
+
+                      The reason to set one here is a NAMING constraint. A
+                      runner scale-set name must be unique *within its runner
+                      group*, not within the org: GitHub's docs state that to
+                      deploy several scale sets sharing a name, "they must
+                      belong to different runner groups". With everything
+                      defaulting to `Default`, a second GARM instance declaring
+                      an existing name fails its reconcile with a hard
+                      `400 RunnerScaleSetExistsException` — which is why one
+                      `runs-on:` class has so far been pinned to exactly one
+                      host. Giving each host's scale set its own group is what
+                      makes a shared class name across hosts expressible at all.
+
+                      UNVERIFIED, and the reason this option alone is not a
+                      solution: how `runs-on: <name>` RESOLVES when a repository
+                      can see two identically-named scale sets in two groups is
+                      not documented. It may load-balance across them (the
+                      desirable outcome), bind deterministically to one, or be
+                      rejected. Prove it on a scratch repository before relying
+                      on it for capacity.
+
+                      Only passed at scale-set CREATION. GARM also accepts it on
+                      `scaleset update`, but whether GitHub permits moving an
+                      existing scale set between groups is untested here, so
+                      changing this on a live scale set is not reconciled —
+                      delete and recreate it instead.
+                    '';
                   };
                 };
               }
