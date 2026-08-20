@@ -34,5 +34,6 @@
     ./pre-commit.nix
     ./secret-integration
     ./setup-nix-transfer-resilience.nix
+    ./terraform-ci-matrix.nix
   ];
 }
