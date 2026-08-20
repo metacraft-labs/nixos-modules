@@ -52,6 +52,36 @@ func buildDomainXML(args CreateArgs, metaInner, configDriveISO string) string {
 		vcpus = 2
 	}
 
+	// W1: dynamic memory. <memory> is the CEILING the domain may ever reach;
+	// <currentMemory> is the balloon's BOOT TARGET, i.e. how much the guest is
+	// asked to hold on to at power-on, with the difference parked in the balloon
+	// until the guest asks for it back. That makes a large ceiling affordable:
+	// the host only pays the floor while the job is idle.
+	//
+	// Two things this is NOT:
+	//   - it is not an enforcement. <currentMemory> is a REQUEST; a guest that
+	//     is not running the virtio-balloon driver simply ignores it and boots
+	//     with the full <memory>. Until the Windows golden ships balloon.sys +
+	//     BLNSVR (campaign milestone W0) this field is inert on Windows guests.
+	//   - it is not a way to overcommit past <memory>. A value at or above the
+	//     EFFECTIVE ceiling (mem, i.e. after the 4096 MiB default is applied) is
+	//     meaningless — the balloon would be empty — and <= 0 means "unset".
+	//
+	// Both of those degenerate cases are dropped, and when the field is unset
+	// the emitted XML is byte-identical to the pre-W1 template — that is the
+	// regression lock that lets W1 land before W0 without reshaping any running
+	// domain. We also declare <memballoon model='virtio'/> explicitly whenever
+	// we emit a target: libvirt adds one by default, but relying on a default
+	// for the device that makes the target achievable is not something the XML
+	// should leave implicit.
+	currentMemLine := ""
+	balloonLine := ""
+	if args.CurrentMemoryMB > 0 && args.CurrentMemoryMB < mem {
+		currentMemLine = fmt.Sprintf("  <currentMemory unit='MiB'>%d</currentMemory>\n",
+			args.CurrentMemoryMB)
+		balloonLine = "    <memballoon model='virtio'/>\n"
+	}
+
 	uefi := args.UEFILoader != ""
 
 	// <os> block: OVMF pflash loader + per-job nvram (UEFI/Windows 11) or a
@@ -122,7 +152,7 @@ func buildDomainXML(args CreateArgs, metaInner, configDriveISO string) string {
 %s
   </metadata>
   <memory unit='MiB'>%d</memory>
-  <vcpu>%d</vcpu>
+%s  <vcpu>%d</vcpu>
 %s%s%s%s  <devices>
     <disk type='file' device='disk'>
       <driver name='qemu' type='qcow2'/>
@@ -138,7 +168,7 @@ func buildDomainXML(args CreateArgs, metaInner, configDriveISO string) string {
       <model type='qxl'/>
     </video>
     <console type='pty'/>
-  </devices>
+%s  </devices>
 </domain>
-`, name, metaInner, mem, vcpus, osBlock, features, cpuBlock, clockBlock, source, configDrive, network)
+`, name, metaInner, mem, currentMemLine, vcpus, osBlock, features, cpuBlock, clockBlock, source, configDrive, network, balloonLine)
 }

@@ -70,6 +70,7 @@ func NewWithConfig(cfg *config.Config) (*Provider, error) {
 			UEFINVRAMTemplate: cfg.UEFINVRAMTemplate,
 			MemoryMB:          cfg.MemoryMB,
 			VCPUs:             cfg.VCPUs,
+			CurrentMemoryMB:   cfg.CurrentMemoryMB,
 		}
 	case config.BackendIncus:
 		b = &backend.IncusBackend{
