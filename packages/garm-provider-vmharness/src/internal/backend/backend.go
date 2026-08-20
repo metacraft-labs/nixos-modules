@@ -83,6 +83,13 @@ type CreateArgs struct {
 	// MemoryMB / VCPUs size the domain. Zero => defaults (4096 MiB / 2 vCPU).
 	MemoryMB int
 	VCPUs    int
+	// CurrentMemoryMB is the virtio-balloon BOOT TARGET (<currentMemory>): the
+	// amount the guest is asked to hold at power-on, with MemoryMB - this
+	// parked in the balloon. It is a request, not a cap — a guest without the
+	// balloon driver ignores it and boots with the full MemoryMB. Zero (or any
+	// value outside 0 < n < MemoryMB) means "no target": the domain XML is
+	// emitted exactly as it was before this field existed.
+	CurrentMemoryMB int
 }
 
 // Backend is the seam the provider shells to. Every method is a thin wrapper

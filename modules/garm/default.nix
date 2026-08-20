@@ -116,18 +116,26 @@
           "VMH_QEMU_WINDOWS_ARM_SWTPM_CMD"
           "VM_HARNESS_DARWIN_ASUSER_UID"
         ];
-      mkLibvirtKeys = p: ''
-        virsh_path = "${p.virshPath}"
-        qemu_img_path = "${p.qemuImgPath}"
-        vm_harness_path = "${p.vmHarnessPath}"
-        libvirt_uri = "${p.libvirtURI}"
-        network = "${p.network}"
-        pool_dir = "${p.poolDir}"
-        uefi_loader = "${p.uefiLoader}"
-        uefi_nvram_template = "${p.uefiNvramTemplate}"
-        memory_mb = ${toString p.memoryMb}
-        vcpus = ${toString p.vcpus}
-      '';
+      mkLibvirtKeys =
+        p:
+        ''
+          virsh_path = "${p.virshPath}"
+          qemu_img_path = "${p.qemuImgPath}"
+          vm_harness_path = "${p.vmHarnessPath}"
+          libvirt_uri = "${p.libvirtURI}"
+          network = "${p.network}"
+          pool_dir = "${p.poolDir}"
+          uefi_loader = "${p.uefiLoader}"
+          uefi_nvram_template = "${p.uefiNvramTemplate}"
+          memory_mb = ${toString p.memoryMb}
+          vcpus = ${toString p.vcpus}
+        ''
+        # Only emitted when a balloon floor is actually requested, so providers
+        # that do not use one keep a byte-identical config.toml (and therefore a
+        # byte-identical domain XML) to before this option existed.
+        + optionalString (p.currentMemoryMb > 0) ''
+          current_memory_mb = ${toString p.currentMemoryMb}
+        '';
       mkIncusKeys = p: ''
         incus_path = "${p.incusPath}"
         incus_bridge = "${p.incusBridge}"
@@ -985,6 +993,46 @@
                 Per-job guest RAM (MiB), emitted as `memory_mb`. Also an input to
                 the eval-time resource-guard assertion
                 (`maxRunners * memoryMb <= hostBudget.memoryMb`).
+              '';
+            };
+
+            currentMemoryMb = mkOption {
+              type = types.ints.unsigned;
+              default = 0;
+              example = 8192;
+              description = ''
+                Virtio-balloon BOOT TARGET (MiB) for the per-job libvirt domain,
+                emitted as `current_memory_mb` and rendered as
+                `<currentMemory>` directly below `<memory>` in the domain XML.
+                `0` (the default) omits it entirely.
+
+                What it does: `memoryMb` becomes the CEILING the guest may ever
+                reach, and this becomes the amount it is asked to hold at
+                power-on — the difference is parked in the virtio balloon until
+                the guest asks for it back. That is what makes a large ceiling
+                affordable: an idle job costs the floor, not the ceiling, so a
+                burst of runners cannot pin the host's whole RAM indefinitely.
+
+                Two caveats, both important:
+
+                - It is a REQUEST, not a cap. `<currentMemory>` is honoured only
+                  by a guest running the virtio-balloon driver; a guest without
+                  it silently ignores the target and boots with the full
+                  `memoryMb`. On Windows that means `balloon.sys` plus a running
+                  `BLNSVR` service. Setting this against a guest that lacks them
+                  is inert — it changes the XML and nothing else. Verify with
+                  `virsh dommemstat <domain>`: a guest that is actually
+                  ballooning reports `unused`/`available`, not just
+                  `actual`/`rss`.
+                - It does not relax the resource guard. The eval-time assertion
+                  still budgets `maxRunners * memoryMb`, i.e. the WORST case, on
+                  purpose: the floor is what the host usually pays, but the
+                  ceiling is what it must be able to survive if every runner
+                  fills up at once.
+
+                Must be strictly below `memoryMb` when set (a target at or above
+                the ceiling means an empty balloon); the provider drops such a
+                value and the module asserts against it.
               '';
             };
 
@@ -2182,6 +2230,19 @@
               assertion = cfg.providers ? ${ss.provider};
               message = "services.garm.scaleSets.${n}.provider = \"${ss.provider}\" does not name a declared services.garm.providers.<name> (have: ${lib.concatStringsSep ", " (lib.attrNames cfg.providers)}).";
             }) cfg.scaleSets
+            # W1: a balloon floor must sit strictly BELOW the ceiling it floors,
+            # and only the libvirt backend renders a domain XML to put it in.
+            # Both are eval-time failures rather than silent no-ops: the provider
+            # drops a degenerate value, which would otherwise look like a
+            # working memory floor while every VM quietly boots at its ceiling.
+            ++ lib.mapAttrsToList (n: p: {
+              assertion = p.currentMemoryMb == 0 || p.currentMemoryMb < p.memoryMb;
+              message = "services.garm.providers.${n}: currentMemoryMb (${toString p.currentMemoryMb}) must be strictly below memoryMb (${toString p.memoryMb}) — a balloon boot target at or above the ceiling leaves the balloon empty and is ignored by the provider. Use 0 to disable ballooning.";
+            }) cfg.providers
+            ++ lib.mapAttrsToList (n: p: {
+              assertion = p.currentMemoryMb == 0 || providerIsLibvirt p;
+              message = "services.garm.providers.${n}: currentMemoryMb is only honoured by the libvirt backend (this provider's backend = \"${p.backend}\"); it has no effect on incus containers or vm-harness-run VMs.";
+            }) cfg.providers
             # Resource-guard (eval time): the sum over all scale sets of
             # maxRunners * (its provider's per-VM RAM) must fit the declared host
             # RAM budget, and likewise vCPUs. A bad config FAILS TO EVAL instead
