@@ -108,6 +108,15 @@ type Config struct {
 	MemoryMB int `toml:"memory_mb"`
 	VCPUs    int `toml:"vcpus"`
 
+	// CurrentMemoryMB is the virtio-balloon boot target (<currentMemory>) for
+	// the per-job domain: MemoryMB becomes a ceiling and this the floor the
+	// guest starts at, the rest parked in the balloon. Zero (the default, and
+	// anything not strictly between 0 and MemoryMB) omits <currentMemory>
+	// entirely, leaving the domain XML exactly as it was before. Note this is a
+	// request the guest must honour via the virtio-balloon driver, not an
+	// enforced cap.
+	CurrentMemoryMB int `toml:"current_memory_mb"`
+
 	// LibvirtURI is the libvirt connection URI (eg: "qemu:///system"). Passed
 	// to virsh as `-c`.
 	LibvirtURI string `toml:"libvirt_uri"`

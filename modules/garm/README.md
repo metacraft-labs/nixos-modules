@@ -245,7 +245,15 @@ above + `/metrics` served + the declarative egress option.
 - **Provider** is a `[[provider]]` external block pointing at the
   `garm-provider-vmharness` binary + a secret-free provider `config.toml` carrying
   `virsh_path`/`qemu_img_path`/`libvirt_uri`/`network`/`pool_dir`/`uefi_*`/
-  `memory_mb`/`vcpus` + the golden `[images.*]` map (all from module options).
+  `memory_mb`/`vcpus` (plus `current_memory_mb` when a balloon floor is set) +
+  the golden `[images.*]` map (all from module options).
+- **Dynamic memory** (`providers.<name>.currentMemoryMb`, libvirt only): when set,
+  `memory_mb` becomes the guest's ceiling and `current_memory_mb` its virtio-balloon
+  boot target, emitted as `<currentMemory>` plus an explicit
+  `<memballoon model='virtio'/>`. It is a request the guest honours only while
+  running the balloon driver (on Windows: `balloon.sys` + `BLNSVR`) — check with
+  `virsh dommemstat <domain>`, which reports `unused`/`available` only when the
+  guest is really ballooning. The resource guard below still budgets the ceiling.
 
 ---
 

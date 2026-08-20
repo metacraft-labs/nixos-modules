@@ -72,6 +72,9 @@ type VirshBackend struct {
 	// MemoryMB / VCPUs size the per-job domain (0 => builder defaults).
 	MemoryMB int
 	VCPUs    int
+	// CurrentMemoryMB is the balloon boot target handed to buildDomainXML (0 =>
+	// no <currentMemory>, and the domain XML keeps its pre-W1 shape).
+	CurrentMemoryMB int
 }
 
 // overlayPath is the per-job CoW overlay file (next to the config-drive so
@@ -167,6 +170,9 @@ func (v *VirshBackend) Create(ctx context.Context, args CreateArgs) (Instance, e
 		}
 		if args.VCPUs == 0 {
 			args.VCPUs = v.VCPUs
+		}
+		if args.CurrentMemoryMB == 0 {
+			args.CurrentMemoryMB = v.CurrentMemoryMB
 		}
 	}
 
