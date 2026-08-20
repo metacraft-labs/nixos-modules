@@ -251,8 +251,12 @@ let
     // optionalAttrs (repo ? allowRebaseMerge) { allow_rebase_merge = repo.allowRebaseMerge; }
     // optionalAttrs (repo ? mergeCommitTitle) { merge_commit_title = repo.mergeCommitTitle; }
     // optionalAttrs (repo ? mergeCommitMessage) { merge_commit_message = repo.mergeCommitMessage; }
-    // optionalAttrs (repo ? squashMergeCommitTitle) { squash_merge_commit_title = repo.squashMergeCommitTitle; }
-    // optionalAttrs (repo ? squashMergeCommitMessage) { squash_merge_commit_message = repo.squashMergeCommitMessage; }
+    // optionalAttrs (repo ? squashMergeCommitTitle) {
+      squash_merge_commit_title = repo.squashMergeCommitTitle;
+    }
+    // optionalAttrs (repo ? squashMergeCommitMessage) {
+      squash_merge_commit_message = repo.squashMergeCommitMessage;
+    }
   );
 
   branchDefaultResources =
@@ -446,14 +450,17 @@ let
   actionsRepositoryPermissionResources =
     listToResourceAttrs governance.actionsRepositoryPermissions
       (permissions: "actions-repository-permissions:${permissions.repository}")
-      (permissions: {
-        repository = permissions.repository;
-        enabled = permissions.enabled;
-        sha_pinning_required = permissions.shaPinningRequired;
-      }
-      // optionalAttrs (permissions ? allowedActions) {
-        allowed_actions = permissions.allowedActions;
-      });
+      (
+        permissions:
+        {
+          repository = permissions.repository;
+          enabled = permissions.enabled;
+          sha_pinning_required = permissions.shaPinningRequired;
+        }
+        // optionalAttrs (permissions ? allowedActions) {
+          allowed_actions = permissions.allowedActions;
+        }
+      );
 
   actionsVariableResources =
     listToResourceAttrs governance.actionsVariables

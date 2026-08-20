@@ -3,7 +3,7 @@
 This directory collects fixes for upstream projects that we carry as a
 local patch in this repo and intend to contribute back upstream. It is the
 patch analog of `codetracer-native-backend/upstream-bugs/` (which collects
-*bug reports*); here each entry is a ready-to-submit *fix*.
+_bug reports_); here each entry is a ready-to-submit _fix_.
 
 Each subdirectory is named `<project>-<short-description>` and contains:
 
