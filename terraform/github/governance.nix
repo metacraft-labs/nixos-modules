@@ -213,7 +213,31 @@ let
           # GitHub no longer uses this provider field, but imported state can
           # still contain the historical value.
           "has_downloads"
-        ];
+          # Read-only/deprecated; the API returns null, so it can't be matched.
+          "ignore_vulnerability_alerts_during_read"
+        ]
+        ++ (
+          # Archived repos freeze their settings: the API returns null for the
+          # mutable options, so any managed value is a spurious, unappliable
+          # diff (you can't modify an archived repo). Ignore them there.
+          if (repo.archived or false) then
+            [
+              "allow_auto_merge"
+              "allow_forking"
+              "allow_merge_commit"
+              "allow_rebase_merge"
+              "allow_squash_merge"
+              "allow_update_branch"
+              "delete_branch_on_merge"
+              "merge_commit_message"
+              "merge_commit_title"
+              "squash_merge_commit_message"
+              "squash_merge_commit_title"
+              "web_commit_signoff_required"
+            ]
+          else
+            [ ]
+        );
       };
     }
     // optionalField repo "description"
@@ -224,6 +248,11 @@ let
     // optionalAttrs (repo ? allowSquashMerge) { allow_squash_merge = repo.allowSquashMerge; }
     // optionalAttrs (repo ? allowUpdateBranch) { allow_update_branch = repo.allowUpdateBranch; }
     // optionalAttrs (repo ? deleteBranchOnMerge) { delete_branch_on_merge = repo.deleteBranchOnMerge; }
+    // optionalAttrs (repo ? allowRebaseMerge) { allow_rebase_merge = repo.allowRebaseMerge; }
+    // optionalAttrs (repo ? mergeCommitTitle) { merge_commit_title = repo.mergeCommitTitle; }
+    // optionalAttrs (repo ? mergeCommitMessage) { merge_commit_message = repo.mergeCommitMessage; }
+    // optionalAttrs (repo ? squashMergeCommitTitle) { squash_merge_commit_title = repo.squashMergeCommitTitle; }
+    // optionalAttrs (repo ? squashMergeCommitMessage) { squash_merge_commit_message = repo.squashMergeCommitMessage; }
   );
 
   branchDefaultResources =
@@ -259,6 +288,7 @@ let
         privacy = team.privacy;
       }
       // optionalField team "description"
+      // optionalAttrs (team ? notificationSetting) { notification_setting = team.notificationSetting; }
       // optionalAttrs (team ? parentTeamSlug) { parent_team_id = teamRef team.parentTeamSlug; };
     }) managedTeams
   );
@@ -279,6 +309,9 @@ let
         {
           name = rg.name;
           visibility = rg.visibility;
+        }
+        // optionalAttrs (rg ? selectedRepositoryIds) {
+          selected_repository_ids = rg.selectedRepositoryIds;
         }
         // optionalAttrs (rg ? allowsPublicRepositories) {
           allows_public_repositories = rg.allowsPublicRepositories;
@@ -374,12 +407,17 @@ let
         }
         // optionalAttrs (branch ? requiredPullRequestReviews) {
           required_pull_request_reviews = [
-            {
-              dismiss_stale_reviews = branch.requiredPullRequestReviews.dismissStaleReviews;
-              require_code_owner_reviews = branch.requiredPullRequestReviews.requireCodeOwnerReviews;
-              require_last_push_approval = branch.requiredPullRequestReviews.requireLastPushApproval;
-              required_approving_review_count = branch.requiredPullRequestReviews.requiredApprovingReviewCount;
-            }
+            (
+              {
+                dismiss_stale_reviews = branch.requiredPullRequestReviews.dismissStaleReviews;
+                require_code_owner_reviews = branch.requiredPullRequestReviews.requireCodeOwnerReviews;
+                require_last_push_approval = branch.requiredPullRequestReviews.requireLastPushApproval;
+                required_approving_review_count = branch.requiredPullRequestReviews.requiredApprovingReviewCount;
+              }
+              // optionalAttrs (branch.requiredPullRequestReviews ? pullRequestBypassers) {
+                pull_request_bypassers = branch.requiredPullRequestReviews.pullRequestBypassers;
+              }
+            )
           ];
         }
       );
@@ -411,8 +449,10 @@ let
       (permissions: {
         repository = permissions.repository;
         enabled = permissions.enabled;
-        allowed_actions = permissions.allowedActions;
         sha_pinning_required = permissions.shaPinningRequired;
+      }
+      // optionalAttrs (permissions ? allowedActions) {
+        allowed_actions = permissions.allowedActions;
       });
 
   actionsVariableResources =

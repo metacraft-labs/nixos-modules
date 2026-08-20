@@ -162,13 +162,29 @@ tofu init -input=false -reconfigure -backend-config="$backend"
 tofu fmt -check -recursive .
 tofu validate
 
-# The governance App credential secrets are named secret_<owner>_GH_GOVERNANCE_APP_*
-# by the governance root; derive <owner> from the access-check repository.
-governance_owner="${github_access_check_repository%%/*}"
-governance_app_secret_targets=(
-  "github_actions_organization_secret.secret_${governance_owner}_GH_GOVERNANCE_APP_ID"
-  "github_actions_organization_secret.secret_${governance_owner}_GH_GOVERNANCE_APP_PRIVATE_KEY"
+# Derive the governance App credential secret targets from the manifest, so this
+# works whether the org hosts them as organization secrets (paid orgs) or as
+# repository secrets (Free-plan orgs, where org secrets don't reach private
+# repos). The governance engine keys each secret resource as
+# secret_<providerId with / : . replaced by _>, under github_actions_secret
+# (repository) or github_actions_organization_secret (organization).
+governance_manifest="${src}/secrets/manifest.nix"
+mapfile -t governance_app_secret_targets < <(
+  nix eval --json --file "$governance_manifest" 2>/dev/null | jq -r '
+    .secrets[]
+    | select((.rotationGroup // "") == "github-governance-app")
+    | (
+        if .providerResource == "github_actions_secret" then "github_actions_secret"
+        elif .providerResource == "github_actions_organization_secret" then "github_actions_organization_secret"
+        else .providerResource end
+      ) as $type
+    | "\($type).secret_" + (.providerId | gsub("[/:.]"; "_"))
+  '
 )
+if [[ ${#governance_app_secret_targets[@]} -eq 0 ]]; then
+  echo "No github-governance-app secrets found in ${governance_manifest}." >&2
+  exit 2
+fi
 
 plan_governance_app_secrets() {
   if [[ ! -f "${src}/root.nix" && ! "$config" == *governance* ]]; then
@@ -184,9 +200,13 @@ EOF
   # that let normal governance CI authenticate with the dedicated GitHub App.
   rm -f imports.tf
 
+  local target_args=()
+  local t
+  for t in "${governance_app_secret_targets[@]}"; do
+    target_args+=(-target="$t")
+  done
   tofu plan -input=false -no-color -lock=false \
-    -target="${governance_app_secret_targets[0]}" \
-    -target="${governance_app_secret_targets[1]}" \
+    "${target_args[@]}" \
     -out=github-governance-app-secrets.tfplan
 
   cat <<'EOF'
