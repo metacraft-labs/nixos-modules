@@ -52,6 +52,46 @@
 
 set -euo pipefail
 
+# BEGIN portable system utility PATH bootstrap
+# GitHub runner services do not necessarily inherit the same PATH as an
+# interactive login shell. In particular, the native Darwin services expose
+# the Nix and Bash store paths but can omit /usr/bin, where macOS provides grep,
+# sed, and the other POSIX utilities used below. Preserve the runner's existing
+# PATH (and therefore its selected Nix), then add the conventional immutable or
+# operating-system profiles that can supply missing base utilities.
+setup_nix_system_paths=(
+  /usr/bin
+  /bin
+  /usr/sbin
+  /sbin
+  /run/current-system/sw/bin
+  /nix/var/nix/profiles/default/bin
+)
+for setup_nix_system_dir in "${setup_nix_system_paths[@]}"; do
+  if [ -d "$setup_nix_system_dir" ]; then
+    case ":${PATH:-}:" in
+      *":$setup_nix_system_dir:"*) ;;
+      *) PATH="${PATH:+$PATH:}$setup_nix_system_dir" ;;
+    esac
+  fi
+done
+export PATH
+
+# Check every non-shell utility this script assumes before a missing helper can
+# be misreported as a missing Nix feature. `nix` has its own check below so its
+# established diagnostics remain intact.
+missing_setup_nix_utilities=""
+for setup_nix_utility in mktemp rm cat grep sed sort tr; do
+  if ! command -v "$setup_nix_utility" >/dev/null 2>&1; then
+    missing_setup_nix_utilities="$missing_setup_nix_utilities $setup_nix_utility"
+  fi
+done
+if [ -n "$missing_setup_nix_utilities" ]; then
+  echo "setup-nix: FAIL: required verification utilities are not on PATH:${missing_setup_nix_utilities}" >&2
+  exit 1
+fi
+# END portable system utility PATH bootstrap
+
 # The feature list the caller asked for. `Configure Nix` passes the very same
 # value it wrote into nix.conf, so this asserts what was REQUESTED rather than
 # a second, independently drifting copy of the list.
@@ -125,7 +165,14 @@ fi
 # healthy runner. That mistake turns this guard into the false-alarm half of
 # the very problem it exists to solve.
 probe_stderr="$(mktemp)"
-trap 'rm -f "$probe_stderr"' EXIT
+probe_dir=""
+cleanup_setup_nix_probes() {
+  if [ -n "$probe_dir" ]; then
+    rm -rf "$probe_dir"
+  fi
+  rm -f "$probe_stderr"
+}
+trap cleanup_setup_nix_probes EXIT
 
 probe_output=""
 if ! probe_output="$(nix eval --raw --expr '"setup-nix-probe-ok"' 2>"$probe_stderr")"; then
@@ -146,8 +193,6 @@ fi
 # ---------------------------------------------------------------------------
 if printf '%s' "$required_features" | grep -qw flakes; then
   probe_dir="$(mktemp -d)"
-  # shellcheck disable=SC2064 # expand both paths now, at trap-set time
-  trap "rm -rf '$probe_dir'; rm -f '$probe_stderr'" EXIT
   printf '{ outputs = _: { probe = "setup-nix-flake-ok"; }; }\n' >"$probe_dir/flake.nix"
 
   flake_output=""
