@@ -31,7 +31,14 @@ Each managed root carries a `metadata.json` validated against
 `credential_mode` (`aws-oidc` | `agenix-token` | `none`), `enable_checkov`,
 `provider_allowlist`. `agenix-token` roots also require `credentials_env_name`
 and `agenix_{plan,apply}_secret_path`. Optional: `smoke_test_command`,
-`split_boundary` (prose; see the root-layering runbook).
+`split_boundary` (prose; see the root-layering runbook), and
+`backend_uses_aws_oidc` (default `false`). `credential_mode` describes provider
+authentication only. Set `backend_uses_aws_oidc` when the state backend also
+needs the caller's AWS OIDC role; this permits combinations such as a
+Cloudflare provider token from agenix with an S3 state backend. The generated
+`uses_aws_oidc` value is the combined workflow signal. If a required agenix
+plan/apply key file is absent, the root remains offline-only and the matrix
+emits neither provider credentials nor the AWS workflow switch.
 
 The one fixed rule: the state key must match its sensitivity —
 `terraform/<config>.tfstate` for `standard`, `terraform-sensitive/<config>.tfstate`
@@ -40,5 +47,8 @@ for `sensitive`, where `<config>` is the root path minus the leading
 
 ## Tests
 
-`tests/test-matrix.sh` covers discovery and negative validation offline (no
-credentials, no network).
+`tests/test-matrix.sh` covers the provider/backend credential matrix and
+negative validation directly, without credentials or network.
+`tests/test-matrix-mutations.sh` proves that the suite rejects semantic
+weakenings. The `terraform-ci-matrix` flake check runs both in a Nix sandbox on
+every supported system.

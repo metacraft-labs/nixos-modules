@@ -21,11 +21,19 @@ Required fields:
 - `backend_config_file`: backend HCL file consumed by CI and operator commands.
 - `provider_allowlist`: exact provider sources allowed after Terranix render.
 - `credential_mode`: how CI obtains provider credentials.
+- `backend_uses_aws_oidc`: optional boolean, defaulting to `false`, that requests
+  the reviewed AWS OIDC role independently when the state backend needs it.
 - `enable_checkov`: whether the reusable CI workflow should run Checkov.
 - `split_boundary`: human-readable lifecycle and access-boundary rationale.
 
 The metadata is deliberately redundant with the backend file. The backend file
 drives OpenTofu; the metadata drives review and CI matrix generation.
+Provider and backend authentication are separate: for example, a Cloudflare
+root can use `credential_mode: "agenix-token"` for the provider and
+`backend_uses_aws_oidc: true` for S3 state. The generated `uses_aws_oidc` field
+is the combined workflow signal consumers use when selecting AWS plan, apply,
+and drift roles. If required provider credential material is absent, the root
+remains offline-only even when the backend would otherwise use AWS OIDC.
 
 ## State Classes
 

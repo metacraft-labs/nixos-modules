@@ -43,3 +43,20 @@
   each module's README under =terraform/= and the bootstrap runbook for the
   end-to-end procedure. Deployment facts (accounts, owners, zones) live in the
   consumer's tracked Terraform/Nix files, never in this shared repo.
+
+* Terraform provider and backend credential composition
+
+  Terraform-root metadata models provider and backend authentication as
+  independent axes. =credential_mode= selects provider credentials;
+  =backend_uses_aws_oidc=true= additionally supplies the reviewed AWS OIDC role
+  to an AWS-backed state backend. This supports token-authenticated providers
+  such as Cloudflare, Stripe, or GitHub while retaining an S3 backend without
+  private consumer-side matrix logic. An =agenix-token= root whose encrypted
+  plan/apply key files are absent remains offline-only even when its backend
+  requires AWS OIDC.
+
+  The direct suite covers combined, provider-only, backend-only, legacy AWS
+  provider, credential-free, missing-secret, and malformed-metadata cases. The
+  flake check runs that suite in a Nix sandbox on every supported system and
+  also proves that mutations weakening backend composition, credential
+  readiness, defaulting, validation, or matrix publication are rejected.
