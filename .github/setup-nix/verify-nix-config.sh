@@ -193,6 +193,12 @@ fi
 # ---------------------------------------------------------------------------
 if printf '%s' "$required_features" | grep -qw flakes; then
   probe_dir="$(mktemp -d)"
+  # On Darwin, mktemp commonly returns /var/folders/... even though /var is a
+  # symlink to /private/var. Nix 2.31 rejects local path-flake references that
+  # traverse a symlink, so canonicalize the directory before constructing the
+  # path: URL. `cd` and `pwd` are Bash builtins, keeping the utility inventory
+  # above complete.
+  probe_dir="$(cd -- "$probe_dir" && pwd -P)"
   printf '{ outputs = _: { probe = "setup-nix-flake-ok"; }; }\n' >"$probe_dir/flake.nix"
 
   flake_output=""
