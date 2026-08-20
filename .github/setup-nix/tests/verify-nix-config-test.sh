@@ -23,6 +23,13 @@
 # The suite additionally asserts that action.yml actually INVOKES the guard, so
 # deleting the step from the action fails this test rather than quietly
 # restoring the original silent-success behaviour.
+#
+# The native-Darwin service-PATH regression uses real executables rather than
+# mocks: a temporary bin directory contains the real Nix and every external
+# utility the guard uses except grep. A mutation with the portability bootstrap
+# removed must reproduce the old false missing-feature report, then the real
+# guard must pass under that identical PATH. This proves both that the fixture
+# can trigger the defect and that the fix covers the service environment.
 
 set -euo pipefail
 
@@ -100,6 +107,177 @@ if NIX_CONFIG="experimental-features = $healthy_features" \
 else
   fail "guard rejected a correctly configured Nix — it would block healthy jobs"
 fi
+
+# ---------------------------------------------------------------------------
+# 2a. Native-Darwin runner services may omit /usr/bin from PATH.
+#
+# Retain the real Nix and every other external utility used by the guard, but
+# deliberately omit grep. This is the precise environment from the failing
+# native-Darwin jobs: Nix reports all requested features as effective, while the
+# guard used to turn `grep: command not found` into a false missing-feature
+# report. The vulnerable mutation proves this fixture kills the old code before
+# the fixed guard is allowed to establish the positive result.
+# ---------------------------------------------------------------------------
+portable_fixture_root="$(mktemp -d)"
+portable_fixture_bin="$portable_fixture_root/bin"
+vulnerable_guard="$portable_fixture_root/verify-nix-config-without-path-bootstrap.sh"
+no_system_path_guard="$portable_fixture_root/verify-nix-config-without-system-paths.sh"
+selected_nix_marker="$portable_fixture_root/selected-nix-used"
+selected_nix_real="$(command -v nix)"
+mkdir "$portable_fixture_bin"
+trap 'rm -rf "$portable_fixture_root"' EXIT
+
+for portable_fixture_utility in mktemp rm cat sed sort tr; do
+  portable_fixture_utility_path="$(command -v "$portable_fixture_utility")"
+  ln -s "$portable_fixture_utility_path" "$portable_fixture_bin/$portable_fixture_utility"
+done
+
+# Delegate to the real Nix, while leaving evidence that the guard preserved the
+# incoming PATH's selected Nix instead of replacing it with one from a profile.
+{
+  printf '#!%s\n' "$BASH"
+  cat <<'EOF'
+if [ -n "${SETUP_NIX_SELECTED_NIX_MARKER:-}" ]; then
+  printf 'used\n' >>"$SETUP_NIX_SELECTED_NIX_MARKER"
+fi
+exec "$SETUP_NIX_SELECTED_NIX_REAL" "$@"
+EOF
+} >"$portable_fixture_bin/nix"
+chmod +x "$portable_fixture_bin/nix"
+
+if (PATH="$portable_fixture_bin"; export PATH; command -v grep >/dev/null 2>&1); then
+  fail "FIXTURE BROKEN: grep is still available in the minimal service PATH"
+else
+  pass "fixture reproduces a service PATH with real Nix and utilities but no grep"
+fi
+
+if portable_nix_probe="$(
+  PATH="$portable_fixture_bin" \
+    NIX_CONFIG="experimental-features = $healthy_features" \
+    SETUP_NIX_SELECTED_NIX_REAL="$selected_nix_real" \
+    nix eval --raw --expr '"minimal-path-nix-ok"'
+)" && [ "$portable_nix_probe" = "minimal-path-nix-ok" ]; then
+  pass "fixture's real Nix has every requested feature in effect"
+else
+  fail "FIXTURE BROKEN: real Nix is not functional in the minimal service PATH"
+fi
+
+sed \
+  '/^# BEGIN portable system utility PATH bootstrap$/,/^# END portable system utility PATH bootstrap$/d' \
+  "$guard" >"$vulnerable_guard"
+
+set +e
+vulnerable_output="$(
+  PATH="$portable_fixture_bin" \
+    NIX_CONFIG="experimental-features = $healthy_features" \
+    SETUP_NIX_REQUIRED_EXPERIMENTAL_FEATURES="$healthy_features" \
+    SETUP_NIX_SELECTED_NIX_REAL="$selected_nix_real" \
+    "$BASH" "$vulnerable_guard" 2>&1
+)"
+vulnerable_exit_code=$?
+set -e
+
+if [ "$vulnerable_exit_code" -ne 0 ] &&
+  printf '%s' "$vulnerable_output" | grep -q 'grep: command not found' &&
+  printf '%s' "$vulnerable_output" | grep -q 'requested experimental features are not in effect'; then
+  pass "fixture reproduces the old grep failure and false missing-feature report"
+else
+  fail "FIXTURE BROKEN: guard without the PATH bootstrap did not reproduce the old failure: $vulnerable_output"
+fi
+
+rm -f "$selected_nix_marker"
+if PATH="$portable_fixture_bin" \
+  NIX_CONFIG="experimental-features = $healthy_features" \
+  SETUP_NIX_REQUIRED_EXPERIMENTAL_FEATURES="$healthy_features" \
+  SETUP_NIX_SELECTED_NIX_MARKER="$selected_nix_marker" \
+  SETUP_NIX_SELECTED_NIX_REAL="$selected_nix_real" \
+  "$BASH" "$guard" >/dev/null 2>&1; then
+  pass "guard restores platform utility paths and verifies real Nix from the minimal service PATH"
+else
+  fail "guard rejected healthy Nix when the incoming service PATH omitted grep"
+fi
+
+if [ -s "$selected_nix_marker" ]; then
+  pass "PATH repair preserves the incoming service's selected Nix executable"
+else
+  fail "PATH repair replaced the incoming service's selected Nix with a profile or system Nix"
+fi
+
+# Service temp roots can contain shell metacharacters. Cleanup must retain the
+# exact mktemp paths rather than interpolating them into a trap command string.
+quoted_tmp_dir="$portable_fixture_root/service'tmp"
+mkdir "$quoted_tmp_dir"
+if TMPDIR="$quoted_tmp_dir" \
+  NIX_CONFIG="experimental-features = $healthy_features" \
+  SETUP_NIX_REQUIRED_EXPERIMENTAL_FEATURES="$healthy_features" \
+  "$BASH" "$guard" >/dev/null 2>&1; then
+  pass "guard succeeds when the service temp path contains a quote"
+else
+  fail "guard mishandled a quoted service temp path"
+fi
+if rmdir "$quoted_tmp_dir"; then
+  pass "probe cleanup removes exact temp paths containing shell metacharacters"
+else
+  fail "probe cleanup leaked files from a quoted service temp path"
+fi
+
+# Remove only the conventional path entries, retaining the utility preflight.
+# This lets the suite verify that the inventory is complete and that each
+# helper has a direct diagnostic instead of being misreported as a Nix feature
+# failure. The generated guard still executes the real functional probes.
+sed '
+  /^setup_nix_system_paths=(/,/^)/ {
+    /^  \//d
+  }
+' "$guard" >"$no_system_path_guard"
+
+portable_utility_names="mktemp rm cat grep sed sort tr"
+complete_utility_bin="$portable_fixture_root/complete-utility-bin"
+mkdir "$complete_utility_bin"
+ln -s "$selected_nix_real" "$complete_utility_bin/nix"
+for portable_fixture_utility in $portable_utility_names; do
+  portable_fixture_utility_path="$(command -v "$portable_fixture_utility")"
+  ln -s "$portable_fixture_utility_path" "$complete_utility_bin/$portable_fixture_utility"
+done
+
+if PATH="$complete_utility_bin" \
+  NIX_CONFIG="experimental-features = $healthy_features" \
+  SETUP_NIX_REQUIRED_EXPERIMENTAL_FEATURES="$healthy_features" \
+  "$BASH" "$no_system_path_guard" >/dev/null 2>&1; then
+  pass "the declared utility inventory is sufficient for every functional probe"
+else
+  fail "the guard uses an external utility that its preflight does not declare"
+fi
+
+for missing_portable_utility in $portable_utility_names; do
+  missing_utility_bin="$portable_fixture_root/missing-$missing_portable_utility-bin"
+  mkdir "$missing_utility_bin"
+  ln -s "$selected_nix_real" "$missing_utility_bin/nix"
+  for portable_fixture_utility in $portable_utility_names; do
+    if [ "$portable_fixture_utility" != "$missing_portable_utility" ]; then
+      portable_fixture_utility_path="$(command -v "$portable_fixture_utility")"
+      ln -s "$portable_fixture_utility_path" "$missing_utility_bin/$portable_fixture_utility"
+    fi
+  done
+
+  set +e
+  missing_utility_output="$(
+    PATH="$missing_utility_bin" \
+      NIX_CONFIG="experimental-features = $healthy_features" \
+      SETUP_NIX_REQUIRED_EXPERIMENTAL_FEATURES="$healthy_features" \
+      "$BASH" "$no_system_path_guard" 2>&1
+  )"
+  missing_utility_exit_code=$?
+  set -e
+
+  if [ "$missing_utility_exit_code" -ne 0 ] &&
+    printf '%s' "$missing_utility_output" | grep -qF "required verification utilities are not on PATH: $missing_portable_utility" &&
+    ! printf '%s' "$missing_utility_output" | grep -qF 'requested experimental features are not in effect'; then
+    pass "missing $missing_portable_utility is diagnosed as a utility failure"
+  else
+    fail "missing $missing_portable_utility was not diagnosed precisely: $missing_utility_output"
+  fi
+done
 
 # ---------------------------------------------------------------------------
 # 2b. The guard must not be fooled by Nix writing WARNINGS to stderr.
