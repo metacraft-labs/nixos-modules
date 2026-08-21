@@ -47,6 +47,23 @@ buildGo126Module rec {
     # JSON list per the external-provider contract. One-char fix inverts the
     # check so the error branch fires only on genuine provider failure.
     ./patches/fix-listinstances-inverted-error-check.patch
+    # Upstream cloudbase/garm bug: reconcileStaleJobs() — the loop whose whole
+    # purpose is to clear jobs that are stuck in `queued` for ever — can never
+    # see a SCALE SET job, so on a scale-set-only controller it is a no-op.
+    # It selects candidates via ListEntityJobsByStatus(), which hard-filters
+    # `workflow_job_id > 0`, and scale set jobs never populate WorkflowJobID
+    # (only ScaleSetJobID). It then addresses jobs by WorkflowJobID
+    # throughout — dedupe map, lock key, GitHub lookup and store.DeleteJob(),
+    # which resolves rows with `WHERE workflow_job_id = ?` — so merely
+    # relaxing the filter would make DeleteJob(ctx, 0) delete an ARBITRARY
+    # scale set row. Observed on high-mem-server as a permanently `queued`
+    # phantom in `garm_job_status` (job_id=16820, workflow_job_id=0), minted
+    # when a watchdog reset lost the terminal update for a job whose forge
+    # messages had already been consumed. Every reset can mint another and
+    # they never clear, which corrupts the CI queue dashboards.
+    # See upstream-patches/garm-stale-scaleset-job-reaper/ and the gate
+    # t_garm_stale_scaleset_job_reaped.
+    ./patches/fix-stale-scaleset-job-reaper.patch
   ];
 
   # go-sqlite3 is a cgo module; the daemon needs cgo to link SQLite.
