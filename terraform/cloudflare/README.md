@@ -2,8 +2,8 @@
 
 Company-agnostic tooling for adopting and managing Cloudflare via
 Terraform/OpenTofu. Consumers supply their own zones, accounts, and reviewed
-adoption set; this directory ships only the reusable inventory tool. See the
-[import-phase methodology](../../docs/Terraform-Import-Phase.md).
+adoption set; this directory ships reusable inventory, token, and import
+tooling. See the [import-phase methodology](../../docs/Terraform-Import-Phase.md).
 
 ## `cloudflare-inventory` — read-only inventory
 
@@ -24,6 +24,26 @@ Nothing is hardcoded: pass `--zone` (repeatable) or `CF_ZONES`, `--account-id`
 (repeatable) or `CF_ACCOUNT_ID`, `--all-zones` for every accessible zone, and
 `CF_WRANGLER_CMD` / `CF_WRANGLER_SCOPES` to tune the Wrangler fallback.
 
+## `cloudflare-token` — parametric API-token deep-links (shared engine)
+
+Builds a Cloudflare dashboard "create token" deep-link whose **permission groups
+are derived from the `cloudflare_*` resource types a repo actually manages** —
+least-privilege by construction, no per-repo scope list to maintain. The canonical
+`resource-type → permission-group` mapping lives in the script; each infra repo
+(metacraft / agent-harbor / blocksense) calls it with only its token **name** +
+account/zone.
+
+```sh
+cloudflare-token plan  --scan terraform/cloudflare/metacraft-prod --name "Metacraft Terraform" --open
+cloudflare-token apply --scan terraform/cloudflare/metacraft-prod --name "Metacraft Terraform"
+cloudflare-token import --scan terraform/cloudflare/metacraft-prod --name "Metacraft Terraform"
+```
+
+`--scan DIR` discovers managed types from the root's `resource "…"` / `to = …`
+blocks; `--resource-types a,b` overrides. `plan` = read on every managed group,
+`apply` = edit on writable groups + `zone:read`, `import` = broad read for
+inventory. Managing zone-level settings? add `--zone-writable`.
+
 ## `cloudflare-import-blocks` — shared import-block generator
 
 Emits credential-free `import {}` blocks for a Cloudflare root from the root's
@@ -33,8 +53,14 @@ reviewed **import-id data model**, `terraform/cloudflare/<name>-prod/import-ids.
 {
   "version": 1,
   "imports": [
-    { "to": "cloudflare_dns_record.this[\"apex\"]", "id": "<zone_id>/<record_id>" },
-    { "to": "cloudflare_r2_bucket.this[\"downloads\"]", "id": "<account_id>/downloads/default" }
+    {
+      "to": "cloudflare_dns_record.this[\"apex\"]",
+      "id": "<zone_id>/<record_id>"
+    },
+    {
+      "to": "cloudflare_r2_bucket.this[\"downloads\"]",
+      "id": "<account_id>/downloads/default"
+    }
   ]
 }
 ```
@@ -84,11 +110,21 @@ name: Cloudflare Import
 on:
   pull_request:
     branches: [live]
-    paths: ['terraform/cloudflare/**', 'backends/cloudflare-*', '.github/workflows/cloudflare-import.yml']
+    paths:
+      [
+        'terraform/cloudflare/**',
+        'backends/cloudflare-*',
+        '.github/workflows/cloudflare-import.yml',
+      ]
   workflow_dispatch:
     inputs:
       mode: { type: choice, options: [plan, apply], default: plan }
-      scope: { type: choice, options: [all, dns, pages, r2, workers, zones], default: all }
+      scope:
+        {
+          type: choice,
+          options: [all, dns, pages, r2, workers, zones],
+          default: all,
+        }
       confirm_apply: { type: string, required: false }
 jobs:
   import:
