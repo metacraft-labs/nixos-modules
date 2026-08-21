@@ -33,3 +33,22 @@ its reviewed `terraform/cloudflare/<name>-prod/inventory.md` and generates its
 own `imports.tf` from it (kept under `.result/`, never committed — see the
 [import-phase methodology](../../docs/Terraform-Import-Phase.md)). Only the
 inventory tool and the methodology are shared.
+
+## `cloudflare-token` — parametric API-token deep-links (shared engine)
+
+Builds a Cloudflare dashboard "create token" deep-link whose **permission groups
+are derived from the `cloudflare_*` resource types a repo actually manages** —
+least-privilege by construction, no per-repo scope list to maintain. The canonical
+`resource-type → permission-group` mapping lives in the script; each infra repo
+(metacraft / agent-harbor / blocksense) calls it with only its token **name** +
+account/zone.
+
+```sh
+cloudflare-token plan  --scan terraform/cloudflare/metacraft-prod --name "Metacraft Terraform" --open
+cloudflare-token apply --scan terraform/cloudflare/metacraft-prod --name "Metacraft Terraform"
+cloudflare-token import --scan terraform/cloudflare/metacraft-prod --name "Metacraft Terraform"
+```
+`--scan DIR` discovers managed types from the root's `resource "…"` / `to = …`
+blocks; `--resource-types a,b` overrides. `plan` = read on every managed group,
+`apply` = edit on writable groups + `zone:read`, `import` = broad read for
+inventory. Managing zone-level settings? add `--zone-writable`.
