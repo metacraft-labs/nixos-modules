@@ -17,6 +17,7 @@
     ./garm-api-watchdog.nix
     ./garm-multi-provider.nix
     ./garm-reconcile.nix
+    ./garm-stale-scaleset-job-reaped.nix
     ./garm-incus-runner-host.nix
     ./garm-macos-runner-install-wrapper.nix
     ./garm-provider-vmharness-protocol.nix
