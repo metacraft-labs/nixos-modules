@@ -28,8 +28,15 @@
     # PINNED to a specific rev (not a bare branch): we deploy reprobuild to
     # servers through this input, so an explicit pin keeps the installed
     # `repro` reproducible. Bump this SHA to roll forward (the mainline is the
-    # `dev` branch; `main` was retired).
-    reprobuild.url = "github:metacraft-labs/reprobuild/8c47b5239a85970ac038fa67bbaecca962191fa1";
+    # `dev` branch; `main` was retired). This is the ONLY place reprobuild is
+    # pinned: downstream flakes reach `repro` through this input (with
+    # `follows`) rather than declaring one of their own, so a machine cannot end
+    # up running a `repro` other than the one its closure was built against.
+    # Before bumping, check the candidate against a real workspace — it must
+    # still parse the current manifests (`repro workspace status`) and still
+    # satisfy the installed managed-hook contract
+    # (`repro hooks protocol --require=2 --hook-contract=...`).
+    reprobuild.url = "github:metacraft-labs/reprobuild/c81f0a07eb1938060e34740aed8d77d61600e1c2";
 
     nixpkgs.follows = "nixos-2511";
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
