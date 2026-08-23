@@ -28,10 +28,18 @@
     # PINNED to a specific rev (not a bare branch): we deploy reprobuild to
     # servers through this input, so an explicit pin keeps the installed
     # `repro` reproducible. Bump this SHA to roll forward (the mainline is the
-    # `dev` branch; `main` was retired). This is the ONLY place reprobuild is
-    # pinned: downstream flakes reach `repro` through this input (with
-    # `follows`) rather than declaring one of their own, so a machine cannot end
-    # up running a `repro` other than the one its closure was built against.
+    # `dev` branch; `main` was retired). This SHA is the single source of truth
+    # for the reprobuild revision: nearly every consumer reaches `repro` through
+    # this input with `follows` rather than declaring a pin of its own, so a
+    # machine cannot end up running a `repro` other than the one its closure was
+    # built against.
+    #
+    # `codetracer` is a documented exception — it consumes the prebuilt package
+    # and overrides six of reprobuild's inputs to get a `repro` built with
+    # `ct_interpose`, which a bare `follows` cannot express, so it mirrors this
+    # SHA by hand. Bumping is therefore a two-file edit: here first, then
+    # codetracer's `flake.nix`. Do not "tidy" that input into a `follows`.
+    # See metacraft-specs/how-to-distribute-new-reprobuild-versions-internally.md.
     # Before bumping, check the candidate against a real workspace — it must
     # still parse the current manifests (`repro workspace status`) and still
     # satisfy the installed managed-hook contract
