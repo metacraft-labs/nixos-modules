@@ -114,6 +114,11 @@
         runtimeInputs = [
           mcl-garage
           pkgs.jq
+          # The stale-key prune below pipes `key list` into awk. A systemd
+          # unit's PATH has no gawk, and writeShellApplication only *prepends*
+          # runtimeInputs, so without this the pipeline exits 127 under
+          # `set -o pipefail` and the function dies before it prints its JSON.
+          pkgs.gawk
         ];
         text = ''
           set -euo pipefail
@@ -241,6 +246,14 @@
 
           # Pass 2: apply each bucket's S3 lifecycle expiry (mirrors the Attic
           # retention-period / artifact retention-days).
+          if [[ -z "$bootstrapKeyJson" ]]; then
+            # This used to be silent: the unit skipped every lifecycle rule,
+            # printed "complete." and exited 0, so a broken key mint looked
+            # exactly like a healthy boot.
+            echo "s3-artifact-store-bootstrap: WARNING could not mint the bootstrap key;" \
+              "no lifecycle expiry was applied to any bucket." >&2
+          fi
+
           if [[ -n "$bootstrapKeyJson" ]]; then
             keyId=$(jq -r '.keyId' <<<"$bootstrapKeyJson")
             secret=$(jq -r '.secretKey' <<<"$bootstrapKeyJson")
