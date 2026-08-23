@@ -67,7 +67,15 @@ setup_nix_system_paths=(
   /run/current-system/sw/bin
   /nix/var/nix/profiles/default/bin
 )
-for setup_nix_system_dir in "${setup_nix_system_paths[@]}"; do
+# `${a[@]+"${a[@]}"}` rather than a plain `"${a[@]}"`: on bash < 4.4 — which is
+# what macOS ships as /bin/bash, and therefore what the aarch64-darwin runner
+# executes this with — expanding an EMPTY array under `set -u` is a fatal
+# "unbound variable" error. The contract test builds a mutation of this script
+# with the path entries deleted, so the empty case is real and must stay
+# runnable. The outer expansion is unquoted on purpose: that is what makes it
+# vanish entirely when the array is empty, while the inner "${a[@]}" keeps every
+# element individually quoted so paths containing spaces still survive.
+for setup_nix_system_dir in ${setup_nix_system_paths[@]+"${setup_nix_system_paths[@]}"}; do
   if [ -d "$setup_nix_system_dir" ]; then
     case ":${PATH:-}:" in
       *":$setup_nix_system_dir:"*) ;;
