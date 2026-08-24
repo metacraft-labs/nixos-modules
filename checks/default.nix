@@ -18,6 +18,7 @@
     ./garm-multi-provider.nix
     ./garm-reconcile.nix
     ./garm-incus-runner-host.nix
+    ./garm-incus-storage-pool-source.nix
     ./garm-macos-runner-install-wrapper.nix
     ./garm-provider-vmharness-protocol.nix
     ./garm-provider-vmharness-windows-toolchain.nix
