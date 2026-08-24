@@ -205,6 +205,20 @@ top@{
         lib.findFirst (package: lib.getName package == "mcl-deploy-agent")
           (throw "second Darwin pull-agent entrypoint package is absent from environment.systemPackages")
           staticB.config.environment.systemPackages;
+      staticLaunchdLauncherPackage =
+        lib.findFirst (package: lib.getName package == "mcl-deploy-agent-launcher")
+          (throw "Darwin pull-agent immutable launchd launcher is absent from environment.systemPackages")
+          staticA.config.environment.systemPackages;
+      staticLaunchdLauncherPackageB =
+        lib.findFirst (package: lib.getName package == "mcl-deploy-agent-launcher")
+          (throw "second Darwin pull-agent immutable launchd launcher is absent")
+          staticB.config.environment.systemPackages;
+      expectedLaunchdArguments = [
+        (lib.getExe staticLaunchdLauncherPackage)
+        stableEntrypoint
+        "120"
+        "1"
+      ];
       staticSystemEntrypoint = "${staticA.config.system.path}/bin/mcl-deploy-agent";
       staticSystemEntrypointB = "${staticB.config.system.path}/bin/mcl-deploy-agent";
       staticActivation = staticA.config.system.activationScripts.preActivation.text;
@@ -309,8 +323,11 @@ top@{
           disabledSystem.config.launchd.daemons ? mcl-deploy-agent
         ) "Darwin pull agent is not disabled by default")
         (lib.optional (
-          staticServiceA.ProgramArguments != [ stableEntrypoint ]
-        ) "LaunchDaemon does not use the generation-stable entrypoint")
+          staticServiceA.ProgramArguments != expectedLaunchdArguments
+        ) "LaunchDaemon does not use the immutable bounded launcher")
+        (lib.optional (
+          builtins.head staticServiceA.ProgramArguments == stableEntrypoint
+        ) "LaunchDaemon still executes the not-yet-published current-system link directly")
         (lib.optional (staticServiceA.UserName != "root") "LaunchDaemon is not explicitly root-owned")
         (lib.optional (
           staticServiceA.GroupName != "wheel"
@@ -332,7 +349,13 @@ top@{
         (lib.optional (
           staticEntrypointPackage == staticEntrypointPackageB
         ) "generation-specific packages do not change the resolved wrapper")
-        (lib.optional (lib.hasInfix "/nix/store" (builtins.toJSON staticServiceA)) "LaunchDaemon plist embeds a generation-specific store path")
+        (lib.optional (
+          staticLaunchdLauncherPackage != staticLaunchdLauncherPackageB
+        ) "immutable launchd launcher changes with the wrapped agent generation")
+        (lib.optional (
+          builtins.elem (lib.getExe staticEntrypointPackage) staticServiceA.ProgramArguments
+          || builtins.elem (lib.getExe staticEntrypointPackageB) staticServiceA.ProgramArguments
+        ) "LaunchDaemon plist embeds a generation-specific agent wrapper")
         (lib.optional (lib.hasInfix "sudo" (builtins.toJSON staticServiceA)) "LaunchDaemon plist requires sudo")
         (lib.optional (
           !lib.hasInfix staticPreparationExe staticActivationText
@@ -808,13 +831,51 @@ top@{
           ''
             test ${lib.escapeShellArg (toString staticServiceA.Label)} = ${lib.escapeShellArg (toString staticServiceB.Label)}
             test ${lib.escapeShellArg (builtins.toJSON staticServiceA.ProgramArguments)} = ${lib.escapeShellArg (builtins.toJSON staticServiceB.ProgramArguments)}
+            launcher=${lib.escapeShellArg (lib.getExe staticLaunchdLauncherPackage)}
+            test "$(printf '%s' ${lib.escapeShellArg (builtins.toJSON staticServiceA.ProgramArguments)} | ${pkgs.jq}/bin/jq -r '.[0]')" = "$launcher"
+            test "$launcher" != ${lib.escapeShellArg stableEntrypoint}
             test ${lib.escapeShellArg (lib.getExe staticEntrypointPackage)} != ${lib.escapeShellArg (lib.getExe staticEntrypointPackageB)}
+            test ${lib.escapeShellArg (lib.getExe staticLaunchdLauncherPackage)} = ${lib.escapeShellArg (lib.getExe staticLaunchdLauncherPackageB)}
             test -x ${lib.escapeShellArg (lib.getExe staticEntrypointPackage)}
             test -x ${lib.escapeShellArg (lib.getExe staticEntrypointPackageB)}
             test -L ${lib.escapeShellArg staticSystemEntrypoint}
             test -L ${lib.escapeShellArg staticSystemEntrypointB}
             test "$(readlink ${lib.escapeShellArg staticSystemEntrypoint})" = ${lib.escapeShellArg (lib.getExe staticEntrypointPackage)}
             test "$(readlink ${lib.escapeShellArg staticSystemEntrypointB})" = ${lib.escapeShellArg (lib.getExe staticEntrypointPackageB)}
+
+            # Simulate nix-darwin's first-enable ordering with the exact
+            # evaluated launcher: launchd starts it while the current-system
+            # entrypoint is absent, then activation publishes that executable.
+            fixture="$TMPDIR/first-enable/current-system/sw/bin/mcl-deploy-agent"
+            mkdir -p "$(dirname "$fixture")"
+            "$launcher" "$fixture" 100 0.01 > "$TMPDIR/first-enable.stdout" \
+              2> "$TMPDIR/first-enable.stderr" &
+            launcher_pid=$!
+            sleep 0.05
+            kill -0 "$launcher_pid"
+            printf '%s\n' '#!/bin/sh' 'printf "%s\\n" first-enable-ran' > "$fixture"
+            chmod +x "$fixture"
+            wait "$launcher_pid"
+            grep -Fxq first-enable-ran "$TMPDIR/first-enable.stdout"
+            test ! -s "$TMPDIR/first-enable.stderr"
+
+            # Permanent absence is bounded and diagnostic rather than an
+            # ENOENT launch failure or an activation-long hang.
+            if "$launcher" "$TMPDIR/permanently-absent" 2 0.01 \
+              > "$TMPDIR/absent.stdout" 2> "$TMPDIR/absent.stderr"; then
+              echo 'immutable launchd launcher accepted a permanently absent entrypoint' >&2
+              exit 1
+            else
+              test "$?" -eq 75
+            fi
+            grep -Fq 'entrypoint unavailable after 2 attempts' "$TMPDIR/absent.stderr"
+            test ! -s "$TMPDIR/absent.stdout"
+            if "$launcher" 'relative/path' 2 0.01 >/dev/null 2>&1; then
+              echo 'immutable launchd launcher accepted a relative executable path' >&2
+              exit 1
+            else
+              test "$?" -eq 64
+            fi
             mkdir -p "$out"
             printf '%s\n' 'test_darwin_pull_agent_entrypoint_survives_generation_change: passed' > "$out/result"
           '';
