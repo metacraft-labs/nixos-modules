@@ -13,6 +13,7 @@
     ./deployment-pull-agent.nix
     ./deployment-pull-agent-darwin.nix
     ./deployment-reconciler.nix
+    ./garm-credentials-no-race.nix
     ./garm-service-boot.nix
     ./garm-api-watchdog.nix
     ./garm-multi-provider.nix
