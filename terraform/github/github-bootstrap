@@ -14,7 +14,15 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  github-bootstrap <plan|apply|outputs|governance-app-secrets-plan|governance-app-secrets-apply> <github/<name>> [--root-dir DIR]
+  github-bootstrap <plan|apply|outputs|secret-plan|secret-apply|governance-app-secrets-plan|governance-app-secrets-apply> <github/<name>> [--secret <owner/repo:NAME>] [--root-dir DIR]
+
+Actions:
+  secret-plan / secret-apply     Targeted plan/apply for a single Terraform-managed
+                                 GitHub Actions secret (--secret <owner/repo:NAME>).
+                                 A full plan of a large governance root refreshes
+                                 every declared resource and blows GitHub's hourly
+                                 API rate limit, so single-secret changes are
+                                 applied targeted, without a full-tree refresh.
 
 Environment:
   AWS_PROFILE                    AWS profile for the S3 state backend (set by the dev shell).
@@ -35,6 +43,9 @@ while [[ $# -gt 0 ]]; do
     --root-dir)
       [[ $# -ge 2 ]] || { echo "--root-dir requires a directory." >&2; exit 2; }
       root="$(cd -- "$2" && pwd)"; shift 2 ;;
+    --secret)
+      [[ $# -ge 2 ]] || { echo "--secret requires <owner/repo:NAME>." >&2; exit 2; }
+      secret="$2"; shift 2 ;;
     *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
@@ -43,7 +54,7 @@ if [[ -z "$action" || "$action" == "-h" || "$action" == "--help" ]]; then
   usage; exit 0
 fi
 case "$action" in
-  plan | apply | outputs | governance-app-secrets-plan | governance-app-secrets-apply) ;;
+  plan | apply | outputs | secret-plan | secret-apply | governance-app-secrets-plan | governance-app-secrets-apply) ;;
   *) usage >&2; exit 2 ;;
 esac
 [[ -n "$config" ]] || { echo "A bootstrap config (e.g. github/<name>) is required." >&2; usage >&2; exit 2; }
@@ -53,6 +64,8 @@ dst="${root}/.result/bootstrap/${config}"
 config_slug="$(printf '%s' "$config" | tr '/' '-')"
 backend="${root}/${GITHUB_BOOTSTRAP_BACKEND_FILE:-backends/${config_slug}.hcl}"
 profile="${AWS_PROFILE:-}"
+secret=""
+secret_target=""
 identity_json=""
 expected_account_id=""
 actual_account_id=""
@@ -223,6 +236,69 @@ It should only create or update:
 EOF
 }
 
+# Resolve a single Terraform-managed GitHub Actions secret's resource address
+# from the manifest, using the same keying convention the governance engine and
+# the app-secret targeting above use: <type>.secret_<providerId with /:. -> _>,
+# where <type> is github_actions_secret (repository) or
+# github_actions_organization_secret (organization). The provider id is
+# <owner>/<repo>:<NAME>. Only secrets flagged manageWithTerraform are eligible.
+resolve_secret_target() {
+  local provider_id="$1"
+  if [[ "$provider_id" != */*:* ]]; then
+    echo "--secret must look like <owner>/<repo>:<SECRET_NAME> (got '${provider_id}')." >&2
+    exit 2
+  fi
+  secret_target="$(
+    nix eval --json --file "${src}/secrets/manifest.nix" 2>/dev/null | jq -r --arg pid "$provider_id" '
+      .secrets[]
+      | select(.providerId == $pid)
+      | select((.manageWithTerraform // false) == true)
+      | (
+          if .providerResource == "github_actions_secret" then "github_actions_secret"
+          elif .providerResource == "github_actions_organization_secret" then "github_actions_organization_secret"
+          else .providerResource end
+        ) as $type
+      | "\($type).secret_" + (.providerId | gsub("[/:.]"; "_"))
+    '
+  )"
+  if [[ -z "$secret_target" ]]; then
+    cat >&2 <<EOF
+'${provider_id}' is not a Terraform-managed secret in ${config}.
+It must appear in secrets/manifest.nix with manageWithTerraform = true (then
+re-run github-governance-secrets-render before applying it).
+EOF
+    exit 2
+  fi
+  if [[ "$(printf '%s\n' "$secret_target" | grep -c .)" -gt 1 ]]; then
+    echo "Ambiguous: '${provider_id}' matched multiple manifest entries:" >&2
+    printf '  %s\n' $secret_target >&2
+    exit 2
+  fi
+}
+
+# Targeted plan for one managed secret. A full plan of a large governance root
+# refreshes every declared resource against the GitHub API and blows the hourly
+# rate limit, so single-secret changes MUST be targeted and refresh-free. Import
+# blocks (if any) are stripped: they drive one-time imports of resources already
+# in state, whereas a managed secret is a plain create/update. -lock=false keeps
+# an interrupted plan from leaving a stale state lock behind.
+plan_managed_secret() {
+  [[ -n "$secret" ]] || { echo "secret-plan/secret-apply require --secret <owner/repo:NAME>." >&2; exit 2; }
+  resolve_secret_target "$secret"
+  rm -f imports.tf
+  tofu plan -input=false -no-color -lock=false -refresh=false \
+    -target="$secret_target" \
+    -out=github-managed-secret.tfplan
+  cat <<EOF
+
+Saved targeted plan:
+  github-managed-secret.tfplan  (target: ${secret_target})
+
+Review it with:
+  tofu show -no-color github-managed-secret.tfplan
+EOF
+}
+
 case "$action" in
   plan)
     tofu plan -out=github-bootstrap.tfplan
@@ -244,6 +320,20 @@ case "$action" in
       exit 1
     fi
     tofu apply github-governance-app-secrets.tfplan
+    ;;
+  secret-plan)
+    plan_managed_secret
+    ;;
+  secret-apply)
+    plan_managed_secret
+    tofu show -no-color github-managed-secret.tfplan
+    echo
+    read -r -p "Type 'apply-secret' to apply this targeted plan: " confirmation
+    if [[ "$confirmation" != "apply-secret" ]]; then
+      echo "Aborted."
+      exit 1
+    fi
+    tofu apply github-managed-secret.tfplan
     ;;
   outputs)
     tofu output
