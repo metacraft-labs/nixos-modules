@@ -29,11 +29,11 @@ jobs:
       # on github-hosted runners
       matrix:
         include:
-          - runner: eph-linux-x64
+          - runner: eph-linux-x64-g2
             nix-version: ''
-          - runner: eph-linux-x64
+          - runner: eph-linux-x64-g2
             nix-version: 2.28.5
-          - runner: eph-linux-x64
+          - runner: eph-linux-x64-g2
             nix-version: 2.33.0
     runs-on: ${{ matrix.runner }}
     steps:
@@ -59,7 +59,7 @@ jobs:
   # `.github/setup-nix/tests/devshell-fixture/`.
   test-setup-nix-devshell:
     name: Validate setup-nix devShell build-failure detection
-    runs-on: eph-linux-x64
+    runs-on: eph-linux-x64-g2
     steps:
       - name: Checkout first to use locally defined actions
         uses: actions/checkout@v6.0.2
@@ -157,7 +157,7 @@ jobs:
         run: bash .github/setup-nix/tests/verify-nix-config-test.sh
 
   test-mcl-secret-integration:
-    runs-on: eph-linux-x64
+    runs-on: eph-linux-x64-g2
     steps:
       - name: Checkout first to use locally defined actions
         uses: actions/checkout@v6.0.2
@@ -183,10 +183,18 @@ jobs:
       # Foundry takes longer than vm-harness's currently deployed 600-second
       # default. Remove this override after this PR's provider fix is deployed.
       foundry-darwin-bootstrap-runner: '["aarch64-darwin"]'
+      # Route this repo's flake-check matrix at the GPU hosts' ephemeral scale
+      # set `eph-linux-x64-g1` (gpu-server-001) instead of the saturated
+      # `eph-linux-x64` class on high-mem-server. Only this CALLER is
+      # re-pointed; the reusable workflow's own defaults stay on
+      # `eph-linux-x64` (checks/deployment-production-cutover.nix asserts
+      # those literals), and `results-runner` is deliberately left alone
+      # because `ci / Final Results` is a required status check.
+      non-nix-runner: '["eph-linux-x64-g1"]'
       runners: |
         {
           "x86_64-linux": [
-            "eph-linux-x64"
+            "eph-linux-x64-g1"
           ],
           "aarch64-darwin": [
             "eph-macos-arm64"
