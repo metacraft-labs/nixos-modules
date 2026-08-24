@@ -212,12 +212,15 @@ infrastructure integrations can use it to require runtime-only credentials
 without embedding those credentials in the Nix store.
 
 The module installs a root LaunchDaemon with `RunAtLoad` and periodic polling.
-Its plist deliberately contains `/run/current-system/sw/bin/mcl-deploy-agent`
-instead of a Nix store path. That stable wrapper is exported through
-`environment.systemPackages`; only after launch does it resolve the current
-generation's `mcl`, trust file, and lifecycle hooks. A nix-darwin activation
-can therefore replace the system environment without unloading the process
-that is applying it.
+Its plist executes a small immutable Nix-store launcher whose derivation is
+independent of the configured agent package and host arguments. On a true first
+enable, nix-darwin may load the job before advancing `/run/current-system`; the
+launcher waits up to 120 seconds for
+`/run/current-system/sw/bin/mcl-deploy-agent`, reports a diagnostic, and exits
+75 if that bounded activation window expires. Once available, that stable
+wrapper resolves the current generation's `mcl`, trust file, and lifecycle
+hooks. Agent-package changes therefore leave the plist and launcher identical,
+so an agent can activate its own replacement without launchd unloading it.
 
 Every invocation takes a non-blocking `flock` supplied by the wrapper's Darwin
 runtime closure and applies umask `0027`. Darwin uses canonical
@@ -291,7 +294,9 @@ Implemented M5 coverage:
   hook, profile/activation, health, and rollback surface with fatal markers and
   proves `deploy-apply --dry-run` reaches none of them; the equivalent non-dry
   override configuration fails before creating state or events.
-- Darwin module contract checks for its root LaunchDaemon, stable entrypoint,
+- Darwin module contract checks for its root LaunchDaemon, immutable bounded
+  launcher, delayed first-enable entrypoint availability and timeout, stable
+  self-update semantics,
   polling interval, canonical dedicated paths, root:wheel preparation commands,
   transactional late-failure rollback, exact original-mode restoration,
   invocation-created cleanup, rollback-time race preservation, mode repair,
