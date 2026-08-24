@@ -19,6 +19,7 @@
     ./garm-reconcile.nix
     ./garm-stale-scaleset-job-reaped.nix
     ./garm-incus-runner-host.nix
+    ./garm-incus-storage-pool-source.nix
     ./garm-macos-runner-install-wrapper.nix
     ./garm-provider-vmharness-protocol.nix
     ./garm-provider-vmharness-windows-toolchain.nix

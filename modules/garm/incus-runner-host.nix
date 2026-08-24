@@ -12,7 +12,9 @@
   #   (2) `virtualisation.incus.preseed` for the FULL host triple a fresh GARM
   #       host needs — the managed `incusbr0` bridge on the per-host /24
   #       (high-mem-server 10.157.159.0/24, gpu-server-001 10.158.160.0/24), a
-  #       `dir` storage pool, and the `default` profile's root+eth0 devices.
+  #       storage pool on the declared driver/`source` (`dir` by default; a
+  #       `zfs` pool ADOPTS an existing dataset), and the `default` profile's
+  #       root+eth0 devices.
   #       nixpkgs' incus module ships an idempotent `incus-preseed.service`
   #       (ordered After=incus.service) that applies the preseed; the preseed
   #       CREATES/UPDATES entities but never REMOVES them, so it is safe to
@@ -140,10 +142,82 @@
           driver = mkOption {
             type = types.str;
             default = "dir";
+            example = "zfs";
             description = ''
-              The storage pool driver. `dir` (the default) matches
-              high-mem-server and needs no extra host setup (a plain directory
-              pool under /var/lib/incus).
+              The storage pool driver. `dir` (the default) needs no extra host
+              setup (a plain directory pool under /var/lib/incus).
+
+              For `zfs`, `btrfs` and `lvm` you MUST also set
+              {option}`storagePool.source` (or opt in to
+              {option}`storagePool.allowLoopFileBacking`) — see the hazard
+              documented on `source`.
+            '';
+          };
+
+          source = mkOption {
+            type = types.str;
+            default = "";
+            example = "zroot/root/var/lib/incus-storage";
+            description = ''
+              The pool's `source=` config key — the EXISTING backing store the
+              pool ADOPTS. For the `zfs` driver this is a dataset name
+              (`<zpool>/<path>`); for `btrfs`/`lvm` a block device or existing
+              subvolume/VG; for `dir` an existing directory. Empty (the
+              default) leaves `source` unset.
+
+              THIS IS NOT COSMETIC ON A LOOP-FILE-CAPABLE DRIVER. Incus'
+              `FillConfig()` (internal/server/storage/drivers/driver_zfs.go,
+              and the btrfs/lvm equivalents) treats "no source" as a REQUEST
+              for a loop-backed pool: it rewrites `source` to
+              `/var/lib/incus/disks/<pool>.img`, creates a sparse file there
+              and builds the zpool/filesystem INSIDE it. No error, no warning,
+              and `incus storage list` still reports `driver: zfs` — so the
+              host looks converged while every per-job container rootfs lives
+              in a zpool-in-a-file stacked on the host's real pool, which is
+              strictly worse than the `dir` driver it replaced.
+
+              The check that distinguishes an adopted dataset from that
+              outcome is `ls -A /var/lib/incus/disks/` — it must be EMPTY. The
+              module refuses to render a loop-backed pool at eval time (see
+              {option}`storagePool.allowLoopFileBacking`) and re-checks the
+              live host in `garm-incus-storage-network`.
+            '';
+          };
+
+          extraConfig = mkOption {
+            type = types.attrsOf types.str;
+            default = { };
+            example = {
+              "zfs.pool_name" = "zroot";
+            };
+            description = ''
+              Additional storage-pool config keys, emitted verbatim in the
+              preseed's `config` block and passed as `key=value` arguments to
+              `incus storage create`. `source` has its own option above
+              because the module reasons about it; everything else
+              (`zfs.pool_name`, `size`, `lvm.vg_name`, `ceph.cluster_name`, …)
+              goes here.
+
+              Only consulted at pool CREATION — the convergence oneshot never
+              mutates an existing pool's config.
+            '';
+          };
+
+          allowLoopFileBacking = mkOption {
+            type = types.bool;
+            default = false;
+            description = ''
+              Explicit opt-in to a LOOP-FILE-BACKED storage pool, i.e. a
+              `zfs`/`btrfs`/`lvm` pool declared with no
+              {option}`storagePool.source`, which Incus silently builds inside
+              `/var/lib/incus/disks/<pool>.img`.
+
+              With this `false` (the default) that configuration is REJECTED at
+              eval time, and `garm-incus-storage-network` additionally fails
+              the host if a loop file for the declared pool is ever found on
+              disk. Set it true only when a file-backed pool is what you
+              actually want (a throwaway VM, a laptop, a test); it is never
+              what a CI runner host wants.
             '';
           };
         };
@@ -191,6 +265,38 @@
           derivedGateway = lib.concatStringsSep "." ((lib.sublist 0 3 octets) ++ [ "1" ]);
           gateway = if cfg.bridgeGateway != "" then cfg.bridgeGateway else derivedGateway;
 
+          # ---- The storage pool's config block ---------------------------------
+          #
+          # `source` gets its own option (the module reasons about it — see the
+          # loop-file hazard below); everything else is passed through verbatim.
+          # One value, rendered into BOTH the preseed's `config:` mapping and the
+          # `incus storage create` argument list, so the two can never disagree.
+          poolConfig =
+            lib.optionalAttrs (cfg.storagePool.source != "") { source = cfg.storagePool.source; }
+            // cfg.storagePool.extraConfig;
+
+          # `incus storage create <pool> <driver> key=value …`
+          poolCreateArgs = lib.mapAttrsToList (k: v: "${k}=${v}") poolConfig;
+
+          # Incus' `internalUtil.VarPath()`. The loop file a source-less
+          # zfs/btrfs/lvm pool is silently built inside lands at
+          # <varPath>/disks/<pool>.img (drivers/utils.go: loopFilePath).
+          incusVarPath = "/var/lib/incus";
+          poolLoopFile = "${incusVarPath}/disks/${cfg.storagePool.name}.img";
+
+          # The drivers whose FillConfig() turns "no source" into a loop file
+          # rather than an error. `dir` and the networked drivers (ceph*,
+          # powerflex, linstor, truenas) have no such fallback, so a missing
+          # `source` there is either legal or a loud Incus error.
+          loopFileCapableDrivers = [
+            "zfs"
+            "btrfs"
+            "lvm"
+          ];
+          driverIsLoopFileCapable = lib.elem cfg.storagePool.driver loopFileCapableDrivers;
+          # The exact declaration that yields a silent loop-file pool.
+          poolWouldBeLoopFileBacked = driverIsLoopFileCapable && cfg.storagePool.source == "";
+
           # (2b) The idempotent storage+network+profile convergence oneshot.
           # Every step is create-if-missing so it is a no-op on a converged host
           # and never mutates an existing pool's immutable fields. `</dev/null`
@@ -201,21 +307,95 @@
               incusPkg
               pkgs.coreutils
               pkgs.gnugrep
+              pkgs.gnused
             ];
             text = ''
               set -euo pipefail
               pool="${cfg.storagePool.name}"
               driver="${cfg.storagePool.driver}"
+              declared_source="${cfg.storagePool.source}"
+              loop_file="${poolLoopFile}"
+              allow_loop="${lib.boolToString cfg.storagePool.allowLoopFileBacking}"
+              # True only for the declaration the eval-time assertion rejects.
+              refuse_sourceless="${
+                lib.boolToString (poolWouldBeLoopFileBacked && !cfg.storagePool.allowLoopFileBacking)
+              }"
               bridge="${cfg.bridgeName}"
               addr="${gateway}/${prefix}"
               nat="${lib.boolToString cfg.nat}"
 
+              # The LOOP-FILE GUARD, run before and after the pool step. A
+              # zfs/btrfs/lvm pool created with no `source=` is not an error in
+              # Incus — FillConfig() rewrites `source` to $loop_file, builds the
+              # pool inside a sparse file there, and `incus storage list` goes on
+              # reporting the real driver name. Nothing else on the host ever
+              # says anything is wrong. So we say it, here, and fail.
+              assert_not_loop_backed() { # $1 = when (a label for the message)
+                # storagePool.allowLoopFileBacking = true ⇒ a file-backed pool is
+                # what this host explicitly asked for; nothing to assert.
+                if [ "$allow_loop" = "true" ]; then
+                  return 0
+                fi
+                if [ -e "$loop_file" ]; then
+                  echo "garm-incus-storage-network: FATAL ($1): storage pool '$pool' is" \
+                    "LOOP-FILE BACKED — '$loop_file' exists, so Incus built the pool inside" \
+                    "a sparse file instead of adopting a real backing store. Every per-job" \
+                    "container rootfs would live in a $driver pool stacked on a file on the" \
+                    "host filesystem. Set" \
+                    "services.garm-incus-runner-host.storagePool.source to the backing" \
+                    "store to adopt (or .allowLoopFileBacking = true if a file-backed pool" \
+                    "is genuinely wanted). Contents of ${incusVarPath}/disks:" >&2
+                  ls -A "${incusVarPath}/disks" >&2 || true
+                  exit 1
+                fi
+              }
+
+              assert_not_loop_backed "pre-existing"
+
               # Storage pool (immutable-safe: only create if absent).
               if ${incusBin} storage show "$pool" </dev/null >/dev/null 2>&1; then
                 echo "garm-incus-storage-network: storage pool '$pool' present — no-op"
+
+                # A pool that is already there is never mutated (Incus cannot
+                # change a pool's driver in place and has no `storage rename`),
+                # but a SILENT divergence between the declaration and the live
+                # pool is how this host drifts back to the defect. Say it loudly
+                # and leave the cutover to the operator — a hard failure here
+                # would break every deploy on a host merely awaiting a window.
+                have_driver=$(${incusBin} storage show "$pool" </dev/null 2>/dev/null \
+                  | sed -n 's/^driver: //p' | head -n1)
+                if [ -n "$have_driver" ] && [ "$have_driver" != "$driver" ]; then
+                  echo "garm-incus-storage-network: NEEDS-OPERATOR-CUTOVER: storage pool" \
+                    "'$pool' is on driver '$have_driver' but this configuration declares" \
+                    "'$driver'. Incus cannot change a pool's driver in place." >&2
+                fi
+                if [ -n "$declared_source" ]; then
+                  have_source=$(${incusBin} storage get "$pool" source </dev/null 2>/dev/null || true)
+                  if [ -n "$have_source" ] && [ "$have_source" != "$declared_source" ]; then
+                    echo "garm-incus-storage-network: NEEDS-OPERATOR-CUTOVER: storage pool" \
+                      "'$pool' has source '$have_source' but this configuration declares" \
+                      "'$declared_source'." >&2
+                  fi
+                fi
               else
-                echo "garm-incus-storage-network: creating storage pool '$pool' ($driver)"
-                ${incusBin} storage create "$pool" "$driver" </dev/null
+                # Inert while the eval-time assertion stands; kept so the unit
+                # still refuses if this script is ever reached by another route
+                # (a hand-edited unit, a stale generation left on the host).
+                if [ "$refuse_sourceless" = "true" ]; then
+                  echo "garm-incus-storage-network: FATAL: refusing to create a '$driver'" \
+                    "pool with no source= — Incus would build it inside '$loop_file'." >&2
+                  exit 1
+                fi
+                echo "garm-incus-storage-network: creating storage pool '$pool'" \
+                  "($driver${
+                    lib.optionalString (cfg.storagePool.source != "") ", source=${cfg.storagePool.source}"
+                  })"
+                ${incusBin} storage create "$pool" "$driver" ${lib.escapeShellArgs poolCreateArgs} </dev/null
+
+                # Post-condition. `incus storage create` succeeding proves
+                # nothing about WHAT it created: the loop-file fallback is a
+                # success path.
+                assert_not_loop_backed "just created"
               fi
 
               # Managed bridge (only create if absent — never re-set an existing
@@ -284,6 +464,61 @@
           };
         in
         {
+          # (0) THE LOOP-FILE OUTCOME IS UNREACHABLE, not merely documented.
+          #
+          # `driver = "zfs"` with no `source` is not rejected by Incus — it is
+          # QUIETLY REINTERPRETED as "build me a zpool inside
+          # /var/lib/incus/disks/<pool>.img" (driver_zfs.go FillConfig(), and the
+          # btrfs/lvm equivalents). The host then reports `driver: zfs` while
+          # every per-job container rootfs lives in a file-backed pool stacked on
+          # the real one — strictly worse than the `dir` driver a ZFS cutover
+          # exists to remove, and indistinguishable from success in every status
+          # output an operator would think to check.
+          #
+          # An option alone does not fix that: the defect is that the DEFAULT
+          # (omit `source`) is the dangerous one. So the combination is refused
+          # here, at eval, naming the hazard and the remedy — and the only way to
+          # get a file-backed pool is to ask for one by name. The convergence
+          # oneshot re-checks the live host on every switch (see
+          # `assert_not_loop_backed` above), because an assertion only constrains
+          # what THIS module renders, not what a previous generation left behind.
+          #
+          # Scoped to `managePreseed` because that is exactly when this module
+          # creates a pool. With `managePreseed = false` both the preseed and the
+          # convergence oneshot are inert, the options are pure declaration for
+          # host-local units to read, and rejecting them here would fail hosts
+          # this module never touches.
+          assertions = [
+            {
+              assertion =
+                !(cfg.managePreseed && poolWouldBeLoopFileBacked && !cfg.storagePool.allowLoopFileBacking);
+              message = ''
+                services.garm-incus-runner-host.storagePool declares
+                driver = "${cfg.storagePool.driver}" with an empty `source`, and
+                managePreseed = true.
+
+                Incus does NOT treat that as an error. Its ${cfg.storagePool.driver} driver
+                FillConfig() rewrites the pool's `source` to
+                ${poolLoopFile}, creates a sparse file there, and builds the
+                pool INSIDE it. The result reports `driver: ${cfg.storagePool.driver}` in
+                `incus storage list` while every per-job container rootfs lives
+                in a file-backed pool stacked on the host filesystem — worse
+                than the `dir` driver, and silent. The check that tells the two
+                apart is `ls -A /var/lib/incus/disks/`, which must be empty.
+
+                Fix: set
+                  services.garm-incus-runner-host.storagePool.source
+                to the EXISTING backing store the pool should adopt (for zfs, a
+                dataset name such as "zroot/root/var/lib/incus-storage"; the
+                dataset must already exist — this module adopts, it does not
+                create).
+
+                If a loop-file-backed pool really is what you want, say so:
+                  services.garm-incus-runner-host.storagePool.allowLoopFileBacking = true;
+              '';
+            }
+          ];
+
           # (1) FUSE on the HOST kernel. Incus bind-mounts `/dev/fuse` into
           # every container from its own static device set — NOT from LXC's
           # config templates, which only carry the `c 10:229 rwm` cgroup allow.
@@ -319,8 +554,8 @@
           # setuid. That half lives in the vm-harness runner-image recipe.
           boot.kernelModules = [ "fuse" ];
 
-          # (2) The full host triple — managed incusbr0 bridge + a `dir` storage
-          # pool + the `default` profile's root/eth0 devices — declared via
+          # (2) The full host triple — managed incusbr0 bridge + the declared
+          # storage pool + the `default` profile's root/eth0 devices — declared via
           # incus.preseed. nixpkgs' incus module renders an idempotent
           # incus-preseed.service that CREATES/UPDATES (never removes) these
           # after incus.service, on a FRESH (uninitialised) incus. For a host
@@ -339,10 +574,22 @@
               }
             ];
             storage_pools = [
-              {
-                name = cfg.storagePool.name;
-                driver = cfg.storagePool.driver;
-              }
+              (
+                {
+                  name = cfg.storagePool.name;
+                  driver = cfg.storagePool.driver;
+                }
+                # `config.source` is what makes a zfs/btrfs/lvm pool ADOPT an
+                # existing backing store instead of being built inside
+                # /var/lib/incus/disks/<pool>.img. Emitted from the same
+                # `poolConfig` the convergence oneshot passes to `incus storage
+                # create`, so preseed and oneshot cannot disagree — and note
+                # `incus admin init --preseed` HARD-FAILS on a driver mismatch
+                # against an existing pool ("Storage pool X is of type zfs
+                # instead of dir"), so a preseed that under-declares the pool
+                # leaves incus-preseed.service permanently red.
+                // lib.optionalAttrs (poolConfig != { }) { config = poolConfig; }
+              )
             ];
             profiles = [
               {
