@@ -6,7 +6,10 @@ top@{ ... }:
   # provider-less configuration and proves the GARM DAEMON is actually up (not
   # merely that the unit is "active"):
   #
-  #   (a) garm.service is active/running (a long-running Type=simple unit);
+  #   (a) garm.service is active/running (a long-running Type=exec unit —
+  #       `exec`, not `simple`: Type=simple + ExecStartPost= + credentials is a
+  #       race systemd warns about by name, and it cost this fleet eight
+  #       243/CREDENTIALS starts. See t_garm_credentials_no_race);
   #   (b) the guest `garm --version` equals the packaged post-v0.2.1 pin;
   #   (c) the daemon SERVES its API:
   #        - the apiserver port (9997) is listening;
@@ -80,11 +83,11 @@ top@{ ... }:
             start_all()
             server.wait_for_unit("multi-user.target")
 
-            with subtest("garm.service is a long-running Type=simple unit"):
+            with subtest("garm.service is a long-running Type=exec unit"):
                 service_type = server.succeed(
                     "systemctl show -p Type --value garm.service"
                 ).strip()
-                assert service_type == "simple", f"unexpected Type={service_type!r}"
+                assert service_type == "exec", f"unexpected Type={service_type!r}"
 
             with subtest("garm.service passes the config through the supported long flag"):
                 exec_start = server.succeed(

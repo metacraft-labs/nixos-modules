@@ -2117,16 +2117,23 @@
           # (`/run/agenix/github-runners/*-app-key`), which agenix (re)materialises
           # from an ACTIVATION SCRIPT — there is no `agenix-install-secrets.service`
           # to order against on these hosts (sysusers/userborn are off; agenix runs
-          # `system.activationScripts.agenix*`, not a systemd unit). systemd sets up
-          # `LoadCredential=` in PID 1 BEFORE any Exec*, so a source that is briefly
-          # absent when a start job runs fails the unit opaquely with
-          # `status=243/CREDENTIALS`. We ASSERT these same paths below: an assertion
-          # is evaluated one phase earlier still (before credential setup), so a
-          # missing source now fails fast with an explicit, greppable
-          # `AssertPathExists=… failed` in the journal — same self-heal (Restart=
-          # always retries until the activation script finishes), clearer signal.
-          # This is a strict superset of `LoadCredential`'s own precondition, so it
-          # cannot reject any start that `LoadCredential` would have accepted.
+          # `system.activationScripts.agenix*`, not a systemd unit). Credential
+          # setup happens in the forked child before any Exec*, so a source that is
+          # absent when a start job runs fails the unit with the opaque
+          # `status=243/CREDENTIALS`. Asserting the same paths turns that into an
+          # explicit, greppable `AssertPathExists=… failed`, one phase earlier, with
+          # the same self-heal (`Restart=always` retries). It is a strict superset
+          # of `LoadCredential`'s own precondition, so it cannot reject a start that
+          # `LoadCredential` would have accepted.
+          #
+          # IT IS A DIAGNOSTIC, NOT THE FIX, AND THE DISTINCTION IS LOAD-BEARING.
+          # This assertion was deployed to high-mem-server and PASSED on all 8 of
+          # the observed 243/CREDENTIALS failures — the sources existed every time
+          # and the READ still failed. That is what ruled out the "agenix races
+          # LoadCredential" hypothesis and pointed at the real cause, which is
+          # local to this unit's own shape: see `Type = "exec"` below. Keep the
+          # assertion (it is free and it is what makes a genuinely missing secret
+          # legible), but do not mistake it for the repair.
           credentialSourcePaths =
             lib.optional (cfg.jwtSecretFile != null) (toString cfg.jwtSecretFile)
             ++ lib.optional (cfg.dbPassphraseFile != null) (toString cfg.dbPassphraseFile)
@@ -2344,27 +2351,37 @@
             restartTriggers = [ configTemplate ];
             after = [
               "network.target"
-              # Forward-compatible ordering edge against agenix's systemd-unit
-              # mode. On the current garm hosts agenix installs secrets from an
-              # ACTIVATION SCRIPT (sysusers/userborn off), so this unit does not
-              # exist and the edge is an inert no-op (`After=` never pulls a unit
-              # in, and imposes no ordering when the target is absent from the
-              # transaction). If a host ever adopts `systemd.sysusers.enable` /
-              # `services.userborn.enable`, agenix switches to
-              # `agenix-install-secrets.service` and this becomes the REAL
-              # ordering guarantee that garm starts only once the App-PEM sources
-              # are staged. Costs nothing today; correct the moment it applies.
-              "agenix-install-secrets.service"
             ]
+            # Ordering edge against agenix's systemd-unit mode — emitted ONLY
+            # when that unit actually exists in this configuration.
+            #
+            # An unconditional `After=agenix-install-secrets.service` used to
+            # sit here, justified as an inert forward-compatible no-op. It is
+            # inert (`After=` neither pulls a unit in nor orders against one
+            # absent from the transaction), but "inert" and "harmless" are not
+            # the same thing: on hosts where agenix installs secrets from an
+            # ACTIVATION SCRIPT (sysusers/userborn off — all three garm hosts)
+            # the unit does not exist, and the unit file nonetheless READ as
+            # though credential ordering were handled. It is what a 243/
+            # CREDENTIALS investigation looked at first, and it cost time,
+            # because the real cause was elsewhere entirely (see `Type=` below).
+            # A dependency you cannot see is worse than no dependency.
+            #
+            # So: declare it when it is real, and say nothing when it is not.
+            # `systemd.services ? …` reads only the attribute NAMES, which are
+            # static across every definition, so this cannot recurse into this
+            # unit's own value.
+            ++ lib.optional (config.systemd.services ? agenix-install-secrets) "agenix-install-secrets.service"
             ++ lib.optional anyLibvirt "libvirtd.service"
             ++ lib.optional anyIncus "incus.service";
             wants = lib.optional anyLibvirt "libvirtd.service" ++ lib.optional anyIncus "incus.service";
             wantedBy = [ "multi-user.target" ];
 
-            # Fail fast + legibly (before PID 1 credential setup) if any
-            # LoadCredential source is momentarily absent, instead of the opaque
-            # 243/CREDENTIALS. See `credentialSourcePaths` above for the rationale
-            # and why this cannot reject a start LoadCredential would have taken.
+            # Fail fast + legibly if a LoadCredential source is genuinely absent,
+            # instead of the opaque 243/CREDENTIALS. A DIAGNOSTIC, not the fix for
+            # the observed 243s — it passed on all 8 of them. See
+            # `credentialSourcePaths` above, and `Type = "exec"` below for the
+            # actual repair.
             unitConfig.AssertPathExists = credentialSourcePaths;
 
             # The provider child inherits the unit PATH (GARM forwards PATH via
@@ -2381,7 +2398,78 @@
               ++ lib.optional anyQemuWindowsArm pkgs.swtpm;
 
             serviceConfig = {
-              Type = "simple";
+              # `exec`, NOT `simple`. THIS IS THE 243/CREDENTIALS FIX.
+              #
+              # THE FAILURE. On all three garm hosts the unit intermittently
+              # died at startup with
+              #   (garm)[PID]: garm.service: Failed to set up credentials: Protocol error
+              #   (garm)[PID]: garm.service: Failed at step CREDENTIALS spawning …/garm: Protocol error
+              #   systemd[1]: garm.service: Main process exited, code=exited, status=243/CREDENTIALS
+              # 8 times on high-mem-server between 2026-08-18 and 2026-08-20,
+              # and 3 CONSECUTIVE times on gpu-server-001 for a 3 min 36 s
+              # outage. `Restart=always` eventually got through, so it looked
+              # like a transient nobody had to own.
+              #
+              # WHAT IT IS NOT. It is not a missing/late credential source.
+              # `AssertPathExists=` on the exact `LoadCredential` source paths
+              # was deployed and PASSED on every one of the 8 occurrences: the
+              # agenix symlink farm was fully materialised and the paths
+              # resolved. It is also not activation-adjacent — most occurrences
+              # follow a health-watchdog restart hours after the last switch,
+              # with no agenix activity anywhere near them.
+              #
+              # WHAT IT IS. systemd names it itself, once per start, in this
+              # unit's own journal:
+              #
+              #   garm.service: Service uses a combination of Type=simple,
+              #   ExecStartPost=, and credentials. This could lead to race
+              #   conditions. Continuing.
+              #
+              # (src/core/service.c, service_verify(): Type=simple +
+              # ExecStartPost= + exec_context_has_credentials().) With
+              # `Type=simple`, service_enter_start() forks the main process and
+              # IMMEDIATELY calls service_enter_start_post() — the switch has no
+              # wait for SERVICE_SIMPLE. The bind-verify ExecStartPost below is
+              # therefore spawned while the main child is still inside
+              # exec_child(), which runs exec_setup_credentials() BEFORE the
+              # execve. Both children then set up the SAME
+              # /run/credentials/garm.service: the main one with
+              # EXEC_SETUP_CREDENTIALS_FRESH (it umounts the existing store and
+              # rebuilds it: tmpfs on a workspace, write, remount ro, MS_MOVE
+              # into place), the ExecStartPost one without. They race, and the
+              # loser dies at step CREDENTIALS.
+              #
+              # "Protocol error" is not a hint about protocols; it is
+              # exec_setup_credentials()'s helper child failing.
+              # exec_setup_credentials() does the mount work in a
+              # `safe_fork("(sd-mkdcreds)", …|FORK_WAIT|FORK_NEW_MOUNTNS)`, and
+              # wait_for_terminate_and_check() maps "child exited non-zero" to
+              # -EPROTO. The real errno is logged at LOG_DEBUG inside that child
+              # and never reaches the journal — which is why the message is
+              # opaque and why the observed PIDs are consecutive
+              # (main=N, bind-verify=N+1).
+              #
+              # THE FIX. `Type=exec` keeps everything else identical but makes
+              # systemd wait for the main process's execve — it watches the
+              # exec_fd and only then runs service_enter_start_post()
+              # (service.c: `if (s->type == SERVICE_EXEC && s->state ==
+              # SERVICE_START) service_enter_start_post(s)`). Credential setup
+              # completes strictly before that fd closes, so the two credential
+              # setups can no longer overlap. It also removes the systemd
+              # warning above, which is the machine-checkable statement that the
+              # defective combination is gone (see t_garm_credentials_no_race).
+              #
+              # Ordering against agenix would NOT have fixed this, and neither
+              # would any amount of retrying: the sources were always present.
+              #
+              # Type=exec also tightens startup semantics in a way this unit
+              # wants anyway — a garm binary that cannot even execve now fails
+              # the start instead of being reported "Started" and dying a moment
+              # later. The start-job timeout is unchanged: under Type=simple the
+              # main command already ran with no timeout and TimeoutStartSec
+              # applied to the START_POST phase, which is where the bind-verify
+              # (`healthcheck.startupBindTimeout`, 30 s by default) lives.
+              Type = "exec";
 
               ExecStartPre = lib.getExe renderScript;
               ExecStart = lib.escapeShellArgs [
