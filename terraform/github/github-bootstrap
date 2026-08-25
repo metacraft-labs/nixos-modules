@@ -19,12 +19,13 @@ Usage:
 Actions:
   secret-plan / secret-apply     Targeted plan/apply for Terraform-managed GitHub
                                  Actions secrets. Select ONE with
-                                 --secret <owner/repo:NAME>, or a whole
-                                 rotationGroup with --group <name> (e.g. a per-repo
-                                 secret fanned across many repos). A full plan of a
-                                 large governance root refreshes every declared
-                                 resource and blows GitHub's hourly API rate limit,
-                                 so these apply targeted, without a full-tree refresh.
+                                 --secret <owner/repo:NAME>, a whole rotationGroup
+                                 with --group <name>, or every rendered managed
+                                 secret with --all-managed (the governance-secrets
+                                 CI flow). A full plan of a large governance root
+                                 refreshes every declared resource and blows
+                                 GitHub's hourly API rate limit, so these apply
+                                 targeted, without a full-tree refresh.
 
 Environment:
   AWS_PROFILE                    AWS profile for the S3 state backend (set by the dev shell).
@@ -51,6 +52,8 @@ while [[ $# -gt 0 ]]; do
     --group)
       [[ $# -ge 2 ]] || { echo "--group requires a rotationGroup name." >&2; exit 2; }
       group="$2"; shift 2 ;;
+    --all-managed)
+      all_managed=1; shift ;;
     *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
@@ -71,6 +74,7 @@ backend="${root}/${GITHUB_BOOTSTRAP_BACKEND_FILE:-backends/${config_slug}.hcl}"
 profile="${AWS_PROFILE:-}"
 secret=""
 group=""
+all_managed=0
 secret_target=""
 secret_targets=()
 identity_json=""
@@ -311,6 +315,38 @@ EOF
   fi
 }
 
+# Resolve every RENDERED managed secret (the providerIds in
+# secrets/managed.generated.nix, which is exactly the set the governance root
+# emits github_actions_secret resources for) to its resource address. This is
+# the primitive the governance-secrets CI flow applies on merge: it reconciles
+# all managed secrets in one targeted, refresh-free plan.
+resolve_all_managed_targets() {
+  local managed_file="${src}/secrets/managed.generated.nix"
+  [[ -f "$managed_file" ]] || {
+    echo "Missing ${managed_file}; run github-governance-secrets-render first." >&2
+    exit 2
+  }
+  local managed_ids
+  managed_ids="$(nix eval --json --file "$managed_file" 2>/dev/null | jq -c '.providerIds // []')"
+  mapfile -t secret_targets < <(
+    nix eval --json --file "${src}/secrets/manifest.nix" 2>/dev/null | jq -r --argjson ids "$managed_ids" '
+      .secrets[]
+      | select([.providerId] | inside($ids))
+      | select((.manageWithTerraform // false) == true)
+      | (
+          if .providerResource == "github_actions_secret" then "github_actions_secret"
+          elif .providerResource == "github_actions_organization_secret" then "github_actions_organization_secret"
+          else .providerResource end
+        ) as $type
+      | "\($type).secret_" + (.providerId | gsub("[/:.]"; "_"))
+    '
+  )
+  if [[ ${#secret_targets[@]} -eq 0 ]]; then
+    echo "No rendered managed secrets found in ${managed_file}." >&2
+    exit 2
+  fi
+}
+
 # Targeted plan for one managed secret. A full plan of a large governance root
 # refreshes every declared resource against the GitHub API and blows the hourly
 # rate limit, so single-secret changes MUST be targeted and refresh-free. Import
@@ -319,8 +355,13 @@ EOF
 # an interrupted plan from leaving a stale state lock behind.
 plan_managed_secret() {
   local target_args=()
-  if [[ -n "$group" && -n "$secret" ]]; then
-    echo "Use either --secret or --group, not both." >&2; exit 2
+  local selectors=$(( (all_managed) + (${#group} > 0 ? 1 : 0) + (${#secret} > 0 ? 1 : 0) ))
+  if [[ "$selectors" -gt 1 ]]; then
+    echo "Use exactly one of --secret, --group, or --all-managed." >&2; exit 2
+  elif ((all_managed)); then
+    resolve_all_managed_targets
+    local t
+    for t in "${secret_targets[@]}"; do target_args+=(-target="$t"); done
   elif [[ -n "$group" ]]; then
     resolve_group_targets "$group"
     local t
@@ -330,7 +371,7 @@ plan_managed_secret() {
     secret_targets=("$secret_target")
     target_args=(-target="$secret_target")
   else
-    echo "secret-plan/secret-apply require --secret <owner/repo:NAME> or --group <name>." >&2
+    echo "secret-plan/secret-apply require --secret <owner/repo:NAME>, --group <name>, or --all-managed." >&2
     exit 2
   fi
   rm -f imports.tf
