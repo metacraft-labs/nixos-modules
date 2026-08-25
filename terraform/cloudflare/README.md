@@ -70,3 +70,44 @@ import-only** (≥1 import, 0 of everything else). `apply` mode additionally
 requires the typed confirmation `apply-reviewed-imports`. Company-agnostic: the
 root/config/backend/token come from the environment. See the
 [import-phase methodology](../../docs/Terraform-Import-Phase.md).
+
+## Consuming the reusable import workflow
+
+The harness + generator are driven by the shared
+`.github/workflows/reusable-cloudflare-import.yml`. Each consumer repo adds a
+thin caller (`.github/workflows/cloudflare-import.yml`) — this is the entire
+per-repo surface; blocksense (the third org) copies it verbatim and changes only
+the four `with:` data values:
+
+```yaml
+name: Cloudflare Import
+on:
+  pull_request:
+    branches: [live]
+    paths: ['terraform/cloudflare/**', 'backends/cloudflare-*', '.github/workflows/cloudflare-import.yml']
+  workflow_dispatch:
+    inputs:
+      mode: { type: choice, options: [plan, apply], default: plan }
+      scope: { type: choice, options: [all, dns, pages, r2, workers, zones], default: all }
+      confirm_apply: { type: string, required: false }
+jobs:
+  import:
+    uses: metacraft-labs/nixos-modules/.github/workflows/reusable-cloudflare-import.yml@main
+    with:
+      root_config: cloudflare/<name>-prod
+      backend_config_file: backends/cloudflare-<name>-prod.hcl
+      agenix_plan_secret_path: machines/ci/secrets/cloudflare/api_token_plan.age
+      agenix_apply_secret_path: machines/ci/secrets/cloudflare/api_token_apply.age
+      mode: ${{ inputs.mode }}
+      scope: ${{ inputs.scope }}
+      confirm_apply: ${{ inputs.confirm_apply }}
+    secrets:
+      AGENIX_CI_PRIVATE_KEY: ${{ secrets.AGENIX_CI_PRIVATE_KEY }}
+      NIX_GITHUB_TOKEN: ${{ secrets.NIX_GITHUB_TOKEN }}
+```
+
+Prerequisites in the consumer repo: a Terranix root at
+`terraform/<name>-prod/default.nix` (hand-authored `for_each` over the reviewed
+inventory), `import-ids.json`, a committed `.terraform.lock.hcl`, a `just
+build-terranix <config>` target, the AWS OIDC `AWS_TERRAFORM_{PLAN,DRIFT,APPLY}_ROLE_ARN`
+vars, and the `AGENIX_CI_PRIVATE_KEY` secret.
