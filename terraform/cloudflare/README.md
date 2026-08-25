@@ -41,8 +41,17 @@ reviewed **import-id data model**, `terraform/cloudflare/<name>-prod/import-ids.
 
 ```bash
 "${nixos-modules-tf}/terraform/cloudflare/cloudflare-import-blocks" \
-  --config cloudflare/<name>-prod --root-dir "$PWD" --scope all   # or dns|pages|r2|workers
+  --config cloudflare/<name>-prod --root-dir "$PWD" --scope all
+# --scope accepts: all, an alias (dns|pages|r2|workers|zones), or ANY concrete
+# cloudflare_<type> (e.g. cloudflare_load_balancer) for a selective import.
 ```
+
+Orgs manage entirely different Cloudflare surfaces — different resource **types**,
+instance **counts**, and mixes (one runs Pages + R2; another load balancers,
+Zero Trust, D1, Queues). The generator is agnostic to that: it emits exactly what
+the reviewed `default.nix` / `import-ids.json` declare, `--scope all` always emits
+everything, and any `cloudflare_<type>` can be imported selectively. A per-type
+count is printed so you can confirm your org's resources were captured.
 
 Output lands in `.result/terraform/cloudflare/<name>-prod/imports.tf` and is
 **never committed** (committed blocks make OpenTofu's mocked `tofu test` attempt
