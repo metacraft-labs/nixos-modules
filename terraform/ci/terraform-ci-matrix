@@ -92,6 +92,15 @@ while IFS= read -r root; do
     failures=$((failures + 1)); continue
   fi
 
+  # Roots still in the import/adoption phase (methodology M5/M6) are driven by
+  # the provider-specific import workflow, not the steady-state matrix — their
+  # state is empty, so a steady-state plan/apply would try to (re)create live
+  # resources. Skip them until the import completes and the flag is removed.
+  if [[ "$(jq -r '.adoption_pending // false' "$metadata_file")" == true ]]; then
+    echo "Skipping '${root}' (adoption_pending: managed by the import workflow)." >&2
+    continue
+  fi
+
   credential_mode="$(jq -r '.credential_mode' "$metadata_file")"
   backend_uses_aws_oidc="$(jq -r '.backend_uses_aws_oidc // false' "$metadata_file")"
   uses_aws_oidc=false

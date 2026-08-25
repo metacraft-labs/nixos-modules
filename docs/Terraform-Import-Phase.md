@@ -124,10 +124,14 @@ The only permitted non-import creates are the GitHub governance-app org secrets
 
 ### M7 — Drift detection and steady state
 
-Once imported, enable scheduled drift detection (the DRIFT role/plan) and switch
-to the normal workflow: changes land as PRs, plan on PR, apply on merge through
-the `production` Environment. The import blocks are not needed again unless you
-adopt a new resource class — regenerate on demand.
+Once imported, remove `adoption_pending: true` from the root's `metadata.json`
+so it **rejoins the steady-state CI matrix**. During M5/M6 the root carries that
+flag, which excludes it from the steady-state `terraform-ci-matrix` — otherwise a
+steady-state plan/apply on the still-empty state would try to (re)create the live
+resources the import is adopting. With the flag removed, the normal workflow
+takes over: changes land as PRs, plan on PR, apply on merge through the
+`production` Environment. The import blocks are not needed again unless you adopt
+a new resource class — regenerate on demand.
 
 ## Why import blocks are never committed
 
