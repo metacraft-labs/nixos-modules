@@ -164,3 +164,15 @@ the import-only apply harness are **shared** (`github-governance-import-{blocks,
 GitHub's `governance.nix` and Cloudflare's `default.nix` + `import-ids.json`
 (each org's zones and accounts differ). This is the symmetry to preserve when a
 third org adopts the workflow: never fork the engine, only supply new data.
+
+Crucially, orgs manage **entirely different resource surfaces** — not just
+different values, but different resource **types**, instance **counts**, and mixes
+(one org runs Pages + R2; another runs load balancers, Zero Trust, D1, Queues).
+The engine is agnostic to this by construction: the generator emits exactly what
+the per-repo `default.nix` / `import-ids.json` declare, `--scope` accepts any
+`cloudflare_<type>` (not a fixed taxonomy), and the import-only harness counts
+plan actions generically. The one place types map to shared knowledge is the
+**token-scope engine** (`cloudflare-token`), which derives API permission groups
+from the managed resource types via a canonical table and **warns loudly on any
+type it does not yet know** — the fix is to extend that shared table (every org
+benefits), never to fork it per repo.
