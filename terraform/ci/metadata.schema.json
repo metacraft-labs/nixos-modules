@@ -17,6 +17,7 @@
     "enable_checkov": { "type": "boolean" },
     "provider_allowlist": { "type": "array", "minItems": 1, "items": { "type": "string" }, "description": "Exact terraform.required_providers source values permitted in this root." },
     "smoke_test_command": { "type": "string", "description": "Optional post-apply smoke test command." },
+    "adoption_pending": { "type": "boolean", "default": false, "description": "When true, this root is in the import/adoption phase (methodology M5/M6) and is EXCLUDED from the steady-state CI matrix — it is driven by the provider-specific import workflow instead. Remove the flag once the import has populated state." },
     "split_boundary": { "type": "object", "description": "Optional prose documenting why this root is a separate state boundary (see the root-layering runbook)." }
   },
   "allOf": [
