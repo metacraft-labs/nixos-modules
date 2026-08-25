@@ -88,15 +88,22 @@ render_config() {
   jq . "${dst}/config.tf.json" >/dev/null
 }
 
+# Two credential modes: an operator supplies AWS_PROFILE (SSO/dev shell); CI
+# supplies ambient creds (GitHub OIDC role assumed into AWS_ACCESS_KEY_ID / a web
+# identity token). In ambient mode we use the creds already in the environment
+# instead of exporting them from a profile.
+ambient_aws=0
 if [[ -z "$profile" ]]; then
-  cat >&2 <<'EOF'
-AWS_PROFILE is not set.
-Enter the repo dev shell or export the profile explicitly, for example:
-
-  export AWS_PROFILE=<your-admin-profile>
-
+  if [[ -n "${AWS_ACCESS_KEY_ID:-}" || -n "${AWS_WEB_IDENTITY_TOKEN_FILE:-}" ]]; then
+    ambient_aws=1
+  else
+    cat >&2 <<'EOF'
+Neither AWS_PROFILE nor ambient AWS credentials are set.
+For an operator: enter the repo dev shell or `export AWS_PROFILE=<admin-profile>`.
+For CI: assume the AWS OIDC role before invoking this tool.
 EOF
-  exit 1
+    exit 1
+  fi
 fi
 
 if [[ ! -f "$backend" ]]; then
@@ -127,28 +134,39 @@ if [[ -z "$expected_account_id" || -z "$aws_region" || -z "$github_access_check_
   exit 1
 fi
 
-if ! identity_json="$(aws --region "$aws_region" sts get-caller-identity --profile "$profile" --output json 2>/dev/null)"; then
-  echo "AWS profile '${profile}' is not authenticated. Run your dev shell's aws-login for ${profile}." >&2
+sts_args=(--region "$aws_region" sts get-caller-identity --output json)
+((ambient_aws)) || sts_args+=(--profile "$profile")
+if ! identity_json="$(aws "${sts_args[@]}" 2>/dev/null)"; then
+  if ((ambient_aws)); then
+    echo "Ambient AWS credentials are not valid. Assume the AWS OIDC role first." >&2
+  else
+    echo "AWS profile '${profile}' is not authenticated. Run your dev shell's aws-login for ${profile}." >&2
+  fi
   exit 1
 fi
 
 actual_account_id="$(jq -r '.Account' <<<"$identity_json")"
 if [[ "$actual_account_id" != "$expected_account_id" ]]; then
   cat >&2 <<EOF
-AWS profile '${profile}' is authenticated to account ${actual_account_id}, but
-GitHub bootstrap is pinned to backend account ${expected_account_id}.
+AWS credentials are for account ${actual_account_id}, but GitHub bootstrap is
+pinned to backend account ${expected_account_id}.
 Refusing to use the wrong Terraform state backend.
 EOF
   exit 1
 fi
 
-export AWS_PROFILE="$profile"
 export AWS_REGION="$aws_region"
 export AWS_DEFAULT_REGION="$aws_region"
-export AWS_SDK_LOAD_CONFIG=1
-unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN
-unset AWS_ROLE_ARN AWS_WEB_IDENTITY_TOKEN_FILE
-eval "$(aws --region "$aws_region" configure export-credentials --profile "$profile" --format env)"
+if ((ambient_aws)); then
+  # Keep the ambient (OIDC-assumed) credentials already in the environment.
+  :
+else
+  export AWS_PROFILE="$profile"
+  export AWS_SDK_LOAD_CONFIG=1
+  unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN
+  unset AWS_ROLE_ARN AWS_WEB_IDENTITY_TOKEN_FILE
+  eval "$(aws --region "$aws_region" configure export-credentials --profile "$profile" --format env)"
+fi
 
 if [[ -n "${GH_TOKEN:-}" && -z "${GITHUB_TOKEN:-}" ]]; then
   export GITHUB_TOKEN="$GH_TOKEN"
