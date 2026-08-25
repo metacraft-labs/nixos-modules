@@ -66,8 +66,8 @@ mkdir -p "$result_root"
 # Render the Terranix root into .result and generate the credential-free import
 # blocks alongside it. Both live under .result/ and are never committed.
 nix develop --accept-flake-config --command just build-terranix "$ROOT_CONFIG" >/dev/null
-nix develop --accept-flake-config --command \
-  "$root/terraform/cloudflare/cloudflare-import-blocks" \
+nix shell --accept-flake-config --inputs-from "$workspace" nixpkgs#python3 --command \
+  python3 "$root/terraform/cloudflare/cloudflare-import-blocks" \
   --config "$ROOT_CONFIG" --root-dir "$workspace" \
   --scope "$scope" --output "$result_root/imports.tf"
 
