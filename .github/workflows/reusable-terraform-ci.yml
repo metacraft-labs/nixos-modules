@@ -116,9 +116,21 @@ on:
         required: false
         default: '3600'
 
+      github_app_owner:
+        description: 'Org/user for the github-app credential mode; the minted installation token is scoped here. Empty disables github-app minting.'
+        type: string
+        required: false
+        default: ''
+
     secrets:
       AGENIX_CI_PRIVATE_KEY:
         description: 'SSH private key for agenix secret decryption'
+        required: false
+      GH_APP_ID:
+        description: 'GitHub App id for the github-app credential mode (mints a short-lived installation token exported as GITHUB_TOKEN for the github provider).'
+        required: false
+      GH_APP_PRIVATE_KEY:
+        description: 'GitHub App private key (PEM) paired with GH_APP_ID.'
         required: false
       NIX_GITHUB_TOKEN:
         description: 'GitHub token for Nix flake fetches'
@@ -337,6 +349,25 @@ jobs:
             printf '%s\n' "$TOKEN"
             printf '__MCL_TERRAFORM_SECRET__\n'
           } >> "$GITHUB_ENV"
+
+      # github-app credential mode: mint a short-lived installation token from
+      # the App (e.g. the governance App) and export it as GITHUB_TOKEN for the
+      # github provider. Preferred over a long-lived PAT — nothing new is stored,
+      # the token expires in ~1h, and it is scoped to github_app_owner.
+      - name: Mint GitHub App token
+        if: inputs.github_app_owner != ''
+        id: gh_app_token
+        uses: actions/create-github-app-token@29824e69f54612133e76f7eaac726eef6c875baf # v2
+        with:
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: ${{ inputs.github_app_owner }}
+
+      - name: Export GITHUB_TOKEN for the github provider
+        if: inputs.github_app_owner != ''
+        run: |
+          echo "::add-mask::${{ steps.gh_app_token.outputs.token }}"
+          echo "GITHUB_TOKEN=${{ steps.gh_app_token.outputs.token }}" >> "$GITHUB_ENV"
 
       - name: Configure AWS credentials for plan
         if: inputs.aws_plan_role_arn != ''
@@ -724,6 +755,21 @@ jobs:
             printf '__MCL_TERRAFORM_SECRET__\n'
           } >> "$GITHUB_ENV"
 
+      - name: Mint GitHub App token
+        if: inputs.github_app_owner != ''
+        id: gh_app_token
+        uses: actions/create-github-app-token@29824e69f54612133e76f7eaac726eef6c875baf # v2
+        with:
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: ${{ inputs.github_app_owner }}
+
+      - name: Export GITHUB_TOKEN for the github provider
+        if: inputs.github_app_owner != ''
+        run: |
+          echo "::add-mask::${{ steps.gh_app_token.outputs.token }}"
+          echo "GITHUB_TOKEN=${{ steps.gh_app_token.outputs.token }}" >> "$GITHUB_ENV"
+
       - name: Configure AWS credentials for apply
         if: inputs.aws_apply_role_arn != ''
         uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
@@ -898,6 +944,21 @@ jobs:
             printf '%s\n' "$TOKEN"
             printf '__MCL_TERRAFORM_SECRET__\n'
           } >> "$GITHUB_ENV"
+
+      - name: Mint GitHub App token
+        if: inputs.github_app_owner != ''
+        id: gh_app_token
+        uses: actions/create-github-app-token@29824e69f54612133e76f7eaac726eef6c875baf # v2
+        with:
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: ${{ inputs.github_app_owner }}
+
+      - name: Export GITHUB_TOKEN for the github provider
+        if: inputs.github_app_owner != ''
+        run: |
+          echo "::add-mask::${{ steps.gh_app_token.outputs.token }}"
+          echo "GITHUB_TOKEN=${{ steps.gh_app_token.outputs.token }}" >> "$GITHUB_ENV"
 
       - name: Configure AWS credentials for drift
         if: inputs.aws_plan_role_arn != '' || inputs.aws_drift_role_arn != ''
