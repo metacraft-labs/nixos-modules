@@ -44,7 +44,7 @@
     # still parse the current manifests (`repro workspace status`) and still
     # satisfy the installed managed-hook contract
     # (`repro hooks protocol --require=2 --hook-contract=...`).
-    reprobuild.url = "github:metacraft-labs/reprobuild/c81f0a07eb1938060e34740aed8d77d61600e1c2";
+    reprobuild.url = "github:metacraft-labs/reprobuild/b5b88139767d97e96ca646b6f83641d8bb2e69c5";
 
     nixpkgs.follows = "nixos-2511";
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
