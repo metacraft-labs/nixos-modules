@@ -43,6 +43,21 @@
         { inputs', ... }: inputs'.reprobuild.packages.reprobuild
       );
 
+      # The apply path shells out to `repro __repro-compile-profile`, which
+      # compiles the desired-state profile with Nim. The current reprobuild
+      # release looks Nim up on PATH and fails the tick outright when it is
+      # absent ("vendored-Nim auto-bootstrap is deferred to a later phase"), so
+      # supplying it is the consumer's job. Take the same Nim reprobuild builds
+      # itself with, plus the C toolchain Nim drives to link the profile.
+      defaultProfileCompilerPath = withSystem pkgs.stdenv.hostPlatform.system (
+        { inputs', ... }:
+        [
+          inputs'.reprobuild.packages.nim-fork
+          pkgs.gcc
+          pkgs.binutils
+        ]
+      );
+
       # The allowlist may be provided inline (a list of 130-char hex pubkeys) or
       # as an out-of-store path. Inline keys are rendered to a store file.
       inlineAllowedSigners = pkgs.writeText "mcl-repro-deploy-agent-allowed-signers" (
@@ -88,6 +103,29 @@
           default = defaultPackage;
           defaultText = lib.literalMD "the reprobuild flake's `reprobuild` (`repro`) package";
           description = "Package providing the `repro` binary (with the `deploy-agent` verb).";
+        };
+
+        repoRoot = mkOption {
+          type = types.str;
+          default = "${inputs.reprobuild}";
+          defaultText = lib.literalMD "the reprobuild flake input's source tree";
+          description = ''
+            Value for `$REPROBUILD_REPO_ROOT`. `repro`'s profile compiler
+            resolves reprobuild's Nim library sources beneath this path and
+            runs `nim` with it as the working directory.
+          '';
+        };
+
+        profileCompilerPath = mkOption {
+          type = types.listOf types.package;
+          default = defaultProfileCompilerPath;
+          defaultText = lib.literalMD "the reprobuild flake's `nim-fork`, plus `gcc` and `binutils`";
+          description = ''
+            Packages placed on the unit's PATH so that `repro`'s apply path can
+            compile the desired-state profile. The current reprobuild release
+            requires `nim` on PATH and fails the tick with
+            `profile compilation failed` without it.
+          '';
         };
 
         targetName = mkOption {
@@ -245,6 +283,10 @@
           after = [ "network-online.target" ];
           wants = [ "network-online.target" ];
 
+          # `repro` compiles the desired-state profile with Nim during apply;
+          # systemd units get an empty PATH, so it has to be handed one.
+          path = cfg.profileCompilerPath;
+
           serviceConfig = {
             Type = "oneshot";
             ExecStart = agentCommand;
@@ -271,6 +313,17 @@
               ++ [
                 "HOME=%S/repro-deploy-agent"
                 "XDG_CACHE_HOME=%S/repro-deploy-agent/.cache"
+                # The profile compiler resolves reprobuild's own Nim libraries
+                # relative to $REPROBUILD_REPO_ROOT, falling back to a path
+                # baked in at reprobuild build time — which, in reprobuild's
+                # own words, "is NOT guaranteed to exist on installed
+                # deployments". On a NixOS host it does not, so `nim` was
+                # spawned with a working directory that is not there and the
+                # apply died in setCurrentDir with ENOENT. reprobuild's wrapper
+                # already pins the packaged tree as $REPROBUILD_SOURCE_ROOT for
+                # its other entry points but never feeds it to this one; point
+                # it at the same source.
+                "REPROBUILD_REPO_ROOT=${cfg.repoRoot}"
               ];
 
             TimeoutStartSec = cfg.timeoutStartSec;

@@ -382,6 +382,24 @@ version (Posix)
             description ~ " is writable by its group or other users.");
     }
 
+    // The anchor of the no-follow walk is the filesystem root (or the process
+    // working directory), never a path component the caller chose.  Its owner
+    // is therefore not a control we hold: inside a chroot or a user namespace
+    // — the Nix Linux build sandbox being the case that matters here — "/" is
+    // legitimately owned by nobody rather than by root or by the deployment
+    // user, and demanding otherwise makes every state directory unreachable.
+    // What the anchor must still guarantee is that no other user can plant
+    // entries in it, which is exactly the write-bit rule below; every named
+    // component beneath it keeps the full ownership check.
+    private void validateWalkAnchorDescriptor(int fd, string description)
+    {
+        auto metadata = descriptorMetadata(fd, description);
+        enforce(S_ISDIR(metadata.st_mode), description ~ " is not a directory.");
+        enforce((metadata.st_mode & groupOrOtherWriteBits) == 0
+                || (metadata.st_mode & stickyBit) != 0,
+            description ~ " is writable by its group or other users.");
+    }
+
     version (unittest)
     private void validateDeployStateTestFixtureAncestorDescriptor(
         int fd,
@@ -466,30 +484,10 @@ version (Posix)
             if (currentFd >= 0)
                 close(currentFd);
         ensureCloseOnExec(currentFd, "deployment state directory walk anchor");
-        version (unittest)
-        {
-            auto anchor = absolute ? "/" : ".";
-            if (shouldRelaxDeployStateTestFixtureOwner(
-                anchor,
-                trustedTestFixtureBoundary,
-            ))
-                validateDeployStateTestFixtureAncestorDescriptor(
-                    currentFd,
-                    "Deployment state directory walk anchor",
-                );
-            else
-                validateTrustedAncestorDescriptor(
-                    currentFd,
-                    "Deployment state directory walk anchor",
-                    expectedOwner,
-                );
-        }
-        else
-            validateTrustedAncestorDescriptor(
-                currentFd,
-                "Deployment state directory walk anchor",
-                expectedOwner,
-            );
+        validateWalkAnchorDescriptor(
+            currentFd,
+            "Deployment state directory walk anchor",
+        );
 
         string walked = absolute ? "" : ".";
         foreach (component; components)
@@ -578,11 +576,14 @@ version (Posix)
         else
             auto parentFd = openOrCreateTrustedParentDirectory(parentPath, expectedOwner);
         scope(exit) close(parentFd);
-        validateDirectoryDescriptor(
-            parentFd,
-            "Deployment state directory parent " ~ parentPath,
-            expectedOwner,
-        );
+        // openOrCreateTrustedParentDirectory() has already validated this very
+        // descriptor as a trusted ancestor.  Re-checking it here with
+        // validateDirectoryDescriptor() applied a *different*, stricter policy
+        // to the same directory: it has no sticky exemption at all, so a state
+        // directory placed directly inside a world-writable sticky parent —
+        // `--state-dir /tmp/<name>`, which the walk had just accepted — was
+        // rejected one line later.  The parent is an ancestor; it is validated
+        // by the ancestor rule, once.
 
         auto stateFd = openat(
             parentFd,
@@ -1133,6 +1134,39 @@ unittest
         scope(exit) stateLock.release();
         assert((root.getAttributes & 1023) == 1023);
         assert((boundary.getAttributes & permissionBits) == stateDirectoryCreateMode);
+        assert(targetStateLockPath(stateDir, "target").exists);
+    }
+}
+
+@("test_deploy_state_lock_accepts_state_directory_directly_inside_sticky_parent")
+unittest
+{
+    version (Posix)
+    {
+        import std.file : getAttributes, mkdirRecurse, rmdirRecurse, setAttributes;
+
+        // Every deployment integration test — and every operator who types
+        // `--state-dir /tmp/<name>` — puts the state directory *directly*
+        // inside a world-writable sticky directory, so the sticky parent is
+        // the immediate parent rather than a distant ancestor.  The walk
+        // accepted that; a second, stricter validation of the same descriptor
+        // then rejected it.
+        auto boundary = uniqueDeployStateTestPath("sticky-parent");
+        auto container = boundary.dirName.buildPath(
+            "mcl-deploy-lock-sticky-parent-container-" ~ randomUUID.toString,
+        );
+        auto stateDir = container.buildPath(boundary.baseName);
+        scope(exit)
+            if (container.exists)
+                container.rmdirRecurse;
+
+        container.mkdirRecurse;
+        container.setAttributes(1023); // 01777: writable only while sticky.
+
+        auto stateLock = acquireDeployTargetStateLock(stateDir, "target");
+        scope(exit) stateLock.release();
+        assert((container.getAttributes & 1023) == 1023);
+        assert((stateDir.getAttributes & permissionBits) == stateDirectoryCreateMode);
         assert(targetStateLockPath(stateDir, "target").exists);
     }
 }

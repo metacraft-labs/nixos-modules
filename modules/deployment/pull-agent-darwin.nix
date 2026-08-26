@@ -66,10 +66,48 @@
         cfg.postSwitchHook
       ];
 
-      # The plist deliberately names only this generation-independent path.
-      # Once launchd has opened the wrapper, it may safely activate a system
-      # whose environment contains a different wrapper and mcl package.
       stableEntrypoint = "/run/current-system/sw/bin/mcl-deploy-agent";
+      # nix-darwin loads a newly declared LaunchDaemon before it advances
+      # /run/current-system. Naming the stable link directly therefore makes a
+      # true first enable fail with ENOENT. Keep the plist stable across agent
+      # upgrades, but make its executable an already-realised immutable store
+      # launcher. The launcher waits only for the bounded activation window;
+      # later polls continue to resolve the active generation through the
+      # stable entrypoint, so an agent can activate its own replacement without
+      # launchd unloading it merely because the wrapped package changed.
+      launchdLauncherPackage = pkgs.writeShellApplication {
+        name = "mcl-deploy-agent-launcher";
+        runtimeInputs = [ pkgs.coreutils ];
+        text = ''
+          set -euo pipefail
+
+          if [[ $# -ne 3 ]]; then
+            echo "mcl-deploy-agent-launcher: expected ENTRYPOINT ATTEMPTS DELAY_SECONDS" >&2
+            exit 64
+          fi
+          entrypoint="$1"
+          attempts="$2"
+          delay_seconds="$3"
+          if [[ "$entrypoint" != /* || "$entrypoint" == *$'\n'* \
+            || ! "$attempts" =~ ^[1-9][0-9]{0,3}$ \
+            || ! "$delay_seconds" =~ ^(0\.[0-9]{1,3}|[1-9][0-9]{0,2}(\.[0-9]{1,3})?)$ ]]; then
+            echo "mcl-deploy-agent-launcher: invalid bounded-wait arguments" >&2
+            exit 64
+          fi
+
+          for ((attempt = 1; attempt <= attempts; attempt++)); do
+            if [[ -f "$entrypoint" && -x "$entrypoint" ]]; then
+              exec "$entrypoint"
+            fi
+            if (( attempt < attempts )); then
+              sleep "$delay_seconds"
+            fi
+          done
+          printf 'mcl-deploy-agent-launcher: entrypoint unavailable after %s attempts: %s\n' \
+            "$attempts" "$entrypoint" >&2
+          exit 75
+        '';
+      };
       entrypointPackage = pkgs.writeShellApplication {
         name = "mcl-deploy-agent";
         runtimeInputs = [
@@ -906,6 +944,7 @@
 
         environment.systemPackages = [
           cfg.package
+          launchdLauncherPackage
           entrypointPackage
         ];
 
@@ -919,7 +958,12 @@
         launchd.daemons.mcl-deploy-agent = {
           serviceConfig = {
             Label = "org.metacraft-labs.mcl-deploy-agent";
-            ProgramArguments = [ stableEntrypoint ];
+            ProgramArguments = [
+              (getExe launchdLauncherPackage)
+              stableEntrypoint
+              "120"
+              "1"
+            ];
             UserName = "root";
             GroupName = "wheel";
             RunAtLoad = true;
