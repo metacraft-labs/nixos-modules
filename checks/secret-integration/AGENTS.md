@@ -36,7 +36,15 @@ path (`/nix/store/...`), which would be read-only.
      `mcl.secrets.services.broken-svc.secrets` is a `throw`, so forcing its
      secrets fails. Used to verify `list`'s per-machine `tryEval` resilience
      (the whole-fleet eval must not abort) without making `nix flake check`
-     force the intentional error.
+     force the intentional error. It cannot be a real `nixosSystem`: the
+     module maps `services.<name>.secrets` into `age.secrets`, so the throw
+     would reach `system.build.toplevel` and the machine could not be
+     evaluated at all. Because it stands in for a `nixosSystem`, it must
+     still expose both members that consumers of a `nixosConfigurations`
+     entry read — `config` and `pkgs`. Tooling that walks the flake's
+     outputs (`nix flake show`, `nix flake check`) reads
+     `pkgs.stdenv.system` to decide which system a machine belongs to, so
+     dropping `pkgs` breaks those commands for the flake as a whole.
    - `test-secret-machine-vm` — a valid machine whose name ends in `-vm`,
      used to verify VM filtering in `list`.
 2. A `writeShellApplication` check that runs `test-mcl-secret.sh` with
