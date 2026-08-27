@@ -187,6 +187,7 @@ top@{
                 systemProfile = "/nix/var/nix/profiles/system";
                 preSwitchHook = "/run/current-system/sw/bin/mcl-deploy-pre-switch";
                 postSwitchHook = "/run/current-system/sw/bin/mcl-deploy-post-switch";
+                alreadyCurrentRecoveryHook = "/run/current-system/sw/bin/mcl-deploy-recover-current";
                 runtimePrerequisite = lib.getExe failingRuntimePrerequisite;
               };
             }
@@ -298,6 +299,37 @@ top@{
       };
       invalidAssertionGateTrips =
         !(builtins.tryEval (requireAssertions "deliberately invalid fixture" invalidFixtureSystem)).success;
+      missingRecoveryAssertionMessage = "services.mcl-deploy-agent lifecycle hooks require alreadyCurrentRecoveryHook for safe exact-current convergence.";
+      missingRecoverySystem = inputs.nix-darwin.lib.darwinSystem {
+        system = pkgs.stdenv.hostPlatform.system;
+        modules = [
+          flake.modules.darwin.deployment-pull-agent
+          {
+            networking.hostName = "missing-recovery-m3";
+            system.stateVersion = 6;
+            services.mcl-deploy-agent = {
+              enable = true;
+              package = fakeMcl "missing-recovery-assertion-proof";
+              targetName = "missing-recovery-m3";
+              manifestPublicKeys = [ manifestPublicKey ];
+              manifestSources = [ "https://deployments.example.invalid/m3/latest.json" ];
+              stateDir = "/private/var/lib/mcl/missing-recovery-deployments";
+              eventLog = "/private/var/log/mcl/missing-recovery/events.jsonl";
+              standardOutLog = "/private/var/log/mcl/missing-recovery/stdout.log";
+              standardErrorLog = "/private/var/log/mcl/missing-recovery/stderr.log";
+              lockFile = "/private/var/run/mcl/missing-recovery/agent.lock";
+              preSwitchHook = "/run/current-system/sw/bin/mcl-deploy-pre-switch";
+              postSwitchHook = "/run/current-system/sw/bin/mcl-deploy-post-switch";
+            };
+          }
+        ];
+      };
+      missingRecoveryFailures = assertionFailures missingRecoverySystem;
+      missingRecoveryAssertionPresent = builtins.elem missingRecoveryAssertionMessage missingRecoveryFailures;
+      missingRecoveryAssertionGateTrips =
+        !(builtins.tryEval (
+          requireAssertions "missing already-current recovery hook" missingRecoverySystem
+        )).success;
 
       assertionGateCheck =
         assert requireAssertions "static generation A" staticA;
@@ -306,6 +338,8 @@ top@{
         assert requireAssertions "disabled fixture" disabledSystem;
         assert requireAssertions "agent integration fixture" integrationSystem;
         assert requireAssertions "lock-contention fixture" lockSystem;
+        assert missingRecoveryAssertionPresent;
+        assert missingRecoveryAssertionGateTrips;
         pkgs.runCommand "test-darwin-pull-agent-assertion-gate" { } ''
           ${lib.optionalString (!invalidAssertionGateTrips) ''
             echo 'explicit assertion gate accepted a deliberately invalid fixture' >&2
@@ -319,6 +353,12 @@ top@{
         (lib.optional (
           !invalidAssertionGateTrips
         ) "explicit assertion gate accepted a deliberately invalid fixture")
+        (lib.optional (
+          !missingRecoveryAssertionPresent
+        ) "lifecycle configuration did not expose the exact missing-recovery assertion")
+        (lib.optional (
+          !missingRecoveryAssertionGateTrips
+        ) "assertion gate accepted lifecycle hooks without an already-current recovery hook")
         (lib.optional (
           disabledSystem.config.launchd.daemons ? mcl-deploy-agent
         ) "Darwin pull agent is not disabled by default")
@@ -381,6 +421,7 @@ top@{
         grep -F -- '--system-profile /nix/var/nix/profiles/system' "$entrypoint" >/dev/null
         grep -F -- '--pre-switch-hook /run/current-system/sw/bin/mcl-deploy-pre-switch' "$entrypoint" >/dev/null
         grep -F -- '--post-switch-hook /run/current-system/sw/bin/mcl-deploy-post-switch' "$entrypoint" >/dev/null
+        grep -F -- '--already-current-recovery-hook /run/current-system/sw/bin/mcl-deploy-recover-current' "$entrypoint" >/dev/null
         prerequisite_line=$(grep -nF -- ${lib.escapeShellArg (lib.getExe failingRuntimePrerequisite)} "$entrypoint" | head -n1 | cut -d: -f1)
         flock_line=$(grep -nF -- 'flock -n /private/var/run/mcl/test-pull-agent/m3.lock' "$entrypoint" | head -n1 | cut -d: -f1)
         test -n "$prerequisite_line"
@@ -894,6 +935,22 @@ top@{
         test -n "''${MCL_DARWIN_TEST_ROOT:-}"
         printf '%s\n%s\n%s\n' "$1" "$2" "$3" > "$MCL_DARWIN_TEST_ROOT/post-switch-ran"
       '';
+      alreadyCurrentRecoveryHook = pkgs.writeShellScript "mcl-darwin-pull-agent-already-current-recovery" ''
+        set -eu
+        test -n "''${MCL_DARWIN_TEST_ROOT:-}"
+        test "$1" = "$2"
+        printf '%s\n' "$1" >> "$MCL_DARWIN_TEST_ROOT/already-current-recovery-runs"
+        if test -e "$MCL_DARWIN_TEST_ROOT/pending-lifecycle-recovery"; then
+          printf 'pending\n' >> "$MCL_DARWIN_TEST_ROOT/already-current-recovery-states"
+          if test -e "$MCL_DARWIN_TEST_ROOT/fail-lifecycle-recovery"; then
+            exit 91
+          fi
+          rm "$MCL_DARWIN_TEST_ROOT/pending-lifecycle-recovery"
+          printf 'recovered\n' >> "$MCL_DARWIN_TEST_ROOT/already-current-recovery-states"
+        else
+          printf 'clean\n' >> "$MCL_DARWIN_TEST_ROOT/already-current-recovery-states"
+        fi
+      '';
       blockingPreSwitchHook = pkgs.writeShellScript "mcl-darwin-pull-agent-blocking-pre-switch" ''
         set -eu
         test -n "''${MCL_DARWIN_TEST_ROOT:-}"
@@ -923,7 +980,7 @@ top@{
                 standardErrorLog = "${integrationRoot}/logs/stderr.log";
                 lockFile = "${integrationRoot}/run/agent.lock";
                 systemProfile = "${integrationRoot}/system-profile";
-                inherit preSwitchHook postSwitchHook;
+                inherit alreadyCurrentRecoveryHook preSwitchHook postSwitchHook;
                 maxAttempts = 2;
                 fetchTimeoutSeconds = 7;
               };
@@ -979,7 +1036,7 @@ top@{
                 lockFile = "${lockRoot}/run/agent.lock";
                 systemProfile = "${lockRoot}/system-profile";
                 preSwitchHook = blockingPreSwitchHook;
-                inherit postSwitchHook;
+                inherit alreadyCurrentRecoveryHook postSwitchHook;
                 maxAttempts = 1;
               };
             }
@@ -1226,14 +1283,15 @@ top@{
                     test -e ${lib.escapeShellArg integrationRoot}/state/converged/"$future_id".json
                     validate_event_log ${lib.escapeShellArg integrationRoot}/logs/events.jsonl
 
-                    # test_darwin_pull_agent_already_current_is_transaction_free:
+                    # test_darwin_pull_agent_already_current_recovers_lifecycle_before_convergence:
                     # a new revision and higher signed sequence may publish the exact
-                    # generation already selected by the system profile. Authentication
-                    # and the durable high-water identity must advance, while restore,
-                    # lifecycle hooks, profile selection, activation, health checks, and
-                    # rollback remain completely inert. The poison restore proves the
-                    # short-circuit is before restore; the byte snapshots prove it is also
-                    # before the pre-switch hook and every later mutation surface.
+                    # generation already selected by the system profile. Authentication and
+                    # durable high-water identity must advance, but convergence requires the
+                    # dedicated recovery-only contract to certify or restore host lifecycle
+                    # state. Failure remains retryable with zero transaction attempts; success
+                    # then converges without restore, ordinary lifecycle hooks, profile
+                    # selection, activation, health checks, or rollback. The poison restore
+                    # and byte snapshots enforce those boundaries.
                     already_current=${lib.escapeShellArg integrationRoot}/state/inbox/already-current.json
                     make_manifest \
                       m3 \
@@ -1252,14 +1310,44 @@ top@{
                     pre_before=$(sha256sum ${lib.escapeShellArg integrationRoot}/pre-switch-ran | cut -d' ' -f1)
                     post_before=$(sha256sum ${lib.escapeShellArg integrationRoot}/post-switch-ran | cut -d' ' -f1)
                     export MCL_DEPLOY_RESTORE_COMMAND='printf restore > "$MCL_DARWIN_TEST_ROOT/unexpected-restore"; exit 97'
-                    "$entrypoint"
-                    unset MCL_DEPLOY_RESTORE_COMMAND
+                    touch \
+                      ${lib.escapeShellArg integrationRoot}/pending-lifecycle-recovery \
+                      ${lib.escapeShellArg integrationRoot}/fail-lifecycle-recovery
+                    if "$entrypoint"; then
+                      echo 'agent converged while already-current lifecycle recovery failed' >&2
+                      exit 1
+                    fi
 
                     already_current_status=${lib.escapeShellArg integrationRoot}/state/agent-status/m3.json
                     already_current_target=${lib.escapeShellArg integrationRoot}/state/targets/m3.json
                     already_current_desired=${lib.escapeShellArg integrationRoot}/state/desired/"$already_current_id".json
                     already_current_state=${lib.escapeShellArg integrationRoot}/state/current/"$already_current_id".json
                     already_current_converged=${lib.escapeShellArg integrationRoot}/state/converged/"$already_current_id".json
+                    jq -e \
+                      --arg deployment_id "$already_current_id" \
+                      '.deploymentId == $deployment_id
+                        and .sequence == 5
+                        and .currentState == "failed"
+                        and .attempts == 0
+                        and .maxAttempts == 2
+                        and .retryable == true
+                        and .errorCode == "already_current_recovery_failed"' \
+                      "$already_current_status" >/dev/null
+                    test -e ${lib.escapeShellArg integrationRoot}/pending-lifecycle-recovery
+                    test "$(wc -l < ${lib.escapeShellArg integrationRoot}/already-current-recovery-runs | tr -d ' ')" = 1
+                    test "$(tail -n1 ${lib.escapeShellArg integrationRoot}/already-current-recovery-states)" = pending
+                    test ! -e "$already_current_converged"
+                    test ! -e ${lib.escapeShellArg integrationRoot}/unexpected-restore
+                    test ! -e ${lib.escapeShellArg integrationRoot}/unexpected-health
+                    test "$(readlink ${lib.escapeShellArg integrationRoot}/system-profile)" = "$profile_link_before"
+                    test "$(sha256sum ${lib.escapeShellArg integrationRoot}/activation-runs | cut -d' ' -f1)" = "$activation_before"
+                    test "$(sha256sum ${lib.escapeShellArg integrationRoot}/pre-switch-ran | cut -d' ' -f1)" = "$pre_before"
+                    test "$(sha256sum ${lib.escapeShellArg integrationRoot}/post-switch-ran | cut -d' ' -f1)" = "$post_before"
+
+                    rm ${lib.escapeShellArg integrationRoot}/fail-lifecycle-recovery
+                    "$entrypoint"
+                    unset MCL_DEPLOY_RESTORE_COMMAND
+
                     jq -e \
                       --arg deployment_id "$already_current_id" \
                       '.deploymentId == $deployment_id
@@ -1287,17 +1375,26 @@ top@{
                     test "$(sha256sum ${lib.escapeShellArg integrationRoot}/post-switch-ran | cut -d' ' -f1)" = "$post_before"
                     test ! -e ${lib.escapeShellArg integrationRoot}/unexpected-restore
                     test ! -e ${lib.escapeShellArg integrationRoot}/unexpected-health
+                    test ! -e ${lib.escapeShellArg integrationRoot}/pending-lifecycle-recovery
+                    test "$(wc -l < ${lib.escapeShellArg integrationRoot}/already-current-recovery-runs | tr -d ' ')" = 2
+                    test "$(tail -n1 ${lib.escapeShellArg integrationRoot}/already-current-recovery-states)" = recovered
                     validate_event_log ${lib.escapeShellArg integrationRoot}/logs/events.jsonl
                     jq -e -s \
                       --arg deployment_id "$already_current_id" \
                       '[.[] | select(.deploymentId == $deployment_id)] as $events
-                        | ($events | length) == 2
+                        | ($events | length) == 4
                         and ($events[0].phase == "activate-requested")
                         and ($events[1].phase == "complete")
-                        and ($events[1].command.status == "succeeded")
-                        and ($events[1].metadata.outcome == "already-current")
-                        and ($events[1].metadata.previousGeneration == "${previousGeneration}")
-                        and ($events[1].metadata.newGeneration == "${previousGeneration}")
+                        and ($events[1].command.status == "failed")
+                        and ($events[1].error.code == "already_current_recovery_failed")
+                        and ($events[1].metadata.outcome == "already-current-recovery-failed")
+                        and ($events[2].phase == "activate-requested")
+                        and ($events[3].phase == "complete")
+                        and ($events[3].command.status == "succeeded")
+                        and ($events[3].metadata.outcome == "already-current")
+                        and ($events[3].metadata.lifecycleRecoveryChecked == true)
+                        and ($events[3].metadata.previousGeneration == "${previousGeneration}")
+                        and ($events[3].metadata.newGeneration == "${previousGeneration}")
                         and all($events[];
                           .phase != "agent-restore"
                           and .phase != "switch"
@@ -1311,6 +1408,8 @@ top@{
                     already_current_converged_sha=$(sha256sum "$already_current_converged" | cut -d' ' -f1)
                     already_current_status_sha=$(sha256sum "$already_current_status" | cut -d' ' -f1)
                     already_current_events_sha=$(sha256sum ${lib.escapeShellArg integrationRoot}/logs/events.jsonl | cut -d' ' -f1)
+                    already_current_recovery_runs_sha=$(sha256sum ${lib.escapeShellArg integrationRoot}/already-current-recovery-runs | cut -d' ' -f1)
+                    already_current_recovery_states_sha=$(sha256sum ${lib.escapeShellArg integrationRoot}/already-current-recovery-states | cut -d' ' -f1)
 
                     # Exact replay is a byte-for-byte no-op, including durable state,
                     # event/status timestamps, profile identity, and all hook sentinels.
@@ -1321,6 +1420,8 @@ top@{
                     test "$(sha256sum "$already_current_converged" | cut -d' ' -f1)" = "$already_current_converged_sha"
                     test "$(sha256sum "$already_current_status" | cut -d' ' -f1)" = "$already_current_status_sha"
                     test "$(sha256sum ${lib.escapeShellArg integrationRoot}/logs/events.jsonl | cut -d' ' -f1)" = "$already_current_events_sha"
+                    test "$(sha256sum ${lib.escapeShellArg integrationRoot}/already-current-recovery-runs | cut -d' ' -f1)" = "$already_current_recovery_runs_sha"
+                    test "$(sha256sum ${lib.escapeShellArg integrationRoot}/already-current-recovery-states | cut -d' ' -f1)" = "$already_current_recovery_states_sha"
                     test "$(readlink ${lib.escapeShellArg integrationRoot}/system-profile)" = "$profile_link_before"
                     test "$(nix-store --realise ${lib.escapeShellArg integrationRoot}/system-profile)" = "$profile_generation_before"
                     test "$(sha256sum ${lib.escapeShellArg integrationRoot}/activation-runs | cut -d' ' -f1)" = "$activation_before"
@@ -1359,6 +1460,8 @@ top@{
                     test "$(sha256sum ${lib.escapeShellArg integrationRoot}/activation-runs | cut -d' ' -f1)" = "$activation_before"
                     test "$(sha256sum ${lib.escapeShellArg integrationRoot}/pre-switch-ran | cut -d' ' -f1)" = "$pre_before"
                     test "$(sha256sum ${lib.escapeShellArg integrationRoot}/post-switch-ran | cut -d' ' -f1)" = "$post_before"
+                    test "$(wc -l < ${lib.escapeShellArg integrationRoot}/already-current-recovery-runs | tr -d ' ')" = 3
+                    test "$(tail -n1 ${lib.escapeShellArg integrationRoot}/already-current-recovery-states)" = clean
 
                     same_id_desired=${lib.escapeShellArg integrationRoot}/state/desired/"$same_id".json
                     same_id_current=${lib.escapeShellArg integrationRoot}/state/current/"$same_id".json
@@ -1478,7 +1581,7 @@ top@{
                     mkdir -p "$out"
                     printf '%s\n' 'test_darwin_pull_agent_rejects_untrusted_and_wrong_target_manifests: passed' > "$out/hostile"
                     printf '%s\n' 'test_darwin_pull_agent_rejects_invalid_durable_state: passed' > "$out/durable"
-                    printf '%s\n' 'test_darwin_pull_agent_already_current_is_transaction_free: passed' > "$out/already-current"
+                    printf '%s\n' 'test_darwin_pull_agent_already_current_recovers_lifecycle_before_convergence: passed' > "$out/already-current"
                     printf '%s\n' 'test_darwin_pull_agent_same_id_sequence_high_water: passed' > "$out/high-water"
                     printf '%s\n' 'test_darwin_pull_agent_lock_contention_is_non_destructive: passed' > "$out/lock"
                     printf '%s\n' 'deployment-pull-agent-darwin-integration: passed' > "$out/result"
@@ -1491,7 +1594,12 @@ top@{
         test_darwin_pull_agent_entrypoint_survives_generation_change = generationStabilityCheck;
         test_darwin_pull_agent_rejects_untrusted_and_wrong_target_manifests = darwinIntegrationCheck;
         test_darwin_pull_agent_rejects_invalid_durable_state = darwinIntegrationCheck;
+        # Keep the original public check name as a compatibility alias. The
+        # strengthened scenario is still transaction-free; it now also proves
+        # that recovery-only lifecycle work finishes before convergence.
         test_darwin_pull_agent_already_current_is_transaction_free = darwinIntegrationCheck;
+        test_darwin_pull_agent_already_current_recovers_lifecycle_before_convergence =
+          darwinIntegrationCheck;
         test_darwin_pull_agent_same_id_sequence_high_water = darwinIntegrationCheck;
         test_darwin_pull_agent_lock_contention_is_non_destructive = darwinIntegrationCheck;
         deployment-pull-agent-darwin-integration = darwinIntegrationCheck;

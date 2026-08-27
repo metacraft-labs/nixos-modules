@@ -64,6 +64,10 @@
       ++ lib.optionals (cfg.postSwitchHook != "") [
         "--post-switch-hook"
         cfg.postSwitchHook
+      ]
+      ++ lib.optionals (cfg.alreadyCurrentRecoveryHook != "") [
+        "--already-current-recovery-hook"
+        cfg.alreadyCurrentRecoveryHook
       ];
 
       stableEntrypoint = "/run/current-system/sw/bin/mcl-deploy-agent";
@@ -812,6 +816,17 @@
           description = "Optional executable cleanup hook called with DESIRED PREVIOUS OUTCOME.";
         };
 
+        alreadyCurrentRecoveryHook = mkOption {
+          type = types.coercedTo types.package toString types.str;
+          default = "";
+          description = ''
+            Recovery-only executable called with DESIRED CURRENT when the
+            authenticated desired generation is already selected. It must verify that
+            lifecycle state is clean or complete retained recovery without
+            starting a new deployment transaction.
+          '';
+        };
+
         runtimePrerequisite = mkOption {
           type = types.coercedTo types.package toString types.str;
           default = "";
@@ -937,6 +952,11 @@
           {
             assertion = cfg.preparationFixtureChownCommand == null || cfg.preparationAllowTestOverrides;
             message = "services.mcl-deploy-agent fixture chown command requires test-only preparation overrides.";
+          }
+          {
+            assertion =
+              (cfg.preSwitchHook == "" && cfg.postSwitchHook == "") || cfg.alreadyCurrentRecoveryHook != "";
+            message = "services.mcl-deploy-agent lifecycle hooks require alreadyCurrentRecoveryHook for safe exact-current convergence.";
           }
         ];
 
