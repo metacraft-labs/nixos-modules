@@ -9,11 +9,12 @@ rec {
   # A repository-scoped github_actions_secret manifest entry. `ageFile` defaults
   # to the conventional secrets/actions/repos/<repo>/<name>.age path.
   mkRepoActionsSecret =
-    { owner
-    , repo
-    , name
-    , ageFile ? "secrets/actions/repos/${repo}/${name}.age"
-    , rotationGroup ? null
+    {
+      owner,
+      repo,
+      name,
+      ageFile ? "secrets/actions/repos/${repo}/${name}.age",
+      rotationGroup ? null,
     }:
     {
       providerResource = "github_actions_secret";

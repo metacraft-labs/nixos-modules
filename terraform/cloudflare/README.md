@@ -48,6 +48,7 @@ cloudflare-token plan  --scan terraform/cloudflare/metacraft-prod --name "Metacr
 cloudflare-token apply --scan terraform/cloudflare/metacraft-prod --name "Metacraft Terraform"
 cloudflare-token import --scan terraform/cloudflare/metacraft-prod --name "Metacraft Terraform"
 ```
+
 `--scan DIR` discovers managed types from the root's `resource "…"` / `to = …`
 blocks; `--resource-types a,b` overrides. `plan` = read on every managed group,
 `apply` = edit on writable groups + `zone:read`, `import` = broad read for
