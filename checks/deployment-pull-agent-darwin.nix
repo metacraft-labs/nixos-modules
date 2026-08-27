@@ -1023,6 +1023,10 @@ top@{
                   local output=$4
                   local revision=''${5:-0123456789abcdef0123456789abcdef01234567}
                   local run_id=''${6:-darwin-integration-$sequence}
+                  local -a extra_args=()
+                  if [[ $# -gt 6 ]]; then
+                    extra_args=("''${@:7}")
+                  fi
                   GITHUB_RUN_ID="$run_id" mcl deploy-plan \
                         --target "$target" \
                         --system aarch64-darwin \
@@ -1031,7 +1035,8 @@ top@{
                         --sequence "$sequence" \
                         --signing-key "$key" \
                         --signing-key-id mcl-deployment \
-                        --output "$output"
+                        --output "$output" \
+                        "''${extra_args[@]}"
                     }
 
             validate_event_log() {
@@ -1221,6 +1226,109 @@ top@{
                     test -e ${lib.escapeShellArg integrationRoot}/state/converged/"$future_id".json
                     validate_event_log ${lib.escapeShellArg integrationRoot}/logs/events.jsonl
 
+                    # test_darwin_pull_agent_already_current_is_transaction_free:
+                    # a new revision and higher signed sequence may publish the exact
+                    # generation already selected by the system profile. Authentication
+                    # and the durable high-water identity must advance, while restore,
+                    # lifecycle hooks, profile selection, activation, health checks, and
+                    # rollback remain completely inert. The poison restore proves the
+                    # short-circuit is before restore; the byte snapshots prove it is also
+                    # before the pre-switch hook and every later mutation surface.
+                    already_current=${lib.escapeShellArg integrationRoot}/state/inbox/already-current.json
+                    make_manifest \
+                      m3 \
+                      ${previousGeneration} \
+                      5 \
+                      "$already_current" \
+                      5555555555555555555555555555555555555555 \
+                      darwin-already-current-5 \
+                      --health-command 'already-current-health|5|printf health > "$MCL_DARWIN_TEST_ROOT/unexpected-health"; exit 97'
+                    already_current_id=$(jq -r .deploymentId "$already_current")
+                    test "$already_current_id" != "$future_id"
+
+                    profile_link_before=$(readlink ${lib.escapeShellArg integrationRoot}/system-profile)
+                    profile_generation_before=$(nix-store --realise ${lib.escapeShellArg integrationRoot}/system-profile)
+                    activation_before=$(sha256sum ${lib.escapeShellArg integrationRoot}/activation-runs | cut -d' ' -f1)
+                    pre_before=$(sha256sum ${lib.escapeShellArg integrationRoot}/pre-switch-ran | cut -d' ' -f1)
+                    post_before=$(sha256sum ${lib.escapeShellArg integrationRoot}/post-switch-ran | cut -d' ' -f1)
+                    export MCL_DEPLOY_RESTORE_COMMAND='printf restore > "$MCL_DARWIN_TEST_ROOT/unexpected-restore"; exit 97'
+                    "$entrypoint"
+                    unset MCL_DEPLOY_RESTORE_COMMAND
+
+                    already_current_status=${lib.escapeShellArg integrationRoot}/state/agent-status/m3.json
+                    already_current_target=${lib.escapeShellArg integrationRoot}/state/targets/m3.json
+                    already_current_desired=${lib.escapeShellArg integrationRoot}/state/desired/"$already_current_id".json
+                    already_current_state=${lib.escapeShellArg integrationRoot}/state/current/"$already_current_id".json
+                    already_current_converged=${lib.escapeShellArg integrationRoot}/state/converged/"$already_current_id".json
+                    jq -e \
+                      --arg deployment_id "$already_current_id" \
+                      '.deploymentId == $deployment_id
+                        and .sequence == 5
+                        and .currentState == "succeeded"
+                        and .attempts == 0
+                        and .maxAttempts == 2
+                        and .retryable == false' \
+                      "$already_current_status" >/dev/null
+                    cmp "$already_current" "$already_current_target"
+                    jq -e \
+                      '.sequence == 5
+                        and .gitRevision == "5555555555555555555555555555555555555555"
+                        and .desiredSystemPath == "${previousGeneration}"' \
+                      "$already_current_desired" >/dev/null
+                    jq -e '.sequence == 5 and .currentState == "accepted"' \
+                      "$already_current_state" >/dev/null
+                    jq -e '.sequence == 5 and .currentState == "succeeded"' \
+                      "$already_current_converged" >/dev/null
+                    test "$(readlink ${lib.escapeShellArg integrationRoot}/system-profile)" = "$profile_link_before"
+                    test "$(nix-store --realise ${lib.escapeShellArg integrationRoot}/system-profile)" = "$profile_generation_before"
+                    test "$profile_generation_before" = ${previousGeneration}
+                    test "$(sha256sum ${lib.escapeShellArg integrationRoot}/activation-runs | cut -d' ' -f1)" = "$activation_before"
+                    test "$(sha256sum ${lib.escapeShellArg integrationRoot}/pre-switch-ran | cut -d' ' -f1)" = "$pre_before"
+                    test "$(sha256sum ${lib.escapeShellArg integrationRoot}/post-switch-ran | cut -d' ' -f1)" = "$post_before"
+                    test ! -e ${lib.escapeShellArg integrationRoot}/unexpected-restore
+                    test ! -e ${lib.escapeShellArg integrationRoot}/unexpected-health
+                    validate_event_log ${lib.escapeShellArg integrationRoot}/logs/events.jsonl
+                    jq -e -s \
+                      --arg deployment_id "$already_current_id" \
+                      '[.[] | select(.deploymentId == $deployment_id)] as $events
+                        | ($events | length) == 2
+                        and ($events[0].phase == "activate-requested")
+                        and ($events[1].phase == "complete")
+                        and ($events[1].command.status == "succeeded")
+                        and ($events[1].metadata.outcome == "already-current")
+                        and ($events[1].metadata.previousGeneration == "${previousGeneration}")
+                        and ($events[1].metadata.newGeneration == "${previousGeneration}")
+                        and all($events[];
+                          .phase != "agent-restore"
+                          and .phase != "switch"
+                          and .phase != "healthcheck"
+                          and .phase != "rollback")' \
+                      ${lib.escapeShellArg integrationRoot}/logs/events.jsonl >/dev/null
+
+                    already_current_target_sha=$(sha256sum "$already_current_target" | cut -d' ' -f1)
+                    already_current_desired_sha=$(sha256sum "$already_current_desired" | cut -d' ' -f1)
+                    already_current_state_sha=$(sha256sum "$already_current_state" | cut -d' ' -f1)
+                    already_current_converged_sha=$(sha256sum "$already_current_converged" | cut -d' ' -f1)
+                    already_current_status_sha=$(sha256sum "$already_current_status" | cut -d' ' -f1)
+                    already_current_events_sha=$(sha256sum ${lib.escapeShellArg integrationRoot}/logs/events.jsonl | cut -d' ' -f1)
+
+                    # Exact replay is a byte-for-byte no-op, including durable state,
+                    # event/status timestamps, profile identity, and all hook sentinels.
+                    "$entrypoint"
+                    test "$(sha256sum "$already_current_target" | cut -d' ' -f1)" = "$already_current_target_sha"
+                    test "$(sha256sum "$already_current_desired" | cut -d' ' -f1)" = "$already_current_desired_sha"
+                    test "$(sha256sum "$already_current_state" | cut -d' ' -f1)" = "$already_current_state_sha"
+                    test "$(sha256sum "$already_current_converged" | cut -d' ' -f1)" = "$already_current_converged_sha"
+                    test "$(sha256sum "$already_current_status" | cut -d' ' -f1)" = "$already_current_status_sha"
+                    test "$(sha256sum ${lib.escapeShellArg integrationRoot}/logs/events.jsonl | cut -d' ' -f1)" = "$already_current_events_sha"
+                    test "$(readlink ${lib.escapeShellArg integrationRoot}/system-profile)" = "$profile_link_before"
+                    test "$(nix-store --realise ${lib.escapeShellArg integrationRoot}/system-profile)" = "$profile_generation_before"
+                    test "$(sha256sum ${lib.escapeShellArg integrationRoot}/activation-runs | cut -d' ' -f1)" = "$activation_before"
+                    test "$(sha256sum ${lib.escapeShellArg integrationRoot}/pre-switch-ran | cut -d' ' -f1)" = "$pre_before"
+                    test "$(sha256sum ${lib.escapeShellArg integrationRoot}/post-switch-ran | cut -d' ' -f1)" = "$post_before"
+                    test ! -e ${lib.escapeShellArg integrationRoot}/unexpected-restore
+                    test ! -e ${lib.escapeShellArg integrationRoot}/unexpected-health
+
                     # test_darwin_pull_agent_same_id_sequence_high_water: deployment IDs
                     # intentionally repeat for the same target/system path. A higher
                     # sequence must advance, while stale, exact replay, and equal-sequence
@@ -1230,23 +1338,27 @@ top@{
                 make_manifest \
                   m3 \
                   ${previousGeneration} \
-                  5 \
+                  6 \
                   "$same_id_next" \
-                  0123456789abcdef0123456789abcdef01234567 \
-                  darwin-integration-4
+                  5555555555555555555555555555555555555555 \
+                  darwin-already-current-5
                     same_id=$(jq -r .deploymentId "$same_id_next")
-                    test "$same_id" = "$future_id"
+                    test "$same_id" = "$already_current_id"
                     "$entrypoint"
                     jq -e \
                       --arg deployment_id "$same_id" \
                       '.deploymentId == $deployment_id
-                        and .sequence == 5
+                        and .sequence == 6
                         and .currentState == "succeeded"
-                        and .attempts == 1' \
+                        and .attempts == 0' \
                       ${lib.escapeShellArg integrationRoot}/state/agent-status/m3.json >/dev/null
                     cmp "$same_id_next" "$target_record"
-                    jq -e '.sequence == 5' \
+                    jq -e '.sequence == 6' \
                       ${lib.escapeShellArg integrationRoot}/state/converged/"$same_id".json >/dev/null
+                    test "$(readlink ${lib.escapeShellArg integrationRoot}/system-profile)" = "$profile_link_before"
+                    test "$(sha256sum ${lib.escapeShellArg integrationRoot}/activation-runs | cut -d' ' -f1)" = "$activation_before"
+                    test "$(sha256sum ${lib.escapeShellArg integrationRoot}/pre-switch-ran | cut -d' ' -f1)" = "$pre_before"
+                    test "$(sha256sum ${lib.escapeShellArg integrationRoot}/post-switch-ran | cut -d' ' -f1)" = "$post_before"
 
                     same_id_desired=${lib.escapeShellArg integrationRoot}/state/desired/"$same_id".json
                     same_id_current=${lib.escapeShellArg integrationRoot}/state/current/"$same_id".json
@@ -1278,27 +1390,27 @@ top@{
                       test "$(nix-store --realise ${lib.escapeShellArg integrationRoot}/system-profile)" = ${previousGeneration}
                     }
 
-                    # Removing sequence 5 exposes the signed sequence-4 manifest with the
+                    # Removing sequence 6 exposes the signed sequence-5 manifest with the
                     # same ID. It is stale and must not regress any high-water evidence.
-                    cp "$same_id_next" "$TMPDIR/same-id-sequence-5.json"
+                    cp "$same_id_next" "$TMPDIR/same-id-sequence-6.json"
                     rm "$same_id_next"
                     "$entrypoint"
                     assert_same_id_high_water_unchanged
 
-                    # Restoring the exact sequence-5 bytes is an idempotent no-op.
-                    cp "$TMPDIR/same-id-sequence-5.json" "$same_id_next"
+                    # Restoring the exact sequence-6 bytes is an idempotent no-op.
+                    cp "$TMPDIR/same-id-sequence-6.json" "$same_id_next"
                     "$entrypoint"
                     assert_same_id_high_water_unchanged
 
-                    # A different, correctly signed sequence-5 payload with the same
+                    # A different, correctly signed sequence-6 payload with the same
                     # derived ID is a non-retryable collision, also without mutation.
                     make_manifest \
                       m3 \
                       ${previousGeneration} \
-                      5 \
+                      6 \
                   "$same_id_next" \
-                  5123456789abcdef0123456789abcdef01234567 \
-                  darwin-integration-4
+                  6555555555555555555555555555555555555555 \
+                  darwin-already-current-5
                     test "$(jq -r .deploymentId "$same_id_next")" = "$same_id"
                     if "$entrypoint"; then
                       echo 'agent accepted a signed same-ID same-sequence collision' >&2
@@ -1306,7 +1418,7 @@ top@{
                     fi
                     assert_same_id_high_water_unchanged
 
-                    cp "$TMPDIR/same-id-sequence-5.json" "$same_id_next"
+                    cp "$TMPDIR/same-id-sequence-6.json" "$same_id_next"
 
                     # test_darwin_pull_agent_lock_contention_is_non_destructive: the first
                     # real agent invocation holds the module's flock while readiness waits.
@@ -1366,6 +1478,7 @@ top@{
                     mkdir -p "$out"
                     printf '%s\n' 'test_darwin_pull_agent_rejects_untrusted_and_wrong_target_manifests: passed' > "$out/hostile"
                     printf '%s\n' 'test_darwin_pull_agent_rejects_invalid_durable_state: passed' > "$out/durable"
+                    printf '%s\n' 'test_darwin_pull_agent_already_current_is_transaction_free: passed' > "$out/already-current"
                     printf '%s\n' 'test_darwin_pull_agent_same_id_sequence_high_water: passed' > "$out/high-water"
                     printf '%s\n' 'test_darwin_pull_agent_lock_contention_is_non_destructive: passed' > "$out/lock"
                     printf '%s\n' 'deployment-pull-agent-darwin-integration: passed' > "$out/result"
@@ -1378,6 +1491,7 @@ top@{
         test_darwin_pull_agent_entrypoint_survives_generation_change = generationStabilityCheck;
         test_darwin_pull_agent_rejects_untrusted_and_wrong_target_manifests = darwinIntegrationCheck;
         test_darwin_pull_agent_rejects_invalid_durable_state = darwinIntegrationCheck;
+        test_darwin_pull_agent_already_current_is_transaction_free = darwinIntegrationCheck;
         test_darwin_pull_agent_same_id_sequence_high_water = darwinIntegrationCheck;
         test_darwin_pull_agent_lock_contention_is_non_destructive = darwinIntegrationCheck;
         deployment-pull-agent-darwin-integration = darwinIntegrationCheck;

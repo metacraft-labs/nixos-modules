@@ -9,7 +9,7 @@ import std.file : SpanMode, dirEntries, exists, mkdir, mkdirRecurse,
 import std.json : JSONOptions, JSONType, JSONValue, parseJSON;
 import std.path : buildPath, dirName;
 import std.stdio : writeln;
-import std.string : endsWith, startsWith, strip;
+import std.string : endsWith, splitLines, startsWith, strip;
 import std.typecons : Nullable;
 import std.uuid : randomUUID;
 
@@ -567,6 +567,7 @@ int deployAgentImpl(DeployAgentArgs args, DeployAgentDependencies deps)
     applyArgs.transport = "pull-agent";
     applyArgs.controller = "mcl-deploy-agent";
 
+    bool alreadyCurrent;
     auto result = deployApplyImpl(applyArgs, DeployApplyDependencies(
         runProcess: deps.runProcess,
         queryProcess: deps.queryProcess,
@@ -574,6 +575,7 @@ int deployAgentImpl(DeployAgentArgs args, DeployAgentDependencies deps)
         durableLatest: durableLatest,
         durableLatestBound: true,
         retryIdempotentManifest: true,
+        onAlreadyCurrent: { alreadyCurrent = true; },
     ));
 
     if (result == deployApplyDeferredExitCode)
@@ -596,7 +598,12 @@ int deployAgentImpl(DeployAgentArgs args, DeployAgentDependencies deps)
         return 1;
     }
 
-    auto attempts = previousAttempts + 1;
+    // `attempts` measures deployment transactions, not accepted manifest
+    // identities. A desired generation that was already selected performed no
+    // restore, lifecycle hook, activation, health check, or rollback, so it
+    // succeeds without consuming the retry budget. This is distinct from a
+    // readiness deferral above: the no-op is converged and non-retryable.
+    auto attempts = previousAttempts + (alreadyCurrent ? 0 : 1);
     auto succeeded = result == 0;
     auto exhausted = !succeeded && attempts >= args.maxAttempts;
     auto status = writeAgentStatus(args.stateDir, args.target, deploymentId, sequence,
@@ -604,7 +611,9 @@ int deployAgentImpl(DeployAgentArgs args, DeployAgentDependencies deps)
         attempts,
         args.maxAttempts,
         !succeeded && !exhausted,
-        succeeded ? "Deployment converged."
+        succeeded ? alreadyCurrent
+            ? "Desired system generation was already current."
+            : "Deployment converged."
             : exhausted ? "Retry budget exhausted for this deployment."
             : "Deployment apply failed; retry remains available.",
         succeeded ? "" : exhausted ? "retry_budget_exhausted" : "apply_failed");
@@ -1416,4 +1425,170 @@ unittest
     assert(status["errorCode"].str == "deployment_deferred");
     assert(readinessRuns == 3);
     assert(!manifestStatePath(stateDir, "converged", "deploy-deferred").exists);
+}
+
+@("test_deploy_agent_accepts_higher_already_current_manifest_without_activation_attempt")
+unittest
+{
+    import mcl.utils.deploy_manifest : ManifestBuildRequest, ManifestSigningRequest,
+        buildManifest, signManifest;
+    import mcl.utils.deploy_state : targetLatestPath;
+
+    auto base = uniqueDeployStateTestPath("deploy-agent-already-current");
+    auto keyPath = base ~ ".ed25519";
+    auto stateDir = base ~ ".state";
+    auto manifestPath = base ~ ".manifest.json";
+    auto eventLog = base ~ ".events.jsonl";
+    scope(exit)
+    {
+        foreach (path; [base, keyPath, keyPath ~ ".pub", manifestPath, eventLog])
+            if (path.exists) path.remove;
+        if (stateDir.exists) stateDir.rmdirRecurse;
+    }
+
+    auto keygen = runProcessCapture([
+        "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", keyPath,
+    ]);
+    assert(keygen.succeeded, keygen.stderr);
+    auto publicKey = (keyPath ~ ".pub").readText.strip;
+    auto desired = "/nix/store/77777777777777777777777777777777-system";
+
+    JSONValue signedManifest(string id, ulong sequence, string revision, string path)
+    {
+        return signManifest(buildManifest(ManifestBuildRequest(
+            deploymentId: id,
+            target: "target",
+            gitRevision: revision,
+            sequence: sequence,
+            desiredSystemPath: path,
+        )), ManifestSigningRequest(keyPath: keyPath, keyId: "mcl-deployment"));
+    }
+
+    auto sequence10 = signedManifest(
+        "deploy-10",
+        10,
+        "1010101010101010101010101010101010101010",
+        desired,
+    );
+    auto sequence11 = signedManifest(
+        "deploy-11",
+        11,
+        "1111111111111111111111111111111111111111",
+        desired,
+    );
+    manifestPath.write(sequence10.toString(JSONOptions.doNotEscapeSlashes));
+
+    DeployAgentArgs args;
+    args.target = "target";
+    args.manifests = [manifestPath];
+    args.trustedManifestPublicKey = publicKey;
+    args.stateDir = stateDir;
+    args.eventLog = eventLog;
+    args.maxAttempts = 1;
+    args.dryRun = true;
+
+    uint restoreRuns;
+    uint preHookRuns;
+    uint otherUnsafeMutations;
+    ProcessResult poisonMutation(string[] command)
+    {
+        if (command == ["/bin/sh", "-c", "poison-restore"])
+        {
+            restoreRuns++;
+            return ProcessResult(0, "", "");
+        }
+        if (command == ["/hooks/poison-pre", desired, desired])
+        {
+            preHookRuns++;
+            return ProcessResult(97, "", "poison pre-switch hook ran");
+        }
+        otherUnsafeMutations++;
+        return ProcessResult(97, "", "unsafe deployment surface ran: " ~ command.join(" "));
+    }
+    ProcessResult realEngineQuery(string[] command)
+    {
+        if (command == ["/bin/sh", "-c", "current-generation"])
+            return ProcessResult(0, desired ~ "\n", "");
+        return ProcessResult(0, "{}", "");
+    }
+
+    // Seed a lower, authentic durable high-water identity without activating.
+    assert(deployAgentImpl(args, DeployAgentDependencies(
+        runProcess: &poisonMutation,
+        queryProcess: &realEngineQuery,
+    )) == 0);
+    assert(restoreRuns == 0);
+    assert(preHookRuns == 0);
+    assert(otherUnsafeMutations == 0);
+
+    // A new signed identity and higher sequence can legitimately name the
+    // generation that is already selected. It must advance durable identity
+    // and convergence without spending an activation attempt or entering any
+    // restore/lifecycle/activation/health/rollback surface.
+    manifestPath.write(sequence11.toString(JSONOptions.doNotEscapeSlashes));
+    args.dryRun = false;
+    args.restoreCommand = "poison-restore";
+    args.generationCommand = "current-generation";
+    args.preSwitchHook = "/hooks/poison-pre";
+    args.postSwitchHook = "/hooks/poison-post";
+    assert(deployAgentImpl(args, DeployAgentDependencies(
+        runProcess: &poisonMutation,
+        queryProcess: &realEngineQuery,
+    )) == 0);
+
+    auto exactManifestBytes = manifestPath.readText;
+    auto statusPath = agentStatusPath(stateDir, "target");
+    auto desiredPath = manifestStatePath(stateDir, "desired", "deploy-11");
+    auto currentPath = manifestStatePath(stateDir, "current", "deploy-11");
+    auto convergedPath = manifestStatePath(stateDir, "converged", "deploy-11");
+    auto status = statusPath.readText.parseJSON;
+    assert(status["deploymentId"].str == "deploy-11");
+    assert(status["sequence"].integer == 11);
+    assert(status["currentState"].str == "succeeded");
+    assert(status["attempts"].integer == 0);
+    assert(status["maxAttempts"].integer == 1);
+    assert(status["retryable"].boolean is false);
+    assert(targetLatestPath(stateDir, "target").readText == exactManifestBytes);
+    assert(desiredPath.readText.parseJSON == sequence11);
+    assert(currentPath.readText.parseJSON["currentState"].str == "accepted");
+    assert(convergedPath.readText.parseJSON["currentState"].str == "succeeded");
+    assert(restoreRuns == 0);
+    assert(preHookRuns == 0);
+    assert(otherUnsafeMutations == 0);
+
+    auto events = eventLog.readText
+        .splitLines
+        .filter!(line => line.strip != "")
+        .map!(line => line.parseJSON)
+        .filter!(event => event["deploymentId"].str == "deploy-11")
+        .array;
+    assert(events.length == 2);
+    assert(events[0]["phase"].str == "activate-requested");
+    assert(events[1]["phase"].str == "complete");
+    assert(events[1]["command"]["status"].str == "succeeded");
+    assert(events[1]["metadata"]["outcome"].str == "already-current");
+    assert(!events.canFind!(event => event["phase"].str == "agent-restore"));
+    assert(!events.canFind!(event => event["phase"].str == "switch"));
+    assert(!events.canFind!(event => event["phase"].str == "healthcheck"));
+    assert(!events.canFind!(event => event["phase"].str == "rollback"));
+
+    auto targetBeforeReplay = targetLatestPath(stateDir, "target").readText;
+    auto desiredBeforeReplay = desiredPath.readText;
+    auto currentBeforeReplay = currentPath.readText;
+    auto convergedBeforeReplay = convergedPath.readText;
+    auto statusBeforeReplay = statusPath.readText;
+    auto eventsBeforeReplay = eventLog.readText;
+    assert(deployAgentImpl(args, DeployAgentDependencies(
+        runProcess: &poisonMutation,
+        queryProcess: &realEngineQuery,
+    )) == 0);
+    assert(targetLatestPath(stateDir, "target").readText == targetBeforeReplay);
+    assert(desiredPath.readText == desiredBeforeReplay);
+    assert(currentPath.readText == currentBeforeReplay);
+    assert(convergedPath.readText == convergedBeforeReplay);
+    assert(statusPath.readText == statusBeforeReplay);
+    assert(eventLog.readText == eventsBeforeReplay);
+    assert(restoreRuns == 0);
+    assert(preHookRuns == 0);
+    assert(otherUnsafeMutations == 0);
 }

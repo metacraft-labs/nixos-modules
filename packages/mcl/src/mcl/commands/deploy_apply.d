@@ -197,6 +197,7 @@ struct DeployApplyDependencies
     bool retryIdempotentManifest;
     void delegate() beforeStateLock;
     void delegate() afterDurableValidation;
+    void delegate() onAlreadyCurrent;
 }
 
 export int deploy_apply(DeployApplyArgs args)
@@ -497,6 +498,45 @@ int deployApplyImpl(DeployApplyArgs args, DeployApplyDependencies deps)
         return 0;
     }
 
+    auto desired = manifestDesiredSystemPath(manifest);
+    auto previousResult = currentGeneration(args, queryRunner);
+    auto previous = previousResult.stdout.strip;
+    if (
+        args.activationMode == DeploymentActivationMode.nixDarwin
+        && (!previousResult.succeeded || previous == "")
+    )
+    {
+        emit("switch", "query current generation", [], "failed", previousResult.exitCode,
+            "Failed to determine current system generation", "generation_query_failed",
+            previousResult.stderr.stderrSummary);
+        markDeploymentState(args.stateDir, manifest, "failed",
+            "Could not determine the previous system generation.");
+        return 1;
+    }
+
+    // A newer signed manifest identity can legitimately name the generation
+    // that is already selected (for example, an infra-only revision whose m3
+    // closure did not change). Authentication and monotonic durable acceptance
+    // above still advance the desired-state high-water mark, but no deployment
+    // transaction is required. This check must remain before closure restore
+    // and every lifecycle hook: those surfaces may stop workloads in
+    // preparation for a switch and are not harmless merely because activation
+    // would eventually select the same store path.
+    if (previousResult.succeeded && previous == desired)
+    {
+        markDeploymentState(args.stateDir, manifest, "succeeded",
+            "Desired system generation was already current.");
+        emit("complete", "mcl deploy-apply", ["mcl", "deploy-apply"],
+            "succeeded", 0, "", "command_failed", "", [
+                "previousGeneration": JSONValue(previous),
+                "newGeneration": JSONValue(previous),
+                "outcome": JSONValue("already-current"),
+            ]);
+        if (deps.onAlreadyCurrent !is null)
+            deps.onAlreadyCurrent();
+        return 0;
+    }
+
     ProcessResult restore;
     string[] restoreArgv;
     if (args.restoreCommand != "")
@@ -507,8 +547,8 @@ int deployApplyImpl(DeployApplyArgs args, DeployApplyDependencies deps)
     else
     {
         auto restoreCommand = manifestSubstituters(manifest).length
-            ? ["nix", "copy", "--from", manifestSubstituters(manifest)[0], manifestDesiredSystemPath(manifest)]
-            : ["nix", "path-info", manifestDesiredSystemPath(manifest)];
+            ? ["nix", "copy", "--from", manifestSubstituters(manifest)[0], desired]
+            : ["nix", "path-info", desired];
         auto keys = manifestTrustedPublicKeys(manifest);
         if (keys.length)
             restoreCommand ~= ["--option", "trusted-public-keys", keys.join(" ")];
@@ -525,22 +565,6 @@ int deployApplyImpl(DeployApplyArgs args, DeployApplyDependencies deps)
     if (!restore.succeeded)
     {
         markDeploymentState(args.stateDir, manifest, "failed", "Closure restore failed.");
-        return 1;
-    }
-
-    auto desired = manifestDesiredSystemPath(manifest);
-    auto previousResult = currentGeneration(args, queryRunner);
-    auto previous = previousResult.stdout.strip;
-    if (
-        args.activationMode == DeploymentActivationMode.nixDarwin
-        && (!previousResult.succeeded || previous == "")
-    )
-    {
-        emit("switch", "query current generation", [], "failed", previousResult.exitCode,
-            "Failed to determine current system generation", "generation_query_failed",
-            previousResult.stderr.stderrSummary);
-        markDeploymentState(args.stateDir, manifest, "failed",
-            "Could not determine the previous system generation.");
         return 1;
     }
 

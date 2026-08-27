@@ -124,6 +124,12 @@ Retry handling is bounded:
 - A pre-switch readiness hook that exits with status 75 records `deferred`,
   remains retryable, and does not increment `attempts`. Other hook failures are
   ordinary apply failures and consume an attempt.
+- A higher authenticated sequence whose desired system path is already the
+  selected current generation is durably accepted and marked `succeeded` with
+  zero new attempts. It is a completed no-op, not a retryable deferral: closure
+  restore, pre/post hooks, profile selection, activation, health checks, and
+  rollback are all skipped. Exact replay then uses the ordinary byte-identical
+  convergence shortcut.
 - Wrong target, invalid manifest signature, invalid durable state, ambiguous
   source sequence, conflicting durable sequence identity, and exhausted retry
   budget are explicit non-retryable states.
@@ -138,14 +144,25 @@ need new arguments.
 
 `--activation-mode nix-darwin` uses the native nix-darwin transaction:
 
-1. Resolve the generation currently selected by `--system-profile` (default
+1. After authenticating and durably accepting the monotonic manifest identity,
+   resolve the generation currently selected by `--system-profile` (default
    `/nix/var/nix/profiles/system`).
-2. Atomically select the desired generation with `nix-env --profile ... --set`.
-3. Execute the desired generation's `activate` directly, without
+2. If it already equals the desired generation, mark the new identity
+   converged without restoring or entering any lifecycle/activation surface.
+3. Otherwise, restore the desired closure and atomically select it with
+   `nix-env --profile ... --set`.
+4. Execute the desired generation's `activate` directly, without
    `systemd-run`.
-4. If activation fails, atomically restore the previous profile and execute
+5. If activation fails, atomically restore the previous profile and execute
    the previous generation's `activate` before reporting failure. Automatic
    health-check rollback uses the same pair of operations.
+
+This ordering was hardened after an m3 incident where a newly published
+revision and sequence retained the exact current system store path. Entering
+the pre-switch hook for that non-transaction stopped CI resources even though
+there was no generation to activate. The equality decision therefore remains
+before closure restore and the pre-switch hook, while signature validation and
+durable high-water acceptance remain before the equality decision.
 
 The optional lifecycle hooks are executable paths, not shell fragments. The
 agent invokes them with separate arguments so generation values cannot be
@@ -305,8 +322,10 @@ Implemented M5 coverage:
 - Darwin public-entrypoint integration coverage for a trusted activation,
   unavailable desired state, wrong-target and invalid-signature rejection,
   parse/type/shape/target/signature durable-state corruption, recovery of a
-  later authentic deployment, JSON-schema-valid events, and non-destructive
-  lock contention.
+  later authentic deployment, a higher revision/sequence that is already the
+  selected profile with zero restore/hook/activation/health mutations and zero
+  attempts, exact replay, JSON-schema-valid events, and non-destructive lock
+  contention.
 
 Still required before production enablement:
 
