@@ -132,6 +132,11 @@ struct DeployApplyArgs
         .Description("Executable cleanup hook called with DESIRED PREVIOUS OUTCOME"))
     string postSwitchHook;
 
+    @(NamedArgument(["already-current-recovery-hook"])
+        .Placeholder("PATH")
+        .Description("Executable recovery-only probe called with DESIRED CURRENT before exact-current convergence"))
+    string alreadyCurrentRecoveryHook;
+
     @(NamedArgument(["event-log"])
         .Placeholder("events.jsonl")
         .Description("Write deployment events as JSONL")
@@ -195,6 +200,7 @@ struct DeployApplyDependencies
     DurableManifestSnapshot durableLatest;
     bool durableLatestBound;
     bool retryIdempotentManifest;
+    bool requireAlreadyCurrent;
     void delegate() beforeStateLock;
     void delegate() afterDurableValidation;
     void delegate() onAlreadyCurrent;
@@ -524,6 +530,55 @@ int deployApplyImpl(DeployApplyArgs args, DeployApplyDependencies deps)
     // would eventually select the same store path.
     if (previousResult.succeeded && previous == desired)
     {
+        // Tell the pull agent that this path did not start a new generation
+        // transaction even when lifecycle recovery below fails. Retry budget
+        // measures restore/switch attempts, not cleanup-only retries.
+        if (deps.onAlreadyCurrent !is null)
+            deps.onAlreadyCurrent();
+
+        // A host with lifecycle hooks may retain authenticated recovery state
+        // after the generation itself became current (for example when its
+        // post-switch resource restoration failed). The ordinary pre-switch
+        // hook cannot be reused here: on a clean host it may cordon workloads
+        // and create exactly the transaction this shortcut avoids. Require a
+        // dedicated probe/recovery contract instead, and fail closed when a
+        // lifecycle-enabled caller omitted it.
+        if (
+            args.alreadyCurrentRecoveryHook == ""
+            && (args.preSwitchHook != "" || args.postSwitchHook != "")
+        )
+        {
+            markDeploymentState(args.stateDir, manifest, "failed",
+                "Already-current lifecycle recovery hook is required.");
+            emit("complete", "mcl deploy-apply", ["mcl", "deploy-apply"],
+                "failed", 1,
+                "Already-current lifecycle recovery hook is required",
+                "missing_already_current_recovery_hook", "", [
+                    "previousGeneration": JSONValue(previous),
+                    "newGeneration": JSONValue(previous),
+                    "outcome": JSONValue("already-current-recovery-failed"),
+                ], true);
+            return 1;
+        }
+
+        auto recovery = runLifecycleHook(
+            runner, args.alreadyCurrentRecoveryHook, desired, previous);
+        if (!recovery.succeeded)
+        {
+            markDeploymentState(args.stateDir, manifest, "failed",
+                "Already-current lifecycle recovery failed.");
+            emit("complete", "mcl deploy-apply", ["mcl", "deploy-apply"],
+                "failed", recovery.exitCode,
+                "Already-current lifecycle recovery failed",
+                "already_current_recovery_failed", recovery.stderr.stderrSummary, [
+                    "previousGeneration": JSONValue(previous),
+                    "newGeneration": JSONValue(previous),
+                    "outcome": JSONValue("already-current-recovery-failed"),
+                    "lifecycleStage": JSONValue("already-current-recovery"),
+                ], true);
+            return 1;
+        }
+
         markDeploymentState(args.stateDir, manifest, "succeeded",
             "Desired system generation was already current.");
         emit("complete", "mcl deploy-apply", ["mcl", "deploy-apply"],
@@ -531,10 +586,31 @@ int deployApplyImpl(DeployApplyArgs args, DeployApplyDependencies deps)
                 "previousGeneration": JSONValue(previous),
                 "newGeneration": JSONValue(previous),
                 "outcome": JSONValue("already-current"),
+                "lifecycleRecoveryChecked": JSONValue(
+                    args.alreadyCurrentRecoveryHook != ""),
             ]);
-        if (deps.onAlreadyCurrent !is null)
-            deps.onAlreadyCurrent();
         return 0;
+    }
+
+    // A retry whose transaction budget is already exhausted may enter this
+    // function only to complete exact-current lifecycle recovery. The agent's
+    // earlier equality preflight is deliberately not trusted as an authority:
+    // another activation can move the profile between that read and this one.
+    // Re-check at the last boundary before restore and every ordinary lifecycle
+    // or activation surface, and preserve the exhausted budget on mismatch.
+    if (deps.requireAlreadyCurrent)
+    {
+        markDeploymentState(args.stateDir, manifest, "failed",
+            "Retry budget exhausted before exact-current recovery.");
+        emit("complete", "mcl deploy-apply", ["mcl", "deploy-apply"],
+            "failed", 1,
+            "Retry budget exhausted before exact-current recovery",
+            "retry_budget_exhausted", "", [
+                "desiredGeneration": JSONValue(desired),
+                "observedGeneration": JSONValue(previous),
+                "outcome": JSONValue("retry-budget-exhausted"),
+            ]);
+        return 1;
     }
 
     ProcessResult restore;

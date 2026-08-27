@@ -16,7 +16,7 @@ import std.uuid : randomUUID;
 import argparse : Command, Description, EnvFallback, NamedArgument, Placeholder;
 
 import mcl.commands.deploy_apply : DeploymentActivationMode, DeployApplyArgs,
-    DeployApplyDependencies, deployApplyDeferredExitCode,
+    DeployApplyDependencies, currentGeneration, deployApplyDeferredExitCode,
     deployApplyManifestConflictExitCode, deployApplyImpl, validateDurableManifest;
 import mcl.utils.deploy_manifest : manifestDeploymentId, manifestDesiredSystemPath,
     manifestSequence, manifestSystem, manifestTarget, verifyManifestSignature;
@@ -86,6 +86,11 @@ struct DeployAgentArgs
         .Placeholder("PATH")
         .Description("Executable cleanup hook called with DESIRED PREVIOUS OUTCOME"))
     string postSwitchHook;
+
+    @(NamedArgument(["already-current-recovery-hook"])
+        .Placeholder("PATH")
+        .Description("Executable recovery-only probe called with DESIRED CURRENT before exact-current convergence"))
+    string alreadyCurrentRecoveryHook;
 
     @(NamedArgument(["event-log"])
         .Placeholder("events.jsonl")
@@ -532,13 +537,29 @@ int deployAgentImpl(DeployAgentArgs args, DeployAgentDependencies deps)
         return 0;
     }
 
-    if (previousAttempts >= args.maxAttempts)
+    auto recoveryOnlyAtExhaustedBudget = previousAttempts >= args.maxAttempts;
+    if (recoveryOnlyAtExhaustedBudget)
     {
-        auto status = writeAgentStatus(args.stateDir, args.target, deploymentId, sequence,
-            "non-retryable", previousAttempts, args.maxAttempts, false,
-            "Retry budget exhausted for this deployment.", "retry_budget_exhausted");
-        writeln(status.toString(JSONOptions.doNotEscapeSlashes));
-        return 1;
+        // Retry budget bounds restore/switch transactions, but it must never
+        // strand host lifecycle recovery after a transaction selected the
+        // desired generation and its cleanup failed. This authenticated,
+        // lock-held, read-only preflight permits only the exact-current path
+        // below; a non-current generation remains exhausted without reaching
+        // deploy-apply or any mutation surface.
+        DeployApplyArgs generationArgs;
+        generationArgs.activationMode = args.activationMode;
+        generationArgs.systemProfile = args.systemProfile;
+        generationArgs.generationCommand = args.generationCommand;
+        auto generation = currentGeneration(generationArgs, deps.queryProcess);
+        if (!generation.succeeded
+            || generation.stdout.strip != manifestDesiredSystemPath(manifest))
+        {
+            auto status = writeAgentStatus(args.stateDir, args.target, deploymentId, sequence,
+                "non-retryable", previousAttempts, args.maxAttempts, false,
+                "Retry budget exhausted for this deployment.", "retry_budget_exhausted");
+            writeln(status.toString(JSONOptions.doNotEscapeSlashes));
+            return 1;
+        }
     }
 
     auto temp = tempDir.buildPath("mcl-deploy-agent-" ~ randomUUID.toString);
@@ -557,6 +578,7 @@ int deployAgentImpl(DeployAgentArgs args, DeployAgentDependencies deps)
     applyArgs.systemProfile = args.systemProfile;
     applyArgs.preSwitchHook = args.preSwitchHook;
     applyArgs.postSwitchHook = args.postSwitchHook;
+    applyArgs.alreadyCurrentRecoveryHook = args.alreadyCurrentRecoveryHook;
     applyArgs.eventLog = eventLogPath;
     applyArgs.dryRun = args.dryRun;
     applyArgs.restoreCommand = args.restoreCommand;
@@ -575,6 +597,7 @@ int deployAgentImpl(DeployAgentArgs args, DeployAgentDependencies deps)
         durableLatest: durableLatest,
         durableLatestBound: true,
         retryIdempotentManifest: true,
+        requireAlreadyCurrent: recoveryOnlyAtExhaustedBudget,
         onAlreadyCurrent: { alreadyCurrent = true; },
     ));
 
@@ -603,9 +626,11 @@ int deployAgentImpl(DeployAgentArgs args, DeployAgentDependencies deps)
     // restore, lifecycle hook, activation, health check, or rollback, so it
     // succeeds without consuming the retry budget. This is distinct from a
     // readiness deferral above: the no-op is converged and non-retryable.
-    auto attempts = previousAttempts + (alreadyCurrent ? 0 : 1);
+    auto attempts = previousAttempts
+        + (alreadyCurrent || recoveryOnlyAtExhaustedBudget ? 0 : 1);
     auto succeeded = result == 0;
-    auto exhausted = !succeeded && attempts >= args.maxAttempts;
+    auto exhausted = !succeeded && !alreadyCurrent
+        && (recoveryOnlyAtExhaustedBudget || attempts >= args.maxAttempts);
     auto status = writeAgentStatus(args.stateDir, args.target, deploymentId, sequence,
         succeeded ? "succeeded" : exhausted ? "non-retryable" : "failed",
         attempts,
@@ -614,9 +639,12 @@ int deployAgentImpl(DeployAgentArgs args, DeployAgentDependencies deps)
         succeeded ? alreadyCurrent
             ? "Desired system generation was already current."
             : "Deployment converged."
+            : alreadyCurrent
+                ? "Already-current lifecycle recovery failed; retry remains available."
             : exhausted ? "Retry budget exhausted for this deployment."
             : "Deployment apply failed; retry remains available.",
-        succeeded ? "" : exhausted ? "retry_budget_exhausted" : "apply_failed");
+        succeeded ? "" : alreadyCurrent ? "already_current_recovery_failed"
+            : exhausted ? "retry_budget_exhausted" : "apply_failed");
     writeln(status.toString(JSONOptions.doNotEscapeSlashes));
     return result;
 }
@@ -667,7 +695,7 @@ unittest
     args.trustedManifestPublicKey = publicKey;
     args.stateDir = stateDir;
     args.eventLog = eventLog;
-    args.maxAttempts = 3;
+    args.maxAttempts = 1;
     args.dryRun = true;
 
     uint mutations;
@@ -1489,6 +1517,7 @@ unittest
 
     uint restoreRuns;
     uint preHookRuns;
+    uint recoveryHookRuns;
     uint otherUnsafeMutations;
     ProcessResult poisonMutation(string[] command)
     {
@@ -1501,6 +1530,11 @@ unittest
         {
             preHookRuns++;
             return ProcessResult(97, "", "poison pre-switch hook ran");
+        }
+        if (command == ["/hooks/already-current-recovery", desired, desired])
+        {
+            recoveryHookRuns++;
+            return ProcessResult(0, "", "");
         }
         otherUnsafeMutations++;
         return ProcessResult(97, "", "unsafe deployment surface ran: " ~ command.join(" "));
@@ -1531,16 +1565,37 @@ unittest
     args.generationCommand = "current-generation";
     args.preSwitchHook = "/hooks/poison-pre";
     args.postSwitchHook = "/hooks/poison-post";
+    auto statusPath = agentStatusPath(stateDir, "target");
+    auto desiredPath = manifestStatePath(stateDir, "desired", "deploy-11");
+    auto currentPath = manifestStatePath(stateDir, "current", "deploy-11");
+    auto convergedPath = manifestStatePath(stateDir, "converged", "deploy-11");
+
+    // Lifecycle-enabled callers fail closed when they omit the dedicated
+    // equality recovery contract. The authentic high-water identity is kept,
+    // but the generation is not converged and no transaction attempt or unsafe
+    // deployment surface is consumed.
+    assert(deployAgentImpl(args, DeployAgentDependencies(
+        runProcess: &poisonMutation,
+        queryProcess: &realEngineQuery,
+    )) == 1);
+    auto missingHookStatus = statusPath.readText.parseJSON;
+    assert(missingHookStatus["currentState"].str == "failed");
+    assert(missingHookStatus["attempts"].integer == 0);
+    assert(missingHookStatus["retryable"].boolean);
+    assert(missingHookStatus["errorCode"].str == "already_current_recovery_failed");
+    assert(!convergedPath.exists);
+    assert(restoreRuns == 0);
+    assert(preHookRuns == 0);
+    assert(recoveryHookRuns == 0);
+    assert(otherUnsafeMutations == 0);
+
+    args.alreadyCurrentRecoveryHook = "/hooks/already-current-recovery";
     assert(deployAgentImpl(args, DeployAgentDependencies(
         runProcess: &poisonMutation,
         queryProcess: &realEngineQuery,
     )) == 0);
 
     auto exactManifestBytes = manifestPath.readText;
-    auto statusPath = agentStatusPath(stateDir, "target");
-    auto desiredPath = manifestStatePath(stateDir, "desired", "deploy-11");
-    auto currentPath = manifestStatePath(stateDir, "current", "deploy-11");
-    auto convergedPath = manifestStatePath(stateDir, "converged", "deploy-11");
     auto status = statusPath.readText.parseJSON;
     assert(status["deploymentId"].str == "deploy-11");
     assert(status["sequence"].integer == 11);
@@ -1554,6 +1609,7 @@ unittest
     assert(convergedPath.readText.parseJSON["currentState"].str == "succeeded");
     assert(restoreRuns == 0);
     assert(preHookRuns == 0);
+    assert(recoveryHookRuns == 1);
     assert(otherUnsafeMutations == 0);
 
     auto events = eventLog.readText
@@ -1562,11 +1618,15 @@ unittest
         .map!(line => line.parseJSON)
         .filter!(event => event["deploymentId"].str == "deploy-11")
         .array;
-    assert(events.length == 2);
+    assert(events.length == 4);
     assert(events[0]["phase"].str == "activate-requested");
     assert(events[1]["phase"].str == "complete");
-    assert(events[1]["command"]["status"].str == "succeeded");
-    assert(events[1]["metadata"]["outcome"].str == "already-current");
+    assert(events[1]["command"]["status"].str == "failed");
+    assert(events[1]["error"]["code"].str == "missing_already_current_recovery_hook");
+    assert(events[2]["phase"].str == "activate-requested");
+    assert(events[3]["phase"].str == "complete");
+    assert(events[3]["command"]["status"].str == "succeeded");
+    assert(events[3]["metadata"]["outcome"].str == "already-current");
     assert(!events.canFind!(event => event["phase"].str == "agent-restore"));
     assert(!events.canFind!(event => event["phase"].str == "switch"));
     assert(!events.canFind!(event => event["phase"].str == "healthcheck"));
@@ -1590,5 +1650,221 @@ unittest
     assert(eventLog.readText == eventsBeforeReplay);
     assert(restoreRuns == 0);
     assert(preHookRuns == 0);
+    assert(recoveryHookRuns == 1);
     assert(otherUnsafeMutations == 0);
+}
+
+@("test_deploy_agent_already_current_completes_pending_recovery_before_convergence")
+unittest
+{
+    import mcl.utils.deploy_manifest : ManifestBuildRequest, ManifestSigningRequest,
+        buildManifest, signManifest;
+
+    auto base = uniqueDeployStateTestPath("deploy-agent-already-current-recovery");
+    auto keyPath = base ~ ".ed25519";
+    auto stateDir = base ~ ".state";
+    auto manifestPath = base ~ ".manifest.json";
+    auto eventLog = base ~ ".events.jsonl";
+    scope(exit)
+    {
+        foreach (path; [base, keyPath, keyPath ~ ".pub", manifestPath, eventLog])
+            if (path.exists) path.remove;
+        if (stateDir.exists) stateDir.rmdirRecurse;
+    }
+
+    auto keygen = runProcessCapture([
+        "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", keyPath,
+    ]);
+    assert(keygen.succeeded, keygen.stderr);
+    auto desired = "/nix/store/88888888888888888888888888888888-darwin-system";
+    auto previous = "/nix/store/99999999999999999999999999999999-darwin-system";
+    auto manifest = signManifest(buildManifest(ManifestBuildRequest(
+        deploymentId: "deploy-recovery",
+        target: "m3",
+        system: "aarch64-darwin",
+        gitRevision: "8888888888888888888888888888888888888888",
+        sequence: 8,
+        desiredSystemPath: desired,
+    )), ManifestSigningRequest(keyPath: keyPath, keyId: "mcl-deployment"));
+    manifestPath.write(manifest.toString(JSONOptions.doNotEscapeSlashes));
+
+    string current = previous;
+    bool retainedRecovery;
+    bool failRecovery = true;
+    bool simulateGenerationRace;
+    uint generationRaceReads;
+    uint restoreRuns;
+    uint preRuns;
+    uint profileSets;
+    uint activations;
+    uint postRuns;
+    uint recoveryRuns;
+    ProcessResult fakeRun(string[] command)
+    {
+        if (command == ["/bin/sh", "-c", "restore"])
+        {
+            restoreRuns++;
+            return ProcessResult(0, "", "");
+        }
+        if (command == ["/hooks/pre", desired, previous])
+        {
+            preRuns++;
+            return ProcessResult(0, "", "");
+        }
+        if (command == ["nix-env", "--profile", base ~ ".profile", "--set", desired])
+        {
+            profileSets++;
+            current = desired;
+            return ProcessResult(0, "", "");
+        }
+        if (command == [desired ~ "/activate"])
+        {
+            activations++;
+            return ProcessResult(0, "", "");
+        }
+        if (command == ["/hooks/post", desired, previous, "succeeded"])
+        {
+            postRuns++;
+            retainedRecovery = true;
+            return ProcessResult(91, "", "CI restoration failed");
+        }
+        if (command == ["/hooks/already-current-recovery", desired, desired])
+        {
+            recoveryRuns++;
+            assert(retainedRecovery);
+            if (failRecovery)
+                return ProcessResult(92, "", "CI recovery still failed");
+            retainedRecovery = false;
+            return ProcessResult(0, "", "");
+        }
+        return ProcessResult(97, "", "unexpected mutation: " ~ command.join(" "));
+    }
+    ProcessResult fakeQuery(string[] command)
+    {
+        if (command == ["/bin/sh", "-c", "current-generation"])
+        {
+            if (simulateGenerationRace)
+            {
+                generationRaceReads++;
+                return ProcessResult(0,
+                    (generationRaceReads == 1 ? desired : previous) ~ "\n", "");
+            }
+            return ProcessResult(0, current ~ "\n", "");
+        }
+        return ProcessResult(0, "{}", "");
+    }
+
+    DeployAgentArgs args;
+    args.target = "m3";
+    args.manifests = [manifestPath];
+    args.trustedManifestPublicKey = (keyPath ~ ".pub").readText.strip;
+    args.stateDir = stateDir;
+    args.eventLog = eventLog;
+    args.maxAttempts = 1;
+    args.activationMode = DeploymentActivationMode.nixDarwin;
+    args.systemProfile = base ~ ".profile";
+    args.generationCommand = "current-generation";
+    args.restoreCommand = "restore";
+    args.preSwitchHook = "/hooks/pre";
+    args.postSwitchHook = "/hooks/post";
+    args.alreadyCurrentRecoveryHook = "/hooks/already-current-recovery";
+
+    // The generation transaction succeeds, but its lifecycle cleanup fails and
+    // leaves authenticated recovery state behind. This consumes one attempt.
+    assert(deployAgentImpl(args, DeployAgentDependencies(
+        runProcess: &fakeRun,
+        queryProcess: &fakeQuery,
+    )) == 1);
+    auto statusPath = agentStatusPath(stateDir, "m3");
+    auto status = statusPath.readText.parseJSON;
+    assert(status["currentState"].str == "non-retryable");
+    assert(status["attempts"].integer == 1);
+    assert(!status["retryable"].boolean);
+    assert(status["errorCode"].str == "retry_budget_exhausted");
+    assert(current == desired);
+    assert(retainedRecovery);
+    assert(restoreRuns == 1);
+    assert(preRuns == 1);
+    assert(profileSets == 1);
+    assert(activations == 1);
+    assert(postRuns == 1);
+    assert(recoveryRuns == 0);
+
+    // The profile can change after the max-attempt preflight but before the
+    // apply-side equality decision. That race must fail closed at the last
+    // boundary before restore and ordinary lifecycle/activation work, while
+    // preserving the exhausted attempt count.
+    simulateGenerationRace = true;
+    generationRaceReads = 0;
+    assert(deployAgentImpl(args, DeployAgentDependencies(
+        runProcess: &fakeRun,
+        queryProcess: &fakeQuery,
+    )) == 1);
+    simulateGenerationRace = false;
+    status = statusPath.readText.parseJSON;
+    assert(generationRaceReads == 2);
+    assert(status["currentState"].str == "non-retryable");
+    assert(status["attempts"].integer == 1);
+    assert(!status["retryable"].boolean);
+    assert(status["errorCode"].str == "retry_budget_exhausted");
+    assert(!manifestStatePath(stateDir, "converged", "deploy-recovery").exists);
+    assert(retainedRecovery);
+    assert(recoveryRuns == 0);
+    assert(restoreRuns == 1);
+    assert(preRuns == 1);
+    assert(profileSets == 1);
+    assert(activations == 1);
+    assert(postRuns == 1);
+
+    // Exact-current is not convergence while retained lifecycle recovery still
+    // fails. Recovery is not a second deployment transaction, so the attempt
+    // count stays at one and the retry remains available.
+    assert(deployAgentImpl(args, DeployAgentDependencies(
+        runProcess: &fakeRun,
+        queryProcess: &fakeQuery,
+    )) == 1);
+    status = statusPath.readText.parseJSON;
+    assert(status["currentState"].str == "failed");
+    assert(status["attempts"].integer == 1);
+    assert(status["maxAttempts"].integer == 1);
+    assert(status["retryable"].boolean);
+    assert(!manifestStatePath(stateDir, "converged", "deploy-recovery").exists);
+    assert(retainedRecovery);
+    assert(recoveryRuns == 1);
+    assert(restoreRuns == 1);
+    assert(preRuns == 1);
+    assert(profileSets == 1);
+    assert(activations == 1);
+    assert(postRuns == 1);
+
+    // A later recovery-only success clears the retained state before the same
+    // generation can be declared converged. It still consumes no new attempt
+    // and does not re-enter any deployment mutation surface.
+    failRecovery = false;
+    assert(deployAgentImpl(args, DeployAgentDependencies(
+        runProcess: &fakeRun,
+        queryProcess: &fakeQuery,
+    )) == 0);
+    status = statusPath.readText.parseJSON;
+    assert(status["currentState"].str == "succeeded");
+    assert(status["attempts"].integer == 1);
+    assert(!status["retryable"].boolean);
+    assert(!retainedRecovery);
+    assert(recoveryRuns == 2);
+    assert(restoreRuns == 1);
+    assert(preRuns == 1);
+    assert(profileSets == 1);
+    assert(activations == 1);
+    assert(postRuns == 1);
+    assert(manifestStatePath(stateDir, "converged", "deploy-recovery").exists);
+
+    auto statusBeforeReplay = statusPath.readText;
+    auto eventsBeforeReplay = eventLog.readText;
+    assert(deployAgentImpl(args, DeployAgentDependencies(
+        runProcess: &fakeRun,
+        queryProcess: &fakeQuery,
+    )) == 0);
+    assert(statusPath.readText == statusBeforeReplay);
+    assert(eventLog.readText == eventsBeforeReplay);
+    assert(recoveryRuns == 2);
 }

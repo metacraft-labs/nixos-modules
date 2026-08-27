@@ -125,11 +125,20 @@ Retry handling is bounded:
   remains retryable, and does not increment `attempts`. Other hook failures are
   ordinary apply failures and consume an attempt.
 - A higher authenticated sequence whose desired system path is already the
-  selected current generation is durably accepted and marked `succeeded` with
-  zero new attempts. It is a completed no-op, not a retryable deferral: closure
-  restore, pre/post hooks, profile selection, activation, health checks, and
-  rollback are all skipped. Exact replay then uses the ordinary byte-identical
-  convergence shortcut.
+  selected current generation is durably accepted with zero new transaction
+  attempts. A lifecycle-enabled deployment must first run its dedicated
+  `--already-current-recovery-hook`: exit zero certifies clean lifecycle state
+  or completes retained recovery, while failure remains retryable without
+  falsely recording convergence or consuming another activation attempt. Only
+  then is the identity marked `succeeded`. Closure restore, ordinary pre/post
+  hooks, profile selection, activation, health checks, and rollback are all
+  skipped. This recovery-only path remains available when the transaction
+  retry budget is exhausted, but only after an authenticated, lock-held check
+  proves that the selected generation exactly equals the desired generation.
+  The apply engine repeats that equality check at the final boundary before
+  restore and ordinary lifecycle/activation work, so a concurrent profile
+  change cannot turn the recovery exception into another transaction. Exact
+  replay then uses the ordinary byte-identical convergence shortcut.
 - Wrong target, invalid manifest signature, invalid durable state, ambiguous
   source sequence, conflicting durable sequence identity, and exhausted retry
   budget are explicit non-retryable states.
@@ -147,8 +156,11 @@ need new arguments.
 1. After authenticating and durably accepting the monotonic manifest identity,
    resolve the generation currently selected by `--system-profile` (default
    `/nix/var/nix/profiles/system`).
-2. If it already equals the desired generation, mark the new identity
-   converged without restoring or entering any lifecycle/activation surface.
+2. If it already equals the desired generation, invoke only the configured
+   recovery probe and require it to certify clean or recovered lifecycle state.
+   Lifecycle-enabled callers that omit this hook fail closed. A successful
+   probe marks the new identity converged without restore, ordinary pre/post
+   hooks, profile mutation, activation, health checks, or rollback.
 3. Otherwise, restore the desired closure and atomically select it with
    `nix-env --profile ... --set`.
 4. Execute the desired generation's `activate` directly, without
@@ -164,6 +176,24 @@ there was no generation to activate. The equality decision therefore remains
 before closure restore and the pre-switch hook, while signature validation and
 durable high-water acceptance remain before the equality decision.
 
+A second m3 incident exposed the inverse edge: activation had selected the
+desired generation, but post-switch CI restoration failed and retained its
+authenticated recovery journal. An identical retry therefore observed the
+desired path as current even though host lifecycle state was not clean. The
+generic engine cannot infer a host's recovery format, so
+`--already-current-recovery-hook` is a separate executable contract called only
+on equality, with `DESIRED_GENERATION CURRENT_GENERATION`. It must validate or
+complete retained state without beginning a new deployment transaction. It is
+not the pre-switch hook: invoking normal preparation on a clean equality would
+recreate the first incident.
+
+This repository provides the engine and nix-darwin option, not m3's
+host-specific recovery implementation. The infra consumer must provide a
+dedicated `m3-phase deploy-recover` executable (or an equivalent recovery-only
+command) and set `alreadyCurrentRecoveryHook` to it before enabling m3's
+lifecycle hooks; the module assertion deliberately rejects that configuration
+when the recovery hook is missing.
+
 The optional lifecycle hooks are executable paths, not shell fragments. The
 agent invokes them with separate arguments so generation values cannot be
 reinterpreted as shell syntax:
@@ -171,6 +201,7 @@ reinterpreted as shell syntax:
 ```text
 PRE_SWITCH_HOOK  DESIRED_GENERATION PREVIOUS_GENERATION
 POST_SWITCH_HOOK DESIRED_GENERATION PREVIOUS_GENERATION OUTCOME
+ALREADY_CURRENT_RECOVERY_HOOK DESIRED_GENERATION CURRENT_GENERATION
 ```
 
 The pre-switch hook runs after closure restoration and generation discovery,
@@ -323,7 +354,9 @@ Implemented M5 coverage:
   unavailable desired state, wrong-target and invalid-signature rejection,
   parse/type/shape/target/signature durable-state corruption, recovery of a
   later authentic deployment, a higher revision/sequence that is already the
-  selected profile with zero restore/hook/activation/health mutations and zero
+  selected profile, injected recovery-only failure without false convergence,
+  successful retained-state recovery, a separate clean-state probe, zero
+  restore/ordinary-hook/profile/activation/health mutations and zero new
   attempts, exact replay, JSON-schema-valid events, and non-destructive lock
   contention.
 
