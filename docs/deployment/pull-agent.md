@@ -1,27 +1,30 @@
 # Deployment Pull Agent
 
-M5 adds an optional target-side pull path for hosts that cannot be reached
-reliably by the push reconciler. It is a prototype and is not enabled on
-production machines by the generic module.
+This module provides the opt-in target-side deployment path for NixOS and
+nix-darwin. It is production-capable, but importing the generic module never
+enables deployment by itself: the consuming infrastructure repository owns
+target selection, manifest publication, trust roots, credentials, lifecycle
+hooks, health policy, and rollout approval. Metacraft's production enablement
+and operator runbook live in the `metacraft-labs/infra` repository.
 
-## Controller Shape
+## Architecture
 
-The selected M5 shape is hybrid:
+The selected shape is publisher plus pull agent:
 
-- CI or a cron reconciler remains responsible for building closures, pushing
-  them to Cachix or Attic, creating signed desired-state manifests, and
-  publishing only the manifests a target is allowed to read.
+- CI or another publisher remains responsible for building closures, pushing
+  them to an authenticated binary cache, creating signed desired-state
+  manifests, and publishing only the manifests a target is allowed to read.
 - The target-side `mcl-deploy-agent` service polls configured manifest files,
   directories, or HTTP(S) URLs and applies the latest signed manifest for its
   own target.
-- No persistent central controller is introduced in M5. A persistent service
+- No persistent central controller is required. A persistent service
   can still be added later if full-topology rehearsals prove that the simpler
   publisher plus pull-agent model is insufficient.
-- Cachix Deploy remains the production fallback while this path is tested.
 
-This keeps the new target-side behavior small and preserves the M4 signed
-manifest and `deploy-apply` format. The agent does not define a second desired
-state protocol.
+This keeps the target-side behavior small and preserves the signed manifest and
+`deploy-apply` format. The agent does not define a second desired
+state protocol. Cache selection is intentionally consumer-owned; the Metacraft
+production integration uses private Attic and has no Cachix Deploy fallback.
 
 ## Target Rules
 
@@ -50,9 +53,10 @@ directories. A shared mixed-target directory is rejected by design.
 The pull agent reuses the M4 deployment state directory and event stream:
 
 - Desired/current/failed/superseded/converged state stays under
-  `/var/lib/mcl/deployments`.
+  `/var/lib/mcl/deployments` on NixOS or the canonical
+  `/private/var/lib/mcl/deployments` path on Darwin.
 - Agent status is written only to
-  `/var/lib/mcl/deployments/agent-status/<target>.json`.
+  `<stateDir>/agent-status/<target>.json`.
 - `targets/<target>.json` is the complete signed desired-state manifest and is
   replaced atomically with mode `0640`. Before its deployment identity or
   sequence is used as a high-water mark, the agent binds the exact durable
@@ -321,7 +325,7 @@ Like the NixOS module, importing the Darwin module does not enable it.
 
 ## Verification
 
-Implemented M5 coverage:
+Current automated coverage:
 
 - Focused D unit tests for latest-only selection, wrong-target rejection,
   retry budget behavior, authenticated durable high-water validation, and
@@ -360,9 +364,12 @@ Implemented M5 coverage:
   attempts, exact replay, JSON-schema-valid events, and non-destructive lock
   contention.
 
-Still required before production enablement:
+## Consumer Integration Boundary
 
-- Full-topology Incus/LXC rehearsal covering runner, cache, publisher,
-  unreachable target, reconnection, and latest-only apply.
-- Production canary with Cachix Deploy still available as fallback.
-- Approval gates for sensitive targets at the manifest publishing layer.
+Before enabling a new production target, the consumer must test the complete
+publisher/cache/target topology, including an unreachable target, reconnection,
+latest-only selection, activation failure and rollback. Sensitive-target
+approval belongs at manifest publication; the generic target agent cannot
+infer organizational policy. A consumer must also provide monitoring for both
+the agent's durable desired/actual state and its structured event log—a healthy
+binary-cache request is not proof that the target activated the closure.
