@@ -102,8 +102,172 @@ runs:
         GH_TOKEN: ${{ github.token }}
       shell: bash
       run: |
+        # -------------------------------------------------------------------
+        # WHY THIS STEP LOOKS LIKE THIS
+        #
+        # It used to be one line:
+        #
+        #     gh api /rate_limit | jq || true
+        #
+        # This is the FIRST step of the action, so it runs BEFORE Nix is
+        # provisioned -- and on these runner images `gh` and `jq` come FROM
+        # Nix, not from the image. Both invocations died with `command not
+        # found`, `|| true` swallowed the exit status, and the step reported
+        # `conclusion=success` on every job that provisions Nix while
+        # measuring nothing whatsoever.
+        #
+        # So the one instrument in the pipeline that reports an API budget
+        # has never emitted a single number, and its greenness said only that
+        # `|| true` works. A diagnostic that cannot fail cannot report.
+        #
+        # `curl` IS on the image, so this uses curl, and it parses the JSON
+        # with bash parameter expansion so the step acquires no dependency
+        # that Nix would have to supply first. It now FAILS when it cannot
+        # measure -- a missing curl, a non-200, or a response it cannot
+        # parse -- because "the instrument is broken" and "the budget is
+        # healthy" must never again be the same colour.
+        #
+        # WHAT THIS DOES NOT MEASURE -- stated here so the number is not
+        # misread by the next person who needs it:
+        #
+        #   `/rate_limit` reports REST API budgets ONLY. The buckets it
+        #   returns are core, search, graphql, code_search and
+        #   integration_manifest. GitHub exposes NO budget for git over
+        #   HTTPS, and `git clone` / `git fetch` / upload-pack traffic is
+        #   not metered by `core`.
+        #
+        #   Therefore a healthy `remaining` here is NOT evidence that a git
+        #   fetch will succeed, and an exhausted one is NOT the explanation
+        #   for a clone that failed. If you are chasing
+        #   `fatal: could not read Username for 'https://github.com'`, this
+        #   number can neither confirm nor refute it -- that failure is an
+        #   HTTP 401 on the `POST /<repo>/git-upload-pack` half of the fetch,
+        #   and it has to be measured there.
+        # -------------------------------------------------------------------
+        set -uo pipefail
+
         echo "::group::GH API rate limits"
-        gh api /rate_limit | jq || true
+
+        if ! command -v curl >/dev/null 2>&1; then
+          echo "::error::curl is not on this runner image, so the GH API rate limit cannot be read. This step measures nothing; do not treat other steps' success as evidence about API budgets."
+          echo "::endgroup::"
+          exit 1
+        fi
+
+        auth=()
+        if [ -n "${GH_TOKEN:-}" ]; then
+          # Through the environment and into a header array -- never onto a
+          # command line, where anything reading /proc could see it.
+          auth=(-H "Authorization: Bearer ${GH_TOKEN}")
+        else
+          echo "NOTE: no GH_TOKEN in the environment; querying anonymously."
+        fi
+
+        # RETRY TRANSPORT FAILURES, BUT NEVER CREDENTIAL ONES.
+        #
+        # This step now fails the job when it cannot measure, and this action
+        # provisions Nix for many repositories -- so a single api.github.com
+        # hiccup must not redden every one of them. Three attempts with a
+        # short backoff separate "GitHub blinked" from "this is broken".
+        #
+        # 401/403 are NOT retried: bad or missing credentials will still be
+        # bad three seconds later, and retrying only delays the report.
+        body="$(mktemp)"
+        status="000"
+        for attempt in 1 2 3; do
+          status="$(curl -sS -o "${body}" -w '%{http_code}' --max-time 30 \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            ${auth[@]+"${auth[@]}"} \
+            https://api.github.com/rate_limit 2>/dev/null)" || status="000"
+
+          case "${status}" in
+            200) break ;;
+            401|403) break ;;
+            *)
+              if [ "${attempt}" -lt 3 ]; then
+                echo "attempt ${attempt}: HTTP ${status} from /rate_limit; retrying"
+                sleep "$((attempt * 2))"
+              fi
+              ;;
+          esac
+        done
+
+        if [ "${status}" != "200" ]; then
+          # 401/403 is the case worth failing loudest on: the token this job
+          # was handed is absent, expired or malformed, and every later
+          # authenticated step will hit the same wall -- but silently.
+          echo "::error::GET /rate_limit returned HTTP ${status} after ${attempt} attempt(s); the API budget could not be read."
+          echo "--- response body (first 400 bytes) ---"
+          head -c 400 "${body}" 2>/dev/null || true
+          echo
+          rm -f "${body}"
+          echo "::endgroup::"
+          exit 1
+        fi
+
+        json="$(cat "${body}")"
+        rm -f "${body}"
+
+        # Whitespace-strip so this parses pretty-printed and compact JSON
+        # alike. Safe here specifically because every value in the `core`
+        # bucket is a number -- there is no string whose spaces matter.
+        compact="${json//[$' \t\n\r']/}"
+
+        core="${compact#*\"core\":\{}"
+        core="${core%%\}*}"
+
+        if [ "${core}" = "${compact}" ] || [ -z "${core}" ]; then
+          echo "::error::No \"core\" bucket in the /rate_limit response; this step could not parse what GitHub returned."
+          printf '%s\n' "${json}" | head -c 400
+          echo
+          echo "::endgroup::"
+          exit 1
+        fi
+
+        field() {
+          local rest="${core#*\"$1\":}"
+          printf '%s' "${rest%%,*}"
+        }
+
+        limit="$(field limit)"
+        remaining="$(field remaining)"
+        used="$(field used)"
+        reset="$(field reset)"
+
+        case "${limit}|${remaining}|${used}|${reset}" in
+          *[!0-9\|]* | *'||'* | '|'* | *'|')
+            echo "::error::/rate_limit returned a core bucket this step could not parse into numbers."
+            printf '  core = %s\n' "${core}" | head -c 300
+            echo
+            echo "::endgroup::"
+            exit 1
+            ;;
+        esac
+
+        reset_human="$(date -u -d "@${reset}" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null \
+          || date -u -r "${reset}" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null \
+          || echo 'unix seconds')"
+
+        echo "core.limit     : ${limit}"
+        echo "core.remaining : ${remaining}"
+        echo "core.used      : ${used}"
+        echo "core.reset     : ${reset} (${reset_human})"
+
+        # The LIMIT says which identity GitHub billed this to, and that is
+        # worth more than the remaining count: it is the only cheap way to
+        # notice that a token was never sent or was silently ignored.
+        case "${limit}" in
+          60)    echo "IDENTITY: limit=60 -> UNAUTHENTICATED. The token was not sent or was rejected, and every API call in this job shares one budget with every other job on this runner's egress IP." ;;
+          5000)  echo "IDENTITY: limit=5000 -> authenticated as a user or GITHUB_TOKEN." ;;
+          15000) echo "IDENTITY: limit=15000 -> authenticated as a GitHub App installation." ;;
+          *)     echo "IDENTITY: limit=${limit} -> unrecognised tier; record this if it recurs." ;;
+        esac
+
+        if [ "${remaining}" -lt 100 ]; then
+          echo "::warning::Only ${remaining} of ${limit} REST API requests remain (resets at ${reset_human})."
+        fi
+
         echo "::endgroup::"
 
     - name: Check if Nix is available
