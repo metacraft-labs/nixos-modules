@@ -243,6 +243,30 @@ type Config struct {
 	// backends. Backs HR2.
 	IncusNestedKvm bool `toml:"incus_nested_kvm"`
 
+	// IncusLimitsCPU, when non-empty, is written verbatim to each per-job
+	// container's `limits.cpu` before start:
+	//   incus config set <name> limits.cpu <IncusLimitsCPU>
+	//
+	// Incus accepts either a COUNT ("8") or an explicit CPU SET ("0-7",
+	// "0,2,4"). A count is dynamic: incusd picks that many host CPUs (the
+	// least loaded ones) and pins the container's cpuset to them, re-balancing
+	// as containers come and go. The container's `cpuset.cpus` therefore has N
+	// entries, which is what `nproc` (and every build tool that shells to it)
+	// reports inside the guest.
+	//
+	// THAT LAST PROPERTY IS THE POINT, and it is why this is a `limits.cpu`
+	// key rather than a `limits.cpu.allowance` one. An uncapped container on a
+	// 32-thread host reports 32 to `nproc`, so `make -j$(nproc)` /
+	// `cargo build` / `nix build --cores 0` each spawn ~32 runnable compilers.
+	// The cap bounds the DEMAND the guest generates, not merely the share it is
+	// scheduled at, and it does so without a CFS quota that would idle host
+	// CPUs whenever fewer containers than the worst case are running.
+	//
+	// Empty (the default) sets nothing at all, so a provider that does not want
+	// a cap produces a byte-identical container to before this key existed.
+	// Ignored by non-incus backends.
+	IncusLimitsCPU string `toml:"incus_limits_cpu"`
+
 	// StateDir stores pid/metadata files for vm-harness run based backends
 	// (Tart/UTM on m3). It contains no secrets.
 	StateDir string `toml:"state_dir"`

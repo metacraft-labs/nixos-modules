@@ -22,6 +22,7 @@
     ./garm-incus-runner-host.nix
     ./garm-incus-storage-pool-source.nix
     ./garm-macos-runner-install-wrapper.nix
+    ./garm-provider-vmharness-backend.nix
     ./garm-provider-vmharness-protocol.nix
     ./garm-provider-vmharness-windows-toolchain.nix
     ./s3-artifact-store.nix

@@ -136,21 +136,30 @@
         + optionalString (p.currentMemoryMb > 0) ''
           current_memory_mb = ${toString p.currentMemoryMb}
         '';
-      mkIncusKeys = p: ''
-        incus_path = "${p.incusPath}"
-        incus_bridge = "${p.incusBridge}"
-        incus_ipv4_cidr = "${p.incusIPv4CIDR}"
-        incus_ipv4_gateway = "${p.incusIPv4Gateway}"
-        incus_ipv4_range_start = "${p.incusIPv4RangeStart}"
-        incus_ipv4_range_end = "${p.incusIPv4RangeEnd}"
-        incus_nameservers = [${lib.concatMapStringsSep ", " (s: "\"${s}\"") p.incusNameservers}]
-        incus_gpu_passthrough = ${lib.boolToString p.incusGpuPassthrough}
-        incus_share_host_nix_store = ${lib.boolToString p.incusShareHostNixStore}
-        incus_reprobuild_store = "${p.incusReprobuildStore}"
-        incus_reprobuild_store_guest_path = "${p.incusReprobuildStoreGuestPath}"
-        incus_security_nesting = ${lib.boolToString p.incusSecurityNesting}
-        incus_nested_kvm = ${lib.boolToString p.incusNestedKvm}
-      '';
+      mkIncusKeys =
+        p:
+        ''
+          incus_path = "${p.incusPath}"
+          incus_bridge = "${p.incusBridge}"
+          incus_ipv4_cidr = "${p.incusIPv4CIDR}"
+          incus_ipv4_gateway = "${p.incusIPv4Gateway}"
+          incus_ipv4_range_start = "${p.incusIPv4RangeStart}"
+          incus_ipv4_range_end = "${p.incusIPv4RangeEnd}"
+          incus_nameservers = [${lib.concatMapStringsSep ", " (s: "\"${s}\"") p.incusNameservers}]
+          incus_gpu_passthrough = ${lib.boolToString p.incusGpuPassthrough}
+          incus_share_host_nix_store = ${lib.boolToString p.incusShareHostNixStore}
+          incus_reprobuild_store = "${p.incusReprobuildStore}"
+          incus_reprobuild_store_guest_path = "${p.incusReprobuildStoreGuestPath}"
+          incus_security_nesting = ${lib.boolToString p.incusSecurityNesting}
+          incus_nested_kvm = ${lib.boolToString p.incusNestedKvm}
+        ''
+        # Only emitted when a cap is actually requested, so a provider that
+        # wants none keeps a byte-identical config.toml (and therefore a
+        # byte-identical container) to before this option existed — the same
+        # discipline `currentMemoryMb` follows in mkLibvirtKeys above.
+        + optionalString (p.incusLimitsCpu != "") ''
+          incus_limits_cpu = "${p.incusLimitsCpu}"
+        '';
       mkVMHarnessRunKeys =
         p:
         ''
@@ -1287,6 +1296,46 @@
                 image must ship qemu/kvm. Default false ⇒ the container is
                 byte-unchanged (the live runners are untouched). Ignored by
                 non-incus providers. Backs HR2 (Production-Runners nested KVM).
+              '';
+            };
+
+            incusLimitsCpu = mkOption {
+              # Constrained rather than free-form `str` for two reasons. It is
+              # rendered into TOML by string interpolation, so a value carrying
+              # a quote would emit syntactically invalid config and fail at
+              # provider start-up rather than at eval. And a typo that incus
+              # rejects (`"eight"`, `"8 "`) is only discovered on the first
+              # container Create, i.e. on a real job. The shapes incus accepts
+              # are a count or a cpuset; empty means "no cap".
+              type = types.strMatching "([0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*)?";
+              default = "";
+              example = "8";
+              description = ''
+                When non-empty (incus backend only), the provider sets
+                `limits.cpu` on every per-job container BEFORE start:
+                `incus config set <name> limits.cpu <value>`. Incus accepts a
+                COUNT (`"8"`) or an explicit CPU SET (`"0-7"`, `"0,2,4"`); a
+                count is a DYNAMIC pin — incusd picks that many host CPUs and
+                re-balances as containers come and go.
+
+                This bounds the DEMAND a per-job container generates, not just
+                the share it is scheduled at. An uncapped container inherits
+                `cpuset.cpus=0-N` and therefore reports every host thread to
+                `nproc`, so `make -j$(nproc)` / `cargo build` /
+                `nix build --cores 0` each size themselves to the WHOLE
+                machine; several such containers put the host into a
+                multi-hundred runnable-task overhang that starves every other
+                workload on the box, including co-resident libvirt guests.
+
+                Chosen over a `limits.cpu.allowance` CFS quota deliberately: an
+                allowance sized for the worst case idles host CPUs whenever
+                fewer than the worst-case number of containers are running,
+                whereas a cpuset count caps peak parallelism while still
+                letting a lone container use its full allotment.
+
+                Default `""` ⇒ the key is not emitted at all, the provider sets
+                nothing, and the container is byte-identical to before this
+                option existed. Ignored by non-incus providers.
               '';
             };
 

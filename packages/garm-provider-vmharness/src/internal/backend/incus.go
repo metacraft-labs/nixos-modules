@@ -48,9 +48,10 @@ import (
 //	incus config set <name> cloud-init.network-config  # static IPv4 (no DHCP)
 //	incus start <name>                            # cloud-init runs the bootstrap
 //
-// Delete: `incus delete --force <name>` (stops + removes the container and
-// its per-container storage volume in one shot — no residue). Idempotent:
-// a missing container is success.
+// Delete is ORDERED (see the Delete doc comment for the measurement that
+// motivates it): stop and wait for `Stopped`, detach the devices Create
+// attached, then `incus delete`, with a short bounded local retry and a
+// `--force` last resort. Idempotent: a missing container is success.
 type IncusBackend struct {
 	// IncusCmd is the incus invocation vector, eg ["incus"] or
 	// ["sudo","-n","incus"]. Built from config.IncusPath (whitespace-split)
@@ -161,6 +162,36 @@ type IncusBackend struct {
 	// (`kvm_intel.nested=Y` / `kvm_amd.nested=Y`). Default false ⇒ the
 	// container is byte-unchanged (the live runners are untouched).
 	NestedKvm bool
+	// LimitsCPU, when non-empty, is written verbatim to each per-job
+	// container's `limits.cpu` BEFORE start (a count like "8", or an explicit
+	// set like "0-7"). Incus turns a count into a dynamic cpuset pin, so the
+	// guest's `cpuset.cpus` — and therefore its `nproc` — reports that many
+	// CPUs and build tools that self-size from `nproc` stop spawning one job
+	// per HOST thread. Default "" ⇒ nothing is set and the container is
+	// byte-unchanged (the live runners are untouched).
+	LimitsCPU string
+	// StopSettleTimeout / DeleteRetryBackoff override the ORDERED teardown's
+	// timings (see Delete). Zero means the package defaults
+	// (incusStopSettleTimeout / incusDeleteBackoffBase). Production leaves
+	// both zero; tests shrink them so the retry ladder is exercised without
+	// sleeping through it — the same seam IPAllocationLockPath provides for
+	// the IP lease lock.
+	StopSettleTimeout  time.Duration
+	DeleteRetryBackoff time.Duration
+}
+
+func (b *IncusBackend) stopSettleTimeout() time.Duration {
+	if b.StopSettleTimeout > 0 {
+		return b.StopSettleTimeout
+	}
+	return incusStopSettleTimeout
+}
+
+func (b *IncusBackend) deleteRetryBackoff() time.Duration {
+	if b.DeleteRetryBackoff > 0 {
+		return b.DeleteRetryBackoff
+	}
+	return incusDeleteBackoffBase
 }
 
 // Host paths shared into the per-job container when ShareHostNixStore is set:
@@ -232,7 +263,12 @@ type incusContainer struct {
 	Name   string            `json:"name"`
 	Status string            `json:"status"`
 	Config map[string]string `json:"config"`
-	State  *struct {
+	// Devices is the container's device map as incusd reports it. Only the
+	// device NAMES are used (to detach exactly the devices this provider
+	// attached, and only if they are still present), so the inner map is left
+	// untyped.
+	Devices map[string]map[string]string `json:"devices"`
+	State   *struct {
 		Network map[string]struct {
 			Addresses []struct {
 				Family  string `json:"family"`
@@ -586,6 +622,29 @@ func (b *IncusBackend) Create(ctx context.Context, args CreateArgs) (Instance, e
 		}
 	}
 
+	// 4c-bis. CPU cap. Set BEFORE start so the container's cgroup carries the
+	//     limit from PID 1 onward: a cap applied after boot would still let
+	//     cloud-init and the runner's own start-up see every host thread, and
+	//     the tools that matter read `nproc` once, early.
+	//
+	//     Measured motivation (high-mem-server, 16 days): the per-job
+	//     containers run uncapped at `cpu.max=max`, `cpuset.cpus=0-31` on a
+	//     32-thread host, so each one reports 32 to `nproc` and self-sizes its
+	//     build parallelism to the WHOLE machine. With several containers live
+	//     the runnable queue reaches load1 87-191, and the co-resident Windows
+	//     libvirt guests miss a ~300 s GitHub job-assignment window they
+	//     otherwise clear in ~200 s. Capping bounds the demand each container
+	//     generates.
+	//
+	//     Default "" ⇒ this block is skipped and the container is
+	//     byte-unchanged (the live runners are untouched).
+	if b.LimitsCPU != "" {
+		if out, err := b.run(ctx, "", "config", "set", args.Name, "limits.cpu", b.LimitsCPU); err != nil {
+			_ = b.forceDelete(ctx, args.Name)
+			return Instance{}, fmt.Errorf("incus config set limits.cpu=%s: %w: %s", b.LimitsCPU, err, strings.TrimSpace(out))
+		}
+	}
+
 	// 4d. Security nesting (the `runs-on: incus` nested-Docker path — HR1). Turn
 	//     on nested containerisation so an in-guest Docker/Podman daemon can
 	//     create its own namespaces/cgroups + overlay mount, and add the two
@@ -759,27 +818,218 @@ func (b *IncusBackend) addDisk(ctx context.Context, container, device, source, g
 	return nil
 }
 
-// forceDelete is the idempotent teardown primitive.
+// forceDelete is the one-shot teardown primitive: it folds the stop into the
+// delete. It is the CREATE-path ROLLBACK (a half-built container whose state is
+// unknown and which no job ever reached), and the last-resort fallback at the
+// end of Delete. The ordered teardown lives in Delete, not here.
 func (b *IncusBackend) forceDelete(ctx context.Context, name string) error {
 	_, err := b.run(ctx, "", "delete", "--force", name)
 	return err
 }
 
-// Delete force-removes the container. Idempotent: a missing container is
-// treated as already-deleted success.
+// Teardown tuning. These bound the ORDERED delete below; they are not a
+// substitute for GARM's own retry ladder (workers/provider/instance_manager.go:
+// 1 s doubling, capped at 5 min, unbounded), which still applies if every
+// attempt here fails. The point of a SHORT local ladder is that a transient
+// busy dataset resolves in seconds instead of escalating into that 5-minute
+// cap.
+const (
+	// How long to wait for incusd to report the container `Stopped` after the
+	// stop is issued. A container whose rootfs is referenced by hundreds of
+	// processes across dozens of mount namespaces (security.nesting + nested
+	// KVM + Docker) takes real time to unwind.
+	incusStopSettleTimeout = 30 * time.Second
+	incusStopPollInterval  = 500 * time.Millisecond
+	// Bounded local delete retries: 1 s, 2 s, 4 s, 8 s between five attempts.
+	incusDeleteAttempts    = 5
+	incusDeleteBackoffBase = time.Second
+	// incusStopCommandTimeout bounds the `stop --force` COMMAND itself, which
+	// the ordered teardown places BEFORE the last-resort force delete. Without
+	// it, a container wedged in an uninterruptible unmount — exactly the case
+	// this reordering targets — would block the teardown indefinitely at a
+	// point the previous one-shot `delete --force` never reached, i.e. the
+	// reordering itself would introduce a new way to reclaim nothing.
+	incusStopCommandTimeout = 30 * time.Second
+	// incusLastResortTimeout budgets the final force delete. That call runs on
+	// a context deliberately NOT cancelled by the caller's (see Delete, step
+	// 4), so it cannot inherit a deadline and needs one of its own.
+	incusLastResortTimeout = 30 * time.Second
+)
+
+// providerAttachedDevices are exactly the device names Create attaches. Delete
+// detaches THESE and nothing else: `root` and `eth0` come from the `default`
+// profile and are not ours to remove, and removing a device this provider did
+// not add would be a mutation of somebody else's container.
+var providerAttachedDevices = []string{"nixstore", "nixdaemon", "reprostore", "kvm", "gpu"}
+
+// gone reports whether the container is absent (which every teardown step
+// treats as success — Delete is idempotent by contract).
+func (b *IncusBackend) gone(ctx context.Context, idOrName string) bool {
+	_, err := b.findExact(ctx, idOrName)
+	return err == garmErrors.ErrNotFound
+}
+
+// waitStopped polls incusd until the container reports `Stopped` (or vanishes).
+// Returns false if it is still not stopped when the budget runs out; the caller
+// proceeds anyway, because the force fallback at the end of Delete can still
+// finish the job.
+func (b *IncusBackend) waitStopped(ctx context.Context, idOrName string) bool {
+	deadline := time.Now().Add(b.stopSettleTimeout())
+	for {
+		c, err := b.findExact(ctx, idOrName)
+		if err == garmErrors.ErrNotFound {
+			return true
+		}
+		if err == nil && strings.EqualFold(strings.TrimSpace(c.Status), "stopped") {
+			return true
+		}
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(incusStopPollInterval):
+		}
+	}
+}
+
+// Delete removes the container with an ORDERED teardown: stop and WAIT for the
+// daemon to confirm it, detach the devices this provider attached, then delete.
+// Idempotent: a missing container is treated as already-deleted success.
+//
+// WHY THE ORDER MATTERS — measured, not assumed. The previous implementation
+// was a single unconditional `incus delete --force`, which folds the stop into
+// the delete: incusd races its own unmount of the container rootfs against the
+// references still held by the container's own processes, and ZFS refuses the
+// destroy. Over 16 days on high-mem-server that produced 8786 distinct delete
+// failures across 1333 of the 14447 instances deleted (9.2%), 96.7% of them
+// `zfs destroy ...: dataset is busy`, retried a median of 7 and up to 30 times
+// each. They retry to success — the holders drain — so nothing leaked
+// permanently, but every one of them re-entered GARM's ladder and held the
+// instance in `deleting` for minutes.
+//
+// SCOPE LIMIT, stated so nobody writes a success criterion this cannot meet:
+// the other failure mode in that window (108 `context deadline exceeded`, of
+// which 84 are the `incus list` READ PROBE in findExact timing out before any
+// delete is attempted) is incus DATABASE contention, not teardown ordering.
+// Reordering the teardown does not address it and it will not go to zero.
 func (b *IncusBackend) Delete(ctx context.Context, idOrName string) error {
-	if _, err := b.findExact(ctx, idOrName); err != nil {
+	c, err := b.findExact(ctx, idOrName)
+	if err != nil {
 		if err == garmErrors.ErrNotFound {
 			return nil
 		}
 		return err
 	}
-	if err := b.forceDelete(ctx, idOrName); err != nil {
-		// A container that vanished between the check and delete is success.
-		if _, gerr := b.findExact(ctx, idOrName); gerr == garmErrors.ErrNotFound {
+
+	// 1. Stop, and WAIT for the daemon to confirm it. A stop error is not
+	//    fatal here: the container may already be stopping, or may have
+	//    vanished, and the force fallback below is the backstop.
+	if !strings.EqualFold(strings.TrimSpace(c.Status), "stopped") {
+		// `--force` because this is a teardown of an EPHEMERAL one-job
+		// container whose job has already finished and whose storage volume is
+		// about to be destroyed: there is no in-guest state worth a graceful
+		// shutdown's wall-clock, and holding the slot longer is the risk this
+		// change has to stay clear of.
+		//
+		// The stop runs on its OWN bounded context. `b.run` has no per-command
+		// timeout and the provider's own context has no deadline today, so an
+		// unbounded stop of a wedged container would hang the teardown here —
+		// upstream of the force fallback that the previous implementation
+		// reached immediately. Bounding it keeps the fallback reachable.
+		stopCtx, cancelStop := context.WithTimeout(ctx, incusStopCommandTimeout)
+		_, serr := b.run(stopCtx, "", "stop", "--force", idOrName)
+		cancelStop()
+		if serr != nil {
+			if b.gone(ctx, idOrName) {
+				return nil
+			}
+		}
+		if !b.waitStopped(ctx, idOrName) && b.gone(ctx, idOrName) {
 			return nil
 		}
-		return err
+	}
+
+	// 2. Detach the devices Create attached, so the delete has no device
+	//    references left to unwind. Best-effort by design: a device that is
+	//    already absent is the desired state, and a detach failure must never
+	//    prevent the delete.
+	if c.Devices != nil {
+		for _, dev := range providerAttachedDevices {
+			if _, ok := c.Devices[dev]; !ok {
+				continue
+			}
+			_, _ = b.run(ctx, "", "config", "device", "remove", idOrName, dev)
+		}
+	}
+
+	// 3. Delete, with a SHORT bounded local retry. Plain `delete` (no
+	//    `--force`) because the container is stopped by now: if it is not, the
+	//    error is worth surfacing to the retry rather than papering over.
+	var lastErr error
+	backoff := b.deleteRetryBackoff()
+retry:
+	for attempt := 0; attempt < incusDeleteAttempts; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				// BREAK, never return. Returning here would skip step 4, and
+				// step 4 is the entire basis of the "can never reclaim fewer
+				// containers than the one-shot force delete" guarantee. A
+				// cancelled caller context is precisely the situation in which
+				// the old code would still have force-deleted the container
+				// (it issued its single command at t=0), so it is precisely
+				// the situation in which the new code must not give up.
+				if lastErr == nil {
+					lastErr = ctx.Err()
+				}
+				break retry
+			case <-time.After(backoff):
+			}
+			backoff *= 2
+		}
+		out, derr := b.run(ctx, "", "delete", idOrName)
+		if derr == nil {
+			return nil
+		}
+		lastErr = fmt.Errorf("incus delete %s: %w: %s", idOrName, derr, strings.TrimSpace(out))
+		// A container that vanished between attempts is success.
+		if b.gone(ctx, idOrName) {
+			return nil
+		}
+	}
+
+	// 4. Last resort: exactly the pre-fix behaviour, and the reason the ordered
+	//    path can never reclaim FEWER containers than the one-shot force
+	//    delete it replaces. The worst case degrades to the old behaviour plus
+	//    a bounded delay, never to a new failure.
+	//
+	//    That guarantee is NOT free, and the way it is bought is worth stating
+	//    because it is easy to delete by accident. The old code issued its one
+	//    force delete at t=0. The ordered path spends real time first — up to
+	//    incusStopCommandTimeout stopping, incusStopSettleTimeout waiting, and
+	//    ~15 s of backoff — so any deadline on the caller's context that the
+	//    old code would have beaten, the new code can run past. If this call
+	//    inherited that context, an expired one would make the fallback fail
+	//    to even spawn (exec.CommandContext refuses to start on a done
+	//    context) and the container would survive a teardown that the old code
+	//    completed. So the fallback runs on a context derived from the
+	//    caller's but explicitly NOT cancelled by it, with a budget of its own.
+	//
+	//    This matters in practice rather than in theory: GARM's external
+	//    provider wrapper applies `exec_timeout_seconds` to this process and
+	//    kills the child on expiry. That key is unset today, but the in-process
+	//    half of the guarantee must not depend on it staying unset.
+	lastResort, cancelLastResort := context.WithTimeout(
+		context.WithoutCancel(ctx), incusLastResortTimeout)
+	defer cancelLastResort()
+	if ferr := b.forceDelete(lastResort, idOrName); ferr != nil {
+		if b.gone(lastResort, idOrName) {
+			return nil
+		}
+		return fmt.Errorf("%w (force fallback after %d ordered attempts; last ordered error: %v)",
+			ferr, incusDeleteAttempts, lastErr)
 	}
 	return nil
 }
