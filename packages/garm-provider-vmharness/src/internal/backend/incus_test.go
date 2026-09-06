@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	garmErrors "github.com/cloudbase/garm-provider-common/errors"
 )
@@ -40,6 +41,13 @@ mkdir -p "$STATE"
 
 cmd="${1:-}"; shift || true
 
+# Every invocation is appended to $MOCK_INCUS_CMDLOG (when set) so a test can
+# assert the ORDER of the teardown steps, not merely their end state. The
+# end state cannot distinguish "stopped, then deleted" from "force-deleted".
+if [ -n "${MOCK_INCUS_CMDLOG:-}" ]; then
+  printf '%s %s\n' "$cmd" "$*" >> "$MOCK_INCUS_CMDLOG"
+fi
+
 case "$cmd" in
   init)
     # init <image> <name>
@@ -54,12 +62,24 @@ case "$cmd" in
   config)
     sub="$1"; shift
     if [ "$sub" = "device" ]; then
-      # config device add <name> <devname> <devtype> [k=v ...]
-      action="$1"; name="$2"; devname="$3"; devtype="$4"; shift 4 || true
-      d="$STATE/$name"
-      [ -d "$d" ] || { echo "Error: Instance '$name' not found" >&2; exit 1; }
-      if [ "$action" = "add" ]; then
-        printf '%s\t%s\t%s\n' "$devname" "$devtype" "$*" >> "$d/devices"
+      if [ "${1:-}" = "remove" ]; then
+        # config device remove <name> <devname>
+        name="$2"; devname="$3"
+        d="$STATE/$name"
+        [ -d "$d" ] || { echo "Error: Instance '$name' not found" >&2; exit 1; }
+        if [ ! -f "$d/devices" ] || ! grep -q "^$devname	" "$d/devices"; then
+          echo "Error: Device '$devname' doesn't exist" >&2; exit 1
+        fi
+        grep -v "^$devname	" "$d/devices" > "$d/devices.tmp" || true
+        mv "$d/devices.tmp" "$d/devices"
+      else
+        # config device add <name> <devname> <devtype> [k=v ...]
+        action="$1"; name="$2"; devname="$3"; devtype="$4"; shift 4 || true
+        d="$STATE/$name"
+        [ -d "$d" ] || { echo "Error: Instance '$name' not found" >&2; exit 1; }
+        if [ "$action" = "add" ]; then
+          printf '%s\t%s\t%s\n' "$devname" "$devtype" "$*" >> "$d/devices"
+        fi
       fi
     else
       # config set <name> <key> <value|->   OR   config set <name> <key=val>
@@ -92,14 +112,52 @@ case "$cmd" in
     printf '%s\n' "$*" >> "$d/execs"
     ;;
   stop)
-    name="$1"; d="$STATE/$name"
+    # stop [--force] <name>
+    name=""
+    for a in "$@"; do case "$a" in --*) ;; *) name="$a"; break;; esac; done
+    d="$STATE/$name"
     [ -d "$d" ] || { echo "Error: Instance '$name' not found" >&2; exit 1; }
-    echo "Stopped" > "$d/status"
+    if [ -n "${MOCK_INCUS_STOP_FAILS:-}" ]; then
+      echo "Error: The instance is busy running a command" >&2; exit 1
+    fi
+    # Real incusd does not settle instantly: a container whose rootfs is
+    # referenced across many mount namespaces takes time to report Stopped.
+    # MOCK_INCUS_STOP_SETTLE_POLLS makes the mock report Stopping for that
+    # many subsequent 'list' calls, so waitStopped is actually exercised.
+    if [ -n "${MOCK_INCUS_STOP_SETTLE_POLLS:-}" ]; then
+      echo "$MOCK_INCUS_STOP_SETTLE_POLLS" > "$d/settle"
+      echo "Stopping" > "$d/status"
+    else
+      echo "Stopped" > "$d/status"
+    fi
     ;;
   delete)
-    # delete --force <name>
-    name="$2"; d="$STATE/$name"
+    # delete [--force] <name>
+    force=0; name=""
+    for a in "$@"; do
+      case "$a" in
+        --force) force=1 ;;
+        --*) ;;
+        *) [ -n "$name" ] || name="$a" ;;
+      esac
+    done
+    d="$STATE/$name"
     [ -d "$d" ] || { echo "Error: Instance '$name' not found" >&2; exit 1; }
+    st=$(cat "$d/status" 2>/dev/null || echo Stopped)
+    if [ "$st" != "Stopped" ] && [ "$force" = 0 ]; then
+      echo "Error: The instance is currently running, stop it first or pass --force" >&2; exit 1
+    fi
+    # Failure injection: the FIRST $MOCK_INCUS_DELETE_FAILURES delete attempts
+    # fail exactly the way the host does (ZFS refusing a busy dataset), so the
+    # bounded local retry ladder is exercised against the real error text.
+    if [ -n "${MOCK_INCUS_DELETE_FAILURES:-}" ]; then
+      n=$(cat "$STATE/.delete-failures" 2>/dev/null || echo 0)
+      if [ "$n" -lt "$MOCK_INCUS_DELETE_FAILURES" ]; then
+        echo $(( n + 1 )) > "$STATE/.delete-failures"
+        echo "Error: Failed to delete instance \"$name\": Failed to run: zfs destroy -r zroot/root/var/lib/incus-storage/containers/$name: exit status 1 (cannot destroy 'zroot/root/var/lib/incus-storage/containers/$name': dataset is busy)" >&2
+        exit 1
+      fi
+    fi
     rm -rf "$d"
     ;;
   list)
@@ -114,9 +172,31 @@ case "$cmd" in
       n=$(basename "$d")
       if [ -n "$filter" ] && [ "$n" != "$filter" ]; then continue; fi
       st=$(cat "$d/status" 2>/dev/null || echo Stopped)
+      # Honour a pending stop-settle countdown: report Stopping until it runs
+      # out, then Stopped. Decremented per observation, like a real poll.
+      if [ -f "$d/settle" ]; then
+        s=$(cat "$d/settle")
+        if [ "$s" -gt 0 ]; then
+          echo $(( s - 1 )) > "$d/settle"
+        else
+          rm -f "$d/settle"
+          echo "Stopped" > "$d/status"
+          st="Stopped"
+        fi
+      fi
       [ "$first" = 1 ] || printf ','
       first=0
-      printf '{"name":"%s","status":"%s","config":{' "$n" "$st"
+      printf '{"name":"%s","status":"%s","devices":{' "$n" "$st"
+      dfirst=1
+      if [ -f "$d/devices" ]; then
+        while IFS='	' read -r dn dt drest; do
+          [ -n "$dn" ] || continue
+          [ "$dfirst" = 1 ] || printf ','
+          dfirst=0
+          printf '"%s":{"type":"%s"}' "$dn" "$dt"
+        done < "$d/devices"
+      fi
+      printf '},"config":{'
       ip=""
       cfirst=1
       while IFS='	' read -r k v; do
@@ -646,5 +726,385 @@ func TestIncusNetworkConfigRendersStaticIP(t *testing.T) {
 		if !strings.Contains(nc, want) {
 			t.Fatalf("network-config missing %q:\n%s", want, nc)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// CIR-M1 — CPU cap + ordered teardown
+// ---------------------------------------------------------------------------
+
+// readCmdLog returns the mock incus command log as a slice of lines.
+func readCmdLog(t *testing.T, path string) []string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read cmdlog %s: %v", path, err)
+	}
+	var lines []string
+	for _, l := range strings.Split(string(raw), "\n") {
+		if strings.TrimSpace(l) != "" {
+			lines = append(lines, l)
+		}
+	}
+	return lines
+}
+
+// indexOfLine returns the index of the first log line containing every needle,
+// or -1.
+func indexOfLine(lines []string, needles ...string) int {
+	for i, l := range lines {
+		all := true
+		for _, n := range needles {
+			if !strings.Contains(l, n) {
+				all = false
+				break
+			}
+		}
+		if all {
+			return i
+		}
+	}
+	return -1
+}
+
+func withCmdLog(t *testing.T) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "cmdlog")
+	t.Setenv("MOCK_INCUS_CMDLOG", p)
+	if err := os.WriteFile(p, nil, 0o644); err != nil {
+		t.Fatalf("seed cmdlog: %v", err)
+	}
+	return p
+}
+
+// TestIncusLimitsCpuIsSetBeforeStart proves the CPU cap that CIR-M1 needs on
+// high-mem-server: `limits.cpu` is applied to the per-job container BEFORE
+// `incus start`, so the cap is in the container's cgroup from PID 1 onward and
+// `nproc` — which every build tool self-sizes from — reports the capped count
+// rather than all 32 host threads.
+//
+// The negative control is in the same test rather than in a reviewer's notes:
+// with LimitsCPU left at its zero value the backend must issue NO limits.cpu
+// command at all, so a provider that does not ask for a cap gets a container
+// byte-identical to the one it got before this key existed.
+func TestIncusLimitsCpuIsSetBeforeStart(t *testing.T) {
+	cmd, _ := writeMockIncus(t)
+	log := withCmdLog(t)
+	b := newTestIncusBackend(cmd)
+	b.LimitsCPU = "8"
+	ctx := context.Background()
+
+	if _, err := b.Create(ctx, CreateArgs{Name: "garm-capped", SourceImage: "runner-linux"}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	lines := readCmdLog(t, log)
+	set := indexOfLine(lines, "config set garm-capped limits.cpu 8")
+	if set < 0 {
+		t.Fatalf("limits.cpu was never set; log:\n%s", strings.Join(lines, "\n"))
+	}
+	start := indexOfLine(lines, "start garm-capped")
+	if start < 0 {
+		t.Fatalf("container never started; log:\n%s", strings.Join(lines, "\n"))
+	}
+	if set > start {
+		t.Fatalf("limits.cpu set AFTER start (set=%d start=%d): a cap applied post-boot lets cloud-init and the runner start-up see every host thread\n%s",
+			set, start, strings.Join(lines, "\n"))
+	}
+
+	// ---- negative control: no cap requested => no cap applied -------------
+	cmd2, _ := writeMockIncus(t)
+	log2 := withCmdLog(t)
+	b2 := newTestIncusBackend(cmd2)
+	if _, err := b2.Create(ctx, CreateArgs{Name: "garm-uncapped", SourceImage: "runner-linux"}); err != nil {
+		t.Fatalf("Create (uncapped): %v", err)
+	}
+	if i := indexOfLine(readCmdLog(t, log2), "limits.cpu"); i >= 0 {
+		t.Fatalf("LimitsCPU unset but the backend still set limits.cpu; this key must be inert by default\n%s",
+			strings.Join(readCmdLog(t, log2), "\n"))
+	}
+}
+
+// TestIncusDeleteStopsAndWaitsBeforeDeleting is the H7 teardown-ordering gate.
+//
+// The old implementation was a single unconditional `incus delete --force`,
+// which folds the stop into the delete and races incusd's unmount against the
+// container's own references — 96.7% of the 8786 delete failures measured over
+// 16 days on high-mem-server were `zfs destroy ...: dataset is busy`.
+//
+// NON-VACUITY IS STRUCTURAL, not asserted: the mock refuses a plain `delete` of
+// a RUNNING container exactly as incusd does, so a Delete that skipped the stop
+// could not reach a successful plain delete at all. And the mock reports
+// `Stopping` for two polls after the stop, so a Delete that issued the stop but
+// did not WAIT would delete while the container was still stopping.
+func TestIncusDeleteStopsAndWaitsBeforeDeleting(t *testing.T) {
+	cmd, _ := writeMockIncus(t)
+	t.Setenv("MOCK_INCUS_STOP_SETTLE_POLLS", "2")
+	log := withCmdLog(t)
+	b := newTestIncusBackend(cmd)
+	ctx := context.Background()
+
+	if _, err := b.Create(ctx, CreateArgs{Name: "garm-td", SourceImage: "runner-linux"}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := b.Delete(ctx, "garm-td"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	lines := readCmdLog(t, log)
+	stop := indexOfLine(lines, "stop", "garm-td")
+	del := indexOfLine(lines, "delete", "garm-td")
+	if stop < 0 {
+		t.Fatalf("teardown never stopped the container; log:\n%s", strings.Join(lines, "\n"))
+	}
+	if del < 0 {
+		t.Fatalf("teardown never deleted the container; log:\n%s", strings.Join(lines, "\n"))
+	}
+	if stop > del {
+		t.Fatalf("stop issued AFTER delete (stop=%d delete=%d)\n%s", stop, del, strings.Join(lines, "\n"))
+	}
+	// The happy path must NOT use --force: force is the fallback, and if the
+	// ordered path silently reached for it we would be back to the behaviour
+	// this change exists to replace.
+	if i := indexOfLine(lines, "delete", "--force"); i >= 0 {
+		t.Fatalf("ordered teardown used `delete --force` on the happy path (line %d); that is the pre-fix behaviour\n%s",
+			i, strings.Join(lines, "\n"))
+	}
+	// The wait must be a real poll, not a single look: with two settle polls
+	// injected, at least three `list` probes must separate stop from delete.
+	probes := 0
+	for _, l := range lines[stop:del] {
+		if strings.HasPrefix(l, "list ") {
+			probes++
+		}
+	}
+	if probes < 3 {
+		t.Fatalf("only %d status probes between stop and delete; the teardown is not waiting for `Stopped`\n%s",
+			probes, strings.Join(lines, "\n"))
+	}
+	if _, err := b.Get(ctx, "garm-td"); err != garmErrors.ErrNotFound {
+		t.Fatalf("container survived Delete: %v", err)
+	}
+}
+
+// TestIncusDeleteDetachesOnlyProviderAttachedDevices proves the middle step of
+// the ordered teardown: the devices Create attached are removed before the
+// delete, and nothing else is touched. Removing a device this provider did not
+// add would be a mutation of somebody else's container.
+func TestIncusDeleteDetachesOnlyProviderAttachedDevices(t *testing.T) {
+	cmd, _ := writeMockIncus(t)
+	log := withCmdLog(t)
+	b := newTestIncusBackend(cmd)
+	// GpuPassthrough attaches `gpu` + `nixstore`, ReprobuildStore attaches
+	// `reprostore`, NestedKvm attaches `kvm` — four of the five devices Create
+	// can attach, with no dependency on a NixOS host path. `nixdaemon` (the
+	// fifth) is deliberately absent so the "detach it only if it is still
+	// present" guard is exercised too.
+	b.GpuPassthrough = true
+	b.ReprobuildStore = t.TempDir()
+	b.ReprobuildStoreGuestPath = "/srv/repro-store"
+	b.NestedKvm = true
+	ctx := context.Background()
+
+	if _, err := b.Create(ctx, CreateArgs{Name: "garm-dev", SourceImage: "runner-linux"}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := b.Delete(ctx, "garm-dev"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	lines := readCmdLog(t, log)
+	del := indexOfLine(lines, "delete", "garm-dev")
+	for _, dev := range []string{"nixstore", "reprostore", "kvm", "gpu"} {
+		i := indexOfLine(lines, "config device remove garm-dev "+dev)
+		if i < 0 {
+			t.Fatalf("device %q was never detached before delete\n%s", dev, strings.Join(lines, "\n"))
+		}
+		if i > del {
+			t.Fatalf("device %q detached AFTER delete (%d > %d)\n%s", dev, i, del, strings.Join(lines, "\n"))
+		}
+	}
+	// A provider device that was never attached must not be detached either:
+	// the teardown removes what is present, it does not fire blind.
+	if i := indexOfLine(lines, "config device remove garm-dev nixdaemon"); i >= 0 {
+		t.Fatalf("teardown tried to remove a device that was never attached (line %d)\n%s",
+			i, strings.Join(lines, "\n"))
+	}
+	// Never the profile-inherited devices.
+	for _, dev := range []string{"eth0", "root"} {
+		if i := indexOfLine(lines, "config device remove garm-dev "+dev); i >= 0 {
+			t.Fatalf("teardown removed profile-inherited device %q (line %d); only provider-attached devices are ours\n%s",
+				dev, i, strings.Join(lines, "\n"))
+		}
+	}
+}
+
+// TestIncusDeleteRetriesBusyDatasetLocally proves the bounded local ladder: a
+// transient `zfs destroy ...: dataset is busy` resolves inside one Delete call
+// instead of returning an error that escalates into GARM's unbounded 1 s→5 min
+// retry ladder (workers/provider/instance_manager.go:127-136), which is what
+// produced a median of 7 and up to 30 retries per instance on the host.
+func TestIncusDeleteRetriesBusyDatasetLocally(t *testing.T) {
+	cmd, _ := writeMockIncus(t)
+	t.Setenv("MOCK_INCUS_DELETE_FAILURES", "3")
+	log := withCmdLog(t)
+	b := newTestIncusBackend(cmd)
+	b.DeleteRetryBackoff = 5 * time.Millisecond
+	ctx := context.Background()
+
+	if _, err := b.Create(ctx, CreateArgs{Name: "garm-busy", SourceImage: "runner-linux"}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := b.Delete(ctx, "garm-busy"); err != nil {
+		t.Fatalf("Delete did not absorb 3 transient busy-dataset failures: %v", err)
+	}
+	lines := readCmdLog(t, log)
+	deletes := 0
+	for _, l := range lines {
+		if strings.HasPrefix(l, "delete ") {
+			deletes++
+		}
+	}
+	if deletes != 4 {
+		t.Fatalf("expected 4 delete attempts (3 failed + 1 success), got %d\n%s", deletes, strings.Join(lines, "\n"))
+	}
+	if _, err := b.Get(ctx, "garm-busy"); err != garmErrors.ErrNotFound {
+		t.Fatalf("container survived Delete: %v", err)
+	}
+}
+
+// TestIncusDeleteFallsBackToForce proves the change can never delete FEWER
+// containers than the one-shot `delete --force` it replaces: when the whole
+// ordered ladder is exhausted, the pre-fix behaviour still runs as a last
+// resort.
+func TestIncusDeleteFallsBackToForce(t *testing.T) {
+	cmd, _ := writeMockIncus(t)
+	// One more failure than the ordered ladder has attempts, so every ordered
+	// attempt fails and only the force fallback can succeed.
+	t.Setenv("MOCK_INCUS_DELETE_FAILURES", "5")
+	log := withCmdLog(t)
+	b := newTestIncusBackend(cmd)
+	b.DeleteRetryBackoff = 5 * time.Millisecond
+	ctx := context.Background()
+
+	if _, err := b.Create(ctx, CreateArgs{Name: "garm-stuck", SourceImage: "runner-linux"}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := b.Delete(ctx, "garm-stuck"); err != nil {
+		t.Fatalf("Delete: force fallback did not run or did not succeed: %v", err)
+	}
+	lines := readCmdLog(t, log)
+	if i := indexOfLine(lines, "delete", "--force", "garm-stuck"); i < 0 {
+		t.Fatalf("force fallback never ran\n%s", strings.Join(lines, "\n"))
+	}
+	if _, err := b.Get(ctx, "garm-stuck"); err != garmErrors.ErrNotFound {
+		t.Fatalf("container survived Delete: %v", err)
+	}
+}
+
+// TestIncusDeleteReclaimsEvenWhenTheCallerContextExpires is the regression test
+// for the ONE guarantee the ordered teardown makes to the rest of the system:
+// it can never reclaim FEWER containers than the single unconditional
+// `incus delete --force` it replaces.
+//
+// The guarantee is not self-evident, and it was briefly FALSE. The old code
+// issued its one command at t=0 and beat any deadline the caller had. The
+// ordered path spends real time first — stopping, waiting for `Stopped`, and
+// backing off between attempts — so a caller deadline the old code beat is one
+// the new code can run past. If the last-resort force delete inherited that
+// expired context, `exec.CommandContext` would refuse to even spawn it and the
+// container would survive a teardown that the old code completed. That is a
+// reclamation REGRESSION produced by a change whose entire purpose is to
+// reclaim better.
+//
+// This test pins the fix: a caller context that expires DURING the ordered
+// teardown must still end with the container gone and `delete --force` issued.
+// GARM's external-provider wrapper applies `exec_timeout_seconds` to this
+// process, so the deadline is one config key away from being real.
+func TestIncusDeleteReclaimsEvenWhenTheCallerContextExpires(t *testing.T) {
+	cmd, _ := writeMockIncus(t)
+	// Make the stop settle slowly enough that the caller's budget is consumed
+	// inside the ordered path rather than before it starts.
+	t.Setenv("MOCK_INCUS_STOP_SETTLE_POLLS", "200")
+	log := withCmdLog(t)
+	b := newTestIncusBackend(cmd)
+	b.StopSettleTimeout = 10 * time.Second
+	b.DeleteRetryBackoff = 5 * time.Millisecond
+
+	if _, err := b.Create(context.Background(), CreateArgs{
+		Name: "garm-ctxexpiry", SourceImage: "runner-linux",
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// A budget the old one-shot force delete would have met comfortably.
+	ctx, cancel := context.WithTimeout(context.Background(), 400*time.Millisecond)
+	defer cancel()
+	derr := b.Delete(ctx, "garm-ctxexpiry")
+
+	lines := readCmdLog(t, log)
+	if i := indexOfLine(lines, "delete", "--force", "garm-ctxexpiry"); i < 0 {
+		t.Fatalf("the caller's context expired and the last-resort force delete was SKIPPED, so this teardown reclaimed less than the one-shot force delete it replaces (Delete err: %v)\n%s",
+			derr, strings.Join(lines, "\n"))
+	}
+	if _, err := b.Get(context.Background(), "garm-ctxexpiry"); err != garmErrors.ErrNotFound {
+		t.Fatalf("container SURVIVED a teardown the pre-fix code would have completed: %v", err)
+	}
+	if derr != nil {
+		t.Fatalf("container was reclaimed but Delete reported failure: %v", derr)
+	}
+}
+
+// TestIncusDeleteSurfacesPersistentFailure is the counterpart negative control:
+// when NOTHING can delete the container, Delete must report an error rather
+// than silently returning success. A teardown that always returns nil would
+// pass every test above and leak every container.
+func TestIncusDeleteSurfacesPersistentFailure(t *testing.T) {
+	cmd, _ := writeMockIncus(t)
+	t.Setenv("MOCK_INCUS_DELETE_FAILURES", "99")
+	b := newTestIncusBackend(cmd)
+	b.DeleteRetryBackoff = 5 * time.Millisecond
+	ctx := context.Background()
+
+	if _, err := b.Create(ctx, CreateArgs{Name: "garm-perma", SourceImage: "runner-linux"}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	err := b.Delete(ctx, "garm-perma")
+	if err == nil {
+		t.Fatal("Delete returned success while the container still exists")
+	}
+	if !strings.Contains(err.Error(), "dataset is busy") {
+		t.Fatalf("error lost the underlying cause, which is what the operator needs: %v", err)
+	}
+	if _, gerr := b.Get(ctx, "garm-perma"); gerr != nil {
+		t.Fatalf("container should still exist after a failed delete: %v", gerr)
+	}
+}
+
+// TestIncusDeleteToleratesStopFailure proves a stop that cannot be issued does
+// not abort the teardown: the force fallback still reclaims the container. A
+// teardown that turned a stop error into a hard failure would REGRESS against
+// the one-shot force delete it replaces.
+func TestIncusDeleteToleratesStopFailure(t *testing.T) {
+	cmd, _ := writeMockIncus(t)
+	log := withCmdLog(t)
+	b := newTestIncusBackend(cmd)
+	b.DeleteRetryBackoff = 5 * time.Millisecond
+	b.StopSettleTimeout = 50 * time.Millisecond
+	ctx := context.Background()
+
+	if _, err := b.Create(ctx, CreateArgs{Name: "garm-nostop", SourceImage: "runner-linux"}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	t.Setenv("MOCK_INCUS_STOP_FAILS", "1")
+	if err := b.Delete(ctx, "garm-nostop"); err != nil {
+		t.Fatalf("Delete: a stop failure must not abort teardown: %v", err)
+	}
+	if i := indexOfLine(readCmdLog(t, log), "delete", "--force", "garm-nostop"); i < 0 {
+		t.Fatalf("expected the force fallback to reclaim the still-running container\n%s",
+			strings.Join(readCmdLog(t, log), "\n"))
+	}
+	if _, err := b.Get(ctx, "garm-nostop"); err != garmErrors.ErrNotFound {
+		t.Fatalf("container survived Delete: %v", err)
 	}
 }

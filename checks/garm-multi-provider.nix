@@ -131,6 +131,23 @@ top@{ ... }:
       offUnit = mkGarmUnit {
         enable = true;
       };
+
+      # (5) an incus provider WITH a CPU cap (CIR-M1). Identical to (2) but for
+      # `incusLimitsCpu`, so (2) doubles as the negative control: the key must
+      # be ABSENT from an uncapped provider's config, not merely empty. That
+      # matters because the provider keys "apply no cap at all" off emptiness,
+      # and because an emitted-but-empty key would change the rendered
+      # config.toml — and therefore restart garm — on every existing host.
+      cappedIncusUnit = mkGarmUnit {
+        enable = true;
+        providers.vmharness = {
+          backend = "incus";
+          incusIPv4CIDR = "10.0.100.0/24";
+          incusIPv4Gateway = "10.0.100.1";
+          incusLimitsCpu = "8";
+          images.linux-runner.sourceImage = "runner-linux";
+        };
+      };
     in
     {
       checks = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
@@ -142,6 +159,7 @@ top@{ ... }:
                 incusUnit
                 qemuWindowsArmUnit
                 offUnit
+                cappedIncusUnit
                 ;
             }
             ''
@@ -229,7 +247,36 @@ top@{ ... }:
               ! grep -q '^SupplementaryGroups=' "$off" || fail "off: must have NO supplementary groups"
               ! grep -q '^DeviceAllow=' "$off" || fail "off: must have NO DeviceAllow"
 
-              echo "[t_garm_multi_provider][PASS] union sandbox, incus-only strict posture, qemu-windows-arm provider config, and provider-off M0 posture all verified"
+              # --- (5) CIR-M1: the incus CPU cap renders, and only on request ---
+              #
+              # The cap exists because the per-job containers are uncapped
+              # (`cpu.max=max`, `cpuset.cpus=0-31` on a 32-thread host), so each
+              # one reports every host thread to `nproc` and self-sizes its build
+              # parallelism to the whole machine — the demand that drives the
+              # co-resident Windows guests past GitHub's ~300 s assignment
+              # window. This asserts the option reaches the rendered TOML, which
+              # is the only contract between the NixOS option and the provider.
+              cpre=$(grep '^ExecStartPre=' "$cappedIncusUnit/garm.service" | head -1 | cut -d= -f2-)
+              [ -f "$cpre" ] || fail "incus-capped: render script not found at $cpre"
+              ctmpl=$(grep -ohE '/nix/store/[a-z0-9]+-garm-config.toml.tmpl' "$cpre" | head -1)
+              [ -f "$ctmpl" ] || fail "incus-capped: config template not found (from $cpre)"
+              ccfg=$(grep -ohE '/nix/store/[a-z0-9]+-garm-provider-vmharness\.toml' "$ctmpl" | head -1)
+              [ -f "$ccfg" ] || fail "incus-capped: provider config not found"
+              grep -qx 'incus_limits_cpu = "8"' "$ccfg" \
+                || fail "incus-capped: incus_limits_cpu not rendered (got: $(grep -c . "$ccfg") lines, none matching)"
+
+              # NEGATIVE CONTROL: shape (2) differs ONLY in not setting the
+              # option, and its config must not carry the key AT ALL. An
+              # emitted-but-empty key would restart garm on every existing host
+              # and would hand the provider a cap it was never asked for.
+              ipre=$(grep '^ExecStartPre=' "$incus" | head -1 | cut -d= -f2-)
+              itmpl=$(grep -ohE '/nix/store/[a-z0-9]+-garm-config.toml.tmpl' "$ipre" | head -1)
+              icfg=$(grep -ohE '/nix/store/[a-z0-9]+-garm-provider-vmharness\.toml' "$itmpl" | head -1)
+              [ -f "$icfg" ] || fail "incus-uncapped: provider config not found"
+              ! grep -q 'incus_limits_cpu' "$icfg" \
+                || fail "incus-uncapped: incus_limits_cpu present without the option being set; the key must be inert by default"
+
+              echo "[t_garm_multi_provider][PASS] union sandbox, incus-only strict posture, qemu-windows-arm provider config, the incus CPU cap (present when set, absent when not), and provider-off M0 posture all verified"
               touch $out
             '';
       };
