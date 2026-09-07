@@ -625,6 +625,11 @@ int deployApplyImpl(DeployApplyArgs args, DeployApplyDependencies deps)
         auto restoreCommand = manifestSubstituters(manifest).length
             ? ["nix", "copy", "--from", manifestSubstituters(manifest)[0], desired]
             : ["nix", "path-info", desired];
+        // A signed latest manifest is fresher authority than Nix's per-user
+        // negative narinfo cache. Without this override, one transient 404 can
+        // poison every bounded deployment retry for the default one-hour TTL.
+        if (manifestSubstituters(manifest).length)
+            restoreCommand ~= ["--option", "narinfo-cache-negative-ttl", "0"];
         auto keys = manifestTrustedPublicKeys(manifest);
         if (keys.length)
             restoreCommand ~= ["--option", "trusted-public-keys", keys.join(" ")];
@@ -1565,7 +1570,8 @@ unittest
     import std.algorithm : any, canFind;
     import std.file : rmdirRecurse;
     import std.json : JSONOptions;
-    import mcl.utils.deploy_manifest : ManifestSigningRequest, signManifest;
+    import mcl.utils.deploy_manifest : ManifestSigningRequest, ManifestSubstituter,
+        signManifest;
     import mcl.utils.deploy_state : manifestStatePath;
 
     auto base = uniqueDeployStateTestPath("deploy-apply-darwin-success");
@@ -1592,6 +1598,10 @@ unittest
         gitRevision: "0123456789abcdef0123456789abcdef01234567",
         sequence: 1,
         desiredSystemPath: desired,
+        substituters: [ManifestSubstituter(
+            url: "https://cache.example/deployments",
+            trustedPublicKey: "deployments.example:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        )],
     )), ManifestSigningRequest(keyPath: keyPath, keyId: "mcl-deployment"));
     manifestPath.write(manifest.toString(JSONOptions.doNotEscapeSlashes));
 
@@ -1619,13 +1629,18 @@ unittest
     args.activationMode = DeploymentActivationMode.nixDarwin;
     args.systemProfile = base ~ ".profile";
     args.generationCommand = "current-generation";
-    args.restoreCommand = "restore";
 
     assert(deployApplyImpl(args, DeployApplyDependencies(
         runProcess: &fakeRun,
         queryProcess: &fakeQuery,
     )) == 0);
     assert(current == desired);
+    assert(commands.canFind([
+        "nix", "copy", "--from", "https://cache.example/deployments", desired,
+        "--option", "narinfo-cache-negative-ttl", "0",
+        "--option", "trusted-public-keys",
+        "deployments.example:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    ]));
     assert(commands.canFind(["nix-env", "--profile", args.systemProfile, "--set", desired]));
     assert(commands.canFind([desired ~ "/activate"]));
     assert(!commands.any!(command => command.canFind("systemd-run")));
