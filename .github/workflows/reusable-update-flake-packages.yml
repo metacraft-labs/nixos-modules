@@ -55,7 +55,7 @@ jobs:
           private_key: ${{ secrets.CREATE_PR_APP_PRIVATE_KEY }}
 
       - name: Update flake packages
-        uses: metacraft-labs/nix-update-action@main
+        uses: metacraft-labs/nix-update-action@fix/drop-nix-install-pkgs-action
         with:
           token: ${{ steps.generate-token.outputs.token }}
           blacklist: 'ci-matrix,folder-size-metrics,mcl'
