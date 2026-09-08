@@ -23,6 +23,8 @@
     ./mcl-reprobuild
     ./mcl-repro-deploy-agent
     ./garm
+    ./garm-fleet-alerts
+    ./garm-fleet-external-checks
     ./virtualisation/desktop-vms.nix
     ./nix-topology
   ];
