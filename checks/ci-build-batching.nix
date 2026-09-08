@@ -475,7 +475,17 @@
                 "a batch with no failures must pass; stderr: %s" % proc.stderr[-400:],
             )
 
-            # I.6 Unbatched fallback: no BATCH_TSV, behave exactly as before.
+            # I.6 A planner-produced singleton (one row) drives exactly one
+            #     build. This is what an opted-in caller gets for outputs that
+            #     must stay alone, e.g. deployment targets and Foundry.
+            proc, attempted, _ = run_batch(tsv("solo"), [])
+            check(attempted == [".#solo"], "a one-row batch must build exactly one output")
+            check(proc.returncode == 0, "a passing one-row batch must pass")
+            proc, attempted, _ = run_batch(tsv("solo"), ["solo"])
+            check(attempted == [".#solo"], "a failing one-row batch must still be attempted")
+            check(proc.returncode != 0, "a failing one-row batch must fail the job")
+
+            # I.7 Unbatched fallback: no BATCH_TSV, behave exactly as before.
             proc, attempted, _ = run_batch("", [], fallback_name="solo", fallback_attr="solo")
             check(
                 attempted == [".#solo"],
@@ -490,7 +500,7 @@
                 "the unbatched failure path must still fail the job",
             )
 
-            # I.7 Zero resolved outputs is never a green build.
+            # I.8 Zero resolved outputs is never a green build.
             proc, attempted, _ = run_batch("", [], fallback_name="empty", fallback_attr="")
             check(attempted == [], "an empty batch must attempt nothing")
             check(
