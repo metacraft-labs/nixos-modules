@@ -17,12 +17,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	garmErrors "github.com/cloudbase/garm-provider-common/errors"
 )
@@ -217,9 +219,17 @@ func (b *VMHarnessRunBackend) Create(ctx context.Context, args CreateArgs) (Inst
 
 	guestPath := "/tmp/garm-bootstrap.sh"
 	bootstrapPath := filepath.Join(dir, "garm-bootstrap.sh")
+	// --baseline names the baseline; --source-image is what vm-harness
+	// actually resolves the golden from (cli.nim applyDefaults maps them to
+	// BaselineSpec.name and BaselineSpec.sourceImage respectively). Passing
+	// only --baseline left sourceImage empty, and the two backends disagreed
+	// about that: qemu-windows-arm falls back to spec.name, but the tart
+	// backends silently substituted their built-in cirruslabs golden and
+	// ignored the configured image entirely. Pass both.
 	argv := []string{
 		"run", "--backend", b.BackendID, "--guest", b.GuestOS,
-		"--baseline", args.SourceImage, "--output-dir", outDir,
+		"--baseline", args.SourceImage, "--source-image", args.SourceImage,
+		"--output-dir", outDir,
 		"--timeout-sec", runnerTimeoutSec,
 	}
 	ephemeralPrefix := b.tartEphemeralPrefix(args.Name)
@@ -289,6 +299,10 @@ func (b *VMHarnessRunBackend) Create(ctx context.Context, args CreateArgs) (Inst
 	}
 	_ = logFile.Close()
 
+	if err := waitPastStartup(cmd.Process.Pid, filepath.Join(dir, "vm-harness.log")); err != nil {
+		return Instance{}, err
+	}
+
 	st := vmhState{
 		ProviderID:      args.Name,
 		Name:            args.Name,
@@ -309,6 +323,90 @@ func (b *VMHarnessRunBackend) Create(ctx context.Context, args CreateArgs) (Inst
 		return Instance{}, err
 	}
 	return b.toInstance(st), nil
+}
+
+// defaultStartupGrace bounds how long Create watches a freshly started
+// vm-harness before accepting it as launched. Every backend keeps the direct
+// child alive for the whole guest lifetime — Delete and ListInstances already
+// depend on that — so a child that is gone this early has failed, not
+// daemonised. VMH_PROVIDER_STARTUP_GRACE_SEC is the escape hatch if a future
+// backend ever forks and exits instead.
+//
+// The faults this catches (an absent or unreadable golden) abort vm-harness
+// during argument and baseline validation, well inside a second. The window is
+// deliberately not widened further: it is paid in full on every healthy
+// Create, and later failures remain the bootstrap timeout's job.
+const defaultStartupGrace = 2 * time.Second
+
+const startupPollInterval = 100 * time.Millisecond
+
+func startupGrace() time.Duration {
+	if v := os.Getenv("VMH_PROVIDER_STARTUP_GRACE_SEC"); v != "" {
+		if secs, err := strconv.Atoi(v); err == nil && secs >= 0 {
+			return time.Duration(secs) * time.Second
+		}
+	}
+	return defaultStartupGrace
+}
+
+// waitPastStartup fails when vm-harness exits during the grace window.
+//
+// Create previously returned success as soon as cmd.Start() succeeded, so a
+// guest that died immediately — a missing or invalid golden being the common
+// case — was recorded as a healthy instance. GARM then waited out the full
+// runner bootstrap timeout, reaped the instance and created another, giving an
+// unbounded retry loop that surfaced on no provider error metric at all.
+// Anything that kills vm-harness this early is a provisioning fault.
+func waitPastStartup(pid int, logPath string) error {
+	deadline := time.Now().Add(startupGrace())
+	for {
+		var ws syscall.WaitStatus
+		wpid, err := syscall.Wait4(pid, &ws, syscall.WNOHANG, nil)
+		if err != nil {
+			// Not reapable from here. Prefer accepting a launch that may be
+			// healthy over failing one that is.
+			return nil
+		}
+		if wpid == pid {
+			return fmt.Errorf(
+				"vm-harness exited during startup (%s): %s",
+				describeWaitStatus(ws), tailFile(logPath, 2048))
+		}
+		if !time.Now().Before(deadline) {
+			return nil
+		}
+		time.Sleep(startupPollInterval)
+	}
+}
+
+func describeWaitStatus(ws syscall.WaitStatus) string {
+	if ws.Signaled() {
+		return "killed by signal " + ws.Signal().String()
+	}
+	return "exit status " + strconv.Itoa(ws.ExitStatus())
+}
+
+// tailFile returns up to max trailing bytes of path for use in error messages.
+func tailFile(path string, max int64) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return "(no vm-harness log)"
+	}
+	defer func() { _ = f.Close() }()
+	fi, err := f.Stat()
+	if err != nil {
+		return "(no vm-harness log)"
+	}
+	if fi.Size() > max {
+		if _, err := f.Seek(-max, io.SeekEnd); err != nil {
+			return "(no vm-harness log)"
+		}
+	}
+	data, err := io.ReadAll(f)
+	if err != nil || len(data) == 0 {
+		return "(empty vm-harness log)"
+	}
+	return strings.TrimSpace(string(data))
 }
 
 func (b *VMHarnessRunBackend) Delete(ctx context.Context, idOrName string) error {

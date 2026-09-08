@@ -10,6 +10,104 @@ import (
 	"time"
 )
 
+// vm-harness resolves the golden from --source-image, not --baseline: cli.nim's
+// applyDefaults maps the two flags to BaselineSpec.sourceImage and
+// BaselineSpec.name respectively. Passing only --baseline left sourceImage
+// empty, and the tart backends answer that by substituting their built-in
+// cirruslabs golden, so the configured image was silently discarded and macOS
+// runners booted an image nobody declared. Assert both flags carry it.
+func TestVMHarnessRunBackendCreatePassesSourceImage(t *testing.T) {
+	t.Setenv("VM_HARNESS_DARWIN_ASUSER_UID", "")
+	tmp := t.TempDir()
+	logPath := filepath.Join(tmp, "argv.log")
+	mock := filepath.Join(tmp, "vm-harness")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$@\" > " + shellSingleQuote(logPath) + "\n" +
+		"sleep 30\n"
+	if err := os.WriteFile(mock, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	const wantImage = "ghcr.io/metacraft-labs/macos-tart-runner:tahoe-nix-v1"
+	b := &VMHarnessRunBackend{
+		VMHarnessPath: mock,
+		BackendID:     "tart-macos",
+		GuestOS:       "macos",
+		StateDir:      filepath.Join(tmp, "state"),
+	}
+	inst, err := b.Create(context.Background(), CreateArgs{
+		Name:        "garm-source-image-test",
+		SourceImage: wantImage,
+		OSName:      "macos",
+		Bootstrap:   []byte("#!/bin/sh\necho hi\n"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = b.Delete(context.Background(), inst.Name) }()
+
+	var argv string
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if data, err := os.ReadFile(logPath); err == nil {
+			argv = string(data)
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if argv == "" {
+		t.Fatal("mock vm-harness did not record argv")
+	}
+	if !strings.Contains(argv, "--source-image\n"+wantImage+"\n") {
+		t.Fatalf("Create did not pass --source-image; vm-harness would fall back to its\nbuilt-in golden and ignore the configured image. argv:\n%s", argv)
+	}
+	if !strings.Contains(argv, "--baseline\n"+wantImage+"\n") {
+		t.Fatalf("Create dropped --baseline, which the qemu-windows-arm backend\nresolves the golden directory from. argv:\n%s", argv)
+	}
+}
+
+// A guest that dies during vm-harness' own baseline validation — a missing or
+// unreadable golden being the case seen in production — must surface as a
+// failed Create. Reporting success there recorded a dead instance as healthy,
+// so GARM waited out the full bootstrap timeout, reaped it, and immediately
+// created another, looping indefinitely with no provider error ever recorded.
+func TestVMHarnessRunBackendCreateFailsWhenHarnessDiesImmediately(t *testing.T) {
+	t.Setenv("VM_HARNESS_DARWIN_ASUSER_UID", "")
+	tmp := t.TempDir()
+	mock := filepath.Join(tmp, "vm-harness")
+	script := "#!/bin/sh\n" +
+		"echo 'Error: unhandled exception: baseline directory must contain windows.qcow2' >&2\n" +
+		"exit 1\n"
+	if err := os.WriteFile(mock, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	b := &VMHarnessRunBackend{
+		VMHarnessPath: mock,
+		BackendID:     "qemu-windows-arm",
+		GuestOS:       "windows",
+		StateDir:      filepath.Join(tmp, "state"),
+	}
+	_, err := b.Create(context.Background(), CreateArgs{
+		Name:        "garm-dead-on-arrival",
+		SourceImage: filepath.Join(tmp, "golden", "win-arm-runner"),
+		OSName:      "windows",
+		Bootstrap:   []byte("echo hi\n"),
+	})
+	if err == nil {
+		t.Fatal("Create reported success for a vm-harness that exited immediately")
+	}
+	if !strings.Contains(err.Error(), "exit status 1") {
+		t.Fatalf("Create error lost the child's exit status: %v", err)
+	}
+	if !strings.Contains(err.Error(), "windows.qcow2") {
+		t.Fatalf("Create error did not carry the vm-harness log tail, which is the\nonly place the actual cause appears: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(tmp, "state", "garm-dead-on-arrival", "state.json")); statErr == nil {
+		t.Fatal("Create persisted state for an instance that never started")
+	}
+}
+
 func TestVMHarnessChildEnvDropsSharedNixStoreOnlyForTartGuests(t *testing.T) {
 	t.Setenv("MCL_RUNNER_SHARED_NIX_STORE", "/nix/store")
 
