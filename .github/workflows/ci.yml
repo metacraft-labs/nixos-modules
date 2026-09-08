@@ -191,6 +191,21 @@ jobs:
       # those literals), and `results-runner` is deliberately left alone
       # because `ci / Final Results` is a required status check.
       non-nix-runner: '["eph-linux-x64-g1"]'
+      # Cap the Darwin fan-out. Measured on run 34275237639 (2026-09-08): this
+      # repo asked for 52 `eph-macos-arm64` jobs per CI run — 51 from this
+      # matrix plus one from `test-setup-nix-verification` — against a pool
+      # whose ceiling is 2 concurrent runners (maxRunners = 2, and the runbook
+      # host-caps Tart at 2 simultaneous macOS VMs). That made this repo 47% of
+      # the whole org's macOS demand and starved every other repo behind it.
+      #
+      # 6 jobs still saturates a 2-runner pool three times over, so nothing is
+      # gained by asking for more. Every flake output is still built, named and
+      # individually reported inside its job; only the GitHub job boundary is
+      # coarser. x86_64-linux is left uncapped — that class is elastic.
+      build-max-jobs: |
+        {
+          "aarch64-darwin": 6
+        }
       runners: |
         {
           "x86_64-linux": [
