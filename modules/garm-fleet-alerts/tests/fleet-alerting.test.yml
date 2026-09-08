@@ -1,0 +1,345 @@
+# `promtool test rules` for the GARM runner-fleet alert-rule library.
+#
+# Rendered against the DEFAULT thresholds (scale-set mode, external + webhook
+# families ON) by checks/fleet-alerting.nix — the gate copies the rendered
+# rules next to this file as `garm-fleet-alerts.yml` and runs promtool.
+#
+# Every alert is asserted in BOTH directions: a replay of a real incident that
+# MUST fire, and a transient/healthy control that MUST stay silent. An alert
+# with only a firing test is one nobody trusts — it fires on every ordinary job.
+rule_files:
+  - garm-fleet-alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── GarmControllerDown ─────────────────────────────────────────────────────
+  - interval: 1m
+    name: 'a down controller pages; a healthy sibling stays silent'
+    input_series:
+      - series: 'up{job="garm", instance="high-mem-server"}'
+        values: '0x10'
+      - series: 'up{job="garm", instance="gpu-server-001"}'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 1m # for: 2m not elapsed
+        alertname: GarmControllerDown
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: GarmControllerDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: garm-fleet
+              job: garm
+              instance: high-mem-server
+            exp_annotations:
+              summary: 'GARM controller unreachable (high-mem-server)'
+              description: 'Prometheus cannot scrape GARM at high-mem-server (job garm) for 2m. No runners can be created or reaped while the controller is down — check the garm.service unit and the host.'
+
+  # ── GarmControllerUnhealthy ────────────────────────────────────────────────
+  - interval: 1m
+    name: 'garm_health==0 pages; a healthy controller stays silent'
+    input_series:
+      - series: 'garm_health{controller_id="c6cb71fc"}'
+        values: '0x10'
+      - series: 'garm_health{controller_id="healthy"}'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 3m # for: 5m not elapsed
+        alertname: GarmControllerUnhealthy
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: GarmControllerUnhealthy
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: garm-fleet
+              controller_id: c6cb71fc
+            exp_annotations:
+              summary: 'GARM controller reports unhealthy (c6cb71fc)'
+              description: 'garm_health for controller c6cb71fc has been 0 for 5m — the process is up but degraded. Check the garm.service journal.'
+
+  # ── GarmPoolManagerNotRunning ──────────────────────────────────────────────
+  - interval: 1m
+    name: 'a stopped org pool manager pages; running orgs stay silent'
+    input_series:
+      - series: 'garm_organization_pool_manager_status{id="21f80534", name="agent-harbor", running="false"}'
+        values: '0x10'
+      - series: 'garm_organization_pool_manager_status{id="9962f69f", name="metacraft-labs", running="true"}'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 3m # for: 5m not elapsed
+        alertname: GarmPoolManagerNotRunning
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: GarmPoolManagerNotRunning
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: garm-fleet
+              id: 21f80534
+              name: agent-harbor
+              running: 'false'
+            exp_annotations:
+              summary: 'GARM pool manager not running (agent-harbor)'
+              description: 'The pool manager for org agent-harbor has been stopped for 5m. That org gets no new runners even though the controller is up — restart / check the org credentials.'
+
+  # ── GarmProviderCreateFailures ─────────────────────────────────────────────
+  - interval: 1m
+    name: 'repeated CreateInstance failures page; one transient does not'
+    input_series:
+      # Broken backend: CreateInstance errors accrue steadily (4/min).
+      - series: 'garm_runner_errors_total{operation="CreateInstance", provider="vmharness"}'
+        values: '0+4x20'
+      # Healthy: a single lifetime CreateInstance failure, then flat.
+      - series: 'garm_runner_errors_total{operation="CreateInstance", provider="win"}'
+        values: '0 1+0x19'
+    alert_rule_test:
+      - eval_time: 2m # for: 5m not elapsed
+        alertname: GarmProviderCreateFailures
+        exp_alerts: []
+      - eval_time: 8m
+        alertname: GarmProviderCreateFailures
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: garm-fleet
+              operation: CreateInstance
+              provider: vmharness
+            exp_annotations:
+              summary: 'GARM provider failing to create runners (vmharness)'
+              description: 'Provider vmharness has had at least 3 CreateInstance failures in the last 15m. The backend (incus/libvirt/tart/EC2) is likely broken — check the provider host.'
+
+  # ── GarmProviderHighErrorRatio ─────────────────────────────────────────────
+  - interval: 1m
+    name: 'a backend failing 40% of ops pages; a busy healthy one does not'
+    input_series:
+      # Broken: 2 errors/min against 5 ops/min = 40% failure ratio.
+      - series: 'garm_runner_errors_total{operation="CreateInstance", provider="vmharness"}'
+        values: '0+2x20'
+      - series: 'garm_runner_operations_total{operation="CreateInstance", provider="vmharness"}'
+        values: '0+5x20'
+      # Healthy high-volume: 1 error/min against 100 ops/min = 1%.
+      - series: 'garm_runner_errors_total{operation="CreateInstance", provider="win"}'
+        values: '0+1x20'
+      - series: 'garm_runner_operations_total{operation="CreateInstance", provider="win"}'
+        values: '0+100x20'
+    alert_rule_test:
+      - eval_time: 5m # for: 10m not elapsed
+        alertname: GarmProviderHighErrorRatio
+        exp_alerts: []
+      - eval_time: 13m
+        alertname: GarmProviderHighErrorRatio
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: garm-fleet
+              operation: CreateInstance
+              provider: vmharness
+            exp_annotations:
+              summary: 'GARM provider failing >0.2 of operations (vmharness)'
+              description: 'Provider vmharness is failing more than 0.2 of its runner operations over 15m (40%). The backend is broken (incus/libvirt/tart down, or AWS quota/subnet/AMI errors) — runners are not being provisioned.'
+
+  # ── GarmGithubRateLimit{Low,Critical} ──────────────────────────────────────
+  - interval: 1m
+    name: 'rate limit at 30 pages critical (and low); a healthy budget is silent'
+    input_series:
+      - series: 'garm_github_rate_limit_remaining{credential_id="1", credential_name="mcl-app", endpoint="github.com"}'
+        values: '30x10'
+      - series: 'garm_github_rate_limit_remaining{credential_id="2", credential_name="blocksense-app", endpoint="github.com"}'
+        values: '14981x10'
+    alert_rule_test:
+      - eval_time: 2m # for: 5m not elapsed
+        alertname: GarmGithubRateLimitCritical
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: GarmGithubRateLimitCritical
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: garm-fleet
+              credential_id: '1'
+              credential_name: mcl-app
+              endpoint: github.com
+            exp_annotations:
+              summary: 'GitHub API rate limit critically low (mcl-app)'
+              description: 'Credential mcl-app has only 30 GitHub API requests remaining (< 50). GARM is about to be throttled — runner provisioning will stall.'
+      - eval_time: 6m
+        alertname: GarmGithubRateLimitLow
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: garm-fleet
+              credential_id: '1'
+              credential_name: mcl-app
+              endpoint: github.com
+            exp_annotations:
+              summary: 'GitHub API rate limit low (mcl-app)'
+              description: 'Credential mcl-app has 30 GitHub API requests remaining (< 200) for 5m. Approaching a throttle that will stall runner provisioning.'
+
+  - interval: 1m
+    name: 'rate limit at 120 pages low but NOT critical'
+    input_series:
+      - series: 'garm_github_rate_limit_remaining{credential_id="1", credential_name="mcl-app", endpoint="github.com"}'
+        values: '120x10'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: GarmGithubRateLimitCritical
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: GarmGithubRateLimitLow
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: garm-fleet
+              credential_id: '1'
+              credential_name: mcl-app
+              endpoint: github.com
+            exp_annotations:
+              summary: 'GitHub API rate limit low (mcl-app)'
+              description: 'Credential mcl-app has 120 GitHub API requests remaining (< 200) for 5m. Approaching a throttle that will stall runner provisioning.'
+
+  # ── GarmFleetStarvation (the priority page) ────────────────────────────────
+  - interval: 1m
+    name: 'queued jobs + saturated class pages; saturated-only and queued-only do not'
+    input_series:
+      # metacraft-labs/eph-linux-x64: desired == max (saturated) AND jobs queued
+      # -> the real starvation. (Exactly the live 2026-09-08 shape.)
+      - series: 'garm_scaleset_desired_runner_count{id="5"}'
+        values: '6x15'
+      - series: 'garm_scaleset_max_runners{id="5"}'
+        values: '6x15'
+      - series: 'garm_scaleset_info{id="5", scaleset_owner="metacraft-labs", name="eph-linux-x64"}'
+        values: '1x15'
+      - series: 'garm_job_status{job_id="36620", owner="metacraft-labs", requested_labels="eph-linux-x64", status="queued"}'
+        values: '1x15'
+      # NEGATIVE 1 — saturated but NO queued jobs (metacraft eph-win-x64).
+      - series: 'garm_scaleset_desired_runner_count{id="9"}'
+        values: '6x15'
+      - series: 'garm_scaleset_max_runners{id="9"}'
+        values: '6x15'
+      - series: 'garm_scaleset_info{id="9", scaleset_owner="metacraft-labs", name="eph-win-x64"}'
+        values: '1x15'
+      # NEGATIVE 2 — queued jobs but NOT saturated (agent-harbor eph-linux-x64,
+      # desired 2 < max 6).
+      - series: 'garm_scaleset_desired_runner_count{id="6"}'
+        values: '2x15'
+      - series: 'garm_scaleset_max_runners{id="6"}'
+        values: '6x15'
+      - series: 'garm_scaleset_info{id="6", scaleset_owner="agent-harbor", name="eph-linux-x64"}'
+        values: '1x15'
+      - series: 'garm_job_status{job_id="40001", owner="agent-harbor", requested_labels="eph-linux-x64", status="queued"}'
+        values: '1x15'
+    alert_rule_test:
+      - eval_time: 5m # for: 10m not elapsed
+        alertname: GarmFleetStarvation
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: GarmFleetStarvation
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: garm-fleet
+              garm_owner: metacraft-labs
+              garm_class: eph-linux-x64
+            exp_annotations:
+              summary: 'Runner STARVATION: metacraft-labs/eph-linux-x64 saturated with jobs queued'
+              description: '1 job(s) have been queued for 10m for class eph-linux-x64 (owner metacraft-labs) while that class is at its runner ceiling. Jobs are starving — raise max-runners, add a qualifying host, or check that the AWS burst spill is firing.'
+
+  # ── GithubAppTokenMintFailing (external check) ─────────────────────────────
+  - interval: 1m
+    name: 'a non-minting App pages; a healthy App stays silent'
+    input_series:
+      - series: 'github_app_installation_token_mint_ok{app="mcl-app"}'
+        values: '0x20'
+      - series: 'github_app_installation_token_mint_ok{app="blocksense-app"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 5m # for: 15m not elapsed
+        alertname: GithubAppTokenMintFailing
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: GithubAppTokenMintFailing
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: garm-fleet
+              app: mcl-app
+            exp_annotations:
+              summary: 'GitHub App token minting is failing (mcl-app)'
+              description: 'The garm-fleet-external-checks exporter could not mint an installation token for App mcl-app for 15m. The App private key/JWT is rejected (rotated, revoked, clock skew, or the installation was removed) — GARM cannot register or reap runners for that org. Rotate/repair the App credential.'
+
+  # ── GithubWebhookDeliveryFailing (external, post-Phase-C) ───────────────────
+  - interval: 1m
+    name: 'a failing webhook delivery pages; a healthy one stays silent'
+    input_series:
+      - series: 'github_webhook_last_delivery_ok{org="metacraft-labs", hook_id="123"}'
+        values: '0x40'
+      - series: 'github_webhook_last_delivery_ok{org="blocksense-network", hook_id="456"}'
+        values: '1x40'
+    alert_rule_test:
+      - eval_time: 10m # for: 30m not elapsed
+        alertname: GithubWebhookDeliveryFailing
+        exp_alerts: []
+      - eval_time: 31m
+        alertname: GithubWebhookDeliveryFailing
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: garm-fleet
+              org: metacraft-labs
+              hook_id: '123'
+            exp_annotations:
+              summary: 'GitHub webhook deliveries are failing (metacraft-labs)'
+              description: 'GitHub reports the most recent webhook delivery to the controller endpoint for metacraft-labs (hook 123) as non-2xx for 30m. Job events are not reaching GARM — check the Cloudflare Tunnel / public endpoint and the org webhook config.'
+
+  # ── GithubWebhookEndpointProbeDown (external, post-Phase-C) ─────────────────
+  - interval: 1m
+    name: 'a failed blackbox probe pages; a passing probe stays silent'
+    input_series:
+      - series: 'probe_success{job="blackbox-webhook", instance="ci-hms.example.com"}'
+        values: '0x10'
+      - series: 'probe_success{job="blackbox-webhook", instance="ci-ok.example.com"}'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 3m # for: 5m not elapsed
+        alertname: GithubWebhookEndpointProbeDown
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: GithubWebhookEndpointProbeDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: garm-fleet
+              job: blackbox-webhook
+              instance: ci-hms.example.com
+            exp_annotations:
+              summary: 'GARM public webhook endpoint probe is failing (ci-hms.example.com)'
+              description: 'The blackbox probe of the public webhook endpoint ci-hms.example.com has failed for 5m (tunnel down, cert expired, or endpoint unreachable). GitHub cannot deliver workflow_job events.'
+
+  # ── GarmWebhookHmacFailures (GARM-side, post-Phase-C) ──────────────────────
+  - interval: 1m
+    name: 'sustained HMAC-invalid deliveries page; valid deliveries stay silent'
+    input_series:
+      # Invalid deliveries accrue (1/min) -> increase[10m] stays >= 1.
+      - series: 'garm_webhook_received{valid="false", reason="signature"}'
+        values: '0+1x30'
+      # A healthy stream of VALID deliveries must never trip the valid="false" rule.
+      - series: 'garm_webhook_received{valid="true", reason=""}'
+        values: '0+5x30'
+    alert_rule_test:
+      - eval_time: 5m # for: 10m not elapsed
+        alertname: GarmWebhookHmacFailures
+        exp_alerts: []
+      - eval_time: 13m
+        alertname: GarmWebhookHmacFailures
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: garm-fleet
+              valid: 'false'
+              reason: signature
+            exp_annotations:
+              summary: 'GARM is rejecting webhook deliveries (HMAC/parse)'
+              description: 'GARM has recorded webhook deliveries with valid="false" (reason signature) for 10m. The per-entity webhook secret likely does not match GitHub, or a relay is corrupting the payload — new jobs from the affected org will not scale runners.'

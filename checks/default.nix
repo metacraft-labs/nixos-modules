@@ -17,6 +17,7 @@
     ./garm-service-boot.nix
     ./garm-api-watchdog.nix
     ./garm-multi-provider.nix
+    ./fleet-alerting.nix
     ./garm-reconcile.nix
     ./garm-stale-scaleset-job-reaped.nix
     ./garm-incus-runner-host.nix
