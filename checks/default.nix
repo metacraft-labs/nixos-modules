@@ -35,6 +35,7 @@
     ./consumer-flake-attic.nix
     ./linux-vm-cloud-init
     ./netbird-with-agenix.nix
+    ./ci-build-batching.nix
     ./packages-ci-matrix.nix
     ./pre-commit.nix
     ./secret-integration

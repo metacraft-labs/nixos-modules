@@ -34,6 +34,24 @@ on:
         default: ''
         required: false
         type: string
+      build-max-jobs:
+        # Opt-in fan-out cap. The build matrix is one GitHub job per flake
+        # output, which is fine on an elastic runner class and ruinous on a
+        # capped one: the macOS pool tops out at 2 concurrent runners, so a
+        # single run asking for ~50 `aarch64-darwin` jobs monopolises the
+        # class for hours and starves every other repo behind it.
+        #
+        # Set a system's value to cap how many BUILD JOBS that system may use.
+        # Outputs are distributed evenly across that many jobs and each job
+        # builds its share sequentially. Nothing is dropped: every output is
+        # still built, still reported by name, and still able to fail the run
+        # (see the `Build` step). Systems absent from the map keep one job per
+        # output, so the default `{}` reproduces the previous behaviour
+        # exactly and no caller changes unless it opts in.
+        description: 'JSON-encoded map of nix system to the maximum number of build jobs for that system ({} = one job per flake output)'
+        default: '{}'
+        required: false
+        type: string
       push-deployment-caches:
         description: 'Push deployment target closures to configured deployment cache backends'
         default: false
@@ -377,13 +395,227 @@ jobs:
         with:
           path: comment.md
 
+  # Collapse the one-job-per-flake-output build matrix into at most
+  # `inputs.build-max-jobs[system]` jobs for the systems the caller caps.
+  #
+  # This job only exists for callers that opt in; when `build-max-jobs` is the
+  # default `{}` it is skipped entirely and `build` falls back to the exact
+  # matrix expression it used before, so non-opted-in repos see no extra job
+  # and no behaviour change at all.
+  plan-build-matrix:
+    name: Plan build matrix
+    needs: [shard-matrix, merge-matrices]
+    if: always() && inputs.build-max-jobs != '' && inputs.build-max-jobs != '{}'
+    runs-on: ${{ fromJSON(inputs.runners).x86_64-linux }}
+    outputs:
+      build_matrix: ${{ steps.plan.outputs.build_matrix }}
+    steps:
+      - name: Group flake outputs into build jobs
+        id: plan
+        shell: bash
+        env:
+          # Same precedence the `build` job applies when picking its matrix:
+          # the merged matrix when `merge-matrices` succeeded, otherwise the
+          # shard matrix. Empty means "nothing to plan" and `build` falls back.
+          SOURCE_BUILD_MATRIX: >-
+            ${{
+              (
+                needs.merge-matrices.result == 'success' &&
+                needs.merge-matrices.outputs.build_matrix
+              ) ||
+              needs.shard-matrix.outputs.build_matrix ||
+              ''
+            }}
+          BUILD_MAX_JOBS: ${{ inputs.build-max-jobs }}
+          FOUNDRY_DARWIN_BOOTSTRAP_RUNNER: ${{ inputs.foundry-darwin-bootstrap-runner }}
+          PUSH_DEPLOYMENT_CACHES: ${{ inputs.push-deployment-caches }}
+        run: |
+          set -euo pipefail
+
+          run_python() {
+            if command -v python3 >/dev/null 2>&1; then
+              python3 "$@"
+            else
+              # This job deliberately skips Setup Nix (it needs no Nix store),
+              # so the pre-installed Nix here may still have the flake features
+              # disabled. Ask for them explicitly rather than failing with the
+              # familiar "nix-command is disabled".
+              nix --extra-experimental-features 'nix-command flakes' \
+                shell nixpkgs#python3 --command python3 "$@"
+            fi
+          }
+
+          run_python - <<'PY'
+          import json
+          import os
+          import sys
+
+          raw = os.environ.get("SOURCE_BUILD_MATRIX", "").strip()
+          raw_max_jobs = os.environ.get("BUILD_MAX_JOBS", "").strip() or "{}"
+          foundry_override = os.environ.get("FOUNDRY_DARWIN_BOOTSTRAP_RUNNER", "").strip()
+          push_deployment_caches = (
+              os.environ.get("PUSH_DEPLOYMENT_CACHES", "").strip().lower() == "true"
+          )
+
+          def emit(matrix):
+              line = "build_matrix=" + json.dumps(matrix, separators=(",", ":")) + "\n"
+              path = os.environ.get("GITHUB_OUTPUT")
+              if path:
+                  with open(path, "a", encoding="utf-8") as handle:
+                      handle.write(line)
+              else:
+                  sys.stdout.write(line)
+
+          def note(message):
+              print(message)
+              path = os.environ.get("GITHUB_STEP_SUMMARY")
+              if path:
+                  with open(path, "a", encoding="utf-8") as handle:
+                      handle.write(message + "\n")
+
+          # No source matrix at all: emit an empty plan so `build` falls back to
+          # its own expression instead of inventing work.
+          if not raw or raw == '{"include":[]}':
+              emit({"include": []})
+              sys.exit(0)
+
+          packages = json.loads(raw).get("include", [])
+          max_jobs = json.loads(raw_max_jobs) if raw_max_jobs else {}
+          if not isinstance(max_jobs, dict):
+              raise SystemExit("build-max-jobs must be a JSON object mapping system -> integer")
+
+          def member(pkg):
+              return {"name": pkg.get("name", ""), "attrPath": pkg.get("attrPath", "")}
+
+          def row(pkg):
+              return "{}\t{}".format(pkg.get("name", ""), pkg.get("attrPath", ""))
+
+          def singleton(pkg):
+              # Preserve the original entry verbatim and only ADD batch fields,
+              # so every existing `matrix.*` reference keeps its exact meaning.
+              entry = dict(pkg)
+              entry["batch"] = [member(pkg)]
+              entry["batchSize"] = 1
+              entry["batchTsv"] = row(pkg)
+              return entry
+
+          def must_stay_alone(pkg):
+              # Synthetic "nothing to build" entry.
+              if pkg.get("noop"):
+                  return True
+              # Deployment targets carry per-target push/upload steps keyed on
+              # `matrix.output` / `matrix.deploymentKind`, which only make sense
+              # one target per job.
+              if push_deployment_caches and pkg.get("deploymentTarget"):
+                  return True
+              # The Foundry Darwin bootstrap runner override is selected by
+              # `matrix.name == 'foundry'`; batching would rename the job and
+              # silently route it back to the ephemeral class.
+              if (
+                  foundry_override
+                  and pkg.get("name") == "foundry"
+                  and pkg.get("system") == "aarch64-darwin"
+              ):
+                  return True
+              return False
+
+          planned = []
+          groups = {}
+          group_order = []
+
+          for pkg in packages:
+              if must_stay_alone(pkg):
+                  planned.append(singleton(pkg))
+                  continue
+              # Batches must be homogeneous in runner and in allowedToFail so
+              # `runs-on` and `continue-on-error` keep working per-entry.
+              key = (
+                  pkg.get("system", ""),
+                  json.dumps(pkg.get("ghRunner"), sort_keys=True),
+                  bool(pkg.get("allowedToFail", False)),
+              )
+              if key not in groups:
+                  groups[key] = []
+                  group_order.append(key)
+              groups[key].append(pkg)
+
+          for key in group_order:
+              system, _runner, allowed_to_fail = key
+              members = sorted(
+                  groups[key], key=lambda p: (p.get("name", ""), p.get("attrPath", ""))
+              )
+              limit = max_jobs.get(system)
+              if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
+                  # This system is uncapped: keep one job per flake output.
+                  planned.extend(singleton(pkg) for pkg in members)
+                  continue
+              if len(members) <= limit:
+                  planned.extend(singleton(pkg) for pkg in members)
+                  continue
+
+              base, extra = divmod(len(members), limit)
+              cursor = 0
+              for index in range(limit):
+                  size = base + (1 if index < extra else 0)
+                  chunk = members[cursor:cursor + size]
+                  cursor += size
+                  if not chunk:
+                      continue
+                  planned.append({
+                      "name": "batch {}/{} ({} outputs)".format(index + 1, limit, len(chunk)),
+                      "system": system,
+                      "ghRunner": chunk[0].get("ghRunner"),
+                      "allowedToFail": allowed_to_fail,
+                      "noop": False,
+                      "deploymentTarget": False,
+                      "deploymentKind": "",
+                      "attrPath": chunk[0].get("attrPath", ""),
+                      "output": "",
+                      "batch": [member(pkg) for pkg in chunk],
+                      "batchSize": len(chunk),
+                      "batchTsv": "\n".join(row(pkg) for pkg in chunk),
+                  })
+
+          # Reconciliation: batching may reorder, but it must never drop,
+          # duplicate or invent a flake output. Failing loudly here is far
+          # better than silently building less than the caller asked for.
+          before = sorted(
+              (pkg.get("system", ""), pkg.get("name", ""), pkg.get("attrPath", ""))
+              for pkg in packages
+          )
+          after = sorted(
+              (entry.get("system", ""), item["name"], item["attrPath"])
+              for entry in planned
+              for item in entry["batch"]
+          )
+          if before != after:
+              raise SystemExit(
+                  "build matrix batching changed the output set: "
+                  "{} in, {} out".format(len(before), len(after))
+              )
+
+          note(
+              "Planned {} flake output(s) into {} build job(s) "
+              "(unbatched would have been {}).".format(
+                  len(before), len(planned), len(packages)
+              )
+          )
+          emit({"include": planned})
+          PY
+
   build:
-    needs: [compute-mcl-ref, shard-matrix, merge-matrices]
+    needs: [compute-mcl-ref, shard-matrix, merge-matrices, plan-build-matrix]
     if: always()
     strategy:
       fail-fast: false
       matrix: >-
         ${{fromJSON(
+          (
+            needs.plan-build-matrix.result == 'success' &&
+            needs.plan-build-matrix.outputs.build_matrix &&
+            needs.plan-build-matrix.outputs.build_matrix != '{"include":[]}' &&
+            needs.plan-build-matrix.outputs.build_matrix
+          ) ||
           (
             needs.merge-matrices.result == 'success' &&
             needs.merge-matrices.outputs.build_matrix &&
@@ -449,9 +681,75 @@ jobs:
 
       - name: Build ${{ matrix.name }}
         if: ${{ !matrix.noop }}
+        shell: bash
+        env:
+          # Newline-separated "<output name>\t<flake attribute>" rows for every
+          # output this job owns. Empty when the caller has not opted into
+          # `build-max-jobs`, in which case the job builds its single matrix
+          # entry exactly as it always did. Passed through `env` rather than
+          # interpolated into the script so names are data, never shell syntax.
+          BATCH_TSV: ${{ matrix.batchTsv }}
+          BATCH_FALLBACK_NAME: ${{ matrix.name }}
+          BATCH_FALLBACK_ATTR: ${{ matrix.attrPath }}
         run: |
-          nix build -L --no-link --keep-going --show-trace \
-            '.#${{ matrix.attrPath }}'
+          # DELIBERATELY NOT `set -e`. A batch must attempt EVERY output even
+          # after one fails; stopping at the first failure would report a
+          # single broken output and hide the rest, which is exactly the signal
+          # the per-output fan-out existed to provide. The aggregated verdict is
+          # applied at the end, and any failure fails the job.
+          set -uo pipefail
+
+          read -r -a build_cmd <<< "${CI_MATRIX_BUILD_COMMAND:-nix build -L --no-link --keep-going --show-trace}"
+
+          rows="$BATCH_TSV"
+          if [[ -z "${rows//[[:space:]]/}" ]]; then
+            printf -v rows '%s\t%s' "$BATCH_FALLBACK_NAME" "$BATCH_FALLBACK_ATTR"
+          fi
+
+          summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
+          {
+            printf '### %s\n\n' "$BATCH_FALLBACK_NAME"
+            printf '| flake output | attribute | result |\n'
+            printf '| --- | --- | --- |\n'
+          } >> "$summary"
+
+          total=0
+          passed=0
+          failed_names=()
+
+          while IFS=$'\t' read -r out_name out_attr || [[ -n "${out_name:-}" ]]; do
+            [[ -n "${out_attr:-}" ]] || continue
+            total=$((total + 1))
+            echo "::group::Build $out_name (.#$out_attr)"
+            if "${build_cmd[@]}" ".#$out_attr"; then
+              result='✅ pass'
+              passed=$((passed + 1))
+            else
+              result='❌ FAIL'
+              failed_names+=("$out_name")
+            fi
+            echo "::endgroup::"
+            # The backticks are literal markdown code spans in a printf FORMAT
+            # string, not command substitution.
+            # shellcheck disable=SC2016
+            printf '| `%s` | `%s` | %s |\n' "$out_name" "$out_attr" "$result" >> "$summary"
+          done <<< "$rows"
+
+          # A job that resolved no outputs has proved nothing; never let an
+          # empty batch masquerade as a green build.
+          if [[ "$total" -eq 0 ]]; then
+            echo "::error title=Empty build batch::No flake outputs resolved for '$BATCH_FALLBACK_NAME'; refusing to report success for zero work."
+            exit 1
+          fi
+
+          echo "Attempted $total flake output(s): $passed passed, ${#failed_names[@]} failed."
+
+          if [[ "${#failed_names[@]}" -gt 0 ]]; then
+            for out_name in "${failed_names[@]}"; do
+              echo "::error title=Flake output build failed::$out_name"
+            done
+            exit 1
+          fi
 
       # Cache push runs only when the caller requests deployment cache
       # publication.
@@ -751,7 +1049,7 @@ jobs:
   results:
     runs-on: ${{ fromJSON(inputs.results-runner) }}
     name: Final Results
-    needs: [compute-mcl-ref, build, shard-matrix, merge-matrices]
+    needs: [compute-mcl-ref, build, shard-matrix, merge-matrices, plan-build-matrix]
     if: always()
     permissions:
       contents: read

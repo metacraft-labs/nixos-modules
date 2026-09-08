@@ -7,6 +7,7 @@
     "shard-matrix",
     "eval-matrix",
     "merge-matrices",
+    "plan-build-matrix",
     "build",
     "results"
   ],
@@ -27,6 +28,7 @@
     "Generate Shard Matrix",
     "Generate CI Matrix",
     "Merge matrices",
+    "Group flake outputs into build jobs",
     "Build ${{ matrix.name }}",
     "Push deployment closure caches ${{ matrix.name }}",
     "Print CI Matrix",
