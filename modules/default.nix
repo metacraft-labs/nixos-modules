@@ -25,6 +25,7 @@
     ./garm
     ./garm-fleet-alerts
     ./garm-fleet-external-checks
+    ./vm-harness-serve
     ./virtualisation/desktop-vms.nix
     ./nix-topology
   ];
