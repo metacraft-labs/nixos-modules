@@ -27,6 +27,7 @@
     ./garm-fleet-external-checks
     ./github-actions-fit-exporter
     ./github-actions-fit-alerts
+    ./runner-label-taxonomy
     ./vm-harness-serve
     ./vm-harness-serve/darwin.nix
     ./virtualisation/desktop-vms.nix
