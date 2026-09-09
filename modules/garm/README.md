@@ -65,9 +65,12 @@ services.garm = {
 ```
 
 Orgs and scale sets carry GitHub-side state (a message-queue subscription, a
-numeric id) and are therefore NOT part of `config.toml`; they are provisioned at
-runtime with `garm-cli` against the live, App-authenticated org (see §4). Only the
-credentials, provider, metrics, and controller URLs are declarative.
+numeric id) and are therefore NOT part of `config.toml`; they are applied with
+`garm-cli` against the live, App-authenticated org (see §4). They are still
+declared here: `services.garm.scaleSets` (and the orgs those entries reference)
+is rendered into a desired-state manifest that the `garm-reconcile` oneshot
+converges idempotently once `services.garm.reconcile.enable` is set (default
+`false`).
 
 ---
 
@@ -237,8 +240,10 @@ above + `/metrics` served + the declarative egress option.
 <stateDir>/app-key.pem` — using the App ID / installation ID from
   > `services.garm.github` and the **module-staged PEM**. Every input is still
   > declarative (module options + LoadCredential); only the final `garm-cli`
-  > registration is a runtime step, exactly like org/scale-set creation. A future
-  > reconcile activation can automate this idempotently.
+  > registration is a runtime step, exactly like org/scale-set creation. Setting
+  > `services.garm.reconcile.enable` automates that step idempotently: the
+  > `garm-reconcile` oneshot adds the credential when absent and updates it when
+  > drifted, from the same declared App id / installation id / staged PEM.
 
 - **Controller URLs** (`metadata_url`, `callback_url`) go in `[default]` and must be
   guest-reachable (host bridge IP).
@@ -259,7 +264,8 @@ above + `/metrics` served + the declarative egress option.
 
 ## 4. Provisioning orgs + scale sets at runtime
 
-Scale sets carry GitHub-side state, so after the daemon is up:
+Scale sets carry GitHub-side state, so they are applied after the daemon is up.
+The `garm-reconcile` oneshot below does this for you; the equivalent by hand is:
 
 ```bash
 # org (references the declarative App creds by name)
@@ -274,9 +280,13 @@ garm-cli scaleset add --org <ORG_ID> --provider-name vmharness \
 ```
 
 The `services.garm.scaleSets.<name>` option records the **intended** policy so a
-host config documents its concurrency in one place; a future reconcile activation
-can apply it. `garm-cli controller update --minimum-job-age-backoff 0` makes
-scale-to-zero react eagerly.
+host config documents its concurrency in one place, and `garm-reconcile` applies
+it: with `services.garm.reconcile.enable = true` (default `false`) a oneshot runs
+after `garm.service` and converges the forge endpoint, credentials, orgs, and
+scale sets to the declared shape — creating what is missing, updating what has
+drifted, and doing nothing on a second run. Undeclared entities are left alone
+unless `reconcile.pruneUnmanaged` is also set. `garm-cli controller update
+--minimum-job-age-backoff 0` makes scale-to-zero react eagerly.
 
 ---
 
@@ -390,26 +400,34 @@ still applies on top for transient host load.
 
 ---
 
-## 8. Known cosmetic log noise: `%!s(<nil>)`
+## 8. `%!s(<nil>)` in consolidate logs — a real bug, patched here
 
-Every consolidate cycle GARM may log:
+On an **unpatched** GARM, every consolidate cycle may log:
 
 ```
 failed to consolidate runner state ... provider binary <path> returned error: %!s(<nil>)
 ```
 
-This is a **GARM-side** Go formatting artifact, **not** a provider bug. In
-`runner/providers/v0.1.1/external.go` GARM wraps the provider's error with
-`NewProviderError("... returned error: %s", execPath, err)`; when `err` is a
-nil-valued wrapped error in the consolidate/GetInstance path, `%s` renders it as
-`%!s(<nil>)`. The `garm-provider-vmharness` provider returns clean results:
-`ListInstances`/`List` return `(nil, nil)` on the empty case (verified in
-`internal/backend/virsh.go` `listFiltered` and `internal/provider/provider.go`
-`ListInstances`), and `DeleteInstance` treats absence as success (idempotent). The
-noise is **cosmetic** — it does not affect correctness (all M4/M5 phases were green
-with VMs correctly created and destroyed). We do **not** patch the vendored GARM
-(read-only in this workspace); the fix belongs upstream (guard the log/format on a
-non-nil error). Tracked here for operators who see it.
+This is a **GARM-side** bug, **not** a provider bug. In
+`runner/providers/v0.1.1/external.go`, `ListInstances` guards the provider
+exec with an inverted `if err == nil` — every sibling command in that file uses
+`if err != nil`. On a **successful** provider run GARM therefore takes the
+failure branch: it formats the nil error with `%s` (hence `%!s(<nil>)`) **and
+returns an empty instance slice**, so scale-set runner-state consolidation never
+sees the runners the provider actually reported. The message is not cosmetic —
+it comes with genuine runner state drift.
+
+The `garm-provider-vmharness` provider is correct: `ListInstances`/`List` return
+`(nil, nil)` on the empty case (verified in `internal/backend/virsh.go`
+`listFiltered` and `internal/provider/provider.go` `ListInstances`), and
+`DeleteInstance` treats absence as success (idempotent).
+
+The GARM package in this repo carries the one-line fix:
+`packages/garm/default.nix` applies
+`packages/garm/patches/fix-listinstances-inverted-error-check.patch`, and the
+upstream submission material lives in
+`upstream-patches/garm-listinstances-inverted-error-check/`. Operators who still
+see the message are running an unpatched GARM.
 
 ---
 
