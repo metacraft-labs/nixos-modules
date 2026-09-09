@@ -20,6 +20,7 @@
     ./fleet-alerting.nix
     ./alertmanager-routing.nix
     ./fit-monitoring.nix
+    ./hybrid-ci-runner.nix
     ./garm-reconcile.nix
     ./garm-stale-scaleset-job-reaped.nix
     ./garm-incus-runner-host.nix
