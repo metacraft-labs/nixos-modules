@@ -215,6 +215,16 @@ def generate_blocks(governance: dict, scope: str, owner: str, root_config: str) 
 
     if include_scope(scope, "branch-protections"):
         for branch in governance["branchProtections"]:
+            # A branch protection's import id is derivable (`<repo>:<pattern>`)
+            # rather than a server-assigned id, so "does this exist on GitHub
+            # yet?" cannot be inferred from a missing id the way it is for
+            # rulesets, runner groups and custom roles. Entries that are
+            # declared but not yet created say so with `exists = false`; they
+            # get no import block, and the first apply creates them. Importing
+            # one of those would fail the whole plan with "could not find a
+            # branch protection rule with the pattern '<pattern>'".
+            if branch.get("exists") is False:
+                continue
             repository = branch["repository"]
             pattern = branch["pattern"]
             blocks.append(
