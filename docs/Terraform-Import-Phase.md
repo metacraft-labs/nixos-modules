@@ -89,6 +89,26 @@ context attempt provider imports, breaking offline tests. Each root's
 `IMPORTS.md` documents the resource-class-by-resource-class import IDs and an
 imperative `tofu import` fallback.
 
+Only resources that already exist on GitHub may get an import block: an import
+of something absent fails the entire plan, not just that resource. For most
+classes existence is implied by a server-assigned `id` in the model, and the
+generator skips id-less entries so the first apply creates them instead.
+Branch protections have no such id — theirs is the derivable `<repo>:<pattern>`
+— so a declared-but-not-yet-created one must say so explicitly:
+
+```nix
+{
+  repository = "new-repo";
+  pattern = "dev";
+  exists = false; # no import block; the first apply creates it
+  # ...
+}
+```
+
+Without it the plan aborts with `could not find a branch protection rule with
+the pattern '<pattern>'`, and no other resource in the root can be planned.
+Drop the `exists = false` once the rule has been created.
+
 For Cloudflare, the shared `cloudflare-import-blocks` generator does the same
 from the root's reviewed **import-id data model** — `import-ids.json`, a list of
 `{ "to": "<resource address>", "id": "<composite Cloudflare id>" }` captured from
