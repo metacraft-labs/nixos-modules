@@ -49,6 +49,51 @@
   end-to-end procedure. Deployment facts (accounts, owners, zones) live in the
   consumer's tracked Terraform/Nix files, never in this shared repo.
 
+* Immutable reusable-workflow source
+
+  Every Terraform job materializes the repository and commit that contain the
+  called reusable workflow into =.mcl/reusable-terraform-ci=. GitHub supplies
+  that identity through =job.workflow_repository= and =job.workflow_sha=; the
+  workflow does not substitute the caller repository/SHA or accept a duplicate
+  caller-provided revision. The checkout action is commit-pinned and does not
+  persist credentials.
+
+  Before Setup Nix runs, each job fails closed unless the local checkout has a
+  full commit SHA matching =job.workflow_sha=, an origin matching the called
+  workflow repository on the current GitHub server, and a clean worktree. It
+  also hashes every tracked Setup Nix source file directly against the called
+  commit, so index flags cannot conceal changed action bytes. Setup Nix is then
+  invoked as a local composite action from that checkout.
+
+  The plan job repeats the exact HEAD/origin checks immediately before the
+  policy gate. It compares both policy files' worktree bytes with blobs selected
+  through =job.workflow_sha=, materializes private policy copies directly from
+  those content-addressed Git objects, verifies the copies, and executes only
+  the copies. This rejects modifications hidden from =git status= with
+  =assume-unchanged= or similar index flags. It does not resolve =@main=, use
+  =github.action_ref= fallbacks, or download policy bytes from a mutable URL.
+
+  GitHub documents the =job.workflow_*= identity fields for GitHub.com reusable
+  workflows and marks them unavailable on GitHub Enterprise Server. An absent
+  identity therefore fails closed here; this checkpoint does not claim GitHub
+  Enterprise Server compatibility. The origin check derives its host from
+  =github.server_url= rather than hard-coding =github.com=, so supported GitHub
+  hosts retain their exact repository identity.
+
+  =scripts/tests/test_reusable_terraform_source_identity.py= is an executable
+  contract test for all four jobs. It checks exact cardinality and step order,
+  exercises the verification shell against a real temporary Git repository,
+  proves that ordinary and index-hidden Setup Nix/policy-file tampering fails,
+  and carries hostile mutations for removed, reordered, substituted, fallback,
+  credential-persistence, worktree-materialization, and weakened-verification
+  cases. The test is wired into the flake as
+  =reusable-terraform-source-identity=.
+
+  Local Linux verification establishes the source and shell contracts only.
+  After this change lands, real reusable-workflow calls on the supported CI
+  runners—including macOS ARM64—remain required operational evidence; no
+  Darwin execution result is claimed by this local checkpoint.
+
 * Terraform provider and backend credential composition
 
   Terraform-root metadata models provider and backend authentication as
