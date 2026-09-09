@@ -135,6 +135,31 @@ org's inventory and secret facts. Only the mapper is shared. See
 [`governance.example.nix`](./governance.example.nix) for a minimal renderable
 model and [`tests/test-render.sh`](./tests/test-render.sh) for the offline check.
 
+### Security posture the engine models
+
+Three free-on-every-plan dimensions, all optional and all rendered only when the
+consumer's inventory supplies them:
+
+| Inventory field                      | Resource                                        | Notes                                                                                                                                                                 |
+| ------------------------------------ | ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `repositories[].securityAndAnalysis` | `github_repository.security_and_analysis`       | `secretScanning` + `secretScanningPushProtection`, both required together. Nested block — rides the existing `github_repository` import, so it needs no import block. |
+| `vulnerabilityAlerts[]`              | `github_repository_vulnerability_alerts`        | `{ repository, enabled }`, imported by bare repository name.                                                                                                          |
+| `dependabotSecurityUpdates[]`        | `github_repository_dependabot_security_updates` | `{ repository, enabled }`, imported by bare repository name.                                                                                                          |
+
+Two constraints are enforced rather than documented. `advancedSecurity` and the
+other `security_and_analysis` sub-blocks are rejected at eval time: GitHub
+renamed `advanced_security` to `code_security` in its responses while provider
+6.12.1 still sends and reads `advanced_security`, and `code_security`,
+`secret_scanning_ai_detection` and `secret_scanning_non_provider_patterns` are
+schema-only — declaring any of them yields a permanent diff and no API call. And
+the two sub-blocks must be supplied together, because an omitted one is left
+Computed and drifts silently.
+
+Model **every** repository in the two list-shaped dimensions, not only the
+enabled ones: a disabled feature imports cleanly as `enabled = false`, whereas an
+unmodelled repository is a creation waiting to happen. Seed from observed values;
+enabling is a later, separately reviewed change against a populated state.
+
 Verifying an extraction is a no-op is the same as for the AWS module: render the
 original `root.nix` and the thin caller with identical data and `diff` the
 `nix eval --json | jq -S` output — empty diff == zero plan diff == safe.
@@ -146,13 +171,29 @@ one-time [import phase](../../docs/Terraform-Import-Phase.md)). None hardcode an
 org — owner / root-config / repo-root are parameters.
 
 - **`github-inventory`** — read-only inventory of the org (repos, branch
-  protection, Environments, Actions vars/permissions, labels, team grants) into
-  `.result/` as raw JSON + a redacted `inventory.md`. Secret values are never
-  read. `--owner <org>` (or `GITHUB_OWNER`), `--all-repos`.
+  protection, Environments, Actions vars/permissions, labels, team grants,
+  security posture) into `.result/` as raw JSON + a redacted `inventory.md`.
+  Secret values are never read. `--owner <org>` (or `GITHUB_OWNER`),
+  `--all-repos`.
+
+  Collaborators are captured under three affiliations and they are **not**
+  interchangeable. `repo-collaborators-*.json` is `affiliation=direct` and is
+  the only one that corresponds to a `github_repository_collaborator`;
+  `repo-outside-collaborators-*.json` is `affiliation=outside`; and
+  `repo-effective-access-*.json` is `affiliation=all` — effective access,
+  including team-derived and owner-derived grants. Reading the last one as if it
+  were the first produces import blocks for collaborations that do not exist,
+  and, if applied as creations, direct grants that survive removal from the
+  team. [`tests/test-collaborator-affiliation.sh`](./tests/test-collaborator-affiliation.sh)
+  is the negative control.
+
 - **`github-governance-import-blocks`** — credential-free generator that reads a
   repo's reviewed `bootstrap/<root-config>/governance.nix` and emits OpenTofu
   `import {}` blocks. `--owner`, `--root-config`, `--root-dir`, `--scope`. Output
-  stays under `.result/` and is never committed.
+  stays under `.result/` and is never committed. Scopes include
+  `vulnerability-alerts` and `dependabot-security-updates`; `security_and_analysis`
+  has no scope of its own because it is a nested block on `github_repository`
+  and rides the `repositories` import.
 - **`github-governance-import-ci`** — the CI harness (plan / gated apply) that
   runs the generator + plan and **refuses any non-import action** (≥1 import, 0
   add/change/destroy/replace; typed confirm for apply). Driven by env
