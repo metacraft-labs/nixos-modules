@@ -101,6 +101,12 @@
         # `garm-provider-vmharness` (env+stdin/stdout JSON protocol; shells to
         # virsh/vm-harness). Wired into `services.garm` as an optional provider.
         garm-provider-vmharness = pkgs.callPackage ./garm-provider-vmharness { };
+        # Runner-Fleet-Capability-Pools-And-Remote-Driving RA2 — the vm-harness
+        # CLI/daemon binary. Its single binary includes `vm-harness serve` (the
+        # RA1 remoting daemon), which `services.vm-harness-serve` packages into a
+        # hardened systemd unit. Vendored (like garm-provider-vmharness) to keep
+        # this repo's flake.lock free of vm-harness's own input tree.
+        vm-harness = pkgs.callPackage ./vm-harness { };
       }
       // optionalAttrs isLinux {
         deployment-event-metrics = pkgs.callPackage ./deployment-event-metrics { };
