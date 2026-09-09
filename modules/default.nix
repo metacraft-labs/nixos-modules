@@ -25,6 +25,8 @@
     ./garm
     ./garm-fleet-alerts
     ./garm-fleet-external-checks
+    ./github-actions-fit-exporter
+    ./github-actions-fit-alerts
     ./vm-harness-serve
     ./virtualisation/desktop-vms.nix
     ./nix-topology
