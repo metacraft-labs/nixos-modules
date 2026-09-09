@@ -80,6 +80,22 @@
       appKeyCredName = name: "app-key-${name}";
       stagedPemPath = name: "${stateDir}/app-key-${sanitizeName name}.pem";
 
+      # RB2: systemd LoadCredential id + on-disk staged path for a REMOTE
+      # provider's `vm-harness serve` bearer token. Mirrors the App-PEM staging
+      # exactly (LoadCredential source -> stable 0600 path under stateDir the
+      # provider reads), so the central GARM's per-host serve token never enters
+      # the store and is read from a path that is stable across the render ->
+      # daemon boundary. A remote provider whose token comes from an ENV var
+      # (`remote.authTokenFile == null`) is untouched by this — the env path is
+      # the infra layer's responsibility (EnvironmentFile / LoadCredential value).
+      serveTokenCredName = name: "serve-token-${name}";
+      stagedServeTokenPath = name: "${stateDir}/serve-token-${sanitizeName name}";
+      # Remote providers that stage their token from a FILE source (the central
+      # topology's shape): backend = "remote" AND remote.authTokenFile set.
+      enabledRemoteTokenProviders = lib.filterAttrs (
+        _: p: providerIsRemote p && p.remote.authTokenFile != null
+      ) enabledProviders;
+
       # ----- Per-provider config.toml (a DIFFERENT file from garm's config) ---
       # It holds NO secrets — only the virsh/qemu-img/vm-harness binary paths,
       # the libvirt URI/network OR the incus bridge + static-IPv4 params, the
@@ -189,7 +205,7 @@
       # (agenix / LoadCredential-staged) resolved at runtime, or the provider
       # reads `auth_token_env` from the environment (value supplied by infra).
       mkRemoteKeys =
-        p:
+        name: p:
         ''
           [remote]
           endpoint = "${p.remote.endpoint}"
@@ -197,20 +213,24 @@
           guest_os = "${p.remote.guestOS}"
           auth_token_env = "${p.remote.authTokenEnv}"
         ''
+        # RB2: when the token is staged from a FILE, the provider reads it from
+        # the STABLE staged path under stateDir (the ExecStartPre copy of the
+        # LoadCredential-mounted secret), NOT the agenix source directly — the
+        # same indirection the App PEMs use. The token never enters the store.
         + optionalString (p.remote.authTokenFile != null) ''
-          auth_token_file = "${toString p.remote.authTokenFile}"
+          auth_token_file = "${stagedServeTokenPath name}"
         ''
         + optionalString (p.remote.requestTimeoutSec > 0) ''
           request_timeout_sec = ${toString p.remote.requestTimeoutSec}
         '';
       mkProviderConfigText =
-        p:
+        name: p:
         ''
           backend = "${p.backend}"
         ''
         + (
           if providerIsRemote p then
-            mkRemoteKeys p
+            mkRemoteKeys name p
           else if providerIsIncus p then
             mkIncusKeys p
           else if providerIsVMHarnessRun p then
@@ -228,7 +248,7 @@
           '') p.images
         );
       mkProviderConfigFile =
-        name: p: pkgs.writeText "garm-provider-${sanitizeName name}.toml" (mkProviderConfigText p);
+        name: p: pkgs.writeText "garm-provider-${sanitizeName name}.toml" (mkProviderConfigText name p);
 
       # The `[[provider]]` block per enabled provider. External-provider keys per
       # config/external.go: provider_executable / config_file / interface_version.
@@ -365,6 +385,25 @@
         '') enabledGithub
       );
 
+      # RB2: stage each remote provider's `vm-harness serve` bearer token from
+      # its LoadCredential-mounted secret to a STABLE 0600 path under stateDir
+      # (owned by the service user, outside the store), mirroring stageGithubPems
+      # above. The provider config's `auth_token_file` points at this stable path
+      # (see mkRemoteKeys), so the value survives the render -> daemon boundary
+      # regardless of the tmpfs credentials dir's lifetime. Failure to stage a
+      # declared token is fatal — the same posture as a missing App PEM.
+      stageServeTokens = lib.concatStrings (
+        lib.mapAttrsToList (name: _p: ''
+          if [ -n "$cred_dir" ] && [ -f "$cred_dir/${serveTokenCredName name}" ]; then
+            install -m 0600 /dev/null "${stagedServeTokenPath name}"
+            tr -d '[:space:]' < "$cred_dir/${serveTokenCredName name}" > "${stagedServeTokenPath name}"
+          else
+            echo "garm-render-config: services.garm.providers.${name}.backend = \"remote\" sets remote.authTokenFile but the serve-token credential '${serveTokenCredName name}' was not staged" >&2
+            exit 1
+          fi
+        '') enabledRemoteTokenProviders
+      );
+
       # First-run/refresh renderer. Resolves the two secrets, then substitutes
       # them into the template to produce the runtime config under $STATE_DIR.
       #
@@ -420,6 +459,9 @@
           # when it re-authenticates. So copy each to a STABLE 0600 path under
           # stateDir (owned by the service user, outside the store).
           ${stageGithubPems}
+
+          # RB2: stage the remote providers' serve bearer tokens (central GARM).
+          ${stageServeTokens}
 
           tmp="$(mktemp "${renderedConfig}.XXXXXX")"
           sed \
@@ -2286,7 +2328,12 @@
             ) "${cfg.dbPassphraseCredentialName}:${toString cfg.dbPassphraseFile}"
             ++ lib.mapAttrsToList (name: g: "${appKeyCredName name}:${toString g.appKeyFile}") (
               lib.filterAttrs (_: g: g.appKeyFile != null) enabledGithub
-            );
+            )
+            # RB2: one serve-token credential per remote provider that sources
+            # its bearer token from a file (the central GARM topology).
+            ++ lib.mapAttrsToList (
+              name: p: "${serveTokenCredName name}:${toString p.remote.authTokenFile}"
+            ) enabledRemoteTokenProviders;
 
           # The bare on-disk SOURCE paths behind `loadCredential` (the `path`
           # halves, without the `id:` prefixes). On the real hosts the App-PEM
@@ -2316,7 +2363,12 @@
             ++ lib.optional (cfg.dbPassphraseFile != null) (toString cfg.dbPassphraseFile)
             ++ lib.mapAttrsToList (_: g: toString g.appKeyFile) (
               lib.filterAttrs (_: g: g.appKeyFile != null) enabledGithub
-            );
+            )
+            # RB2: the serve-token source paths, asserted present (AssertPathExists)
+            # so a genuinely missing token is a legible failure one phase earlier.
+            ++ lib.mapAttrsToList (
+              _: p: toString p.remote.authTokenFile
+            ) enabledRemoteTokenProviders;
 
           # The dedicated-user base (shared by both provider postures).
           userBaseServiceConfig = {
