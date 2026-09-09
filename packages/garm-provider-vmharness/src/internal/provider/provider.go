@@ -27,6 +27,7 @@ import (
 	"os"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/cloudbase/garm-provider-common/cloudconfig"
 	garmErrors "github.com/cloudbase/garm-provider-common/errors"
@@ -117,6 +118,26 @@ func NewWithConfig(cfg *config.Config) (*Provider, error) {
 			BackendID:     string(config.BackendQemuWindowsArm),
 			GuestOS:       "windows",
 			StateDir:      cfg.StateDir,
+		}
+	case config.BackendRemote:
+		// RB1 remote-target mode: an RPC client to a remote `vm-harness serve`
+		// daemon instead of a local-exec backend. The bearer token is resolved
+		// at construction from the inline value / token file / env (agenix /
+		// LoadCredential friendly); a stateless RemoteBackend then drives the
+		// remote lifecycle over the RA1 protocol.
+		if cfg.Remote == nil {
+			return nil, fmt.Errorf("backend %q requires a [remote] section", cfg.Backend)
+		}
+		token, err := cfg.Remote.ResolveToken()
+		if err != nil {
+			return nil, err
+		}
+		b = &backend.RemoteBackend{
+			Client: backend.NewServeClient(
+				cfg.Remote.Endpoint, token,
+				time.Duration(cfg.Remote.RequestTimeoutSec)*time.Second),
+			TargetBackend: cfg.Remote.TargetBackend,
+			GuestOS:       cfg.Remote.GuestOS,
 		}
 	default:
 		return nil, fmt.Errorf("unsupported backend %q", cfg.Backend)
