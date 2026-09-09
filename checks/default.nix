@@ -18,6 +18,7 @@
     ./garm-api-watchdog.nix
     ./garm-multi-provider.nix
     ./fleet-alerting.nix
+    ./alertmanager-routing.nix
     ./fit-monitoring.nix
     ./garm-reconcile.nix
     ./garm-stale-scaleset-job-reaped.nix
