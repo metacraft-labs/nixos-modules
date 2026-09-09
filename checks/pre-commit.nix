@@ -46,6 +46,7 @@
                     enable = true;
                     excludes = [
                       "^checks/garm-provider-vmharness-protocol\.nix$"
+                      "^checks/garm-provider-remote\.nix$"
                       "^checks/t_ephemeral_runner_security_and_metrics\.sh$"
                       "^checks/t_incus_linux_autoscale_and_harden\.sh$"
                       "^packages/garm-provider-vmharness/src/"

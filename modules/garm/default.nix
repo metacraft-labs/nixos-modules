@@ -91,6 +91,12 @@
       # [images.*] blocks would be appended to the derivation's store PATH.)
       providerIsIncus = p: p.backend == "incus";
       providerIsLibvirt = p: p.backend == "libvirt";
+      # RB1: remote-target mode — the provider is an RPC client to a remote
+      # `vm-harness serve` daemon instead of a local-exec backend. It needs no
+      # local hypervisor tools (no virsh/incus/kvm), only network reach to the
+      # endpoint + the bearer token; the strict M0 sandbox posture already
+      # permits outbound TCP, so a remote provider relaxes nothing.
+      providerIsRemote = p: p.backend == "remote";
       providerIsVMHarnessRun =
         p:
         builtins.elem p.backend [
@@ -106,6 +112,11 @@
           "PATH"
         ]
         ++ lib.optional (providerIsIncus p) "HOME"
+        # RB1: when the remote token is supplied via an environment variable
+        # (not a file), the provider process must inherit that variable. GARM
+        # forwards ONLY the vars listed here, so add the configured name. The
+        # infra layer supplies its value (EnvironmentFile / systemd LoadCredential).
+        ++ lib.optional (providerIsRemote p && p.remote.authTokenFile == null) p.remote.authTokenEnv
         ++ lib.optionals (providerIsVMHarnessRun p) [
           "MCL_RUNNER_SHARED_NIX_STORE"
           "MCL_RUNNER_SHARED_REPRO_STORE"
@@ -172,13 +183,35 @@
         + optionalString (p.guestCallbackURL != null) ''
           guest_callback_url = "${p.guestCallbackURL}"
         '';
+      # RB1: the [remote] section. COMPANY-AGNOSTIC — the endpoint + target
+      # backend + how to obtain the bearer token, with NO baked-in host. The
+      # token itself never enters the store: `auth_token_file` points at a path
+      # (agenix / LoadCredential-staged) resolved at runtime, or the provider
+      # reads `auth_token_env` from the environment (value supplied by infra).
+      mkRemoteKeys =
+        p:
+        ''
+          [remote]
+          endpoint = "${p.remote.endpoint}"
+          target_backend = "${p.remote.targetBackend}"
+          guest_os = "${p.remote.guestOS}"
+          auth_token_env = "${p.remote.authTokenEnv}"
+        ''
+        + optionalString (p.remote.authTokenFile != null) ''
+          auth_token_file = "${toString p.remote.authTokenFile}"
+        ''
+        + optionalString (p.remote.requestTimeoutSec > 0) ''
+          request_timeout_sec = ${toString p.remote.requestTimeoutSec}
+        '';
       mkProviderConfigText =
         p:
         ''
           backend = "${p.backend}"
         ''
         + (
-          if providerIsIncus p then
+          if providerIsRemote p then
+            mkRemoteKeys p
+          else if providerIsIncus p then
             mkIncusKeys p
           else if providerIsVMHarnessRun p then
             mkVMHarnessRunKeys p
@@ -205,7 +238,9 @@
         name = "${name}"
         provider_type = "external"
         description = "${
-          if providerIsIncus p then
+          if providerIsRemote p then
+            "remote ephemeral runners via a vm-harness serve daemon (${p.remote.targetBackend})"
+          else if providerIsIncus p then
             "incus Linux container ephemeral runners via vm-harness"
           else
             "libvirt/KVM Windows ephemeral runners via vm-harness"
@@ -942,10 +977,16 @@
                 "tart-macos"
                 "utm-windows-arm"
                 "qemu-windows-arm"
+                "remote"
               ];
               default = "libvirt";
               description = ''
-                vm-harness backend the provider drives. `libvirt` boots per-job
+                vm-harness backend the provider drives. `remote` (RB1) makes the
+                provider an RPC CLIENT to a remote `vm-harness serve` daemon
+                (configured under `remote.*`) instead of a local-exec backend —
+                the foundation for the central-GARM topology where one controller
+                drives every host's VMs/containers over the network. All other
+                values are LOCAL-exec backends. `libvirt` boots per-job
                 Windows-11 VMs from a golden qcow2 (the Ephemeral-Windows-Runners
                 path); `incus` launches per-job Linux SYSTEM CONTAINERS from a
                 runner image (the Ephemeral-Linux-Runners path);
@@ -1384,6 +1425,93 @@
                   };
                 }
               );
+            };
+
+            # ----- RB1 remote-target mode -------------------------------------
+            # Consulted only when `backend = "remote"`. COMPANY-AGNOSTIC: an
+            # endpoint + how to obtain the bearer token + the vm-harness backend
+            # the REMOTE host drives — no Metacraft host or secret is baked in.
+            # The concrete endpoint/token wiring (NetBird IPs, agenix secrets)
+            # is an infra-layer concern that CONSUMES these options.
+            remote = mkOption {
+              default = { };
+              description = ''
+                Remote-target mode configuration (RB1). Only used when
+                `backend = "remote"`, in which case the provider is an RPC client
+                to a remote `vm-harness serve` daemon instead of a local backend.
+              '';
+              type = types.submodule {
+                options = {
+                  endpoint = mkOption {
+                    type = types.str;
+                    default = "";
+                    example = "100.72.0.5:8873";
+                    description = ''
+                      Remote `vm-harness serve` address as host:port — typically a
+                      NetBird overlay IP (the control channel is NEVER exposed on
+                      the public internet). Required when `backend = "remote"`.
+                    '';
+                  };
+                  targetBackend = mkOption {
+                    type = types.enum [
+                      "incus"
+                      "libvirt"
+                      "hyperv"
+                      "tart-macos"
+                      "tart-linux-arm"
+                      "noop"
+                    ];
+                    default = "incus";
+                    description = ''
+                      vm-harness backend id the REMOTE host drives (forwarded as
+                      the remote `--backend`). `noop` is the sanctioned test
+                      backend used by the `t_garm_provider_remote` gate.
+                    '';
+                  };
+                  authTokenFile = mkOption {
+                    type = types.nullOr types.path;
+                    default = null;
+                    description = ''
+                      Path the provider reads the bearer token from
+                      (`auth_token_file`). Point it at an agenix secret path or a
+                      systemd `LoadCredential`-staged file — the token NEVER enters
+                      the Nix store. When null, the provider reads the token from
+                      the `authTokenEnv` environment variable instead.
+                    '';
+                  };
+                  authTokenEnv = mkOption {
+                    type = types.str;
+                    default = "VMH_SERVE_TOKEN";
+                    description = ''
+                      Environment variable the bearer token is read from when
+                      `authTokenFile` is null (`auth_token_env`). Its value is
+                      supplied by the infra layer (systemd `EnvironmentFile` /
+                      `LoadCredential`); this module only forwards the variable
+                      name to the provider process. Matches the variable
+                      `vm-harness serve` itself documents, so one per-host secret
+                      serves both ends.
+                    '';
+                  };
+                  guestOS = mkOption {
+                    type = types.str;
+                    default = "linux";
+                    description = ''
+                      Reported guest OS for instances created through this remote
+                      when the golden-image map carries no os_name (`guest_os`).
+                    '';
+                  };
+                  requestTimeoutSec = mkOption {
+                    type = types.ints.unsigned;
+                    default = 0;
+                    description = ''
+                      Bounds a single non-streaming RPC (`/v1/info`).
+                      0 (default) uses a built-in timeout. The create/delete
+                      streams are bounded by the remote worker's own
+                      `--timeout-sec`, not this.
+                    '';
+                  };
+                };
+              };
             };
           };
         };
@@ -2298,6 +2426,12 @@
             ++ lib.mapAttrsToList (n: p: {
               assertion = p.currentMemoryMb == 0 || providerIsLibvirt p;
               message = "services.garm.providers.${n}: currentMemoryMb is only honoured by the libvirt backend (this provider's backend = \"${p.backend}\"); it has no effect on incus containers or vm-harness-run VMs.";
+            }) cfg.providers
+            # RB1: a remote-target provider needs an endpoint. (The token is
+            # resolved at runtime — file or env — so it cannot be asserted here.)
+            ++ lib.mapAttrsToList (n: p: {
+              assertion = !(providerIsRemote p) || p.remote.endpoint != "";
+              message = "services.garm.providers.${n}: backend = \"remote\" requires remote.endpoint (host:port of the vm-harness serve daemon).";
             }) cfg.providers
             # Resource-guard (eval time): the sum over all scale sets of
             # maxRunners * (its provider's per-VM RAM) must fit the declared host
