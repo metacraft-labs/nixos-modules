@@ -14,19 +14,19 @@ Delivered for milestone **RE1** of
 Every link in the runner chain, mapped to metric names verified live on a real
 controller (`:9997`, scale-set mode, 2026-09-08):
 
-| Alert | Signal | Severity |
-|---|---|---|
-| `GarmControllerDown` | `up{job=…} == 0` | critical |
-| `GarmControllerUnhealthy` | `garm_health == 0` | critical |
-| `GarmPoolManagerNotRunning` | `garm_organization_pool_manager_status == 0` | critical |
-| `GarmProviderCreateFailures` | `increase(garm_runner_errors_total{operation="CreateInstance"}[15m])` | warning |
-| `GarmProviderHighErrorRatio` | `rate(errors)/rate(operations) > 0.2` | critical |
-| `GarmGithubRateLimitLow` / `…Critical` | `garm_github_rate_limit_remaining` | warning / critical |
-| **`GarmFleetStarvation`** | queued jobs vs a **saturated** class, past the bootstrap window | **critical (the priority page)** |
-| `GithubAppTokenMintFailing` | external: App installation token cannot be minted | critical |
-| `GithubWebhookDeliveryFailing` | external: GitHub delivery ledger non-2xx (post-Phase-C) | critical |
-| `GithubWebhookEndpointProbeDown` | external: blackbox probe of the public endpoint (post-Phase-C) | critical |
-| `GarmWebhookHmacFailures` | `garm_webhook_received{valid="false"}` (pool mode only) | warning |
+| Alert                                  | Signal                                                                | Severity                         |
+| -------------------------------------- | --------------------------------------------------------------------- | -------------------------------- |
+| `GarmControllerDown`                   | `up{job=…} == 0`                                                      | critical                         |
+| `GarmControllerUnhealthy`              | `garm_health == 0`                                                    | critical                         |
+| `GarmPoolManagerNotRunning`            | `garm_organization_pool_manager_status == 0`                          | critical                         |
+| `GarmProviderCreateFailures`           | `increase(garm_runner_errors_total{operation="CreateInstance"}[15m])` | warning                          |
+| `GarmProviderHighErrorRatio`           | `rate(errors)/rate(operations) > 0.2`                                 | critical                         |
+| `GarmGithubRateLimitLow` / `…Critical` | `garm_github_rate_limit_remaining`                                    | warning / critical               |
+| **`GarmFleetStarvation`**              | queued jobs vs a **saturated** class, past the bootstrap window       | **critical (the priority page)** |
+| `GithubAppTokenMintFailing`            | external: App installation token cannot be minted                     | critical                         |
+| `GithubWebhookDeliveryFailing`         | external: GitHub delivery ledger non-2xx (post-Phase-C)               | critical                         |
+| `GithubWebhookEndpointProbeDown`       | external: blackbox probe of the public endpoint (post-Phase-C)        | critical                         |
+| `GarmWebhookHmacFailures`              | `garm_webhook_received{valid="false"}` (pool mode only)               | warning                          |
 
 Plus two recording rules (`garm:class_saturated`, `garm:class_queued_jobs`) that
 drive the starvation join.

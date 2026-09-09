@@ -8,9 +8,17 @@ This document provides instructions for AI agents working on the `mcl` (Metacraf
 
 - Host information gathering (`host-info`)
 - Remote host management (`hosts`)
-- CI matrix generation (`ci-matrix`, `shard-matrix`)
+- CI evaluation and matrix generation (`ci`, `ci-matrix`, `print-table`, `merge-ci-matrices`, `shard-matrix`)
 - Machine configuration (`machine`, `config`)
-- Deployment (`deploy-spec`)
+- Deployment (`deploy-spec`, `deploy-plan`, `deploy-apply`, `deploy-agent`, `deploy-reconcile`, `deploy-ssh`, `deploy-status`)
+- Deployment cache backends (`cache`)
+- Age-encrypted secret management (`secret`)
+
+A module under `src/mcl/commands/` becomes a top-level command only when it is
+listed in `commandModulesToExport` in `src/mcl/commands/package.d` — that map is
+the authoritative command registry, and `mcl --help` prints exactly what it
+contains. Everything else in `commands/` is reachable only as a subcommand (for
+example `match_invoices.d`, wired in under `host-info`), or not at all.
 
 ## Code Style Philosophy
 
@@ -298,8 +306,13 @@ foreach (record; records)
 
 ## Dependencies
 
-- `argparse` - CLI argument parsing
-- `silly` - Test runner
+The full set declared in `dub.sdl`:
+
+- `argparse` - CLI argument parsing (`@Command`, `SubCommand!`, `CLI!`)
+- `silly` - Test runner backing `dub test`
+- `sparkles:core-cli` - Shared CLI scaffolding (`initLogger` in `src/main.d`)
+- `sparkles:test-utils` - Test fixtures (e.g. the `TmpFS` temp-directory helper)
+- `mir-cpuid` - CPU identification (pulls in `mir-core` transitively)
 
 All dependencies are managed via `dub.sdl` and Nix flake.
 
