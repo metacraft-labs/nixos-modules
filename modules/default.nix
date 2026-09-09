@@ -30,5 +30,6 @@
     ./vm-harness-serve
     ./virtualisation/desktop-vms.nix
     ./nix-topology
+    ./alertmanager-fleet-routing
   ];
 }
