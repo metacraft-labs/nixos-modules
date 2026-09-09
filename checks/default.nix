@@ -32,6 +32,7 @@
     ./garm-provider-vmharness-windows-toolchain.nix
     ./vmharness-serve-linux-deploy.nix
     ./vmharness-serve-win-libvirt.nix
+    ./runner-label-taxonomy.nix
     ./s3-artifact-store.nix
     ./repro-binary-cache-systemd.nix
     ./repro-binary-cache-cross-host.nix
