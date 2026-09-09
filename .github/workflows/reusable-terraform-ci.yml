@@ -154,8 +154,82 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
+      - name: Checkout called workflow source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .mcl/reusable-terraform-ci
+          persist-credentials: false
+
+      - name: Verify called workflow source
+        shell: bash
+        env:
+          EXPECTED_WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          EXPECTED_WORKFLOW_SHA: ${{ job.workflow_sha }}
+          EXPECTED_WORKFLOW_SERVER_URL: ${{ github.server_url }}
+          WORKFLOW_SOURCE: ${{ github.workspace }}/.mcl/reusable-terraform-ci
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$EXPECTED_WORKFLOW_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+            echo "::error::Called workflow repository identity is empty or malformed."
+            exit 1
+          fi
+          if [[ ! "$EXPECTED_WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Called workflow SHA is not a full lowercase commit SHA."
+            exit 1
+          fi
+          if [[ ! "$EXPECTED_WORKFLOW_SERVER_URL" =~ ^https?://[^/]+$ ]]; then
+            echo "::error::GitHub server URL is empty or malformed."
+            exit 1
+          fi
+          if [ ! -d "$WORKFLOW_SOURCE/.git" ]; then
+            echo "::error::Called workflow source is not a standalone Git checkout."
+            exit 1
+          fi
+
+          actual_sha="$(git -C "$WORKFLOW_SOURCE" rev-parse --verify 'HEAD^{commit}')"
+          if [ "$actual_sha" != "$EXPECTED_WORKFLOW_SHA" ]; then
+            echo "::error::Called workflow checkout is at $actual_sha, expected $EXPECTED_WORKFLOW_SHA."
+            exit 1
+          fi
+
+          expected_remote="${EXPECTED_WORKFLOW_SERVER_URL}/${EXPECTED_WORKFLOW_REPOSITORY}"
+          actual_remote="$(git -C "$WORKFLOW_SOURCE" remote get-url origin)"
+          actual_remote="${actual_remote%.git}"
+          if [ "$actual_remote" != "$expected_remote" ]; then
+            echo "::error::Called workflow checkout remote is $actual_remote, expected $expected_remote."
+            exit 1
+          fi
+
+          if [ -n "$(git -C "$WORKFLOW_SOURCE" status --porcelain=v1 --untracked-files=all)" ]; then
+            echo "::error::Called workflow checkout is not clean."
+            exit 1
+          fi
+
+          setup_file_count=0
+          while IFS= read -r -d '' setup_path; do
+            setup_file="$WORKFLOW_SOURCE/$setup_path"
+            if [ ! -f "$setup_file" ] || [ -L "$setup_file" ]; then
+              echo "::error::Called workflow Setup Nix source is missing or is not a regular file: $setup_path"
+              exit 1
+            fi
+            expected_blob="$(git -C "$WORKFLOW_SOURCE" rev-parse --verify "${EXPECTED_WORKFLOW_SHA}:${setup_path}")"
+            actual_blob="$(git -C "$WORKFLOW_SOURCE" hash-object --no-filters -- "$setup_file")"
+            if [ "$actual_blob" != "$expected_blob" ]; then
+              echo "::error::Called workflow Setup Nix source differs from $EXPECTED_WORKFLOW_SHA: $setup_path"
+              exit 1
+            fi
+            ((setup_file_count += 1))
+          done < <(git -C "$WORKFLOW_SOURCE" ls-tree -r --name-only -z "$EXPECTED_WORKFLOW_SHA" -- .github/setup-nix)
+          if [ "$setup_file_count" -eq 0 ]; then
+            echo "::error::Called workflow commit contains no Setup Nix action source."
+            exit 1
+          fi
+
       - name: Setup Nix
-        uses: metacraft-labs/nixos-modules/.github/setup-nix@main
+        uses: ./.mcl/reusable-terraform-ci/.github/setup-nix
         with:
           push-to-cache: false
           nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
@@ -298,8 +372,82 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
+      - name: Checkout called workflow source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .mcl/reusable-terraform-ci
+          persist-credentials: false
+
+      - name: Verify called workflow source
+        shell: bash
+        env:
+          EXPECTED_WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          EXPECTED_WORKFLOW_SHA: ${{ job.workflow_sha }}
+          EXPECTED_WORKFLOW_SERVER_URL: ${{ github.server_url }}
+          WORKFLOW_SOURCE: ${{ github.workspace }}/.mcl/reusable-terraform-ci
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$EXPECTED_WORKFLOW_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+            echo "::error::Called workflow repository identity is empty or malformed."
+            exit 1
+          fi
+          if [[ ! "$EXPECTED_WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Called workflow SHA is not a full lowercase commit SHA."
+            exit 1
+          fi
+          if [[ ! "$EXPECTED_WORKFLOW_SERVER_URL" =~ ^https?://[^/]+$ ]]; then
+            echo "::error::GitHub server URL is empty or malformed."
+            exit 1
+          fi
+          if [ ! -d "$WORKFLOW_SOURCE/.git" ]; then
+            echo "::error::Called workflow source is not a standalone Git checkout."
+            exit 1
+          fi
+
+          actual_sha="$(git -C "$WORKFLOW_SOURCE" rev-parse --verify 'HEAD^{commit}')"
+          if [ "$actual_sha" != "$EXPECTED_WORKFLOW_SHA" ]; then
+            echo "::error::Called workflow checkout is at $actual_sha, expected $EXPECTED_WORKFLOW_SHA."
+            exit 1
+          fi
+
+          expected_remote="${EXPECTED_WORKFLOW_SERVER_URL}/${EXPECTED_WORKFLOW_REPOSITORY}"
+          actual_remote="$(git -C "$WORKFLOW_SOURCE" remote get-url origin)"
+          actual_remote="${actual_remote%.git}"
+          if [ "$actual_remote" != "$expected_remote" ]; then
+            echo "::error::Called workflow checkout remote is $actual_remote, expected $expected_remote."
+            exit 1
+          fi
+
+          if [ -n "$(git -C "$WORKFLOW_SOURCE" status --porcelain=v1 --untracked-files=all)" ]; then
+            echo "::error::Called workflow checkout is not clean."
+            exit 1
+          fi
+
+          setup_file_count=0
+          while IFS= read -r -d '' setup_path; do
+            setup_file="$WORKFLOW_SOURCE/$setup_path"
+            if [ ! -f "$setup_file" ] || [ -L "$setup_file" ]; then
+              echo "::error::Called workflow Setup Nix source is missing or is not a regular file: $setup_path"
+              exit 1
+            fi
+            expected_blob="$(git -C "$WORKFLOW_SOURCE" rev-parse --verify "${EXPECTED_WORKFLOW_SHA}:${setup_path}")"
+            actual_blob="$(git -C "$WORKFLOW_SOURCE" hash-object --no-filters -- "$setup_file")"
+            if [ "$actual_blob" != "$expected_blob" ]; then
+              echo "::error::Called workflow Setup Nix source differs from $EXPECTED_WORKFLOW_SHA: $setup_path"
+              exit 1
+            fi
+            ((setup_file_count += 1))
+          done < <(git -C "$WORKFLOW_SOURCE" ls-tree -r --name-only -z "$EXPECTED_WORKFLOW_SHA" -- .github/setup-nix)
+          if [ "$setup_file_count" -eq 0 ]; then
+            echo "::error::Called workflow commit contains no Setup Nix action source."
+            exit 1
+          fi
+
       - name: Setup Nix
-        uses: metacraft-labs/nixos-modules/.github/setup-nix@main
+        uses: ./.mcl/reusable-terraform-ci/.github/setup-nix
         with:
           push-to-cache: false
           nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
@@ -639,13 +787,12 @@ jobs:
         if: steps.plan.outputs.json_plan_path != ''
         env:
           GH_TOKEN: ${{ github.token }}
+          EXPECTED_WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          EXPECTED_WORKFLOW_SHA: ${{ job.workflow_sha }}
+          EXPECTED_WORKFLOW_SERVER_URL: ${{ github.server_url }}
+          WORKFLOW_SOURCE: ${{ github.workspace }}/.mcl/reusable-terraform-ci
         run: |
-          # Fetch policy script from nixos-modules
-          WORKFLOW_REF="${{ github.action_ref || 'main' }}"
-          POLICY_SCRIPT_URL="https://raw.githubusercontent.com/metacraft-labs/nixos-modules/${WORKFLOW_REF}/scripts/tofu-plan-policy.py"
-          POLICY_RUNNER_URL="https://raw.githubusercontent.com/metacraft-labs/nixos-modules/${WORKFLOW_REF}/scripts/tofu-plan-policy-ci"
-          curl -fsSL "$POLICY_SCRIPT_URL" -o /tmp/tofu-plan-policy.py
-          curl -fsSL "$POLICY_RUNNER_URL" -o /tmp/tofu-plan-policy-ci
+          set -euo pipefail
 
           PLAN_JSON="${{ steps.plan.outputs.json_plan_path }}"
           POLICY_ARGS=()
@@ -661,9 +808,72 @@ jobs:
             POLICY_ARGS+=(--scope-expansion)
           fi
 
-          # Run policy check
+          # Consumer-controlled plan commands run after the first source check.
+          # Re-verify immediately before policy execution so they cannot replace
+          # the policy files or retarget the exact called-workflow checkout.
+          if [[ ! "$EXPECTED_WORKFLOW_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+            echo "::error::Called workflow repository identity is empty or malformed."
+            exit 1
+          fi
+          if [[ ! "$EXPECTED_WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Called workflow SHA is not a full lowercase commit SHA."
+            exit 1
+          fi
+          if [[ ! "$EXPECTED_WORKFLOW_SERVER_URL" =~ ^https?://[^/]+$ ]]; then
+            echo "::error::GitHub server URL is empty or malformed."
+            exit 1
+          fi
+
+          actual_sha="$(git -C "$WORKFLOW_SOURCE" rev-parse --verify 'HEAD^{commit}')"
+          if [ "$actual_sha" != "$EXPECTED_WORKFLOW_SHA" ]; then
+            echo "::error::Called workflow checkout is at $actual_sha, expected $EXPECTED_WORKFLOW_SHA."
+            exit 1
+          fi
+
+          expected_remote="${EXPECTED_WORKFLOW_SERVER_URL}/${EXPECTED_WORKFLOW_REPOSITORY}"
+          actual_remote="$(git -C "$WORKFLOW_SOURCE" remote get-url origin)"
+          actual_remote="${actual_remote%.git}"
+          if [ "$actual_remote" != "$expected_remote" ]; then
+            echo "::error::Called workflow checkout remote is $actual_remote, expected $expected_remote."
+            exit 1
+          fi
+
+          policy_script_path="scripts/tofu-plan-policy.py"
+          policy_runner_path="scripts/tofu-plan-policy-ci"
+          for policy_path in "$policy_script_path" "$policy_runner_path"; do
+            policy_file="$WORKFLOW_SOURCE/$policy_path"
+            if [ ! -f "$policy_file" ] || [ -L "$policy_file" ]; then
+              echo "::error::Called workflow policy source is missing or is not a regular file: $policy_path"
+              exit 1
+            fi
+            expected_blob="$(git -C "$WORKFLOW_SOURCE" rev-parse --verify "${EXPECTED_WORKFLOW_SHA}:${policy_path}")"
+            if [ "$(git -C "$WORKFLOW_SOURCE" cat-file -t "$expected_blob")" != "blob" ]; then
+              echo "::error::Called workflow policy source is not a blob at $EXPECTED_WORKFLOW_SHA: $policy_path"
+              exit 1
+            fi
+            actual_blob="$(git -C "$WORKFLOW_SOURCE" hash-object --no-filters -- "$policy_file")"
+            if [ "$actual_blob" != "$expected_blob" ]; then
+              echo "::error::Called workflow policy source differs from $EXPECTED_WORKFLOW_SHA: $policy_path"
+              exit 1
+            fi
+          done
+
+          umask 077
+          policy_dir="$(mktemp -d "$RUNNER_TEMP/reusable-terraform-policy.XXXXXX")"
+          trap 'rm -rf "$policy_dir"' EXIT
+          POLICY_SCRIPT="$policy_dir/tofu-plan-policy.py"
+          POLICY_RUNNER="$policy_dir/tofu-plan-policy-ci"
+          git -C "$WORKFLOW_SOURCE" cat-file blob "${EXPECTED_WORKFLOW_SHA}:${policy_script_path}" > "$POLICY_SCRIPT"
+          git -C "$WORKFLOW_SOURCE" cat-file blob "${EXPECTED_WORKFLOW_SHA}:${policy_runner_path}" > "$POLICY_RUNNER"
+
+          if [ "$(git -C "$WORKFLOW_SOURCE" hash-object --no-filters -- "$POLICY_SCRIPT")" != "$(git -C "$WORKFLOW_SOURCE" rev-parse --verify "${EXPECTED_WORKFLOW_SHA}:${policy_script_path}")" ] \
+            || [ "$(git -C "$WORKFLOW_SOURCE" hash-object --no-filters -- "$POLICY_RUNNER")" != "$(git -C "$WORKFLOW_SOURCE" rev-parse --verify "${EXPECTED_WORKFLOW_SHA}:${policy_runner_path}")" ]; then
+            echo "::error::Materialized plan-policy source does not match the called workflow commit."
+            exit 1
+          fi
+
           nix shell --accept-flake-config --inputs-from "$GITHUB_WORKSPACE" nixpkgs#python3 --command \
-            bash /tmp/tofu-plan-policy-ci /tmp/tofu-plan-policy.py "$PLAN_JSON" "${POLICY_ARGS[@]}"
+            bash "$POLICY_RUNNER" "$POLICY_SCRIPT" "$PLAN_JSON" "${POLICY_ARGS[@]}"
 
       - name: Sensitive-change gate
         if: inputs.sensitive_change_label != '' && steps.plan.outputs.changes == 'true'
@@ -696,8 +906,82 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
+      - name: Checkout called workflow source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .mcl/reusable-terraform-ci
+          persist-credentials: false
+
+      - name: Verify called workflow source
+        shell: bash
+        env:
+          EXPECTED_WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          EXPECTED_WORKFLOW_SHA: ${{ job.workflow_sha }}
+          EXPECTED_WORKFLOW_SERVER_URL: ${{ github.server_url }}
+          WORKFLOW_SOURCE: ${{ github.workspace }}/.mcl/reusable-terraform-ci
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$EXPECTED_WORKFLOW_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+            echo "::error::Called workflow repository identity is empty or malformed."
+            exit 1
+          fi
+          if [[ ! "$EXPECTED_WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Called workflow SHA is not a full lowercase commit SHA."
+            exit 1
+          fi
+          if [[ ! "$EXPECTED_WORKFLOW_SERVER_URL" =~ ^https?://[^/]+$ ]]; then
+            echo "::error::GitHub server URL is empty or malformed."
+            exit 1
+          fi
+          if [ ! -d "$WORKFLOW_SOURCE/.git" ]; then
+            echo "::error::Called workflow source is not a standalone Git checkout."
+            exit 1
+          fi
+
+          actual_sha="$(git -C "$WORKFLOW_SOURCE" rev-parse --verify 'HEAD^{commit}')"
+          if [ "$actual_sha" != "$EXPECTED_WORKFLOW_SHA" ]; then
+            echo "::error::Called workflow checkout is at $actual_sha, expected $EXPECTED_WORKFLOW_SHA."
+            exit 1
+          fi
+
+          expected_remote="${EXPECTED_WORKFLOW_SERVER_URL}/${EXPECTED_WORKFLOW_REPOSITORY}"
+          actual_remote="$(git -C "$WORKFLOW_SOURCE" remote get-url origin)"
+          actual_remote="${actual_remote%.git}"
+          if [ "$actual_remote" != "$expected_remote" ]; then
+            echo "::error::Called workflow checkout remote is $actual_remote, expected $expected_remote."
+            exit 1
+          fi
+
+          if [ -n "$(git -C "$WORKFLOW_SOURCE" status --porcelain=v1 --untracked-files=all)" ]; then
+            echo "::error::Called workflow checkout is not clean."
+            exit 1
+          fi
+
+          setup_file_count=0
+          while IFS= read -r -d '' setup_path; do
+            setup_file="$WORKFLOW_SOURCE/$setup_path"
+            if [ ! -f "$setup_file" ] || [ -L "$setup_file" ]; then
+              echo "::error::Called workflow Setup Nix source is missing or is not a regular file: $setup_path"
+              exit 1
+            fi
+            expected_blob="$(git -C "$WORKFLOW_SOURCE" rev-parse --verify "${EXPECTED_WORKFLOW_SHA}:${setup_path}")"
+            actual_blob="$(git -C "$WORKFLOW_SOURCE" hash-object --no-filters -- "$setup_file")"
+            if [ "$actual_blob" != "$expected_blob" ]; then
+              echo "::error::Called workflow Setup Nix source differs from $EXPECTED_WORKFLOW_SHA: $setup_path"
+              exit 1
+            fi
+            ((setup_file_count += 1))
+          done < <(git -C "$WORKFLOW_SOURCE" ls-tree -r --name-only -z "$EXPECTED_WORKFLOW_SHA" -- .github/setup-nix)
+          if [ "$setup_file_count" -eq 0 ]; then
+            echo "::error::Called workflow commit contains no Setup Nix action source."
+            exit 1
+          fi
+
       - name: Setup Nix
-        uses: metacraft-labs/nixos-modules/.github/setup-nix@main
+        uses: ./.mcl/reusable-terraform-ci/.github/setup-nix
         with:
           push-to-cache: false
           nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
@@ -893,8 +1177,82 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
+      - name: Checkout called workflow source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .mcl/reusable-terraform-ci
+          persist-credentials: false
+
+      - name: Verify called workflow source
+        shell: bash
+        env:
+          EXPECTED_WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          EXPECTED_WORKFLOW_SHA: ${{ job.workflow_sha }}
+          EXPECTED_WORKFLOW_SERVER_URL: ${{ github.server_url }}
+          WORKFLOW_SOURCE: ${{ github.workspace }}/.mcl/reusable-terraform-ci
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$EXPECTED_WORKFLOW_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+            echo "::error::Called workflow repository identity is empty or malformed."
+            exit 1
+          fi
+          if [[ ! "$EXPECTED_WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Called workflow SHA is not a full lowercase commit SHA."
+            exit 1
+          fi
+          if [[ ! "$EXPECTED_WORKFLOW_SERVER_URL" =~ ^https?://[^/]+$ ]]; then
+            echo "::error::GitHub server URL is empty or malformed."
+            exit 1
+          fi
+          if [ ! -d "$WORKFLOW_SOURCE/.git" ]; then
+            echo "::error::Called workflow source is not a standalone Git checkout."
+            exit 1
+          fi
+
+          actual_sha="$(git -C "$WORKFLOW_SOURCE" rev-parse --verify 'HEAD^{commit}')"
+          if [ "$actual_sha" != "$EXPECTED_WORKFLOW_SHA" ]; then
+            echo "::error::Called workflow checkout is at $actual_sha, expected $EXPECTED_WORKFLOW_SHA."
+            exit 1
+          fi
+
+          expected_remote="${EXPECTED_WORKFLOW_SERVER_URL}/${EXPECTED_WORKFLOW_REPOSITORY}"
+          actual_remote="$(git -C "$WORKFLOW_SOURCE" remote get-url origin)"
+          actual_remote="${actual_remote%.git}"
+          if [ "$actual_remote" != "$expected_remote" ]; then
+            echo "::error::Called workflow checkout remote is $actual_remote, expected $expected_remote."
+            exit 1
+          fi
+
+          if [ -n "$(git -C "$WORKFLOW_SOURCE" status --porcelain=v1 --untracked-files=all)" ]; then
+            echo "::error::Called workflow checkout is not clean."
+            exit 1
+          fi
+
+          setup_file_count=0
+          while IFS= read -r -d '' setup_path; do
+            setup_file="$WORKFLOW_SOURCE/$setup_path"
+            if [ ! -f "$setup_file" ] || [ -L "$setup_file" ]; then
+              echo "::error::Called workflow Setup Nix source is missing or is not a regular file: $setup_path"
+              exit 1
+            fi
+            expected_blob="$(git -C "$WORKFLOW_SOURCE" rev-parse --verify "${EXPECTED_WORKFLOW_SHA}:${setup_path}")"
+            actual_blob="$(git -C "$WORKFLOW_SOURCE" hash-object --no-filters -- "$setup_file")"
+            if [ "$actual_blob" != "$expected_blob" ]; then
+              echo "::error::Called workflow Setup Nix source differs from $EXPECTED_WORKFLOW_SHA: $setup_path"
+              exit 1
+            fi
+            ((setup_file_count += 1))
+          done < <(git -C "$WORKFLOW_SOURCE" ls-tree -r --name-only -z "$EXPECTED_WORKFLOW_SHA" -- .github/setup-nix)
+          if [ "$setup_file_count" -eq 0 ]; then
+            echo "::error::Called workflow commit contains no Setup Nix action source."
+            exit 1
+          fi
+
       - name: Setup Nix
-        uses: metacraft-labs/nixos-modules/.github/setup-nix@main
+        uses: ./.mcl/reusable-terraform-ci/.github/setup-nix
         with:
           push-to-cache: false
           nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
