@@ -9,8 +9,19 @@
   # ciphertext) lives in the private `infra` repo, which CONSUMES these options.
   #
   # The daemon is the uniform network access point that lets ONE central GARM's
-  # incus providers target every Linux host (campaign Phase B), replacing the
-  # per-host GARM + the eph-linux-x64 capacity band-aid.
+  # providers target every Linux host (campaign Phase B), replacing the per-host
+  # GARM + the eph-linux-x64 capacity band-aid. The SAME daemon fronts whichever
+  # backends the host runs — the per-request backend is the client's
+  # `run --backend <id>` argv — so one instance can serve incus (Linux
+  # containers) AND libvirt (e.g. the Windows-11 VMs on high-mem-server, RA3).
+  # Backend access is opened parametrically: {option}`extraGroups` for the
+  # backend's control group(s) as a unit-level runtime grant (enough for incus,
+  # which checks the socket peer's runtime groups), {option}`staticGroups` for
+  # backends whose authorization reads the user's STATIC group-database entry
+  # instead (libvirt, via polkit — a runtime-only grant is invisible to it),
+  # {option}`extraPackages` for its CLI(s), and {option}`readWritePaths` /
+  # {option}`readOnlyPaths` for the sandbox holes a disk-image backend needs.
+  # NO backend is hardcoded here.
   #
   # Posture (campaign non-negotiable pattern (a) + serve.md "Auth & network
   # posture"): the control channel is authenticated (bearer token over the
@@ -151,8 +162,72 @@
           description = ''
             Supplementary groups the daemon needs to reach its backend. The incus
             client reaches the daemon socket via the `incus-admin` group (added by
-            default when incus is enabled); a libvirt host would add `libvirtd` +
-            `kvm`.
+            default when incus is enabled); a libvirt host adds `libvirtd` (the
+            group NixOS' libvirtd polkit rule grants `org.libvirt.unix.manage`)
+            plus `kvm`. A host that serves BOTH backends lists all of them, e.g.
+            `[ "incus-admin" "libvirtd" "kvm" ]`.
+          '';
+        };
+
+        staticGroups = mkOption {
+          type = types.listOf types.str;
+          default = [ ];
+          example = [ "libvirtd" ];
+          description = ''
+            Groups the daemon USER is made a STATIC member of in the group
+            database (`users.users.<user>.extraGroups`), in addition to the
+            per-unit runtime {option}`extraGroups`.
+
+            This distinction is load-bearing and backend-specific:
+
+            * incus authorizes by the connecting process's *runtime* groups
+              (`SO_PEERCRED`), so a unit-level `SupplementaryGroups` grant
+              (i.e. {option}`extraGroups`) is enough — nothing is needed here.
+
+            * libvirt authorizes through **polkit**, and polkit resolves
+              `subject.isInGroup("libvirtd")` from the user's *static* group
+              database entry, NOT from the process's runtime supplementary
+              groups. A runtime-only grant is therefore invisible to polkit and
+              the `org.libvirt.unix.manage` action is refused. So a libvirt host
+              MUST list `libvirtd` (the group NixOS' libvirtd polkit rule
+              allows) here, e.g. `[ "libvirtd" "kvm" ]`.
+
+            Static membership is a per-user grant, so keep {option}`user` a
+            dedicated system user (the default) that runs nothing but this
+            daemon.
+          '';
+        };
+
+        readWritePaths = mkOption {
+          type = types.listOf types.str;
+          default = [ ];
+          example = [ "/storage/vm-harness-serve" ];
+          description = ''
+            Filesystem subtrees the daemon needs WRITE access to under the
+            `ProtectSystem=strict` sandbox (which otherwise mounts the whole
+            hierarchy read-only). Passed through to the unit's
+            `ReadWritePaths=`.
+
+            The incus path needs none of these (it drives everything through the
+            incus socket). A libvirt host needs write access to the per-job image
+            pool directory — where the backend writes each job's copy-on-write
+            overlay (`<name>.overlay.qcow2`) and config-drive ISO before defining
+            the transient domain. That directory must also be owned/writable by
+            {option}`user` (create it with `systemd.tmpfiles`).
+          '';
+        };
+
+        readOnlyPaths = mkOption {
+          type = types.listOf types.str;
+          default = [ ];
+          example = [ "/storage/iso" ];
+          description = ''
+            Filesystem subtrees to expose read-only to the daemon, passed through
+            to the unit's `ReadOnlyPaths=`. Under `ProtectSystem=strict` the
+            hierarchy is already read-only, so this is mostly documentation of
+            intent — e.g. the directory holding a libvirt golden image the
+            backend clones the per-job overlay from. Listing it makes the daemon's
+            read surface explicit and survives a future relaxation of the sandbox.
           '';
         };
 
@@ -195,6 +270,10 @@
           isSystemUser = true;
           group = cfg.group;
           home = "/var/lib/${runtimeDir}";
+          # STATIC group membership — needed by backends whose access check
+          # reads the user's group-database entry rather than the socket peer's
+          # runtime groups (libvirt via polkit). See staticGroups' description.
+          extraGroups = cfg.staticGroups;
         };
         users.groups.${cfg.group} = { };
 
@@ -212,6 +291,10 @@
             "network-online.target"
           ]
           ++ optional config.virtualisation.incus.enable "incus.service"
+          # Order after libvirtd when present so its system socket exists before
+          # the daemon may be asked to drive a libvirt job (harmless on hosts
+          # that never receive a `--backend libvirt` request).
+          ++ optional config.virtualisation.libvirtd.enable "libvirtd.service"
           # Order after agenix ONLY when it runs as a systemd unit; on the infra
           # hosts agenix runs from an activation script (no unit), so this stays
           # inert there.
@@ -286,6 +369,15 @@
             CapabilityBoundingSet = [ "" ];
             AmbientCapabilities = [ "" ];
             UMask = "0077";
+          }
+          # Punch the backend-specific holes in ProtectSystem=strict: a libvirt
+          # host needs its per-job image pool writable and (optionally) the
+          # golden's directory read-exposed. incus hosts leave both empty.
+          // lib.optionalAttrs (cfg.readWritePaths != [ ]) {
+            ReadWritePaths = cfg.readWritePaths;
+          }
+          // lib.optionalAttrs (cfg.readOnlyPaths != [ ]) {
+            ReadOnlyPaths = cfg.readOnlyPaths;
           };
 
           unitConfig.AssertPathExists = [ (toString cfg.authTokenFile) ];
