@@ -33,6 +33,27 @@ import ./governance.nix {
         description = "Infrastructure as code.";
         topics = [ "terraform" ];
       }
+      {
+        name = "docs";
+        visibility = "public";
+        hasIssues = true;
+        hasProjects = false;
+        hasWiki = false;
+        hasDiscussions = false;
+        allowForking = true;
+        archived = false;
+        isTemplate = false;
+        webCommitSignoffRequired = false;
+        defaultBranch = "main";
+        description = "Public documentation.";
+        # Recorded at the OBSERVED value, never the desired one: the block rides
+        # the existing github_repository import, so a declared value that does
+        # not match live turns the import into an update.
+        securityAndAnalysis = {
+          secretScanning = "enabled";
+          secretScanningPushProtection = "disabled";
+        };
+      }
     ];
     memberships = [
       {
@@ -40,7 +61,32 @@ import ./governance.nix {
         role = "admin";
       }
     ];
+    # `github_repository_collaborator` rows are DIRECT grants only
+    # (`collaborators?affiliation=direct`). Team-derived access belongs in
+    # teamRepositories; recording it here would survive removal from the team.
     outsideCollaborators = [ ];
+    # Dependabot alerts and security updates: free on every plan and both
+    # visibilities, one row per repository including the disabled ones.
+    vulnerabilityAlerts = [
+      {
+        repository = "infra";
+        enabled = true;
+      }
+      {
+        repository = "docs";
+        enabled = false;
+      }
+    ];
+    dependabotSecurityUpdates = [
+      {
+        repository = "infra";
+        enabled = false;
+      }
+      {
+        repository = "docs";
+        enabled = false;
+      }
+    ];
     teamRepositories = [
       {
         teamSlug = "infra";

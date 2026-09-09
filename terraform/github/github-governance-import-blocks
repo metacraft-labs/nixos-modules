@@ -41,7 +41,13 @@ SCOPES = {
     "custom-roles",
     "repository-rulesets",
     "organization-rulesets",
+    "vulnerability-alerts",
+    "dependabot-security-updates",
 }
+
+# `security_and_analysis` is deliberately absent: it is a nested block on
+# github_repository, so it rides the repositories import and needs no import
+# block of its own.
 
 
 def parse_args() -> argparse.Namespace:
@@ -176,6 +182,28 @@ def generate_blocks(governance: dict, scope: str, owner: str, root_config: str) 
                     "github_repository_collaborator."
                     f"{resource_key(f'repo-collaborator:{repository}:{username}')}",
                     f"{repository}:{username}",
+                )
+            )
+
+    if include_scope(scope, "vulnerability-alerts"):
+        for row in governance.get("vulnerabilityAlerts", []):
+            repository = row["repository"]
+            blocks.append(
+                import_block(
+                    "github_repository_vulnerability_alerts."
+                    f"{resource_key(f'vulnerability-alerts:{repository}')}",
+                    repository,
+                )
+            )
+
+    if include_scope(scope, "dependabot-security-updates"):
+        for row in governance.get("dependabotSecurityUpdates", []):
+            repository = row["repository"]
+            blocks.append(
+                import_block(
+                    "github_repository_dependabot_security_updates."
+                    f"{resource_key(f'dependabot-security-updates:{repository}')}",
+                    repository,
                 )
             )
 
