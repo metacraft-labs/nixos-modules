@@ -30,7 +30,12 @@
     (=terraform/github/github-inventory=, =github-governance-import-blocks=,
     =github-governance-import-ci=).
   - *Cloudflare* — the read-only inventory tool
-    (=terraform/cloudflare/cloudflare-inventory=); adoption sets stay per-repo.
+    (=terraform/cloudflare/cloudflare-inventory=), the import-block generator
+    (=terraform/cloudflare/cloudflare-import-blocks=, driven by the per-repo
+    =import-ids.json=), and the import-only apply harness
+    (=terraform/cloudflare/cloudflare-import-ci=) — symmetric with GitHub
+    governance. The reviewed adoption data (=default.nix= + =import-ids.json=)
+    stays per-repo; the generator and harness are shared.
   - *Methodology* — [[file:Terraform-Agent-Development-Methodology.md][development methodology]],
     [[file:Terraform-Testing.md][testing]], [[file:Terraform-Root-Layering.md][root layering]],
     [[file:Terraform-Import-Phase.md][the import/adoption phase]], and
