@@ -17,7 +17,7 @@ Three components work together:
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `modules/host-info.nix`                  | NixOS option module — defines `mcl.host-info.configPath` (must be a valid relative subpath, validated via `lib.path.subpath.isValid`). Changed from `types.path` to `types.str` to avoid Nix store coercion. |
 | `modules/secrets.nix`                    | NixOS option module — defines `mcl.secrets.services.<name>.recipients` and derives the on-disk secrets directory from `configPath + "/secrets"`.                                                             |
-| `packages/mcl/src/mcl/commands/secret.d` | D CLI implementation — `mcl secret edit`, `re-encrypt`, and `re-encrypt-all` subcommands. Resolves `configPath` and `recipients` via `nix eval`, then invokes `age` for encryption/decryption.               |
+| `packages/mcl/src/mcl/commands/secret.d` | D CLI implementation — the `edit`, `re-encrypt`, `re-encrypt-all`, `verify`, and `list` subcommands. Resolves `configPath` and `recipients` via `nix eval`, then invokes `age` for encryption/decryption.    |
 
 ### Key invariant
 
@@ -67,6 +67,10 @@ The valid machines use test SSH keys from `test-keys/` and set
 | 7    | `mcl secret list`           | All machines: machine name + indented services                                                                                             |
 | 8    | `mcl secret list`           | Resilience: `broken-machine` yields an ERROR marker (tree) / `__error__` (JSON) and is logged to stderr, while healthy machines still list |
 | 9    | `mcl secret list`           | VM filtering: `-vm` machine hidden by default, shown with `--include-vms`                                                                  |
+
+`mcl secret verify` (decrypts a secret and checks the declared recipients
+against the `.age` header) has no scenario here yet — it is the one subcommand
+this check does not cover.
 
 ### Test environment setup
 

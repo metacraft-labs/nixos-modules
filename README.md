@@ -56,6 +56,61 @@ jobs:
       NIX_GITHUB_TOKEN: ${{ secrets.NIX_GITHUB_TOKEN }}
 ```
 
+#### [`reusable-merge.yml`](.github/workflows/reusable-merge.yml)
+
+Merges a source branch into a target branch with `--no-ff` and pushes the result.
+
+```yml
+jobs:
+  promote:
+    uses: metacraft-labs/nixos-modules/.github/workflows/reusable-merge.yml@main
+    with:
+      source_branch: main
+      target_branch: testnet
+```
+
+#### [`reusable-nix-diff.yml`](.github/workflows/reusable-nix-diff.yml)
+
+On pull requests, builds every machine under a flake attribute on both the PR and a synthetic base branch and comments the derivation diff.
+
+```yml
+jobs:
+  nix-diff:
+    uses: metacraft-labs/nixos-modules/.github/workflows/reusable-nix-diff.yml@main
+    secrets:
+      NIX_GITHUB_TOKEN: ${{ secrets.NIX_GITHUB_TOKEN }}
+    with:
+      # Flake attribute to enumerate machines (must be an attrset of derivations)
+      machines-attr: legacyPackages.x86_64-linux.bareMetalMachines
+```
+
+#### [`reusable-recorder-ci.yml`](.github/workflows/reusable-recorder-ci.yml)
+
+Shared lint-and-test CI for the CodeTracer recorder fleet: `setup-dev-env`, an optional recorder-specific `just` prep recipe (`prepare-recipe`), then `just lint` / `just test`, with failure logs uploaded to GitHub and mirrored to the S3 artifact store.
+
+```yml
+jobs:
+  ci:
+    uses: metacraft-labs/nixos-modules/.github/workflows/reusable-recorder-ci.yml@main
+    secrets: inherit
+```
+
+#### [`reusable-terraform-ci.yml`](.github/workflows/reusable-terraform-ci.yml)
+
+Terraform/OpenTofu CI for a single root, in one of three modes: `pr` (offline checks + plan), `apply` (apply on merge), `drift` (scheduled drift check). It has a large input surface (backends, credential modes, Checkov, smoke tests); see [`terraform/ci/README.md`](terraform/ci/README.md) for the root `metadata.json` contract and the `terraform-ci-matrix` generator that feeds it.
+
+```yml
+jobs:
+  terraform:
+    uses: metacraft-labs/nixos-modules/.github/workflows/reusable-terraform-ci.yml@main
+    secrets:
+      AGENIX_CI_PRIVATE_KEY: ${{ secrets.AGENIX_CI_PRIVATE_KEY }}
+      NIX_GITHUB_TOKEN: ${{ secrets.NIX_GITHUB_TOKEN }}
+    with:
+      mode: pr
+      working_directory: cloudflare
+```
+
 #### [`reusable-update-flake-lock.yml`](.github/workflows/reusable-update-flake-lock.yml)
 
 Updates `flake.lock` and creates a PR. Supports GPG-signed commits.
@@ -93,13 +148,25 @@ The `mcl` tool is a Swiss-knife CLI for managing NixOS deployments. For developm
 
 ### Available Commands
 
-| Command        | Description                                                                                                              |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `host-info`    | Returns system information (OS, BIOS, CPU, GPU, RAM, disks) as JSON                                                      |
-| `hosts`        | Remote host management and network scanning                                                                              |
-| `ci`           | Evaluates packages and compares to cached versions                                                                       |
-| `shard-matrix` | Splits packages into shards for distributed CI. See [Shard Splitting Architecture](docs/shard-splitting-architecture.md) |
-| `deploy-spec`  | Deploys machine specs to Cachix                                                                                          |
-| `machine`      | Create and manage NixOS machine configurations                                                                           |
+| Command             | Description                                                                                                              |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `host-info`         | Returns system information (OS, BIOS, CPU, GPU, RAM, disks) as JSON                                                      |
+| `hosts`             | Remote host management and network scanning                                                                              |
+| `ci`                | Evaluates packages and compares to cached versions                                                                       |
+| `ci-matrix`         | Print a table of the cache status of each package                                                                        |
+| `print-table`       | Print a table of the cache status of each package                                                                        |
+| `merge-ci-matrices` | Merge downloaded `matrix-pre.json` artifacts and emit GitHub outputs                                                     |
+| `shard-matrix`      | Splits packages into shards for distributed CI. See [Shard Splitting Architecture](docs/shard-splitting-architecture.md) |
+| `cache`             | Operate on deployment cache backends                                                                                     |
+| `deploy-spec`       | Deploys machine specs to Cachix                                                                                          |
+| `deploy-plan`       | Create a signed desired-state deployment manifest                                                                        |
+| `deploy-apply`      | Target-side signed deployment apply wrapper                                                                              |
+| `deploy-agent`      | Target-side pull agent for signed desired-state manifests                                                                |
+| `deploy-reconcile`  | Converge signed desired-state deployments with latest-only semantics                                                     |
+| `deploy-ssh`        | Direct one-target SSH deployment backed by `deploy-reconcile`                                                            |
+| `deploy-status`     | Inspect deployment event logs                                                                                            |
+| `machine`           | Create and manage NixOS machine configurations                                                                           |
+| `config`            | Manage NixOS machine configurations (system, home, VM)                                                                   |
+| `secret`            | Manage age-encrypted secrets for NixOS machines                                                                          |
 
-Run `mcl --help` or `mcl <command> --help` for usage details and environment variables.
+Run `mcl --help` or `mcl <command> --help` for usage details, subcommands, and environment variables.

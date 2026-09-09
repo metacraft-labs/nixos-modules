@@ -366,6 +366,14 @@ Key series (namespace `garm_`): `garm_health` (gauge, alert on `== 0`),
 - `rate(garm_runner_errors_total[15m]) > 0` → provider create/delete failures.
 - `garm_github_rate_limit_remaining < 100` → App rate-limit pressure.
 
+You do not have to hand-roll these. `services.garm-fleet-alerts` (see
+[`modules/garm-fleet-alerts/README.md`](../garm-fleet-alerts/README.md)) ships a
+parametric alert-rule library covering the whole runner chain — controller
+health, pool-manager status, provider error rates, GitHub rate limit, and fleet
+starvation — and renders it into `services.prometheus.ruleFiles`. Enable it and
+tune `thresholds` instead of writing the rules above by hand; the three bullets
+here are just the smallest useful subset if you are not using the module.
+
 ---
 
 ## 7. Eval-time resource guard (M5 guard promoted to a module assertion)
