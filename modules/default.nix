@@ -25,6 +25,7 @@
     ./garm
     ./garm-fleet-alerts
     ./garm-fleet-external-checks
+    ./garm-webhook-endpoint
     ./github-actions-fit-exporter
     ./github-actions-fit-alerts
     ./runner-label-taxonomy
