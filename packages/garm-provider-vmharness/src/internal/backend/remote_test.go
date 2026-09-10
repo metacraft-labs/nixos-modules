@@ -255,6 +255,46 @@ func TestRemoteCreateWithoutBootstrapSendsNoUserData(t *testing.T) {
 	}
 }
 
+// The ephemeral recipe is the fallback for every non-noop target, not just
+// incus. --base-image is the incus image alias; other backends resolve their
+// golden from --source-image, which cli.nim maps to BaselineSpec.sourceImage
+// (--baseline goes to .name). Sending only --base-image left sourceImage
+// empty for tart and qemu-windows-arm, and the tart backends answer an empty
+// image by substituting their built-in cirruslabs golden — silently running an
+// image that appears in no configuration.
+func TestRemoteCreateCarriesSourceImageForNonIncusTargets(t *testing.T) {
+	for _, target := range []string{"tart-macos", "tart-linux-arm", "qemu-windows-arm"} {
+		t.Run(target, func(t *testing.T) {
+			b, fs, closeFn := newFakeBackend(t, target, 0)
+			defer closeFn()
+			const image = "ghcr.io/metacraft-labs/macos-tart-runner:tahoe-nix-v1"
+			if _, err := b.Create(context.Background(),
+				CreateArgs{Name: "job-7", SourceImage: image}); err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			argv := fs.execArgv[0]
+			assertContains(t, argv, "--source-image", image)
+			// --baseline still names the instance, so it must not be mistaken
+			// for the image.
+			assertContains(t, argv, "--baseline", "job-7")
+		})
+	}
+}
+
+// With no configured image there is nothing to forward, and an empty
+// --source-image would be worse than its absence: it would look configured.
+func TestRemoteCreateOmitsImageFlagsWhenUnset(t *testing.T) {
+	b, fs, closeFn := newFakeBackend(t, "tart-macos", 0)
+	defer closeFn()
+	if _, err := b.Create(context.Background(), CreateArgs{Name: "job-8"}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	argv := fs.execArgv[0]
+	if hasFlag(argv, "--source-image") || hasFlag(argv, "--base-image") {
+		t.Fatalf("create argv carries an image flag with no image set: %v", argv)
+	}
+}
+
 func TestRemoteCreateNonZeroExitFails(t *testing.T) {
 	b, _, closeFn := newFakeBackend(t, "noop", 7)
 	defer closeFn()

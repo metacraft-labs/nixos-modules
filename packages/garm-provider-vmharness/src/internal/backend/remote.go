@@ -102,7 +102,18 @@ var ephemeralRecipe = remoteRecipe{
 	create: func(backend *RemoteBackend, args CreateArgs) []string {
 		argv := []string{"run", "--ephemeral", "--backend", backend.TargetBackend, "--baseline", args.Name}
 		if args.SourceImage != "" {
-			argv = append(argv, "--base-image", args.SourceImage)
+			// --base-image is the incus ephemeral path's image alias;
+			// --source-image is what every other backend resolves its golden
+			// from (cli.nim maps it to BaselineSpec.sourceImage, whereas
+			// --baseline goes to BaselineSpec.name). Since this recipe is the
+			// fallback for *any* non-noop target, sending only --base-image
+			// left sourceImage empty for tart and qemu-windows-arm — and the
+			// tart backends answer an empty image by substituting their
+			// built-in cirruslabs golden, i.e. silently running an image
+			// nobody configured. Send both; each backend reads the one it
+			// understands and ignores the other.
+			argv = append(argv, "--base-image", args.SourceImage,
+				"--source-image", args.SourceImage)
 		}
 		// Only remote Incus consumes these provider-admin grants. The fixed
 		// flag order is part of the contract: nesting first, nested KVM second,
