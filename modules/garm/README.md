@@ -432,6 +432,77 @@ here are just the smallest useful subset if you are not using the module.
 
 ---
 
+## 6a. Central-GARM recovery + DB backup (RE2)
+
+When the fleet collapses onto **one** central controller (the Runner-Fleet
+campaign's Phase-B end state), that controller is a deliberate provisioning
+**SPOF**. GARM is **DB-as-truth**: on start it reconciles desired-vs-actual
+against GitHub, and GitHub re-queues any job whose runner disappeared — so a
+crashed controller loses **no jobs** as long as it comes back fast over a
+**surviving DB**. Two option blocks harden that, and they compose with the
+`healthcheck` watchdog (which recovers a process-*alive*-but-API-*dead* garm):
+
+**`recovery`** — the fast declarative restart posture (default `enable = true`):
+
+| option | default | effect |
+|---|---|---|
+| `restartSec` | `"5s"` | `RestartSec` — respawn delay after a crash |
+| `startLimitIntervalSec` | `"300s"` | widened `StartLimitIntervalSec` |
+| `startLimitBurst` | `50` | `StartLimitBurst` |
+| `targetRecoverySeconds` | `30` | the documented RTO (informational + gate bound) |
+| `warmStandby.enable` | `false` | see the trade-off below |
+| `warmStandby.host` | `null` | informational standby host |
+
+The start-limit widening is the load-bearing SPOF property: systemd's **default**
+(5 restarts / 10s) would drop the crown-jewel controller into a permanent
+`failed` state on a brief crash-loop. The widened window keeps it recovering;
+only a garm that exceeds the generous burst is genuinely broken (bad config,
+disk full) and is then **left failed on purpose**, so RE1's
+`up==0`/`GarmControllerDown` pages a human instead of hiding a hard fault behind
+an endless loop.
+
+> **Warm-standby trade-off.** A *second live controller* against the same forge
+> would double-provision (split-brain), because both would reconcile the same
+> desired state. So `warmStandby` here is **not** two live controllers — it is
+> the DB backup continuously shipped to a standby host that can be **promoted**
+> by restoring the DB and starting garm (a seconds-to-minutes runbook step).
+> It is heavier than fast-restart and only pays off on **host** loss; most
+> deploys should leave it off and rely on fast-restart + backup. Enabling it
+> asserts `backup.enable` **and** a `backup.remoteCommand` (the ship-to-standby
+> feed) are set — otherwise it would promise an HA that ships nothing.
+
+**`backup`** — online SQLite snapshot + off-host hook (default `enable = false`):
+
+| option | default | effect |
+|---|---|---|
+| `enable` | `false` | install `garm-db-backup` oneshot + timer |
+| `interval` | `"15min"` | snapshot cadence |
+| `dir` | `/var/backup/garm` | local rotated snapshot dir (put it on a **different** filesystem than `stateDir`) |
+| `retain` | `24` | snapshots kept |
+| `compress` | `true` | gzip each snapshot |
+| `remoteCommand` | `null` | operator hook: ship `$1` / `$GARM_DB_SNAPSHOT` off-host |
+
+Snapshots use SQLite's own `.backup` (a consistent copy of committed pages under
+a shared lock — **not** `cp`, which can catch a torn WAL write) and are
+`PRAGMA integrity_check`-verified before publication. Restore with the installed
+**`garm-db-restore <snapshot>`** tool: it stops garm, swaps the snapshot into
+`stateDir`, and restarts — garm then reconciles the restored DB against the
+forge. A **cross-host** restore requires the same `database.passphraseFile` the
+snapshot was encrypted with (GARM field-encrypts the DB); the restore refuses a
+snapshot that fails its integrity check.
+
+The `remoteCommand` runs as the garm user from `garm-db-backup.service`, so any
+transport credentials it needs must be reachable there (e.g. a `LoadCredential`
+you add to that unit). The module ships **no transport** — only the hook — so it
+stays company-agnostic.
+
+The gate `t_central_garm_recovery` proves all of this hermetically: the RE1
+down-signal alerts fire, a SIGKILL'd controller recovers within the RTO with a
+new PID, the DB survives the crash, and a **destroyed** DB is recovered from a
+backup (with a non-vacuity control that a wiped DB genuinely loses state).
+
+---
+
 ## 7. Eval-time resource guard (M5 guard promoted to a module assertion)
 
 The M5 autoscale gate enforced `MAX_RUNNERS * memory` against free RAM at **runtime**
