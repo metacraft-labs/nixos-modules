@@ -17,6 +17,8 @@
     ./garm-service-boot.nix
     ./garm-api-watchdog.nix
     ./garm-multi-provider.nix
+    ./garm-aws-burst.nix
+    ./garm-aws-spot.nix
     ./fleet-alerting.nix
     ./alertmanager-routing.nix
     ./fit-monitoring.nix
