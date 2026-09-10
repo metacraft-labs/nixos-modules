@@ -28,11 +28,16 @@ terraform-ci-matrix --github-output "$GITHUB_OUTPUT" # writes matrix=<json>
 Each managed root carries a `metadata.json` validated against
 [`metadata.schema.json`](./metadata.schema.json). Required: `state_key`,
 `state_sensitivity` (`standard` | `sensitive`), `backend_config_file`,
-`credential_mode` (`aws-oidc` | `agenix-token` | `none`), `enable_checkov`,
-`provider_allowlist`. `agenix-token` roots also require `credentials_env_name`
-and `agenix_{plan,apply}_secret_path`. Optional: `smoke_test_command`,
-`split_boundary` (prose; see the root-layering runbook), and
-`backend_uses_aws_oidc` (default `false`). `credential_mode` describes provider
+`credential_mode` (`aws-oidc` | `agenix-token` | `github-app` | `none`),
+`enable_checkov`, `provider_allowlist`. `agenix-token` roots also require
+`credentials_env_name` and `agenix_{plan,apply}_secret_path`; `github-app` roots
+require `github_app_owner` (the org the per-run installation token is minted
+for, exported as `GITHUB_TOKEN`). Optional: `smoke_test_command`,
+`split_boundary` (prose; see the root-layering runbook),
+`backend_uses_aws_oidc` (default `false`), and `adoption_pending` (default
+`false`; while true the root is excluded from the steady-state matrix and
+driven by the provider-specific import workflow — see the
+[import phase](../../docs/Terraform-Import-Phase.md)). `credential_mode` describes provider
 authentication only. Set `backend_uses_aws_oidc` when the state backend also
 needs the caller's AWS OIDC role; this permits combinations such as a
 Cloudflare provider token from agenix with an S3 state backend. The generated
