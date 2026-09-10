@@ -82,6 +82,40 @@ secret variants (`routing_key_file`, `api_url_file`, `smtp_auth_password_file`).
 | `controllerDownSourceMatchers` | `[alertname="GarmControllerDown"]` | which alert counts as controller-down (overridable) |
 | `listenAddress` / `port` | `127.0.0.1` / `9093` | Alertmanager web/API bind |
 
+## Dead-man's switch
+
+Per the [alerting methodology](https://github.com/metacraft-labs/metacraft-dev-guidelines/blob/latest/policies/alerting-methodology.md),
+a single-controller fleet MUST also run a **dead-man's switch** — otherwise a dead
+Alertmanager/host/network pages nothing and silence reads as health. Set
+`deadManReceiver` to a receiver that **pings an off-host heartbeat sink**
+(Healthchecks) on every interval; the always-firing `Watchdog` alert (emitted by
+`garm-fleet-alerts`, `watchdog = true`) is routed there FIRST, on a short cadence,
+and never falls through to the pager/CI-ops buckets. When the pings stop, the
+off-host sink alarms.
+
+```nix
+services.fleet-alert-routing = {
+  enable = true;
+  deadManReceiver = "deadmanswitch";           # the Watchdog goes only here
+  receivers = {
+    default = { };
+    pager.webhook_configs = [ { url_file = config.age.secrets."alertmanager/ntfy-url".path; } ];
+    deadmanswitch.webhook_configs = [
+      { url_file = config.age.secrets."alertmanager/healthchecks-ping-url".path; }  # OFF-HOST
+    ];
+  };
+};
+```
+
+| Option | Default | Purpose |
+| --- | --- | --- |
+| `deadManReceiver` | `null` | receiver the always-firing `Watchdog` routes to (an off-host Healthchecks ping); `null` disables |
+| `deadManMatchers` | `[alertname="Watchdog"]` | which alert is the heartbeat |
+| `deadManPingInterval` | `1m` | heartbeat cadence (must be < the sink's grace period) |
+
+The heartbeat sink **must not live on the monitored host** — it is what detects
+that host dying. Use a hosted Healthchecks tier or a separate box.
+
 ## Inhibition
 
 Two sane defaults, both overridable:
@@ -97,8 +131,10 @@ Two sane defaults, both overridable:
 The config is rendered by the pure `./config.nix`, so the file `amtool` replays
 is the file the host deploys. The gate `.#checks.<system>.t_fleet_alert_routing`
 runs `amtool check-config` on the default render and `amtool config routes test`
-to assert `critical,garm-fleet → pager` and `warning,garm-fleet → ci-ops` — the
-amtool analogue of the promtool contract `garm-fleet-alerts` uses.
+to assert `critical,garm-fleet → pager` and `warning,garm-fleet → ci-ops`, and on
+a second dead-man render asserts `Watchdog → deadmanswitch` (while `critical`
+still pages) — the amtool analogue of the promtool contract `garm-fleet-alerts`
+uses (whose suite includes the always-firing `Watchdog`).
 
 ## Layering
 

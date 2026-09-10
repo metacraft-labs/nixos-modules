@@ -26,6 +26,7 @@ _top@{ ... }:
     }:
     let
       amConfig = config.packages.fleet-alertmanager-config;
+      amConfigDeadman = config.packages.fleet-alertmanager-config-deadman;
       amtool = "${pkgs.prometheus-alertmanager}/bin/amtool";
     in
     {
@@ -66,7 +67,29 @@ _top@{ ... }:
             [ "$other" = "pager" ] \
               || fail "severity=critical,component=other routed to '$other', expected 'pager'"
 
-            echo "[t_fleet_alert_routing][PASS] config valid; critical->pager, warning->ci-ops as contracted"
+            # ── Dead-man's-switch render: the Watchdog must route to the
+            # dedicated off-host heartbeat receiver, and enabling it must NOT
+            # divert the ordinary severity buckets. ──
+            cp ${amConfigDeadman} alertmanager-deadman.yml
+            echo "[t_fleet_alert_routing] deadman render: amtool check-config"
+            ${amtool} check-config alertmanager-deadman.yml \
+              || fail "amtool check-config rejected the dead-man routing config"
+
+            route_dm() {
+              ${amtool} config routes test --config.file alertmanager-deadman.yml "$@" | tr -d '[:space:]'
+            }
+
+            echo "[t_fleet_alert_routing] Watchdog -> deadmanswitch"
+            wd=$(route_dm alertname=Watchdog severity=none)
+            [ "$wd" = "deadmanswitch" ] \
+              || fail "Watchdog routed to '$wd', expected 'deadmanswitch'"
+
+            echo "[t_fleet_alert_routing] deadman render: critical,garm-fleet still -> pager"
+            dmcrit=$(route_dm severity=critical component=garm-fleet)
+            [ "$dmcrit" = "pager" ] \
+              || fail "with dead-man route, critical routed to '$dmcrit', expected 'pager'"
+
+            echo "[t_fleet_alert_routing][PASS] config valid; critical->pager, warning->ci-ops, Watchdog->deadmanswitch as contracted"
             touch $out
           '';
     };
