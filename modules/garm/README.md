@@ -290,6 +290,52 @@ unless `reconcile.pruneUnmanaged` is also set. `garm-cli controller update
 
 ---
 
+## 4a. Capability POOLS + classic runners (RC2 / RB3)
+
+Scale sets name **one** class and pin it to one host. **Pools** register
+*classic* runners advertising a **capability label set**, so
+`runs-on: [self-hosted, linux, x64, x86-64-v3]` matches **any** runner that
+proves all those labels. The reconcile applies pools via `garm-cli pool`
+(id-tracked in `managed-pool-ids.json` — GARM pools have no name).
+
+`services.garm.mode` (`scaleSets` | `pools`, default `scaleSets`) **declares**
+which model a host is authoritative for; it gates nothing structurally — pools
+and scale sets reconcile **additively** whenever declared, so they run in
+parallel through the cutover (RC5 retires the scale sets).
+
+**RC2 — explicit pools, labels DERIVED from the host manifest.** A
+`services.garm.pools.<name>` binds a `provider` + label set + `minIdleRunners` +
+`maxRunners` + `priority`. Give the backing provider a `manifestFile` (the
+host's RA6-verified `/v1/manifest`, written by the controller's manifest-verify
+step) and the reconcile **derives** the runner's tag set from it with the RC1
+`runner-label-tool` — proven hardware, not a hand-kept class name. A declared
+`labels` set is then **linted** `advertised ⊆ derived` (fail-closed: an
+over-advertised pool is refused). `policyLabels` (e.g. `ephemeral`, `org:<name>`)
+are the attested labels a hardware manifest cannot prove, appended after
+derivation. With no `manifestFile`, `labels` is used verbatim (the escape hatch
+for a guest OS the host manifest cannot describe — a Windows VM on a Linux host).
+
+**RB3 — capability→host placement + balancing.** A
+`services.garm.capabilityPools.<name>` is a **host-agnostic** declaration —
+`requires` (the labels a host must prove), candidate `providers` (default: every
+provider with a `manifestFile`), and a `balance` policy — that the reconcile
+**expands into one concrete pool per qualifying host** (a candidate qualifies iff
+its derived labels ⊇ `requires`). This is the structural fix for the "GPU hosts
+idle while one host saturates" imbalance: a generic Linux pool expands across
+**all** qualifying hosts, so a job is no longer pinned to one.
+
+- `balance = "spread"` (default): every qualifying host's pool gets the same
+  `basePriority`, distributing jobs across equivalent hosts.
+- `balance = "pack"`: qualifying hosts get **descending, distinct** priorities in
+  candidate order — one host fills before the next (bin-packing).
+
+Give a more-specific capability (`requires = [ "gpu" ]`) a higher `basePriority`
+than a generic pool so a specialised job prefers a specialised host. Both gates
+are hermetic module checks: `t_garm_pools_labels` (RC2) and
+`t_garm_capability_placement` (RB3).
+
+---
+
 ## 5. Security posture
 
 ### (a) Fork-PR / untrusted-code gating
