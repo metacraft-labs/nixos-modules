@@ -626,6 +626,8 @@
         manifestFile = providerManifestOf pl.provider;
         labels = pl.labels;
         policyLabels = pl.policyLabels;
+        # RC5: legacy class names this pool also advertises during the cutover.
+        aliasClasses = pl.aliasClasses;
         image = pl.image;
         flavor = pl.flavor;
         osType = pl.osType;
@@ -1099,6 +1101,13 @@
               log "ERROR: pool '$plname' label derivation failed — skipping (fail-closed)"
               continue
             fi
+            # RC5: append legacy alias class names verbatim (NOT linted — a name,
+            # not a hardware claim). A job still using `runs-on: <legacy-class>`
+            # then matches this pool by GitHub's subset rule. Dropping the alias
+            # (empty aliasClasses) removes the tag, and the legacy-named job stays
+            # queued — the deliberate end of the cutover bridge.
+            aliases="$(echo "$pl" | jq -r '.aliasClasses | join(",")')"
+            [ -n "$aliases" ] && tags="$tags,$aliases"
             pool_apply "$plname" "$oid" \
               "$(echo "$pl" | jq -r '.provider')" "$tags" \
               "$(echo "$pl" | jq -r '.image')" "$(echo "$pl" | jq -r '.flavor')" \
@@ -3478,6 +3487,31 @@
                       policy, not hardware): `ephemeral`, `org:<name>`,
                       `dev-env-ready`, etc. Outside the manifest-governed
                       vocabulary, so they are never linted away.
+                    '';
+                  };
+                  aliasClasses = mkOption {
+                    type = types.listOf types.str;
+                    default = [ ];
+                    example = [ "eph-linux-x64" ];
+                    description = ''
+                      RC5 CUTOVER ALIASES — legacy single-name scale-set class
+                      names this pool ALSO advertises so a consumer still naming
+                      `runs-on: eph-linux-x64` keeps routing to the pool until it
+                      migrates to a capability label set. Each alias is appended
+                      verbatim to the pool's tags (a classic runner in the pool
+                      registers with both its derived capability labels AND these
+                      legacy names), so GitHub's subset match serves a legacy-named
+                      job from the aliased pool.
+
+                      This is NOT a hardware capability, so — like `policyLabels` —
+                      an alias is NEVER linted against the manifest (it is a name,
+                      not a claim). It is the transitional bridge that lets the
+                      scale-set→pool migration proceed class-by-class instead of as
+                      a flag day: keep the alias while any consumer still names the
+                      old class, then DROP it (empty this list) as the FINAL RC5
+                      step. Once dropped, a job still naming the retired class
+                      matches no pool and stays queued — the intended, visible end
+                      of the alias.
                     '';
                   };
                   maxRunners = mkOption {

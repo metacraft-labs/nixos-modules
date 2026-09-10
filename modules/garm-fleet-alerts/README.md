@@ -23,13 +23,22 @@ controller (`:9997`, scale-set mode, 2026-09-08):
 | `GarmProviderHighErrorRatio`           | `rate(errors)/rate(operations) > 0.2`                                 | critical                         |
 | `GarmGithubRateLimitLow` / `…Critical` | `garm_github_rate_limit_remaining`                                    | warning / critical               |
 | **`GarmFleetStarvation`**              | queued jobs vs a **saturated** class, past the bootstrap window       | **critical (the priority page)** |
+| `GarmFleetOverProvision`               | runners created ÷ jobs served over 1h > 2 (thundering herd, RC5)      | warning                          |
 | `GithubAppTokenMintFailing`            | external: App installation token cannot be minted                     | critical                         |
 | `GithubWebhookDeliveryFailing`         | external: GitHub delivery ledger non-2xx (post-Phase-C)               | critical                         |
 | `GithubWebhookEndpointProbeDown`       | external: blackbox probe of the public endpoint (post-Phase-C)        | critical                         |
 | `GarmWebhookHmacFailures`              | `garm_webhook_received{valid="false"}` (pool mode only)               | warning                          |
 
 Plus two recording rules (`garm:class_saturated`, `garm:class_queued_jobs`) that
-drive the starvation join.
+drive the starvation join, and three RC5 over-provision rules
+(`garm:runners_created:increase` per provider, `garm:jobs_served:increase` per
+(owner, class), and the fleet `garm:overprovision_ratio`) that drive the
+thundering-herd watch during the pools cutover. The over-provision ratio is a
+FLEET figure by necessity: the numerator `garm_runner_operations_total` is
+labelled only by (operation, provider), so there is no per-(owner, class)
+creation counter in GARM to attribute a herd finer — the denominator is broken
+out per (owner, class) for the dashboard, and the alert is gated on a served-jobs
+floor so a warm `min-idle` floor during a quiet period never pages.
 
 The two **external** checks are things `garm_*` cannot see; they run over metrics
 published by the companion `garm-fleet-external-checks` exporter (this repo).

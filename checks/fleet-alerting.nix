@@ -52,10 +52,12 @@ _top@{ ... }:
               || fail "a fault-injection unit test did not fire/stay-silent as asserted"
 
             # Guard against silent shrinkage: every failure mode the gate names
-            # must have an alert. (14 = 12 alerts + 2 capacity recording rules.)
+            # must have an alert. (13 alerts + 5 recording rules: 2 capacity +
+            # 3 RC5 over-provision.)
             for a in GarmControllerDown GarmControllerUnhealthy GarmPoolManagerNotRunning \
                      GarmProviderCreateFailures GarmProviderHighErrorRatio \
                      GarmGithubRateLimitLow GarmGithubRateLimitCritical GarmFleetStarvation \
+                     GarmFleetOverProvision \
                      GithubAppTokenMintFailing GithubWebhookDeliveryFailing \
                      GithubWebhookEndpointProbeDown GarmWebhookHmacFailures; do
               grep -q "alert: $a" garm-fleet-alerts.yml || fail "alert $a missing from the library"

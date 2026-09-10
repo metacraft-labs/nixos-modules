@@ -21,6 +21,7 @@
     ./garm-aws-spot.nix
     ./garm-webhook-delivery.nix
     ./garm-pools-labels.nix
+    ./garm-pools-cutover-complete.nix
     ./garm-capability-placement.nix
     ./fleet-alerting.nix
     ./alertmanager-routing.nix
