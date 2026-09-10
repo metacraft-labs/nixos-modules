@@ -5,28 +5,33 @@ on:
   workflow_call:
     inputs:
       runners:
-        description: 'JSON-encoded map of nix system to its single-name self-hosted runner class'
-        # Map each Nix system to its runner class: Linux x64 -> eph-linux-x64,
-        # macOS arm64 -> eph-macos-arm64 (the two Nix classes this matrix covers).
+        description: 'JSON-encoded map of nix system to its RC1 capability label set'
+        # Map each Nix system to its minimum capability label set (RC1):
+        # Linux x64 -> [self-hosted, linux, x64], macOS arm64 ->
+        # [self-hosted, macos, arm64] (the two Nix systems this matrix covers).
         default: | # json
           {
             "x86_64-linux": [
-              "eph-linux-x64"
+              "self-hosted",
+              "linux",
+              "x64"
             ],
             "aarch64-darwin": [
-              "eph-macos-arm64"
+              "self-hosted",
+              "macos",
+              "arm64"
             ]
           }
         required: false
         type: string
       non-nix-runner:
-        description: 'JSON-encoded runner class for non-nix tasks (initial comment, mcl reference compute)'
-        default: '["eph-linux-x64"]'
+        description: 'JSON-encoded runner label set for non-nix tasks (initial comment, mcl reference compute)'
+        default: '["self-hosted","linux","x64"]'
         required: false
         type: string
       results-runner:
-        description: 'JSON-encoded runner class for Final Results and deploy orchestration'
-        default: '["eph-linux-x64"]'
+        description: 'JSON-encoded runner label set for Final Results and deploy orchestration'
+        default: '["self-hosted","linux","x64"]'
         required: false
         type: string
       foundry-darwin-bootstrap-runner:
