@@ -113,6 +113,14 @@
       # endpoint + the bearer token; the strict M0 sandbox posture already
       # permits outbound TCP, so a remote provider relaxes nothing.
       providerIsRemote = p: p.backend == "remote";
+      # RE3/RE4: the AWS burst backend. `garm-provider-aws` is a pure-Go cloud
+      # provider — it reaches EC2 over the network via the AWS SDK and needs NO
+      # local hypervisor tools, socket groups, or /dev/kvm. Like `remote` it
+      # relaxes NOTHING in the systemd sandbox (the strict M0 posture already
+      # permits outbound TCP); it only needs its region/subnet config plus AWS
+      # credentials, which the infra layer supplies via the forwarded env chain
+      # (role/IMDS/EnvironmentFile) so no secret ever enters the Nix store.
+      providerIsAws = p: p.backend == "aws";
       providerIsVMHarnessRun =
         p:
         builtins.elem p.backend [
@@ -133,6 +141,11 @@
         # forwards ONLY the vars listed here, so add the configured name. The
         # infra layer supplies its value (EnvironmentFile / systemd LoadCredential).
         ++ lib.optional (providerIsRemote p && p.remote.authTokenFile == null) p.remote.authTokenEnv
+        # RE3: forward the AWS credential/region/TLS env-var NAMES the provider
+        # needs. GARM propagates ONLY the vars listed here; their VALUES are
+        # supplied by the infra layer (systemd EnvironmentFile / LoadCredential /
+        # IMDS role), so no AWS secret is ever baked into the store.
+        ++ lib.optionals (providerIsAws p) p.aws.forwardEnv
         ++ lib.optionals (providerIsVMHarnessRun p) [
           "MCL_RUNNER_SHARED_NIX_STORE"
           "MCL_RUNNER_SHARED_REPRO_STORE"
@@ -223,6 +236,26 @@
         + optionalString (p.remote.requestTimeoutSec > 0) ''
           request_timeout_sec = ${toString p.remote.requestTimeoutSec}
         '';
+      # RE3: the `garm-provider-aws` config.toml (config/config.go). It carries
+      # ONLY the region, the subnet, and the credential TYPE — never a secret.
+      # `credential_type = "role"` (the default) makes the provider use the AWS
+      # SDK default credential chain (forwarded env vars / shared-credentials
+      # file / instance-profile IMDS), all supplied by infra. `static` is
+      # accepted for completeness, but the access/secret keys are NOT rendered
+      # here (that would leak them into the store); infra must instead supply
+      # them through the same env chain (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+      # / AWS_SESSION_TOKEN) or a mounted shared-credentials file. NOTE: unlike
+      # the vm-harness backends, this config carries NO golden-image map — the
+      # AMI is a per-pool value (`burstPools.<name>.image`), not a provider one.
+      mkAwsKeys =
+        p:
+        ''
+          region = "${p.aws.region}"
+          subnet_id = "${p.aws.subnetId}"
+
+          [credentials]
+          credential_type = "${p.aws.credentialType}"
+        '';
       mkProviderConfigText =
         name: p:
         ''
@@ -231,6 +264,8 @@
         + (
           if providerIsRemote p then
             mkRemoteKeys name p
+          else if providerIsAws p then
+            mkAwsKeys p
           else if providerIsIncus p then
             mkIncusKeys p
           else if providerIsVMHarnessRun p then
@@ -260,6 +295,8 @@
         description = "${
           if providerIsRemote p then
             "remote ephemeral runners via a vm-harness serve daemon (${p.remote.targetBackend})"
+          else if providerIsAws p then
+            "AWS EC2 burst ephemeral runners (garm-provider-aws, region ${p.aws.region})"
           else if providerIsIncus p then
             "incus Linux container ephemeral runners via vm-harness"
           else
@@ -510,15 +547,62 @@
         runnerGroup = ss.runnerGroup;
       }) cfg.scaleSets;
 
+      # RE3/RE4: DESIRED burst pools — one per burstPools.<name>. The
+      # floor-vs-lazy policy is resolved HERE: `lazy` forces the effective
+      # min-idle to 0 (pure scale-to-zero) regardless of minIdleRunners, while
+      # `floor` keeps minIdleRunners warm. The spot policy (RE4) is rendered
+      # into a per-pool `extraSpecs` JSON string exactly as garm forwards it to
+      # the provider (BootstrapInstance.ExtraSpecs), which the garm-provider-aws
+      # spot patch consumes to set InstanceMarketOptions.
+      desiredBurstPools = lib.mapAttrsToList (
+        _: bp:
+        let
+          effectiveMinIdle = if bp.floorPolicy == "lazy" then 0 else bp.minIdleRunners;
+          extraSpecs = lib.optionalAttrs bp.spot.enable (
+            {
+              market_type = "spot";
+              spot_instance_type = bp.spot.instanceType;
+              spot_instance_interruption_behavior = bp.spot.interruptionBehavior;
+              on_demand_fallback = bp.spot.onDemandFallback;
+            }
+            // lib.optionalAttrs (bp.spot.maxPrice != "") { spot_max_price = bp.spot.maxPrice; }
+          );
+        in
+        {
+          name = bp.poolName;
+          org = bp.org;
+          credentials = bp.credentials;
+          provider = bp.provider;
+          image = bp.image;
+          flavor = bp.flavor;
+          osType = bp.osType;
+          osArch = bp.osArch;
+          labels = bp.labels;
+          maxRunners = bp.maxRunners;
+          minIdleRunners = effectiveMinIdle;
+          floorPolicy = bp.floorPolicy;
+          priority = bp.priority;
+          jobAgeBackoff = bp.jobAgeBackoff;
+          runnerBootstrapTimeout = bp.runnerBootstrapTimeout;
+          ephemeral = bp.ephemeral;
+          enabled = bp.enabled;
+          # A JSON STRING (not an object) — this is passed to `garm-cli pool
+          # add --extra-specs` verbatim and forwarded to the provider as
+          # BootstrapInstance.ExtraSpecs. Empty ({}) for an on-demand pool.
+          extraSpecs = builtins.toJSON extraSpecs;
+        }
+      ) cfg.burstPools;
+
       # DESIRED orgs — the DISTINCT (org, credentials) pairs referenced by the
-      # declared scale sets. Each managed org is created against its credential.
+      # declared scale sets AND burst pools. Each managed org is created against
+      # its credential.
       desiredOrgs =
         let
           pairs = lib.filter (o: o.name != "") (
             map (ss: {
               name = ss.org;
               credentials = ss.credentials;
-            }) desiredScaleSets
+            }) (desiredScaleSets ++ desiredBurstPools)
           );
         in
         lib.unique pairs;
@@ -552,6 +636,10 @@
           credentials = desiredCreds;
           orgs = desiredOrgs;
           scaleSets = desiredScaleSets;
+          # RE3/RE4: the desired AWS burst pools (consumed by the RC2
+          # pool-reconcile wiring via `garm-cli pool`). An extra manifest key —
+          # the scale-set reconcile ignores it.
+          burstPools = desiredBurstPools;
           pruneUnmanaged = rcfg.pruneUnmanaged;
         }
       );
@@ -1020,6 +1108,7 @@
                 "utm-windows-arm"
                 "qemu-windows-arm"
                 "remote"
+                "aws"
               ];
               default = "libvirt";
               description = ''
@@ -1550,6 +1639,96 @@
                       0 (default) uses a built-in timeout. The create/delete
                       streams are bounded by the remote worker's own
                       `--timeout-sec`, not this.
+                    '';
+                  };
+                };
+              };
+            };
+
+            # ----- RE3 AWS burst backend --------------------------------------
+            # Consulted only when `backend = "aws"`. COMPANY-AGNOSTIC: the
+            # region + subnet + credential TYPE and the names of the env vars
+            # that carry the credentials — with NO Metacraft account, region,
+            # AMI, or secret baked in. The concrete AWS account/region/subnet/AMI
+            # + agenix-staged credentials are an infra-layer concern that
+            # CONSUMES these options (a HELD prerequisite: the operator must
+            # provision the AWS account + a runner AMI + the CI IAM role/creds).
+            aws = mkOption {
+              default = { };
+              description = ''
+                AWS burst backend configuration (RE3). Only used when
+                `backend = "aws"`, in which case the provider is
+                `garm-provider-aws` provisioning ephemeral EC2 runners. The
+                instance type, AMI, and spot policy are PER-POOL values (see
+                `services.garm.burstPools`), not provider-wide — this block holds
+                only the account-scoped region/subnet/credentials.
+              '';
+              type = types.submodule {
+                options = {
+                  region = mkOption {
+                    type = types.str;
+                    default = "";
+                    example = "eu-central-1";
+                    description = ''
+                      AWS region the burst runners launch in (`region`). Pick one
+                      close to the artifact caches / NetBird gateway. Required
+                      when `backend = "aws"`.
+                    '';
+                  };
+                  subnetId = mkOption {
+                    type = types.str;
+                    default = "";
+                    example = "subnet-0123456789abcdef0";
+                    description = ''
+                      Default VPC subnet the runners are placed in (`subnet_id`).
+                      A per-pool `subnet_id` extra-spec can override it. Required
+                      when `backend = "aws"`.
+                    '';
+                  };
+                  credentialType = mkOption {
+                    type = types.enum [
+                      "role"
+                      "static"
+                    ];
+                    default = "role";
+                    description = ''
+                      How `garm-provider-aws` obtains AWS credentials
+                      (`credentials.credential_type`). `role` (the default and
+                      recommended) uses the AWS SDK default credential chain —
+                      the forwarded env vars, a mounted shared-credentials file,
+                      or the instance-profile IMDS — so NO secret enters the Nix
+                      store. `static` is accepted for completeness, but the
+                      access/secret keys are deliberately NOT rendered into the
+                      store config; supply them to the same env chain instead
+                      (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` /
+                      `AWS_SESSION_TOKEN`) via the infra layer.
+                    '';
+                  };
+                  forwardEnv = mkOption {
+                    type = types.listOf types.str;
+                    default = [
+                      "AWS_ACCESS_KEY_ID"
+                      "AWS_SECRET_ACCESS_KEY"
+                      "AWS_SESSION_TOKEN"
+                      "AWS_REGION"
+                      "AWS_DEFAULT_REGION"
+                      "AWS_SHARED_CREDENTIALS_FILE"
+                      "AWS_WEB_IDENTITY_TOKEN_FILE"
+                      "AWS_ROLE_ARN"
+                      "AWS_CONTAINER_CREDENTIALS_FULL_URI"
+                      "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI"
+                      "SSL_CERT_FILE"
+                      "SSL_CERT_DIR"
+                    ];
+                    description = ''
+                      Environment-variable NAMES forwarded to the
+                      `garm-provider-aws` process (GARM propagates only the vars
+                      it is told to). Their VALUES are supplied by the infra
+                      layer (systemd `EnvironmentFile` / `LoadCredential` / an
+                      instance-profile), so credentials never enter the store.
+                      The default set covers the AWS SDK default credential chain
+                      plus the TLS CA-bundle vars the SDK needs to reach the EC2
+                      API. Override to narrow or extend it.
                     '';
                   };
                 };
@@ -2259,6 +2438,255 @@
                       changing this on a live scale set is not reconciled —
                       delete and recreate it instead.
                     '';
+                  };
+                };
+              }
+            )
+          );
+        };
+
+        # RE3/RE4: AWS BURST pools. Unlike scale sets (single-name, GitHub-owned
+        # scheduling), burst uses GARM POOLS in `pack`+`--priority` mode so the
+        # cloud tier fills ONLY after the higher-priority on-prem pools are
+        # saturated (spill). Each pool keeps an always-warm FLOOR
+        # (`min-idle-runners`), a hard ceiling (`max-runners`), one-job
+        # `--ephemeral` auto-terminate, and an anti-overprovision backoff. RE4
+        # adds an optional spot policy whose fields are rendered into the pool's
+        # `extra_specs` and consumed by the garm-provider-aws spot patch.
+        #
+        # Like scale sets, pools carry GitHub-side state and are applied at
+        # runtime via `garm-cli pool` (the RC2 pool-reconcile wiring); this
+        # option captures the DECLARATIVE desired state, emitted into the
+        # reconcile manifest as `burstPools`. COMPANY-AGNOSTIC: no account,
+        # region, or AMI is baked in — those come from the `aws` provider block
+        # and per-pool `image`/`flavor`, all set by infra.
+        burstPools = mkOption {
+          default = { };
+          description = ''
+            Declarative AWS burst pools keyed by pool name. Each binds an
+            `aws`-backed `provider` + a label set + a warm floor
+            (`minIdleRunners`) + a ceiling (`maxRunners`) + a spill `priority` +
+            an optional `spot` policy. Applied at runtime via `garm-cli pool`
+            since pools carry GitHub-side state.
+          '';
+          type = types.attrsOf (
+            types.submodule (
+              { name, ... }:
+              {
+                options = {
+                  provider = mkOption {
+                    type = types.str;
+                    default = "aws";
+                    description = "The named `services.garm.providers.<provider>` (backend = \"aws\") that backs this burst pool.";
+                  };
+                  poolName = mkOption {
+                    type = types.str;
+                    default = name;
+                    defaultText = lib.literalMD "the attribute name";
+                    description = "The GARM pool name (defaults to the attribute name).";
+                  };
+                  org = mkOption {
+                    type = types.str;
+                    default = "";
+                    example = "my-org";
+                    description = "The GitHub organization the pool belongs to (the `garm-cli pool add --org` target).";
+                  };
+                  credentials = mkOption {
+                    type = types.str;
+                    default = "";
+                    example = "my-app";
+                    description = "The `services.garm.github.<name>.credentialsName` the pool's org authenticates with.";
+                  };
+                  image = mkOption {
+                    type = types.str;
+                    default = "";
+                    example = "ami-0123456789abcdef0";
+                    description = ''
+                      The runner AMI id passed as the pool `--image`. A HELD infra
+                      concern — the operator bakes/points at a runner AMI in their
+                      account. Required for a live pool.
+                    '';
+                  };
+                  flavor = mkOption {
+                    type = types.str;
+                    default = "";
+                    example = "m6i.large";
+                    description = "The EC2 instance type passed as the pool `--flavor`.";
+                  };
+                  osType = mkOption {
+                    type = types.enum [
+                      "linux"
+                      "windows"
+                    ];
+                    default = "linux";
+                    description = "Runner OS type reported to GARM/GitHub.";
+                  };
+                  osArch = mkOption {
+                    type = types.str;
+                    default = "amd64";
+                    description = "Runner OS architecture.";
+                  };
+                  labels = mkOption {
+                    type = types.listOf types.str;
+                    default = [ ];
+                    example = [
+                      "self-hosted"
+                      "linux"
+                      "x64"
+                      "aws"
+                      "x86-64-v3"
+                    ];
+                    description = ''
+                      The capability label set runners in this pool advertise
+                      (`--tags`). A `runs-on` whose labels are a subset matches.
+                      Include an `aws` label so cloud-burst jobs can be targeted
+                      or observed distinctly.
+                    '';
+                  };
+                  maxRunners = mkOption {
+                    type = types.ints.positive;
+                    default = 4;
+                    description = ''
+                      Hard ceiling on concurrent EC2 runners in this pool
+                      (`--max-runners`). The primary AWS spend bound; pair with an
+                      AWS budget alarm as a backstop.
+                    '';
+                  };
+                  minIdleRunners = mkOption {
+                    type = types.ints.unsigned;
+                    default = 1;
+                    description = ''
+                      The always-warm FLOOR (`--min-idle-runners`): idle runners
+                      GARM keeps pre-booted and refills after consumption. This is
+                      the part you pay for 24/7 — keep it small (1-2). See
+                      `floorPolicy`: when set to `lazy` the EFFECTIVE floor is 0
+                      regardless of this value. Must be <= maxRunners.
+                    '';
+                  };
+                  floorPolicy = mkOption {
+                    type = types.enum [
+                      "floor"
+                      "lazy"
+                    ];
+                    default = "floor";
+                    description = ''
+                      The floor-vs-pure-lazy policy knob. `floor` (default) keeps
+                      `minIdleRunners` warm at all times (fast first job, small
+                      standing cost). `lazy` forces the effective min-idle to 0 —
+                      pure scale-to-zero, pay-per-job, cold start on the first
+                      queued job. This is the single knob that flips the pool
+                      between "keep N warm always" and "cost nothing when idle".
+                    '';
+                  };
+                  priority = mkOption {
+                    type = types.ints.unsigned;
+                    default = 10;
+                    description = ''
+                      Pool priority for the controller's `pack` balancer
+                      (`--priority`). LOWER numbers fill first, so give the
+                      on-prem pools a lower priority than this cloud pool and AWS
+                      becomes the SPILL tier — provisioned only once the local
+                      fleet is saturated. Larger == later == cloud-last.
+                    '';
+                  };
+                  jobAgeBackoff = mkOption {
+                    type = types.ints.unsigned;
+                    default = 30;
+                    description = ''
+                      Seconds GARM waits after a `workflow_job` queued event
+                      before creating a NEW runner (`--minimum-job-age-backoff`),
+                      giving an existing idle runner a chance to grab the job
+                      first — the anti-overprovision guard that keeps a burst from
+                      launching more EC2 than the queue truly needs.
+                    '';
+                  };
+                  runnerBootstrapTimeout = mkOption {
+                    type = types.ints.positive;
+                    default = 20;
+                    description = "Minutes before a runner that has not joined GitHub is considered failed and replaced (`--runner-bootstrap-timeout`). Raise for slow AMIs.";
+                  };
+                  ephemeral = mkOption {
+                    type = types.bool;
+                    default = true;
+                    description = ''
+                      One-job `--ephemeral` runners: each EC2 instance runs
+                      exactly one job then GARM terminates it, so there is no idle
+                      burn beyond the floor. Default true — the whole cost model
+                      depends on it; leave it on.
+                    '';
+                  };
+                  enabled = mkOption {
+                    type = types.bool;
+                    default = true;
+                    description = "Whether the burst pool is enabled.";
+                  };
+                  spot = mkOption {
+                    default = { };
+                    description = ''
+                      RE4 spot policy. When `enable` is true the pool's
+                      `extra_specs` request EC2 spot (InstanceMarketOptions),
+                      cutting burst cost; the garm-provider-aws spot patch
+                      consumes them. Leave disabled for on-demand burst.
+                    '';
+                    type = types.submodule {
+                      options = {
+                        enable = mkOption {
+                          type = types.bool;
+                          default = false;
+                          description = "Launch this pool's burst runners as EC2 spot instances.";
+                        };
+                        maxPrice = mkOption {
+                          type = types.str;
+                          default = "";
+                          example = "0.05";
+                          description = ''
+                            Maximum hourly USD price for a spot runner
+                            (`spot_max_price`). Empty (recommended) caps at the
+                            on-demand price. Only consulted when `enable`.
+                          '';
+                        };
+                        instanceType = mkOption {
+                          type = types.enum [
+                            "one-time"
+                            "persistent"
+                          ];
+                          default = "one-time";
+                          description = ''
+                            Spot request type (`spot_instance_type`). `one-time`
+                            (default) suits ephemeral one-job runners; the pool
+                            re-requests fresh anyway, so `persistent` is rarely
+                            needed. Only consulted when `enable`.
+                          '';
+                        };
+                        interruptionBehavior = mkOption {
+                          type = types.enum [
+                            "terminate"
+                            "stop"
+                            "hibernate"
+                          ];
+                          default = "terminate";
+                          description = ''
+                            What EC2 does to an interrupted spot runner
+                            (`spot_instance_interruption_behavior`). `terminate`
+                            (default) is correct for ephemeral runners — the
+                            interrupted instance is torn down, GitHub re-queues the
+                            job, and GARM's reconcile drops the vanished runner and
+                            spills/refills. Only consulted when `enable`.
+                          '';
+                        };
+                        onDemandFallback = mkOption {
+                          type = types.bool;
+                          default = true;
+                          description = ''
+                            When a spot request fails with a capacity/price error,
+                            retry the SAME launch on-demand (`on_demand_fallback`)
+                            rather than starving the queue — the burst still lands,
+                            at on-demand cost. Default true. Only consulted when
+                            `enable`.
+                          '';
+                        };
+                      };
+                    };
                   };
                 };
               }
