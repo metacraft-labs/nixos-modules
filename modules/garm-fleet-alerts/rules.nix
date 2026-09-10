@@ -18,7 +18,15 @@
 #   garm_scaleset_{status,max_runners,min_idle_runners,    -> capacity / STARVATION
 #                  desired_runner_count,info}                  (pool mode: garm_pool_*)
 #   garm_job_status{owner,requested_labels,status}         -> queued-job demand
+#                                                             AND jobs-served (RC5)
+#   garm_runner_operations_total{operation="CreateInstance"} -> runners-created (RC5)
 #   garm_webhook_received{valid,reason}                    -> HMAC failures (pool mode only)
+#
+# RC5 OVER-PROVISION: a thundering-herd watch for the pools cutover — runners
+# CREATED / jobs SERVED over a window (`garm:overprovision_ratio`), which sits
+# near 1 in the coordinated central-GARM pool topology and spikes when a
+# provider spins up runners that never serve a job. See the
+# `garm-fleet-overprovision` group.
 #
 # Plus the two checks `garm_*` CANNOT see, over metrics published by the
 # companion external-checks exporter (../garm-fleet-external-checks):
@@ -48,6 +56,7 @@
   providerErrorRatioFor ? "10m",
   rateLimitFor ? "5m",
   starvationFor ? "10m",
+  overProvisionFor ? "30m",
   appTokenMintFor ? "15m",
   webhookDeliveryFor ? "30m",
   webhookHmacFor ? "10m",
@@ -57,6 +66,14 @@
   providerErrorRatioCrit ? "0.2", # errors/ops ratio over 15m.
   rateLimitWarn ? 200,
   rateLimitCrit ? 50,
+  # RC5 over-provision (thundering-herd) ratio: runners CREATED / jobs SERVED
+  # over `overProvisionWindow`. Healthy pool mode is ~1 (one ephemeral runner per
+  # job); a herd creates many runners per job. Only judged once at least
+  # `overProvisionServedFloor` jobs have been served in the window, so a warm
+  # min-idle floor during a quiet period never pages.
+  overProvisionWindow ? "1h",
+  overProvisionRatioCrit ? "2",
+  overProvisionServedFloor ? 5,
   # Toggle the two external-check alert families (over the exporter metrics).
   externalChecks ? true,
   # Toggle the webhook alert family. Post-Phase-C only: in scale-set mode GARM
@@ -306,6 +323,67 @@ let
           severity = "critical";
           summary = "Runner STARVATION: {{ $labels.garm_owner }}/{{ $labels.garm_class }} saturated with jobs queued";
           description = "{{ $value }} job(s) have been queued for ${starvationFor} for class {{ $labels.garm_class }} (owner {{ $labels.garm_owner }}) while that class is at its runner ceiling. Jobs are starving — raise max-runners, add a qualifying host, or check that the AWS burst spill is firing.";
+        }
+      ];
+    }
+    {
+      name = "garm-fleet-overprovision";
+      comment = [
+        "# ── OVER-PROVISION / thundering-herd ratio (RC5 cutover watch) ──"
+        "# runners CREATED / jobs SERVED over ${overProvisionWindow}. The"
+        "# numerator is garm_runner_operations_total{operation=CreateInstance} —"
+        "# labelled only by (operation, provider), so it is summed per provider"
+        "# and the ratio is a FLEET figure (a herd is a fleet phenomenon; there"
+        "# is no per-(owner,class) creation counter in GARM to attribute it"
+        "# finer). The denominator is a served-jobs counter DERIVED from the"
+        "# garm_job_status{status=completed} gauge via a subquery increase, kept"
+        "# per (owner,class) for the dashboard. Mode-independent: both base"
+        "# metrics exist in scale-set and pool mode."
+      ];
+      records = [
+        {
+          record = "garm:runners_created:increase";
+          expr = ''sum by (provider) (increase(garm_runner_operations_total{operation="CreateInstance"}[${overProvisionWindow}]))'';
+        }
+        {
+          # Served jobs per (owner,class). garm_job_status is a GAUGE (1 per job
+          # while its record is retained); count-of-completed rises as jobs
+          # finish, and the subquery increase turns that into new completions in
+          # the window (counter-reset-safe, so job-record pruning only undercounts
+          # slightly at the boundary rather than going negative).
+          record = "garm:jobs_served:increase";
+          expr = ''
+            increase(
+              sum by (garm_owner, garm_class) (
+                label_replace(
+                  label_replace(
+                    garm_job_status{status="completed"},
+                    "garm_owner", "$1", "owner", "(.*)"),
+                  "garm_class", "$1", "requested_labels", "(.*)")
+              )[${overProvisionWindow}:1m]
+            )'';
+        }
+        {
+          # Fleet headline ratio. clamp_min keeps the denominator >= 1 so a burst
+          # of creations with zero served jobs is a large finite number, not a
+          # divide-by-zero — the served-floor guard on the alert decides whether
+          # that is worth paging.
+          record = "garm:overprovision_ratio";
+          expr = ''
+            sum(garm:runners_created:increase)
+              / clamp_min(sum(garm:jobs_served:increase), 1)'';
+        }
+      ];
+      rules = [
+        {
+          name = "GarmFleetOverProvision";
+          expr = ''
+            garm:overprovision_ratio > ${overProvisionRatioCrit}
+              and sum(garm:jobs_served:increase) >= ${s overProvisionServedFloor}'';
+          for = overProvisionFor;
+          severity = "warning";
+          summary = "Runner OVER-PROVISION: {{ $value | humanize }}x more runners created than jobs served";
+          description = "Over the last ${overProvisionWindow} the fleet created more than ${overProvisionRatioCrit}x as many runners as jobs it served ({{ $value | humanize }}x), sustained for ${overProvisionFor}, with at least ${s overProvisionServedFloor} jobs served — a thundering-herd over-provision. In the coordinated central-GARM pool topology this ratio should sit near 1 (one ephemeral runner per job); a spike means a provider is spinning up runners that never serve a job. Check garm:runners_created:increase per provider for the offending host and the provider CreateInstance/DeleteInstance churn.";
         }
       ];
     }

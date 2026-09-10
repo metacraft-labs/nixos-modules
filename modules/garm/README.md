@@ -334,6 +334,34 @@ than a generic pool so a specialised job prefers a specialised host. Both gates
 are hermetic module checks: `t_garm_pools_labels` (RC2) and
 `t_garm_capability_placement` (RB3).
 
+**RC5 — cutover completion: alias classes + scale-set retirement.** The
+migration off scale sets is phased class-by-class (no flag day), bridged by
+`services.garm.pools.<name>.aliasClasses` — a list of **legacy scale-set class
+names** the pool advertises **alongside** its derived capability labels. A
+consumer still writing `runs-on: eph-linux-x64` matches the aliased pool by
+GitHub's subset rule and keeps running while it migrates. An alias is a name, not
+a hardware claim, so — like `policyLabels` — it is **never linted** against the
+manifest. Keep the alias while any consumer still names the old class; then drop
+it (empty `aliasClasses`) as the **final** step — after which a job still naming
+the retired class matches no pool and stays queued (the deliberate, visible end
+of the bridge).
+
+Scale sets are **retired** by declaring the END state — `mode = "pools"`,
+`scaleSets = { }`, and `reconcile.pruneUnmanaged = true` — so the reconcile keeps
+the declared pools and **prunes** any live scale set no longer declared (it
+disables then deletes each). **Rollback** is symmetric and additive: re-add the
+`scaleSets.<name>` entries and the reconcile recreates them beside the pools (the
+coexistence path RC2 already exercises). The hermetic gate
+`t_pools_cutover_complete` (RC5) proves all three: the over-provision
+recording-rule + alert (promtool), alias resolution + drop, and the
+render-and-prune retirement. The live 48h no-regression soak is the operator's
+post-cutover validation — see the runbook.
+
+The **thundering-herd** signal that watches the cutover is the
+`garm:overprovision_ratio` recording rule + `GarmFleetOverProvision` alert in
+`modules/garm-fleet-alerts` (runners created ÷ jobs served over a window; ~1 in
+the coordinated pool topology).
+
 ---
 
 ## 5. Security posture

@@ -343,3 +343,82 @@ tests:
             exp_annotations:
               summary: 'GARM is rejecting webhook deliveries (HMAC/parse)'
               description: 'GARM has recorded webhook deliveries with valid="false" (reason signature) for 10m. The per-entity webhook secret likely does not match GitHub, or a relay is corrupting the payload — new jobs from the affected org will not scale runners.'
+
+  # ── GarmFleetOverProvision (RC5 thundering-herd watch) ─────────────────────
+  # runners CREATED / jobs SERVED over the 1h window. Each job flips
+  # garm_job_status{status="completed"} from 0->1 at t=41m (inside the trailing
+  # hour at the 90m eval) so the served-jobs subquery increase counts it; the
+  # CreateInstance counter is a normal rising provider counter.
+  #
+  # HERD: a provider spins up 12 runners/min (720 in the window) while only 5
+  # jobs complete -> ratio ~144, >= the served floor -> pages (after for: 30m).
+  - interval: 1m
+    name: 'a herd (many runners created, few jobs served) pages; not before for elapses'
+    input_series:
+      - series: 'garm_runner_operations_total{operation="CreateInstance", provider="vmharness"}'
+        values: '0+12x120'
+      - series: 'garm_job_status{job_id="1", owner="metacraft-labs", requested_labels="eph-linux-x64", status="completed"}'
+        values: '0x40 1x80'
+      - series: 'garm_job_status{job_id="2", owner="metacraft-labs", requested_labels="eph-linux-x64", status="completed"}'
+        values: '0x40 1x80'
+      - series: 'garm_job_status{job_id="3", owner="metacraft-labs", requested_labels="eph-linux-x64", status="completed"}'
+        values: '0x40 1x80'
+      - series: 'garm_job_status{job_id="4", owner="metacraft-labs", requested_labels="eph-linux-x64", status="completed"}'
+        values: '0x40 1x80'
+      - series: 'garm_job_status{job_id="5", owner="metacraft-labs", requested_labels="eph-linux-x64", status="completed"}'
+        values: '0x40 1x80'
+    alert_rule_test:
+      - eval_time: 60m # ratio already high + served >= 5, but for: 30m not elapsed
+        alertname: GarmFleetOverProvision
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: GarmFleetOverProvision
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              component: garm-fleet
+            exp_annotations:
+              summary: 'Runner OVER-PROVISION: 144x more runners created than jobs served'
+              description: 'Over the last 1h the fleet created more than 2x as many runners as jobs it served (144x), sustained for 30m, with at least 5 jobs served — a thundering-herd over-provision. In the coordinated central-GARM pool topology this ratio should sit near 1 (one ephemeral runner per job); a spike means a provider is spinning up runners that never serve a job. Check garm:runners_created:increase per provider for the offending host and the provider CreateInstance/DeleteInstance churn.'
+
+  # HEALTHY: created rises in lock-step with served (6 each) -> ratio ~1 -> silent
+  # even though the served floor (5) is cleared. This is the one-runner-per-job
+  # steady state the pool topology is supposed to hold.
+  - interval: 1m
+    name: 'one runner per job (ratio ~1) stays silent above the served floor'
+    input_series:
+      - series: 'garm_runner_operations_total{operation="CreateInstance", provider="vmharness"}'
+        values: '0x40 0+1x6 6x90'
+      - series: 'garm_job_status{job_id="11", owner="metacraft-labs", requested_labels="eph-linux-x64", status="completed"}'
+        values: '0x40 1x80'
+      - series: 'garm_job_status{job_id="12", owner="metacraft-labs", requested_labels="eph-linux-x64", status="completed"}'
+        values: '0x40 1x80'
+      - series: 'garm_job_status{job_id="13", owner="metacraft-labs", requested_labels="eph-linux-x64", status="completed"}'
+        values: '0x40 1x80'
+      - series: 'garm_job_status{job_id="14", owner="metacraft-labs", requested_labels="eph-linux-x64", status="completed"}'
+        values: '0x40 1x80'
+      - series: 'garm_job_status{job_id="15", owner="metacraft-labs", requested_labels="eph-linux-x64", status="completed"}'
+        values: '0x40 1x80'
+      - series: 'garm_job_status{job_id="16", owner="metacraft-labs", requested_labels="eph-linux-x64", status="completed"}'
+        values: '0x40 1x80'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: GarmFleetOverProvision
+        exp_alerts: []
+
+  # FLOOR GUARD: a big create burst but only 2 jobs served (below the floor of 5)
+  # -> silent. This is the warm-min-idle-floor-during-a-quiet-period case that
+  # must never page: a high ratio on tiny volume is not a herd.
+  - interval: 1m
+    name: 'a high ratio below the served floor (warm floor / quiet) stays silent'
+    input_series:
+      - series: 'garm_runner_operations_total{operation="CreateInstance", provider="vmharness"}'
+        values: '0+12x120'
+      - series: 'garm_job_status{job_id="21", owner="metacraft-labs", requested_labels="eph-linux-x64", status="completed"}'
+        values: '0x40 1x80'
+      - series: 'garm_job_status{job_id="22", owner="metacraft-labs", requested_labels="eph-linux-x64", status="completed"}'
+        values: '0x40 1x80'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: GarmFleetOverProvision
+        exp_alerts: []
