@@ -1369,6 +1369,138 @@
         '';
       };
 
+      # ----- RE2 CENTRAL-GARM RECOVERY / DB BACKUP --------------------------
+      # The Runner-Fleet campaign collapses the per-host GARMs into ONE central
+      # controller (RB2). That controller is a deliberate SPOF for provisioning,
+      # bought back (campaign :architecture_decision:) with alerting (RE1/RE1b)
+      # + this recovery posture. GARM is DB-as-truth: on start it reconciles
+      # desired-vs-actual against GitHub, and GitHub re-queues any job whose
+      # runner vanished — so NO job is permanently lost across a controller
+      # crash as long as (a) the process comes back fast and (b) the SQLite DB
+      # under `stateDir` survives. This block hardens both.
+      rcvcfg = cfg.recovery;
+      bcfg = cfg.backup;
+
+      # The live GARM DB (SQLite) + its WAL sidecars, all under the persistent
+      # StateDirectory. `.backup` produces a CONSISTENT online snapshot even
+      # while garm holds the DB open (it copies committed pages under a shared
+      # lock — unlike `cp`, which can catch a torn WAL write).
+      dbBackupScript = pkgs.writeShellApplication {
+        name = "garm-db-backup";
+        runtimeInputs = [
+          pkgs.coreutils
+          pkgs.sqlite
+          pkgs.gzip
+        ];
+        text = ''
+          set -euo pipefail
+
+          db="${dbFile}"
+          out_dir="${bcfg.dir}"
+          retain=${toString bcfg.retain}
+
+          log() { echo "garm-db-backup: $*"; }
+
+          if [ ! -f "$db" ]; then
+            log "no DB at $db yet (garm never initialised its store) — nothing to back up"
+            exit 0
+          fi
+
+          mkdir -p "$out_dir"
+          ts="$(date -u +%Y%m%dT%H%M%SZ)"
+          work="$(mktemp -d "$out_dir/.snap-$ts.XXXXXX")"
+          trap 'rm -rf "$work"' EXIT
+          snap="$work/garm.sqlite"
+
+          # Consistent online snapshot: sqlite's own backup API, not `cp`.
+          sqlite3 "$db" ".backup '$snap'"
+          # Prove it is a well-formed DB before we publish it as a restore point.
+          if ! sqlite3 "$snap" 'PRAGMA integrity_check;' | grep -qx 'ok'; then
+            log "ERROR: snapshot failed integrity_check — discarding" >&2
+            exit 1
+          fi
+
+          final="$out_dir/garm-$ts.sqlite"
+          ${optionalString bcfg.compress ''
+            gzip -c "$snap" > "$work/garm.sqlite.gz"
+            final="$out_dir/garm-$ts.sqlite.gz"
+          ''}
+          ${optionalString (!bcfg.compress) ''
+            cp "$snap" "$work/garm.sqlite.plain"
+          ''}
+          # Publish atomically (rename within the same dir).
+          ${
+            if bcfg.compress then
+              ''mv "$work/garm.sqlite.gz" "$final"''
+            else
+              ''mv "$work/garm.sqlite.plain" "$final"''
+          }
+          log "wrote snapshot $final"
+
+          # Rotate: keep the newest `retain` snapshots, delete older ones.
+          # shellcheck disable=SC2012
+          ls -1t "$out_dir"/garm-*.sqlite* 2>/dev/null \
+            | tail -n +$(( retain + 1 )) \
+            | while IFS= read -r old; do log "rotating out $old"; rm -f "$old"; done
+
+          ${optionalString (bcfg.remoteCommand != null) ''
+            # Operator-supplied off-host ship (binary cache / sibling / standby).
+            # It receives the snapshot path as $1 and in $GARM_DB_SNAPSHOT.
+            log "shipping $final via remoteCommand"
+            export GARM_DB_SNAPSHOT="$final"
+            ${bcfg.remoteCommand} "$final"
+            log "remoteCommand completed"
+          ''}
+        '';
+      };
+
+      # Emergency DB restore. NOT a systemd unit — an operator tool (documented
+      # in the runbook). Stops garm, swaps a chosen snapshot into place under
+      # stateDir, then restarts. A cross-host restore requires the SAME database
+      # passphrase the snapshot was encrypted with (`database.passphraseFile`),
+      # since GARM field-encrypts the DB — the restore refuses to guess.
+      dbRestoreScript = pkgs.writeShellApplication {
+        name = "garm-db-restore";
+        runtimeInputs = [
+          pkgs.coreutils
+          pkgs.sqlite
+          pkgs.gzip
+          pkgs.systemd
+        ];
+        text = ''
+          set -euo pipefail
+
+          db="${dbFile}"
+          usage() { echo "usage: garm-db-restore <snapshot.sqlite[.gz]>" >&2; exit 2; }
+          [ "$#" -eq 1 ] || usage
+          src="$1"
+          [ -f "$src" ] || { echo "garm-db-restore: no such snapshot: $src" >&2; exit 2; }
+
+          echo "garm-db-restore: stopping garm.service"
+          systemctl stop garm.service || true
+
+          tmp="$(mktemp)"
+          case "$src" in
+            *.gz) gzip -dc "$src" > "$tmp" ;;
+            *)    cp "$src" "$tmp" ;;
+          esac
+          if ! sqlite3 "$tmp" 'PRAGMA integrity_check;' | grep -qx 'ok'; then
+            echo "garm-db-restore: snapshot failed integrity_check — refusing to restore" >&2
+            rm -f "$tmp"; exit 1
+          fi
+
+          # Move aside any stale WAL/SHM so the restored file is authoritative.
+          rm -f "$db-wal" "$db-shm"
+          install -o ${cfg.user} -g ${cfg.group} -m 0600 "$tmp" "$db"
+          rm -f "$tmp"
+          echo "garm-db-restore: restored $src -> $db"
+
+          echo "garm-db-restore: starting garm.service"
+          systemctl start garm.service
+          echo "garm-db-restore: done (garm will reconcile the restored DB against the forge)"
+        '';
+      };
+
       # ----- The reusable provider submodule ---------------------------------
       # One named instance per `services.garm.providers.<name>`; the attr name is
       # the GARM `[[provider]].name` referenced by scale sets.
@@ -2383,6 +2515,180 @@
               Seconds the `ExecStartPost` bind-verify waits for the API to bind
               before failing the start (only used when `startupBindVerify` is
               true).
+            '';
+          };
+        };
+
+        # ---- RE2 central-GARM RECOVERY posture (fast declarative restart) -----
+        # The Runner-Fleet campaign (RB2) collapses the fleet onto ONE central
+        # GARM — a deliberate provisioning SPOF. GARM is DB-as-truth: on start it
+        # reconciles desired-vs-actual against GitHub, and GitHub re-queues any
+        # job whose runner disappeared. So the pragmatic recovery mechanism for a
+        # DB-as-truth single controller is a FAST, MONITORED declarative restart
+        # with the DB on persistent storage — a crashed controller is back in
+        # seconds and reconciles the surviving DB, losing no jobs. This block
+        # tunes that restart and records the RTO the `t_central_garm_recovery`
+        # gate measures against.
+        #
+        # This is COMPLEMENTARY to `healthcheck` (which recovers a
+        # process-ALIVE-but-API-DEAD garm via an external probe): `recovery`
+        # governs the ordinary crash path (main process exits) that
+        # `Restart=always` already handles — it makes that path FAST and, above
+        # all, makes it never permanently give up on the SPOF.
+        recovery = {
+          enable =
+            mkEnableOption "the RE2 fast-restart recovery posture for the central GARM"
+            // {
+              default = true;
+              example = false;
+            };
+
+          restartSec = mkOption {
+            type = types.str;
+            default = "5s";
+            description = ''
+              `RestartSec` for `garm.service` — how long systemd waits after a
+              crash before respawning. Kept short so the DB-as-truth reconcile
+              resumes quickly; a fresh garm rebinds the API and reconciles the
+              persistent SQLite DB in seconds.
+            '';
+          };
+
+          startLimitIntervalSec = mkOption {
+            type = types.str;
+            default = "300s";
+            description = ''
+              `StartLimitIntervalSec` for `garm.service`. systemd's DEFAULT
+              (10s / 5 bursts) would put a briefly crash-looping garm into a
+              PERMANENT `failed` state and stop restarting it — unacceptable for
+              a fleet SPOF. This widens the window so a transient loop keeps
+              being recovered; only a garm that exceeds `startLimitBurst` starts
+              in this window is genuinely broken (bad config, disk full) and is
+              then LEFT failed on purpose, so `up==0`/`GarmControllerDown`
+              (RE1) pages a human instead of hiding a hard fault behind an
+              endless restart.
+            '';
+          };
+
+          startLimitBurst = mkOption {
+            type = types.ints.positive;
+            default = 50;
+            description = ''
+              `StartLimitBurst` for `garm.service` — how many restarts are
+              allowed within `startLimitIntervalSec` before systemd gives up and
+              pages (see above). Generous by design: transient recovery must
+              never hit the ceiling; a real fault will.
+            '';
+          };
+
+          targetRecoverySeconds = mkOption {
+            type = types.ints.positive;
+            default = 30;
+            description = ''
+              The documented RECOVERY-TIME OBJECTIVE (RTO) for a crashed central
+              GARM: the wall-clock budget from process death to a re-bound,
+              serving API on the persistent DB. Informational for operators + the
+              runbook, and the bound the `t_central_garm_recovery` gate asserts
+              the measured single-crash recovery stays within.
+            '';
+          };
+
+          warmStandby = {
+            enable =
+              mkEnableOption ''
+                a documented WARM-STANDBY posture for the central GARM. NOTE the
+                trade-off: GARM is DB-as-truth and reconciles against GitHub, so
+                running a SECOND live controller against the same forge risks a
+                split-brain double-provision. Warm standby here therefore does
+                NOT mean two live controllers — it means the DB backup
+                (`services.garm.backup`) is continuously shipped to a standby
+                host, which can be PROMOTED by restoring that DB + starting garm
+                (a documented, seconds-to-minutes manual/scripted step in the
+                runbook). It is heavier than fast-restart and only pays off when
+                the whole HOST is lost, not merely the process — most deploys
+                should leave this off and rely on fast-restart + backup
+              '';
+
+            host = mkOption {
+              type = types.nullOr types.str;
+              default = null;
+              description = ''
+                Informational: the standby host the DB backup is shipped to
+                (surfaced in the runbook / promotion step). The actual shipping
+                is `backup.remoteCommand`; this only records the intent.
+              '';
+            };
+          };
+        };
+
+        # ---- RE2 GARM DB backup (online SQLite snapshot + off-host ship) ------
+        # Fast-restart (above) covers a crashed PROCESS on a live host — the DB
+        # survives on `stateDir`. This covers the DB itself: periodic CONSISTENT
+        # snapshots (sqlite `.backup`, not `cp`) rotated locally and optionally
+        # shipped off-host, so a corrupted DB or a lost host is recoverable with
+        # `garm-db-restore`. Opt-in (needs a destination); disabled by default.
+        backup = {
+          enable = mkOption {
+            type = types.bool;
+            default = false;
+            description = ''
+              Enable periodic online backups of the GARM SQLite DB via a
+              `garm-db-backup` systemd oneshot + timer. Consistent snapshots
+              (sqlite's own `.backup`, integrity-checked) are written to
+              `backup.dir`, rotated to `backup.retain`, and optionally shipped
+              off-host by `backup.remoteCommand`. Restore with the installed
+              `garm-db-restore <snapshot>` tool.
+            '';
+          };
+
+          interval = mkOption {
+            type = types.str;
+            default = "15min";
+            description = ''
+              How often the backup timer fires (`OnUnitActiveSec` / `OnBootSec`,
+              a systemd time span). One consistent snapshot per interval.
+            '';
+          };
+
+          dir = mkOption {
+            type = types.path;
+            default = "/var/backup/garm";
+            description = ''
+              Directory the local rotated snapshots are written to. Should live
+              on PERSISTENT storage (ideally a different filesystem than
+              `stateDir`, so a lost/corrupted DB volume does not take the backups
+              with it). Created 0700, owned by the garm user.
+            '';
+          };
+
+          retain = mkOption {
+            type = types.ints.positive;
+            default = 24;
+            description = ''
+              Number of newest local snapshots to keep; older ones are rotated
+              out on each run. With the default 15min interval, 24 covers ~6h.
+            '';
+          };
+
+          compress = mkOption {
+            type = types.bool;
+            default = true;
+            description = "gzip each snapshot (`garm-<ts>.sqlite.gz`).";
+          };
+
+          remoteCommand = mkOption {
+            type = types.nullOr types.str;
+            default = null;
+            example = "rsync -a \"$1\" backup-host:/srv/garm-db/";
+            description = ''
+              Optional operator-supplied command run after each successful local
+              snapshot to ship it OFF-HOST (a sibling host, the binary cache, an
+              object store — the warm-standby feed). It receives the snapshot
+              path as `$1` and in `$GARM_DB_SNAPSHOT`, and runs as the garm user
+              from the backup service (so any credentials it needs must be
+              reachable there — e.g. a `LoadCredential` you add via
+              `systemd.services.garm-db-backup`). Company-agnostic: the module
+              ships no transport, only the hook.
             '';
           };
         };
@@ -3541,8 +3847,13 @@
           };
 
           # A dedicated static `garm` user is required whenever a provider is on
-          # OR the reconcile is enabled.
-          needsDedicatedUser = providerOn || rcfg.enable;
+          # OR the reconcile is enabled OR the RE2 DB backup is enabled — the
+          # backup oneshot runs as a STABLE user that owns the rotated snapshots
+          # and reads garm's StateDirectory, and the restore tool re-owns the
+          # restored DB to it; a DynamicUser (the bare forge-less M0 boot) has no
+          # stable uid for either. The central GARM always has providers, so this
+          # only matters for a provider-less controller that still wants backups.
+          needsDedicatedUser = providerOn || rcfg.enable || bcfg.enable;
 
           # Posture selector: strict M0 DynamicUser (nothing on), the strict
           # static-user posture (reconcile on, no provider), libvirt relaxations
@@ -3551,7 +3862,7 @@
           # when both are on.
           postureServiceConfig =
             if !providerOn then
-              (if rcfg.enable then staticStrictServiceConfig else m0ServiceConfig)
+              (if rcfg.enable || bcfg.enable then staticStrictServiceConfig else m0ServiceConfig)
             else if anyLibvirt then
               libvirtRelaxServiceConfig
             else
@@ -3667,9 +3978,29 @@
             ++ lib.mapAttrsToList (name: p: {
               assertion = p.backend != "incus" || (p.incusIPv4CIDR != "" && p.incusIPv4Gateway != "");
               message = "services.garm.providers.${name}.backend = \"incus\" requires incusIPv4CIDR and incusIPv4Gateway (incusbr0 DHCP does not lease; the provider injects a static IPv4 per container).";
-            }) enabledProviders;
+            }) enabledProviders
+            # RE2: warm standby is a DB-shipping posture, not a second live
+            # controller — so it is meaningless without the backup feed. Fail
+            # eval rather than silently promise an HA that ships nothing.
+            ++ [
+              {
+                assertion =
+                  !rcvcfg.warmStandby.enable || (bcfg.enable && bcfg.remoteCommand != null);
+                message = ''
+                  services.garm.recovery.warmStandby.enable requires
+                  services.garm.backup.enable = true AND a
+                  services.garm.backup.remoteCommand that ships the DB snapshot to
+                  the standby host — warm standby here means "the standby carries a
+                  current DB it can be promoted from", not a second live GARM.
+                '';
+              }
+            ];
 
-          environment.systemPackages = [ cfg.package ];
+          environment.systemPackages = [
+            cfg.package
+          ]
+          # RE2: the emergency DB restore tool ships wherever backup is enabled.
+          ++ lib.optional bcfg.enable dbRestoreScript;
 
           networking.firewall = {
             allowedTCPPorts = mkIf cfg.openFirewall [ cfg.apiServer.port ];
@@ -3703,7 +4034,10 @@
           # Each enabled libvirt provider writes per-job artifacts into its
           # poolDir; provision each owned garm:libvirtd (0771). The incus daemon
           # owns container storage, so incus providers need no host pool dir.
-          systemd.tmpfiles.rules = map (dir: "d ${dir} 0771 ${cfg.user} libvirtd - -") libvirtPoolDirs;
+          systemd.tmpfiles.rules =
+            map (dir: "d ${dir} 0771 ${cfg.user} libvirtd - -") libvirtPoolDirs
+            # RE2: the DB snapshot dir, garm-owned + private.
+            ++ lib.optional bcfg.enable "d ${bcfg.dir} 0700 ${cfg.user} ${cfg.group} - -";
 
           systemd.services.garm = {
             description = "GitHub Actions Runner Manager (garm)";
@@ -3746,7 +4080,20 @@
             # the observed 243s — it passed on all 8 of them. See
             # `credentialSourcePaths` above, and `Type = "exec"` below for the
             # actual repair.
-            unitConfig.AssertPathExists = credentialSourcePaths;
+            unitConfig = {
+              AssertPathExists = credentialSourcePaths;
+            }
+            # RE2 recovery posture: widen the start-limit window so a briefly
+            # crash-looping central GARM (the fleet SPOF) is never dropped into a
+            # permanent `failed` state by systemd's default 10s/5-burst limiter —
+            # it keeps being restarted until it either recovers or exceeds the
+            # generous burst, at which point it is LEFT failed so RE1's
+            # `up==0`/GarmControllerDown pages a human instead of a hard fault
+            # hiding behind an endless loop.
+            // lib.optionalAttrs rcvcfg.enable {
+              StartLimitIntervalSec = rcvcfg.startLimitIntervalSec;
+              StartLimitBurst = rcvcfg.startLimitBurst;
+            };
 
             # The provider child inherits the unit PATH (GARM forwards PATH via
             # environment_variables). libvirt: cdrkit(genisoimage)+qemu+libvirt
@@ -3848,8 +4195,11 @@
               # Restart policy. Opt-outable via healthcheck.startupBindVerify.
               ExecStartPost = lib.optional (hcfg.enable && hcfg.startupBindVerify) (lib.getExe bindVerifyScript);
               ExecReload = "${pkgs.coreutils}/bin/kill -HUP $MAINPID";
+              # Restart=always: the DB-as-truth central GARM always comes back and
+              # reconciles the persistent DB (RE2). RestartSec is the recovery
+              # posture's fast-respawn knob.
               Restart = "always";
-              RestartSec = "5s";
+              RestartSec = if rcvcfg.enable then rcvcfg.restartSec else "5s";
 
               StateDirectory = "garm";
               StateDirectoryMode = "0700";
@@ -3989,6 +4339,59 @@
               # If the machine was asleep, do not fire a burst of catch-up runs.
               AccuracySec = "10s";
               Unit = "garm-healthcheck.service";
+            };
+          };
+
+          # ---- RE2 DB BACKUP: online SQLite snapshot oneshot + timer ---------
+          # Runs as the garm user (reads the 0700 stateDir DB), writes a
+          # consistent, integrity-checked, rotated snapshot to backup.dir, and
+          # optionally ships it off-host via remoteCommand. It is a SEPARATE unit
+          # from garm.service, so its lighter sandbox never touches the
+          # controller's hardening; it only needs read of stateDir + write of
+          # backup.dir.
+          systemd.services.garm-db-backup = mkIf bcfg.enable {
+            description = "Online backup of the GARM SQLite DB (RE2 recovery)";
+            documentation = [ "https://github.com/cloudbase/garm" ];
+            # Only meaningful once garm has created its store; not a hard require
+            # (the timer keeps taking snapshots regardless, and the script no-ops
+            # if the DB is not there yet).
+            after = [ "garm.service" ];
+            serviceConfig = {
+              Type = "oneshot";
+              ExecStart = lib.getExe dbBackupScript;
+              User = cfg.user;
+              Group = cfg.group;
+              # Snapshot the live DB under stateDir; write the snapshot dir.
+              # stateDir is READ-WRITE (not read-only): a WAL-mode SQLite source
+              # needs to touch the `-shm`/`-wal` sidecars to take even a read
+              # lock, and the garm user owns stateDir already — sqlite's own
+              # locking makes the concurrent `.backup` connection safe.
+              ProtectSystem = "strict";
+              ReadWritePaths = [
+                stateDir
+                bcfg.dir
+              ];
+              NoNewPrivileges = true;
+              ProtectHome = true;
+              PrivateTmp = true;
+              ProtectKernelTunables = true;
+              ProtectKernelModules = true;
+              ProtectControlGroups = true;
+              RestrictSUIDSGID = true;
+              LockPersonality = true;
+              UMask = "0077";
+            };
+          };
+
+          systemd.timers.garm-db-backup = mkIf bcfg.enable {
+            description = "Periodic GARM DB backup (RE2 recovery)";
+            wantedBy = [ "timers.target" ];
+            timerConfig = {
+              OnBootSec = bcfg.interval;
+              OnUnitActiveSec = bcfg.interval;
+              AccuracySec = "1min";
+              Persistent = true;
+              Unit = "garm-db-backup.service";
             };
           };
         }

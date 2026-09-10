@@ -35,6 +35,7 @@
     ./garm-provider-vmharness-backend.nix
     ./garm-provider-remote.nix
     ./garm-central-multi-host.nix
+    ./garm-central-recovery.nix
     ./garm-provider-vmharness-protocol.nix
     ./garm-provider-vmharness-windows-toolchain.nix
     ./vmharness-serve-linux-deploy.nix
