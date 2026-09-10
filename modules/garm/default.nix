@@ -58,6 +58,15 @@
       # for the host system. Consumers/tests may override `package`.
       defaultPackage = withSystem pkgs.stdenv.hostPlatform.system ({ config, ... }: config.packages.garm);
 
+      # The RC1 `runner-label-tool` (manifest → label DERIVATION + `advertised ⊆
+      # derived` linter) — the JIT-registration mechanism RC2 pools call at
+      # reconcile time to compute a classic runner's capability-label array from
+      # a host's RA6-verified `/v1/manifest`. Defaulted from this flake so the
+      # module is self-contained; overridable by consumers/tests.
+      defaultLabelTool = withSystem pkgs.stdenv.hostPlatform.system (
+        { config, ... }: config.packages.runner-label-tool
+      );
+
       # Default to this flake's `garm-provider-vmharness` package (M1). Consumers
       # may override `providers.<name>.package`.
       defaultVmharnessPackage = withSystem pkgs.stdenv.hostPlatform.system (
@@ -593,16 +602,93 @@
         }
       ) cfg.burstPools;
 
+      # The RA6-verified manifest file backing a named provider (empty when the
+      # provider has none). Used to DERIVE a pool's capability-label tag set at
+      # reconcile time (RC2 JIT label derivation) and to QUALIFY a provider for a
+      # capability (RB3 placement).
+      providerManifestOf =
+        pname:
+        let
+          p = cfg.providers.${pname} or null;
+        in
+        if p != null && p.manifestFile != null then toString p.manifestFile else "";
+
+      # RC2: DESIRED on-prem capability pools — one per pools.<name>. The tag set
+      # is DERIVED at reconcile time from the backing provider's manifestFile
+      # (emitted here); `labels` is the operator-declared advertised set the
+      # reconcile LINTS ⊆ derived (fail-closed), and `policyLabels` are the
+      # attested labels appended after derivation.
+      desiredPools = lib.mapAttrsToList (_: pl: {
+        name = pl.poolName;
+        org = pl.org;
+        credentials = pl.credentials;
+        provider = pl.provider;
+        manifestFile = providerManifestOf pl.provider;
+        labels = pl.labels;
+        policyLabels = pl.policyLabels;
+        image = pl.image;
+        flavor = pl.flavor;
+        osType = pl.osType;
+        osArch = pl.osArch;
+        maxRunners = pl.maxRunners;
+        minIdleRunners = pl.minIdleRunners;
+        priority = pl.priority;
+        runnerBootstrapTimeout = pl.runnerBootstrapTimeout;
+        runnerGroup = pl.runnerGroup;
+        enabled = pl.enabled;
+        extraSpecs = "{}";
+      }) cfg.pools;
+
+      # RB3: DESIRED capability pools — one per capabilityPools.<name>, each
+      # carrying its candidate providers (resolved to (name, manifestFile) pairs)
+      # so the reconcile can QUALIFY each candidate against `requires` and expand
+      # into one concrete GARM pool per qualifying host, priced by `balance`.
+      # Candidates default to every enabled provider that has a manifestFile.
+      desiredCapabilityPools = lib.mapAttrsToList (
+        _: cp:
+        let
+          candidateNames =
+            if cp.providers != [ ] then
+              cp.providers
+            else
+              lib.attrNames (lib.filterAttrs (_: p: p.enable && p.manifestFile != null) cfg.providers);
+        in
+        {
+          name = cp.name or "";
+          requires = cp.requires;
+          balance = cp.balance;
+          basePriority = cp.basePriority;
+          org = cp.org;
+          credentials = cp.credentials;
+          image = cp.image;
+          flavor = cp.flavor;
+          osType = cp.osType;
+          osArch = cp.osArch;
+          policyLabels = cp.policyLabels;
+          maxRunners = cp.maxRunners;
+          minIdleRunners = cp.minIdleRunners;
+          runnerBootstrapTimeout = cp.runnerBootstrapTimeout;
+          runnerGroup = cp.runnerGroup;
+          enabled = cp.enabled;
+          # (provider, manifestFile) candidates, in a STABLE order (the balancer
+          # steps priorities down this list under `pack`).
+          candidates = map (pn: {
+            provider = pn;
+            manifestFile = providerManifestOf pn;
+          }) candidateNames;
+        }
+      ) (lib.mapAttrs (n: cp: cp // { name = n; }) cfg.capabilityPools);
+
       # DESIRED orgs — the DISTINCT (org, credentials) pairs referenced by the
-      # declared scale sets AND burst pools. Each managed org is created against
-      # its credential.
+      # declared scale sets, burst pools, capability pools AND on-prem pools.
+      # Each managed org is created against its credential.
       desiredOrgs =
         let
           pairs = lib.filter (o: o.name != "") (
             map (ss: {
               name = ss.org;
               credentials = ss.credentials;
-            }) (desiredScaleSets ++ desiredBurstPools)
+            }) (desiredScaleSets ++ desiredBurstPools ++ desiredPools ++ desiredCapabilityPools)
           );
         in
         lib.unique pairs;
@@ -636,10 +722,17 @@
           credentials = desiredCreds;
           orgs = desiredOrgs;
           scaleSets = desiredScaleSets;
-          # RE3/RE4: the desired AWS burst pools (consumed by the RC2
-          # pool-reconcile wiring via `garm-cli pool`). An extra manifest key —
-          # the scale-set reconcile ignores it.
+          # RE3/RE4: the desired AWS burst pools, consumed by the RC2/RB3
+          # pool-reconcile wiring via `garm-cli pool`.
           burstPools = desiredBurstPools;
+          # RC2: on-prem capability pools (tags DERIVED from the backing
+          # provider's manifestFile). RB3: capability pools expanded per
+          # qualifying host with a pack/spread balancer.
+          pools = desiredPools;
+          capabilityPools = desiredCapabilityPools;
+          # The declared provisioning model (informational — the reconcile
+          # applies whatever is declared; see services.garm.mode).
+          mode = cfg.mode;
           pruneUnmanaged = rcfg.pruneUnmanaged;
         }
       );
@@ -648,6 +741,7 @@
         name = "garm-reconcile";
         runtimeInputs = [
           cfg.package
+          cfg.labelToolPackage
           pkgs.coreutils
           pkgs.jq
           pkgs.curl
@@ -898,6 +992,187 @@
             fi
           done
 
+          # ---- (4b) POOLS (RC2) + CAPABILITY POOLS (RB3) ----------------------
+          # GARM pools have NO name of their own (they are identified by a UUID
+          # and MATCHED by tags), so the reconcile persists a logical-name →
+          # pool-id map under stateDir and reconciles each declared/expanded pool
+          # idempotently against it. Tags for a manifest-backed pool are DERIVED
+          # from the RA6-verified manifest via `runner-label-tool` (RC1) — the
+          # JIT-registration label array is proven hardware, not a hand-kept
+          # class name.
+          pool_state="$state_dir/managed-pool-ids.json"
+          [ -f "$pool_state" ] || echo '{}' > "$pool_state"
+          # Names we (re)applied THIS run — the prune boundary for pools.
+          applied_pools="$(mktemp)"
+
+          # derive_tags MANIFEST_FILE DECLARED_CSV POLICY_CSV
+          #   Compute a pool's classic-runner tag set. With a manifest: derive the
+          #   proven hardware labels (RA6→RC1), LINT any declared set (advertised
+          #   ⊆ derived, FAIL-CLOSED), then append policy labels. Without a
+          #   manifest: the declared set verbatim + policy. Prints a CSV tag list;
+          #   non-zero on a lint/derive failure (no pool for an over-advertised or
+          #   unverifiable host — never a guessed label set).
+          derive_tags() {
+            local mf="$1" declared="$2" policy="$3" derived=""
+            if [ -n "$mf" ]; then
+              if [ ! -r "$mf" ]; then
+                log "ERROR: manifest '$mf' not readable — cannot derive labels"
+                return 1
+              fi
+              if ! derived="$(runner-label-tool derive -m "$mf" 2>/dev/null | paste -sd, -)"; then
+                log "ERROR: runner-label-tool derive failed on '$mf' (fail-closed)"
+                return 1
+              fi
+              if [ -n "$declared" ] && ! runner-label-tool lint -m "$mf" -a "$declared" >/dev/null 2>&1; then
+                log "ERROR: declared labels ($declared) NOT proven by '$mf' (advertised ⊄ derived) — refusing pool"
+                return 1
+              fi
+              printf '%s' "$derived''${policy:+,$policy}"
+            else
+              printf '%s' "$declared''${policy:+,$policy}"
+            fi
+          }
+
+          # qualifies MANIFEST_FILE REQUIRES_CSV — RB3 placement predicate: the
+          # host's derived label set must be a SUPERSET of the required labels.
+          qualifies() {
+            local mf="$1" req="$2" derived lbl
+            { [ -n "$mf" ] && [ -r "$mf" ]; } || return 1
+            derived="$(runner-label-tool derive -m "$mf" 2>/dev/null)" || return 1
+            IFS=',' read -ra _reqs <<< "$req"
+            for lbl in "''${_reqs[@]}"; do
+              [ -z "$lbl" ] && continue
+              echo "$derived" | grep -qxF "$lbl" || return 1
+            done
+            return 0
+          }
+
+          # pool_apply LNAME OID PROVIDER TAGS IMAGE FLAVOR OSTYPE OSARCH MIN MAX PRIO BOOT ENABLED GROUP EXTRAS
+          pool_apply() {
+            local lname="$1" oid="$2" prov="$3" tags="$4" image="$5" flavor="$6"
+            local ostype="$7" osarch="$8" minr="$9" maxr="''${10}" prio="''${11}"
+            local boot="''${12}" enabled="''${13}" group="''${14}" extras="''${15}"
+            local group_flag="" enabled_flag extras_flag="" pid out tmp
+            [ -n "$group" ] && [ "$group" != "null" ] && group_flag="--runner-group=$group"
+            if [ "$enabled" = "true" ]; then enabled_flag="--enabled=true"; else enabled_flag="--enabled=false"; fi
+            [ -n "$extras" ] && [ "$extras" != "{}" ] && extras_flag="--extra-specs=$extras"
+            echo "$lname" >> "$applied_pools"
+            pid="$(jq -r --arg n "$lname" '.[$n] // ""' "$pool_state")"
+            if [ -n "$pid" ] && gcli pool show "$pid" >/dev/null 2>&1; then
+              # shellcheck disable=SC2086
+              garm-cli pool update "$pid" --image "$image" --flavor "$flavor" \
+                --tags "$tags" $enabled_flag --min-idle-runners "$minr" \
+                --max-runners "$maxr" --priority "$prio" \
+                --runner-bootstrap-timeout "$boot" $group_flag $extras_flag >/dev/null
+              log "pool '$lname' (id=$pid) reconciled (provider=$prov tags=[$tags] prio=$prio max=$maxr min=$minr)"
+            else
+              # shellcheck disable=SC2086
+              out="$(garm-cli --format json pool add --org "$oid" --provider-name "$prov" \
+                --image "$image" --flavor "$flavor" --tags "$tags" $enabled_flag \
+                --min-idle-runners "$minr" --max-runners "$maxr" --priority "$prio" \
+                --os-type "$ostype" --os-arch "$osarch" \
+                --runner-bootstrap-timeout "$boot" $group_flag $extras_flag)"
+              pid="$(echo "$out" | jq -r '.id // empty')"
+              if [ -z "$pid" ]; then
+                log "ERROR: pool '$lname' add returned no id"
+                return 1
+              fi
+              tmp="$(mktemp)"
+              jq --arg n "$lname" --arg id "$pid" '.[$n]=$id' "$pool_state" > "$tmp" && mv "$tmp" "$pool_state"
+              log "pool '$lname' created (id=$pid provider=$prov tags=[$tags] prio=$prio max=$maxr min=$minr)"
+            fi
+          }
+
+          # (i) explicit on-prem capability pools (RC2)
+          jq -c '.pools[]?' "$manifest" | while read -r pl; do
+            plname="$(echo "$pl" | jq -r '.name')"
+            plorg="$(echo "$pl" | jq -r '.org')"
+            oid="$(org_id_for "$plorg")"
+            if [ -z "$oid" ]; then
+              log "WARNING: pool '$plname' org '$plorg' has no id; skipping"
+              continue
+            fi
+            mf="$(echo "$pl" | jq -r '.manifestFile // ""')"
+            declared="$(echo "$pl" | jq -r '.labels | join(",")')"
+            policy="$(echo "$pl" | jq -r '.policyLabels | join(",")')"
+            if ! tags="$(derive_tags "$mf" "$declared" "$policy")"; then
+              log "ERROR: pool '$plname' label derivation failed — skipping (fail-closed)"
+              continue
+            fi
+            pool_apply "$plname" "$oid" \
+              "$(echo "$pl" | jq -r '.provider')" "$tags" \
+              "$(echo "$pl" | jq -r '.image')" "$(echo "$pl" | jq -r '.flavor')" \
+              "$(echo "$pl" | jq -r '.osType')" "$(echo "$pl" | jq -r '.osArch')" \
+              "$(echo "$pl" | jq -r '.minIdleRunners')" "$(echo "$pl" | jq -r '.maxRunners')" \
+              "$(echo "$pl" | jq -r '.priority')" "$(echo "$pl" | jq -r '.runnerBootstrapTimeout')" \
+              "$(echo "$pl" | jq -r '.enabled')" "$(echo "$pl" | jq -r '.runnerGroup // ""')" \
+              "$(echo "$pl" | jq -r '.extraSpecs // "{}"')"
+          done
+
+          # (ii) capability pools (RB3): EXPAND per qualifying host + balance.
+          jq -c '.capabilityPools[]?' "$manifest" | while read -r cp; do
+            cpname="$(echo "$cp" | jq -r '.name')"
+            cporg="$(echo "$cp" | jq -r '.org')"
+            oid="$(org_id_for "$cporg")"
+            if [ -z "$oid" ]; then
+              log "WARNING: capabilityPool '$cpname' org '$cporg' has no id; skipping"
+              continue
+            fi
+            req="$(echo "$cp" | jq -r '.requires | join(",")')"
+            balance="$(echo "$cp" | jq -r '.balance')"
+            base="$(echo "$cp" | jq -r '.basePriority')"
+            policy="$(echo "$cp" | jq -r '.policyLabels | join(",")')"
+            # Qualify each candidate (derived ⊇ requires), preserving order.
+            idx=0
+            echo "$cp" | jq -c '.candidates[]?' | while read -r cand; do
+              prov="$(echo "$cand" | jq -r '.provider')"
+              mf="$(echo "$cand" | jq -r '.manifestFile // ""')"
+              if ! qualifies "$mf" "$req"; then
+                log "capabilityPool '$cpname': provider '$prov' does NOT prove [$req] — skipped"
+                continue
+              fi
+              # tags = the host's FULL derived set (+ policy) — a qualifying host
+              # advertises everything it proves, so narrower jobs match too.
+              if ! tags="$(derive_tags "$mf" "" "$policy")"; then
+                log "capabilityPool '$cpname': provider '$prov' derive failed — skipped"
+                continue
+              fi
+              if [ "$balance" = "pack" ]; then
+                prio=$(( base - idx )); [ "$prio" -lt 0 ] && prio=0
+              else
+                prio="$base"   # spread: equal priority ⇒ distribute across hosts
+              fi
+              pool_apply "$cpname@$prov" "$oid" "$prov" "$tags" \
+                "$(echo "$cp" | jq -r '.image')" "$(echo "$cp" | jq -r '.flavor')" \
+                "$(echo "$cp" | jq -r '.osType')" "$(echo "$cp" | jq -r '.osArch')" \
+                "$(echo "$cp" | jq -r '.minIdleRunners')" "$(echo "$cp" | jq -r '.maxRunners')" \
+                "$prio" "$(echo "$cp" | jq -r '.runnerBootstrapTimeout')" \
+                "$(echo "$cp" | jq -r '.enabled')" "$(echo "$cp" | jq -r '.runnerGroup // ""')" \
+                "{}"
+              idx=$(( idx + 1 ))
+            done
+          done
+
+          # (iii) AWS burst pools (RE3/RE4) — explicit labels + spot extra-specs.
+          jq -c '.burstPools[]?' "$manifest" | while read -r bp; do
+            bpname="$(echo "$bp" | jq -r '.name')"
+            bporg="$(echo "$bp" | jq -r '.org')"
+            oid="$(org_id_for "$bporg")"
+            if [ -z "$oid" ]; then
+              log "WARNING: burst pool '$bpname' org '$bporg' has no id; skipping"
+              continue
+            fi
+            tags="$(echo "$bp" | jq -r '.labels | join(",")')"
+            pool_apply "$bpname" "$oid" \
+              "$(echo "$bp" | jq -r '.provider')" "$tags" \
+              "$(echo "$bp" | jq -r '.image')" "$(echo "$bp" | jq -r '.flavor')" \
+              "$(echo "$bp" | jq -r '.osType')" "$(echo "$bp" | jq -r '.osArch')" \
+              "$(echo "$bp" | jq -r '.minIdleRunners')" "$(echo "$bp" | jq -r '.maxRunners')" \
+              "$(echo "$bp" | jq -r '.priority')" "$(echo "$bp" | jq -r '.runnerBootstrapTimeout')" \
+              "$(echo "$bp" | jq -r '.enabled')" "" \
+              "$(echo "$bp" | jq -c '.extraSpecs // "{}"' | jq -r 'if type=="string" then . else tojson end')"
+          done
+
           # ---- (5) Prune (GUARDED, opt-in) ------------------------------------
           prune="$(jq -r '.pruneUnmanaged' "$manifest")"
           if [ "$prune" = "true" ]; then
@@ -930,6 +1205,26 @@
                 fi
               done
             done
+            # Prune undeclared POOLS: any logical name in the id-map that was NOT
+            # (re)applied this run. Pools are matched via the persisted map (they
+            # have no name), so a pool whose declaration/qualification vanished is
+            # disabled and deleted, and dropped from the map.
+            if [ -f "$pool_state" ]; then
+              jq -r 'keys[]' "$pool_state" | while read -r lname; do
+                if ! grep -qxF "$lname" "$applied_pools" 2>/dev/null; then
+                  pid="$(jq -r --arg n "$lname" '.[$n] // ""' "$pool_state")"
+                  [ -n "$pid" ] || continue
+                  garm-cli pool update "$pid" --enabled=false >/dev/null 2>&1 || true
+                  if garm-cli pool delete "$pid" >/dev/null 2>&1; then
+                    log "pruned undeclared pool '$lname' (id=$pid)"
+                  else
+                    log "WARNING: could not delete undeclared pool '$lname' (id=$pid) — may still have runners"
+                  fi
+                  tmp="$(mktemp)"
+                  jq --arg n "$lname" 'del(.[$n])' "$pool_state" > "$tmp" && mv "$tmp" "$pool_state"
+                fi
+              done
+            fi
             # Prune undeclared credentials (only those we recognise as managed —
             # here: any credential not in the declared set is pruned ONLY when
             # prune is on, and never the built-in ones GARM seeds).
@@ -1645,6 +1940,31 @@
               };
             };
 
+            # RC2/RB3: the RA6-verified capability manifest for the HOST this
+            # provider drives. When a `pools`/`capabilityPools` entry is backed
+            # by this provider, the reconcile reads this file, runs
+            # `runner-label-tool derive` on it, and uses the proven labels as the
+            # pool's classic-runner tag set (JIT label DERIVATION — ties RC1 to
+            # RA6). COMPANY-AGNOSTIC: the path is an infra concern — infra points
+            # it at the file its `garm-serve-manifest-verify` oneshot writes
+            # after fetching + verifying the host's signed `GET /v1/manifest`.
+            # null (default) ⇒ pools backed by this provider must declare their
+            # labels explicitly (no derivation).
+            manifestFile = mkOption {
+              type = types.nullOr types.path;
+              default = null;
+              example = "/run/garm/manifests/hms.json";
+              description = ''
+                Path to the host's RA6-verified capability manifest JSON (the
+                `GET /v1/manifest` payload, already signature-verified by the
+                controller). The pool reconcile derives this provider-backed
+                pool's capability labels from it via `runner-label-tool derive`.
+                The manifest is a store-safe, secret-free artifact (hardware
+                facts, not credentials). null ⇒ no derivation for pools on this
+                provider; they must set their labels explicitly.
+              '';
+            };
+
             # ----- RE3 AWS burst backend --------------------------------------
             # Consulted only when `backend = "aws"`. COMPANY-AGNOSTIC: the
             # region + subnet + credential TYPE and the names of the env vars
@@ -1806,6 +2126,46 @@
           default = defaultPackage;
           defaultText = lib.literalMD "this flake's `garm` package (garm daemon + garm-cli)";
           description = "Package providing the `garm` daemon and `garm-cli` binaries.";
+        };
+
+        labelToolPackage = mkOption {
+          type = types.package;
+          default = defaultLabelTool;
+          defaultText = lib.literalMD "this flake's `runner-label-tool` package";
+          description = ''
+            The RC1 `runner-label-tool` package (manifest → label derivation +
+            `advertised ⊆ derived` linter). The pool reconcile (RC2/RB3) runs its
+            `derive`/`lint` subcommands to compute a classic runner's capability
+            labels from a host's RA6-verified `/v1/manifest`. Company-agnostic.
+          '';
+        };
+
+        mode = mkOption {
+          type = types.enum [
+            "scaleSets"
+            "pools"
+          ];
+          default = "scaleSets";
+          description = ''
+            The runner-provisioning MODEL this controller advertises. This is a
+            DECLARATION of intent for the Phase-C cutover, NOT a hard switch:
+            both `scaleSets` and `pools`/`capabilityPools` reconcile ADDITIVELY
+            whenever they are non-empty, so a controller can run scale sets and
+            capability pools side by side during the migration (RC5 retires the
+            scale sets). Concretely:
+
+            - `scaleSets` (default): single-name scale sets — a job names exactly
+              one class (`runs-on: eph-linux-x64`). The historical model.
+            - `pools`: GARM POOLS + classic runners advertising RC1 CAPABILITY
+              LABEL SETS (`runs-on: [self-hosted, linux, x64, x86-64-v3]` matches
+              any runner proving all those labels). Set this once a host's pools
+              are declared so the intent is legible and tooling/alerts can key on
+              `garm_pool_*` rather than `garm_scaleset_*`.
+
+            The value gates NOTHING structurally — declaring `services.garm.pools`
+            provisions pools regardless — but it records which model is
+            authoritative for a host and is the flag infra flips at cutover.
+          '';
         };
 
         stateDir = mkOption {
@@ -2693,6 +3053,321 @@
             )
           );
         };
+
+        # RC2: on-prem capability POOLS. A pool = provider + capability label set
+        # + min-idle + max + priority (the campaign's pool definition). Unlike a
+        # scale set — which names ONE class and is pinned to ONE host — a pool
+        # registers CLASSIC runners advertising an RC1 CAPABILITY LABEL SET, so
+        # `runs-on: [self-hosted, linux, x64, x86-64-v3]` matches ANY runner that
+        # proves all those labels. The tag set is DERIVED at reconcile time from
+        # the backing provider's RA6-verified `manifestFile` (JIT label
+        # derivation — RC1 mechanism over RA6 manifest), not hand-maintained;
+        # `policyLabels` adds the attested labels the manifest cannot prove
+        # (`ephemeral`, `org:<name>`, `dev-env-ready`). If the provider has no
+        # manifestFile, the explicit `labels` set is used verbatim (escape hatch).
+        #
+        # Pools carry GitHub-side state, so they are applied at RUNTIME via
+        # `garm-cli pool` by the reconcile (idempotent, id-tracked — GARM pools
+        # have no name, so the reconcile persists a logical-name → pool-id map).
+        # Emitted into the reconcile manifest as `pools`. ADDITIVE: declaring
+        # pools does not touch `scaleSets`, so both models run in parallel for
+        # the RC5 cutover.
+        pools = mkOption {
+          default = { };
+          description = ''
+            Declarative on-prem capability pools keyed by pool name. Each binds a
+            `provider` + a capability label set (DERIVED from the provider's
+            RA6-verified `manifestFile`, or the explicit `labels` when none) + a
+            warm floor (`minIdleRunners`) + a ceiling (`maxRunners`) + a match
+            `priority`. Applied at runtime via `garm-cli pool` since pools carry
+            GitHub-side state. Coexists with `scaleSets` (RC5 retires those).
+          '';
+          type = types.attrsOf (
+            types.submodule (
+              { name, ... }:
+              {
+                options = {
+                  provider = mkOption {
+                    type = types.str;
+                    default = "vmharness";
+                    description = "The named `services.garm.providers.<provider>` that backs this pool (typically a `backend = \"remote\"` provider targeting a host's `vm-harness serve`).";
+                  };
+                  poolName = mkOption {
+                    type = types.str;
+                    default = name;
+                    defaultText = lib.literalMD "the attribute name";
+                    description = ''
+                      The LOGICAL pool name. GARM pools have no name of their own
+                      (they are identified by UUID + matched by tags); the
+                      reconcile persists a logical-name → pool-id map under
+                      stateDir so this pool is reconciled idempotently and pruned
+                      when removed. Defaults to the attribute name.
+                    '';
+                  };
+                  org = mkOption {
+                    type = types.str;
+                    default = "";
+                    example = "my-org";
+                    description = "The GitHub organization the pool belongs to (the `garm-cli pool add --org` target).";
+                  };
+                  credentials = mkOption {
+                    type = types.str;
+                    default = "";
+                    example = "my-app";
+                    description = "The `services.garm.github.<name>.credentialsName` the pool's org authenticates with.";
+                  };
+                  image = mkOption {
+                    type = types.str;
+                    default = "golden";
+                    description = "Image identifier resolved against the backing provider's `images` map (`--image`).";
+                  };
+                  flavor = mkOption {
+                    type = types.str;
+                    default = "default";
+                    description = "Provider flavor passed as `--flavor` (the vm-harness backends ignore it; kept for parity with the GARM CLI).";
+                  };
+                  osType = mkOption {
+                    type = types.enum [
+                      "windows"
+                      "linux"
+                      "macos"
+                    ];
+                    default = "linux";
+                    description = "Runner OS type reported to GARM/GitHub.";
+                  };
+                  osArch = mkOption {
+                    type = types.str;
+                    default = "amd64";
+                    description = "Runner OS architecture.";
+                  };
+                  labels = mkOption {
+                    type = types.listOf types.str;
+                    default = [ ];
+                    example = [
+                      "self-hosted"
+                      "linux"
+                      "x64"
+                      "x86-64-v3"
+                    ];
+                    description = ''
+                      The capability label set. When the backing provider has a
+                      `manifestFile`, the reconcile DERIVES the tag set from it
+                      (`runner-label-tool derive`) and this list, if non-empty, is
+                      LINTED against the derived set (`advertised ⊆ derived`,
+                      fail-closed) — so a pool can never advertise a capability
+                      the host has not proven. When the provider has NO
+                      manifestFile, this list IS the tag set, verbatim.
+                    '';
+                  };
+                  policyLabels = mkOption {
+                    type = types.listOf types.str;
+                    default = [ ];
+                    example = [
+                      "ephemeral"
+                      "org:metacraft-labs"
+                    ];
+                    description = ''
+                      Attested / policy labels APPENDED to the derived hardware
+                      labels. The RA6 manifest cannot prove these (they are
+                      policy, not hardware): `ephemeral`, `org:<name>`,
+                      `dev-env-ready`, etc. Outside the manifest-governed
+                      vocabulary, so they are never linted away.
+                    '';
+                  };
+                  maxRunners = mkOption {
+                    type = types.ints.positive;
+                    default = 2;
+                    description = "Concurrency CAP — the maximum concurrent runners in this pool (`--max-runners`). Keep `maxRunners * <provider>.memoryMb` within the backing host's RAM headroom.";
+                  };
+                  minIdleRunners = mkOption {
+                    type = types.ints.unsigned;
+                    default = 0;
+                    description = "Warm-pool size (`--min-idle-runners`): pre-booted idle runners kept ready. 0 (default) == scale-to-zero. Must be <= maxRunners.";
+                  };
+                  priority = mkOption {
+                    type = types.ints.unsigned;
+                    default = 0;
+                    description = ''
+                      GARM pool match priority (`--priority`). When multiple pools
+                      match the same labels, GARM tries them in DESCENDING
+                      priority order (higher = tried first). The RB3
+                      `capabilityPools` balancer sets this automatically across
+                      equivalent hosts; for a hand-declared pool leave it 0 unless
+                      you want a specific host preferred.
+                    '';
+                  };
+                  runnerBootstrapTimeout = mkOption {
+                    type = types.ints.positive;
+                    default = 20;
+                    description = "Minutes before a runner that has not joined GitHub is considered failed and replaced (`--runner-bootstrap-timeout`).";
+                  };
+                  runnerGroup = mkOption {
+                    type = types.str;
+                    default = "";
+                    description = "Optional GitHub runner group (`--runner-group`); empty leaves it in `Default`.";
+                  };
+                  enabled = mkOption {
+                    type = types.bool;
+                    default = true;
+                    description = "Whether the pool is enabled.";
+                  };
+                };
+              }
+            )
+          );
+        };
+
+        # RB3: fleet-aware placement + capability→host mapping. A capabilityPool
+        # is a LOGICAL, host-agnostic pool declaration: "provision runners with
+        # capability X on EVERY host that PROVES X, balanced by policy Y". The
+        # reconcile EXPANDS it into one concrete GARM pool per QUALIFYING provider
+        # — a candidate provider qualifies iff its RA6-verified `manifestFile`
+        # derives a label set ⊇ `requires`. This is the structural fix for the
+        # "GPU servers 95% idle vs hms saturated" imbalance: a generic Linux
+        # capabilityPool expands across ALL qualifying Linux hosts, so a job is no
+        # longer pinned to one host — GitHub/GARM place it on whichever qualifying
+        # host is free, per the `balance` policy.
+        capabilityPools = mkOption {
+          default = { };
+          description = ''
+            Declarative CAPABILITY pools keyed by name. Each names the capability
+            labels a host must PROVE (`requires`), the candidate `providers` to
+            consider, and a `balance` policy (`pack`/`spread`). The reconcile
+            expands it into one concrete GARM pool per qualifying provider (host),
+            each advertising THAT host's derived label set, with `priority`
+            assigned by the balancer. Placement is driven entirely by the RA6
+            capability manifests.
+          '';
+          type = types.attrsOf (
+            types.submodule (
+              { name, ... }:
+              {
+                options = {
+                  requires = mkOption {
+                    type = types.listOf types.str;
+                    default = [ ];
+                    example = [
+                      "linux"
+                      "x64"
+                      "gpu"
+                    ];
+                    description = ''
+                      The capability labels a candidate host must PROVE (its
+                      derived manifest labels must be a superset) to back this
+                      pool. E.g. `[ "gpu" ]` restricts placement to GPU hosts;
+                      `[ "x86-64-v3" ]` to v3-capable hosts; `[ ]` matches every
+                      candidate (a generic pool).
+                    '';
+                  };
+                  providers = mkOption {
+                    type = types.listOf types.str;
+                    default = [ ];
+                    description = ''
+                      Candidate `services.garm.providers.<name>` to consider for
+                      placement. Empty (default) ⇒ every enabled provider that has
+                      a `manifestFile` is a candidate. A candidate that does not
+                      PROVE `requires` is skipped (no pool created for it).
+                    '';
+                  };
+                  balance = mkOption {
+                    type = types.enum [
+                      "spread"
+                      "pack"
+                    ];
+                    default = "spread";
+                    description = ''
+                      Balancing policy across the qualifying hosts:
+
+                      - `spread` (default): every qualifying host's pool gets the
+                        SAME `basePriority`, so GARM/GitHub distribute jobs across
+                        equivalent hosts rather than hammering one. This is what
+                        keeps the idle GPU/second-Linux hosts in rotation.
+                      - `pack`: qualifying hosts get DESCENDING priorities in a
+                        stable order, so one host fills to capacity before the
+                        next is touched (bin-packing — useful to keep as many
+                        hosts idle/powered-down as possible).
+                    '';
+                  };
+                  basePriority = mkOption {
+                    type = types.ints.unsigned;
+                    default = 100;
+                    description = ''
+                      The priority assigned to qualifying pools under `spread`, or
+                      the HIGHEST priority (first host) under `pack` (subsequent
+                      hosts step down by one). Give a more-specific capabilityPool
+                      (e.g. gpu) a HIGHER basePriority than a generic one so a
+                      specialised job prefers a specialised host.
+                    '';
+                  };
+                  org = mkOption {
+                    type = types.str;
+                    default = "";
+                    description = "The GitHub organization the expanded pools belong to.";
+                  };
+                  credentials = mkOption {
+                    type = types.str;
+                    default = "";
+                    description = "The `services.garm.github.<name>.credentialsName` the expanded pools authenticate with.";
+                  };
+                  image = mkOption {
+                    type = types.str;
+                    default = "golden";
+                    description = "Image identifier for the expanded pools (`--image`).";
+                  };
+                  flavor = mkOption {
+                    type = types.str;
+                    default = "default";
+                    description = "Provider flavor for the expanded pools (`--flavor`).";
+                  };
+                  osType = mkOption {
+                    type = types.enum [
+                      "windows"
+                      "linux"
+                      "macos"
+                    ];
+                    default = "linux";
+                    description = "Runner OS type for the expanded pools.";
+                  };
+                  osArch = mkOption {
+                    type = types.str;
+                    default = "amd64";
+                    description = "Runner OS architecture for the expanded pools.";
+                  };
+                  policyLabels = mkOption {
+                    type = types.listOf types.str;
+                    default = [ ];
+                    description = "Attested/policy labels appended to each expanded pool's derived labels (see `pools.<name>.policyLabels`).";
+                  };
+                  maxRunners = mkOption {
+                    type = types.ints.positive;
+                    default = 2;
+                    description = "Per-host concurrency cap for each expanded pool (`--max-runners`).";
+                  };
+                  minIdleRunners = mkOption {
+                    type = types.ints.unsigned;
+                    default = 0;
+                    description = "Per-host warm floor for each expanded pool (`--min-idle-runners`). Must be <= maxRunners.";
+                  };
+                  runnerBootstrapTimeout = mkOption {
+                    type = types.ints.positive;
+                    default = 20;
+                    description = "Runner bootstrap timeout (minutes) for each expanded pool.";
+                  };
+                  runnerGroup = mkOption {
+                    type = types.str;
+                    default = "";
+                    description = "Optional GitHub runner group for the expanded pools.";
+                  };
+                  enabled = mkOption {
+                    type = types.bool;
+                    default = true;
+                    description = "Whether the expanded pools are enabled.";
+                  };
+                };
+              }
+            )
+          );
+        };
       };
 
       config = mkIf cfg.enable (
@@ -2894,6 +3569,32 @@
               assertion = cfg.providers ? ${ss.provider};
               message = "services.garm.scaleSets.${n}.provider = \"${ss.provider}\" does not name a declared services.garm.providers.<name> (have: ${lib.concatStringsSep ", " (lib.attrNames cfg.providers)}).";
             }) cfg.scaleSets
+            # RC2: a pool's warm floor can never exceed its concurrency cap.
+            ++ lib.mapAttrsToList (n: pl: {
+              assertion = pl.minIdleRunners <= pl.maxRunners;
+              message = "services.garm.pools.${n}: minIdleRunners (${toString pl.minIdleRunners}) must be <= maxRunners (${toString pl.maxRunners}).";
+            }) cfg.pools
+            # RC2: a pool must reference a declared provider.
+            ++ lib.mapAttrsToList (n: pl: {
+              assertion = cfg.providers ? ${pl.provider};
+              message = "services.garm.pools.${n}.provider = \"${pl.provider}\" does not name a declared services.garm.providers.<name> (have: ${lib.concatStringsSep ", " (lib.attrNames cfg.providers)}).";
+            }) cfg.pools
+            # RB3: a capabilityPool's per-host floor can never exceed its cap.
+            ++ lib.mapAttrsToList (n: cp: {
+              assertion = cp.minIdleRunners <= cp.maxRunners;
+              message = "services.garm.capabilityPools.${n}: minIdleRunners (${toString cp.minIdleRunners}) must be <= maxRunners (${toString cp.maxRunners}).";
+            }) cfg.capabilityPools
+            # RB3: every named candidate provider must be declared.
+            ++ lib.concatMap (
+              n:
+              let
+                cp = cfg.capabilityPools.${n};
+              in
+              map (prov: {
+                assertion = cfg.providers ? ${prov};
+                message = "services.garm.capabilityPools.${n}.providers: \"${prov}\" does not name a declared services.garm.providers.<name> (have: ${lib.concatStringsSep ", " (lib.attrNames cfg.providers)}).";
+              }) cp.providers
+            ) (lib.attrNames cfg.capabilityPools)
             # W1: a balloon floor must sit strictly BELOW the ceiling it floors,
             # and only the libvirt backend renders a domain XML to put it in.
             # Both are eval-time failures rather than silent no-ops: the provider

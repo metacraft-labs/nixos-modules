@@ -20,6 +20,8 @@
     ./garm-aws-burst.nix
     ./garm-aws-spot.nix
     ./garm-webhook-delivery.nix
+    ./garm-pools-labels.nix
+    ./garm-capability-placement.nix
     ./fleet-alerting.nix
     ./alertmanager-routing.nix
     ./fit-monitoring.nix
