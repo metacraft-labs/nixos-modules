@@ -138,7 +138,7 @@ model and [`tests/test-render.sh`](./tests/test-render.sh) for the offline check
 ### Org-wide team grants
 
 `governance.teamRepositories` enumerates one grant per (team, repo). For an
-access policy phrased as *"this team reaches **every** repo"*, enumerating is the
+access policy phrased as _"this team reaches **every** repo"_, enumerating is the
 wrong shape: the list is correct only until the next repo is created, and the
 gap it leaves is invisible — the rule still reads as "all".
 
@@ -166,7 +166,7 @@ repo) pair, **the stronger permission wins** (`pull` < `triage` < `push` <
 Two guardrails throw at eval rather than half-applying a rule: a rule whose
 `permission` is a custom repository role (unrankable, so it could not be
 compared consistently against explicit grants), and more than one rule for the
-same team (the outcome would depend on list order). An *explicit* custom role is
+same team (the outcome would depend on list order). An _explicit_ custom role is
 left exactly as written — the engine cannot know whether it outranks `maintain`,
 and guessing could strip privileges or invent them.
 
