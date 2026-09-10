@@ -69,6 +69,20 @@
   # Additional first-level routes (evaluated before the severity catch-alls), for
   # concrete per-team / per-org routing an operator layers on top.
   extraRoutes ? [ ],
+
+  # DEAD-MAN'S SWITCH (alerting-methodology.md). When `deadManReceiver` names a
+  # receiver, the always-firing Watchdog alert is routed to it on a SHORT cadence
+  # — that receiver pings an OFF-HOST heartbeat sink (Healthchecks) every
+  # interval, so when this Alertmanager / host / network dies the pings STOP and
+  # the sink alarms. This route is placed FIRST (before the component subtree) so
+  # the Watchdog never falls through to the CI-ops / pager buckets. Left null =>
+  # no dead-man route rendered (the hermetic default render stays credential-free
+  # and unchanged).
+  deadManReceiver ? null,
+  deadManMatchers ? [ ''alertname="Watchdog"'' ],
+  # The heartbeat cadence. Kept short so a missed ping is noticed quickly; must be
+  # < the Healthchecks check's grace period.
+  deadManPingInterval ? "1m",
 }:
 let
   inherit (lib) optional mapAttrsToList;
@@ -93,6 +107,20 @@ let
     group_by = fleetGroupBy;
     receiver = warningReceiver; # component-but-no-severity fallback
     routes = severityRoutes;
+  };
+
+  # Dead-man's-switch route: the always-firing Watchdog goes STRAIGHT to the
+  # heartbeat receiver, on a short cadence, and never continues to other routes.
+  # group_by [] collapses every Watchdog into one aggregation so the ping fires
+  # once per interval regardless of extra labels.
+  deadManRoutes = optional (deadManReceiver != null) {
+    matchers = deadManMatchers;
+    receiver = deadManReceiver;
+    group_by = [ ];
+    group_wait = "0s";
+    group_interval = deadManPingInterval;
+    repeat_interval = deadManPingInterval;
+    continue = false;
   };
 
   inhibitRules =
@@ -120,7 +148,7 @@ in
     group_wait = groupWait;
     group_interval = groupInterval;
     repeat_interval = repeatInterval;
-    routes = [ fleetRoute ] ++ extraRoutes ++ severityRoutes;
+    routes = deadManRoutes ++ [ fleetRoute ] ++ extraRoutes ++ severityRoutes;
   };
 
   receivers = mapAttrsToList (name: cfg: { inherit name; } // cfg) receivers;

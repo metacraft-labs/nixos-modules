@@ -48,6 +48,12 @@
   garmJob ? "garm",
   # "scaleset" (live today) | "pool" (post Phase-C migration).
   mode ? "scaleset",
+  # Emit the always-firing `Watchdog` alert — the DEAD-MAN'S SWITCH heartbeat
+  # (alerting-methodology.md). It fires continuously and is routed (by the
+  # alertmanager-fleet-routing `deadManReceiver`) to an off-host Healthchecks
+  # ping, so a dead Prometheus/Alertmanager/host stops the pings and the off-host
+  # sink alarms. severity=none keeps it out of the pager/CI-ops buckets.
+  watchdog ? true,
   # for: windows.
   controllerDownFor ? "2m",
   controllerUnhealthyFor ? "5m",
@@ -213,7 +219,29 @@ let
         garm:class_queued_jobs
           and on (garm_owner, garm_class) (garm:class_saturated == 1)'';
 
-  groups = [
+  # DEAD-MAN'S SWITCH heartbeat. `vector(1)` is always 1, so this alert is always
+  # firing; the routing layer sends it to an off-host Healthchecks ping. Its
+  # absence (dead Prometheus/Alertmanager/host) is what actually raises the alarm.
+  watchdogGroup = {
+    name = "garm-fleet-watchdog";
+    comment = [
+      "# ── DEAD-MAN'S SWITCH (always-firing heartbeat) ──"
+      "# Routed off-host (Healthchecks) by alertmanager-fleet-routing's"
+      "# deadManReceiver. Silence = the alerter itself is dead. See"
+      "# metacraft-dev-guidelines/policies/alerting-methodology.md."
+    ];
+    rules = [
+      {
+        name = "Watchdog";
+        expr = "vector(1)";
+        severity = "none";
+        summary = "Alerting pipeline heartbeat (always firing)";
+        description = "This alert is always firing. It is routed to an off-host dead-man's switch that alarms if these notifications STOP arriving — i.e. if Prometheus, Alertmanager, this host, or the network has died. If YOU are reading this as a page, the routing is misconfigured (the Watchdog must go only to the dead-man receiver).";
+      }
+    ];
+  };
+
+  groups = optionals watchdog [ watchdogGroup ] ++ [
     {
       name = "garm-fleet-controller";
       comment = [ "# ── Controller / host reachability & health ──" ];

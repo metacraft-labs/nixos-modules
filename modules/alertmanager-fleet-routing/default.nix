@@ -34,6 +34,23 @@
       packages.fleet-alertmanager-config =
         (pkgs.formats.yaml { }).generate "alertmanager.yml"
           (import ./config.nix { inherit lib; });
+
+      # Dead-man-switch render variant — the gate input proving the Watchdog
+      # routes to a dedicated off-host heartbeat receiver (and that enabling it
+      # does not swallow the ordinary severity buckets). Credential-free inert
+      # webhooks, like the default render.
+      packages.fleet-alertmanager-config-deadman =
+        (pkgs.formats.yaml { }).generate "alertmanager-deadman.yml"
+          (import ./config.nix {
+            inherit lib;
+            deadManReceiver = "deadmanswitch";
+            receivers = {
+              default = { };
+              pager.webhook_configs = [ { url = "http://127.0.0.1:9099/pager"; } ];
+              "ci-ops".webhook_configs = [ { url = "http://127.0.0.1:9099/ci-ops"; } ];
+              deadmanswitch.webhook_configs = [ { url = "http://127.0.0.1:9099/deadman"; } ];
+            };
+          });
     };
 
   flake.modules.nixos.alertmanager-fleet-routing =
@@ -70,6 +87,9 @@
           controllerDownSourceMatchers
           extraInhibitRules
           extraRoutes
+          deadManReceiver
+          deadManMatchers
+          deadManPingInterval
           ;
       };
     in
@@ -196,6 +216,31 @@
           type = types.listOf (types.attrsOf types.anything);
           default = [ ];
           description = "Additional first-level routes, evaluated before the severity catch-alls (concrete per-team/per-org routing).";
+        };
+
+        deadManReceiver = mkOption {
+          type = types.nullOr types.str;
+          default = null;
+          example = "deadmanswitch";
+          description = ''
+            Receiver name the always-firing `Watchdog` alert routes to — the
+            DEAD-MAN'S SWITCH (see the alerting-methodology policy). That receiver
+            must ping an OFF-HOST heartbeat sink (e.g. a Healthchecks check URL via
+            `webhook_configs`) on every interval; when this Alertmanager / host /
+            network dies the pings stop and the sink alarms. Null disables the
+            dead-man route (no Watchdog handling rendered). Must be a key of
+            `receivers` when set.
+          '';
+        };
+        deadManMatchers = mkOption {
+          type = types.listOf types.str;
+          default = [ ''alertname="Watchdog"'' ];
+          description = "Matchers identifying the always-firing heartbeat alert routed to `deadManReceiver` (default: the conventional `Watchdog` alert emitted by the rules library).";
+        };
+        deadManPingInterval = mkOption {
+          type = types.str;
+          default = "1m";
+          description = "Heartbeat cadence (`group_interval`/`repeat_interval`) for the dead-man route — how often the Watchdog pings the off-host sink. Keep it well under the sink's grace period.";
         };
 
         listenAddress = mkOption {

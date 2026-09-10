@@ -422,3 +422,30 @@ tests:
       - eval_time: 90m
         alertname: GarmFleetOverProvision
         exp_alerts: []
+
+  # ── Watchdog (dead-man's switch heartbeat) ─────────────────────────────────
+  # The only alert with no firing/silent duality: it fires ALWAYS, by design.
+  # Its silence (a dead alerter) is what the off-host sink alarms on — there is
+  # no healthy-input control that makes it stop, and that is the whole point.
+  - interval: 1m
+    name: 'the Watchdog heartbeat fires continuously (severity=none)'
+    input_series: []
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: Watchdog
+        exp_alerts:
+          - exp_labels:
+              severity: none
+              component: garm-fleet
+            exp_annotations:
+              summary: 'Alerting pipeline heartbeat (always firing)'
+              description: 'This alert is always firing. It is routed to an off-host dead-man''s switch that alarms if these notifications STOP arriving — i.e. if Prometheus, Alertmanager, this host, or the network has died. If YOU are reading this as a page, the routing is misconfigured (the Watchdog must go only to the dead-man receiver).'
+      - eval_time: 30m
+        alertname: Watchdog
+        exp_alerts:
+          - exp_labels:
+              severity: none
+              component: garm-fleet
+            exp_annotations:
+              summary: 'Alerting pipeline heartbeat (always firing)'
+              description: 'This alert is always firing. It is routed to an off-host dead-man''s switch that alarms if these notifications STOP arriving — i.e. if Prometheus, Alertmanager, this host, or the network has died. If YOU are reading this as a page, the routing is misconfigured (the Watchdog must go only to the dead-man receiver).'
