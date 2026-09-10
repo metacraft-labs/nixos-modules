@@ -19,6 +19,7 @@
     ./garm-multi-provider.nix
     ./garm-aws-burst.nix
     ./garm-aws-spot.nix
+    ./garm-webhook-delivery.nix
     ./fleet-alerting.nix
     ./alertmanager-routing.nix
     ./fit-monitoring.nix

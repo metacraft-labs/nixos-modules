@@ -25,12 +25,26 @@ Metrics emitted:
   github_app_installation_token_expiry_timestamp_seconds{app}     unix ts of the minted token
   github_webhook_last_delivery_ok{org,hook_id}                    1 if last delivery 2xx
   github_webhook_deliveries_failed_total{org,hook_id}             non-2xx in the recent page
+  probe_success{endpoint,name}                                    1 if the public webhook endpoint answered (blackbox)
+  probe_http_status_code{endpoint,name}                           the status the endpoint returned to an unsigned probe
   github_fleet_checks_up                                          exporter self-liveness
+
+RC3 (Runner-Fleet-Capability-Pools): the webhook-endpoint blackbox probe
+(`probe_success`) is the second delivery-health signal GARM cannot see — a dead
+Cloudflare Tunnel / NetBird relay / expired cert looks identical to "no jobs".
+We POST an UNSIGNED workflow_job-shaped body and expect the endpoint to reject
+it (a 4xx) — a rejection proves the whole path (tunnel/relay -> GARM) is alive
+and reachable, WITHOUT a valid signature ever reaching GARM. probe_success is 1
+when the endpoint answered at all (connection completed); 0 on a connect/TLS
+failure or timeout. It feeds the RE1b GithubWebhookEndpointProbeDown alert.
 
 Config (env):
   GFC_OUTPUT            path to the .prom textfile to write (required)
-  GFC_APPS_JSON        JSON list of {"app","app_id","installation_id","private_key_file"}
-  GFC_WEBHOOKS_JSON    JSON list of {"org","hook_id","token_file"}
+  GFC_CONFIG_FILE      JSON file {"apps":[...],"webhooks":[...],"probes":[...]}
+                       (preferred — quote-safe; the module always sets this)
+  GFC_APPS_JSON        JSON list of {"app","app_id","installation_id","private_key_file"} (fallback)
+  GFC_WEBHOOKS_JSON    JSON list of {"org","hook_id","token_file"} (fallback)
+  GFC_PROBES_JSON      JSON list of {"name","url","expect_reject"(bool,default true)} (fallback)
   GFC_API              GitHub API base (default https://api.github.com)
 
 Dependencies: PyJWT (`jwt`) for the RS256 App JWT; the rest is stdlib.
@@ -143,6 +157,45 @@ def check_webhook(hook: dict) -> list[str]:
     ]
 
 
+def check_probe(probe: dict) -> list[str]:
+    """Blackbox HTTP probe of the public webhook endpoint (RC3).
+
+    POST an UNSIGNED workflow_job-shaped body. A live endpoint fronting GARM
+    rejects it (missing/invalid X-Hub-Signature-256 -> 4xx); that rejection is
+    exactly the evidence the whole delivery path is reachable. probe_success is
+    1 whenever the endpoint answered (any HTTP status), 0 on a transport
+    failure. When expect_reject is set (default), a 2xx is treated as a probe
+    FAILURE too — an endpoint that accepts an unsigned body is misconfigured
+    (HMAC not enforced), which is itself a delivery-health defect worth paging.
+    """
+    name = probe.get("name", "webhook")
+    url = probe["url"]
+    expect_reject = probe.get("expect_reject", True)
+    labels = f'endpoint="{url}",name="{name}"'
+    success = 0
+    status = 0
+    body = b'{"action":"queued","probe":true}'
+    req = urllib.request.Request(url, method="POST", data=body)
+    req.add_header("Content-Type", "application/json")
+    req.add_header("X-GitHub-Event", "workflow_job")
+    req.add_header("User-Agent", USER_AGENT)
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            status = resp.status
+    except urllib.error.HTTPError as exc:
+        # An HTTP error status still means the endpoint ANSWERED — reachable.
+        status = exc.code
+    except (urllib.error.URLError, TimeoutError, OSError):
+        status = 0
+    if status:
+        rejected = not (200 <= status < 300)
+        success = 1 if (rejected or not expect_reject) else 0
+    return [
+        f"probe_success{{{labels}}} {success}",
+        f"probe_http_status_code{{{labels}}} {status}",
+    ]
+
+
 def main() -> int:
     output = os.environ.get("GFC_OUTPUT")
     if not output:
@@ -152,8 +205,17 @@ def main() -> int:
         print("PyJWT (jwt) is required", file=sys.stderr)
         return 2
 
-    apps = json.loads(os.environ.get("GFC_APPS_JSON", "[]"))
-    webhooks = json.loads(os.environ.get("GFC_WEBHOOKS_JSON", "[]"))
+    config_file = os.environ.get("GFC_CONFIG_FILE")
+    if config_file:
+        with open(config_file, "r", encoding="utf-8") as fh:
+            conf = json.load(fh)
+        apps = conf.get("apps", [])
+        webhooks = conf.get("webhooks", [])
+        probes = conf.get("probes", [])
+    else:
+        apps = json.loads(os.environ.get("GFC_APPS_JSON", "[]"))
+        webhooks = json.loads(os.environ.get("GFC_WEBHOOKS_JSON", "[]"))
+        probes = json.loads(os.environ.get("GFC_PROBES_JSON", "[]"))
 
     lines: list[str] = [
         "# HELP github_app_installation_token_mint_ok App installation token minting succeeded (1) or failed (0).",
@@ -164,6 +226,10 @@ def main() -> int:
         "# TYPE github_webhook_last_delivery_ok gauge",
         "# HELP github_webhook_deliveries_failed_total Non-2xx deliveries in the recent ledger page.",
         "# TYPE github_webhook_deliveries_failed_total gauge",
+        "# HELP probe_success Blackbox probe of the public webhook endpoint answered (1) or not (0).",
+        "# TYPE probe_success gauge",
+        "# HELP probe_http_status_code Status the public webhook endpoint returned to an unsigned probe.",
+        "# TYPE probe_http_status_code gauge",
         "# HELP github_fleet_checks_up The external-checks exporter completed a full cycle.",
         "# TYPE github_fleet_checks_up gauge",
     ]
@@ -172,6 +238,8 @@ def main() -> int:
         lines.extend(check_app(app))
     for hook in webhooks:
         lines.extend(check_webhook(hook))
+    for probe in probes:
+        lines.extend(check_probe(probe))
 
     lines.append("github_fleet_checks_up 1")
 

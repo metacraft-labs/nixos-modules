@@ -68,6 +68,24 @@
           token_file = w.tokenFile;
         }) cfg.webhooks
       );
+      # RC3 — blackbox probes of the public webhook endpoint(s). Distinct from
+      # the App-token / delivery-ledger checks above; feeds RE1b's
+      # GithubWebhookEndpointProbeDown (probe_success).
+      probesJson = builtins.toJSON (
+        map (p: {
+          inherit (p) name url;
+          expect_reject = p.expectReject;
+        }) cfg.probes
+      );
+      # Pass the (non-secret: ids/paths/orgs/urls only) config as a single store
+      # FILE rather than JSON-in-Environment: systemd's own quote parsing strips
+      # the double-quotes out of a JSON value in `Environment=`, corrupting it.
+      # A file is quote-safe for any content.
+      configFile = pkgs.writeText "garm-fleet-external-checks.json" (builtins.toJSON {
+        apps = builtins.fromJSON appsJson;
+        webhooks = builtins.fromJSON webhooksJson;
+        probes = builtins.fromJSON probesJson;
+      });
     in
     {
       options.services.garm-fleet-external-checks = {
@@ -137,6 +155,30 @@
             }
           );
         };
+
+        probes = mkOption {
+          default = [ ];
+          description = "Public webhook endpoints to blackbox-probe (RC3 delivery-health; feeds RE1b probe_success).";
+          type = types.listOf (
+            types.submodule {
+              options = {
+                name = mkOption {
+                  type = types.str;
+                  description = "Probe label (e.g. the org or hostname).";
+                };
+                url = mkOption {
+                  type = types.str;
+                  description = "Full public webhook URL to POST an unsigned probe at.";
+                };
+                expectReject = mkOption {
+                  type = types.bool;
+                  default = true;
+                  description = "Treat a 2xx to an unsigned probe as a FAILURE (HMAC not enforced).";
+                };
+              };
+            }
+          );
+        };
       };
 
       config = mkIf cfg.enable {
@@ -157,8 +199,7 @@
             Environment = [
               "GFC_OUTPUT=${cfg.textfileDir}/garm-fleet-external-checks.prom"
               "GFC_API=${cfg.apiBase}"
-              "GFC_APPS_JSON=${appsJson}"
-              "GFC_WEBHOOKS_JSON=${webhooksJson}"
+              "GFC_CONFIG_FILE=${configFile}"
             ];
           };
         };
