@@ -68,6 +68,20 @@
           '';
         };
         cachix-deploy-metrics = pkgs.callPackage ./cachix-deploy-metrics { };
+        # Cross-repo sealer for the fleet-alerting receiver secrets (ntfy topic +
+        # token, Healthchecks ping URL). Shared by every Metacraft infra repo per
+        # policies/alerting-methodology.md. Operates on the consumer repo's flake.
+        seal-alerting-secrets = pkgs.writeShellApplication {
+          name = "seal-alerting-secrets";
+          runtimeInputs = [
+            pkgs.age
+            pkgs.jq
+            pkgs.nix
+          ];
+          text = ''
+            exec bash ${../scripts/seal-alerting-secrets.sh} "$@"
+          '';
+        };
         consumer-flake-cachix-inventory-tool = pkgs.writeShellApplication {
           name = "consumer-flake-cachix-inventory";
           runtimeInputs = [ pkgs.python3 ];
