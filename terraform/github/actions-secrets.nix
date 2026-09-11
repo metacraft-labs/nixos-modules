@@ -40,8 +40,7 @@ let
     replaceStrings
     ;
 
-  resourceKey =
-    value: "secret_${replaceStrings [ "/" ":" "." ] [ "_" "_" "_" ] value}";
+  resourceKey = value: "secret_${replaceStrings [ "/" ":" "." ] [ "_" "_" "_" ] value}";
 
   managedIds = managedDoc.providerIds or [ ];
   payloads = payloadDoc.payloads or { };
