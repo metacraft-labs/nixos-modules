@@ -55,8 +55,12 @@
   called reusable workflow into =.mcl/reusable-terraform-ci=. GitHub supplies
   that identity through =job.workflow_repository= and =job.workflow_sha=; the
   workflow does not substitute the caller repository/SHA or accept a duplicate
-  caller-provided revision. The checkout action is commit-pinned and does not
-  persist credentials.
+  caller-provided revision. The caller selects the reusable source with its
+  literal =uses: metacraft-labs/nixos-modules/...@<ref>= declaration, and
+  GitHub resolves that selection to the full =job.workflow_sha= used by every
+  Terraform job. This is intentionally distinct from =github.sha=, which can
+  name the consumer repository's synthetic pull-request merge. The checkout
+  action is commit-pinned and does not persist credentials.
 
   Before Setup Nix runs, each job fails closed unless the local checkout has a
   full commit SHA matching =job.workflow_sha=, an origin matching the called
@@ -82,11 +86,14 @@
 
   =scripts/tests/test_reusable_terraform_source_identity.py= is an executable
   contract test for all four jobs. It checks exact cardinality and step order,
-  exercises the verification shell against a real temporary Git repository,
-  proves that ordinary and index-hidden Setup Nix/policy-file tampering fails,
-  and carries hostile mutations for removed, reordered, substituted, fallback,
-  credential-persistence, worktree-materialization, and weakened-verification
-  cases. The test is wired into the flake as
+  requires source checkout, verification, and Setup Nix to remain adjacent,
+  and rejects additive source checkouts or Setup Nix/policy executions that
+  could bypass the verified path. It exercises the verification shell against
+  a real temporary Git repository, proves that ordinary and index-hidden Setup
+  Nix, policy-script, and policy-helper byte drift fails, and carries hostile
+  mutations for removed, reordered, substituted, unrelated-immutable,
+  fallback, credential-persistence, worktree-materialization, and
+  weakened-verification cases. The test is wired into the flake as
   =reusable-terraform-source-identity=.
 
   Local Linux verification establishes the source and shell contracts only.

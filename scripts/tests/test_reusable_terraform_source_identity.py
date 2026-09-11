@@ -48,6 +48,27 @@ def named_step(job: str, name: str) -> str:
     return "\n".join(extract_indented_block(lines, starts[0], 6)) + "\n"
 
 
+def job_steps(job: str) -> list[str]:
+    lines = job.splitlines()
+    starts = [
+        index for index, line in enumerate(lines) if line.startswith("      - ")
+    ]
+    return [
+        "\n".join(
+            lines[start : starts[position + 1] if position + 1 < len(starts) else len(lines)]
+        )
+        + "\n"
+        for position, start in enumerate(starts)
+    ]
+
+
+def step_name(step: str) -> str:
+    first_line = step.splitlines()[0]
+    marker = "      - name: "
+    assert first_line.startswith(marker), f"Terraform job has an unnamed step: {first_line!r}"
+    return first_line.removeprefix(marker)
+
+
 def run_script(step: str) -> str:
     lines = step.splitlines()
     starts = [index for index, line in enumerate(lines) if line == "        run: |"]
@@ -82,6 +103,15 @@ def validate(workflow: str) -> None:
     for fragment in forbidden:
         assert fragment not in workflow, f"mutable/downloaded source remains: {fragment}"
 
+    setup_uses = [
+        line.strip()
+        for line in workflow.splitlines()
+        if "setup-nix" in line and line.strip().startswith("uses:")
+    ]
+    assert setup_uses == [f"uses: {LOCAL_SETUP_ACTION}"] * len(RELEVANT_JOBS), (
+        "every and only every Terraform job must use Setup Nix from the exact local "
+        "called-workflow checkout"
+    )
     assert workflow.count(f"uses: {LOCAL_SETUP_ACTION}") == len(RELEVANT_JOBS), (
         "every and only every Terraform job must use Setup Nix from the exact local "
         "called-workflow checkout"
@@ -92,12 +122,31 @@ def validate(workflow: str) -> None:
     assert workflow.count("- name: Verify called workflow source") == len(
         RELEVANT_JOBS
     ), "called-workflow source verifier cardinality changed"
+    assert workflow.count(f"          path: {SOURCE_PATH}\n") == len(RELEVANT_JOBS), (
+        "called-workflow checkout destination cardinality changed"
+    )
     assert workflow.count("persist-credentials: false") == len(
         RELEVANT_JOBS
     ), "persist-credentials:false cardinality changed"
 
     for job_name in RELEVANT_JOBS:
         job = extract_job(workflow, job_name)
+        steps = job_steps(job)
+        names = [step_name(step) for step in steps]
+        assert names[:4] == [
+            "Checkout",
+            "Checkout called workflow source",
+            "Verify called workflow source",
+            "Setup Nix",
+        ], f"{job_name}: source checkout, verification, and Setup Nix must be adjacent"
+        checkout_uses = [
+            line.strip()
+            for line in job.splitlines()
+            if line.strip().startswith("uses: actions/checkout@")
+        ]
+        assert checkout_uses == [f"uses: {CHECKOUT_ACTION}"] * 2, (
+            f"{job_name}: expected only the caller and exact called-workflow checkouts"
+        )
         assert_in_order(
             job,
             (
@@ -200,6 +249,35 @@ def validate(workflow: str) -> None:
         ),
         "late policy-source verification",
     )
+    policy_invocation = (
+        'bash "$POLICY_RUNNER" "$POLICY_SCRIPT" "$PLAN_JSON" "${POLICY_ARGS[@]}"'
+    )
+    assert policy_script.count(policy_invocation) == 1, (
+        "the verified materialized policy helper must execute exactly once"
+    )
+    assert policy_script.count("POLICY_SCRIPT") == 4, (
+        "policy script may only be named, materialized, verified, and executed"
+    )
+    assert policy_script.count("POLICY_RUNNER") == 4, (
+        "policy helper may only be named, materialized, verified, and executed"
+    )
+    assert policy_script.count("tofu-plan-policy.py") == 2, (
+        "policy path may only identify its immutable source and private copy"
+    )
+    assert policy_script.count("tofu-plan-policy-ci") == 2, (
+        "helper path may only identify its immutable source and private copy"
+    )
+    assert policy_script.count('"$PLAN_JSON"') == 1, (
+        "the plan may be passed to exactly one policy execution"
+    )
+    policy_source_steps = [
+        step_name(step)
+        for step in job_steps(plan_job)
+        if "tofu-plan-policy.py" in step or "tofu-plan-policy-ci" in step
+    ]
+    assert policy_source_steps == ["Plan JSON policy gate"], (
+        "the exact-source plan policy may execute only in its named guarded step"
+    )
 
 
 def replace_once(text: str, old: str, new: str) -> str:
@@ -272,7 +350,15 @@ def test_negative_mutations(workflow: str) -> None:
                 checkout_step + verify_step + setup_step,
                 verify_step + setup_step + checkout_step,
             ),
-            "offline-checks: missing '- name: Verify called workflow source",
+            "source checkout, verification, and Setup Nix must be adjacent",
+        ),
+        "move verification after setup": (
+            replace_once(
+                workflow,
+                verify_step + setup_step,
+                setup_step + verify_step,
+            ),
+            "source checkout, verification, and Setup Nix must be adjacent",
         ),
         "use caller repository": (
             replace_once(
@@ -285,6 +371,14 @@ def test_negative_mutations(workflow: str) -> None:
         "use caller sha": (
             replace_once(
                 workflow, "ref: ${{ job.workflow_sha }}", "ref: ${{ github.sha }}"
+            ),
+            "offline-checks checkout: missing 'ref: ${{ job.workflow_sha }}'",
+        ),
+        "use unrelated literal sha": (
+            replace_once(
+                workflow,
+                "ref: ${{ job.workflow_sha }}",
+                f"ref: {'1' * 40}",
             ),
             "offline-checks checkout: missing 'ref: ${{ job.workflow_sha }}'",
         ),
@@ -354,9 +448,41 @@ def test_negative_mutations(workflow: str) -> None:
             ),
             "mutable/downloaded source remains",
         ),
+        "use unrelated immutable setup action": (
+            replace_once(
+                workflow,
+                f"uses: {LOCAL_SETUP_ACTION}",
+                "uses: metacraft-labs/nixos-modules/.github/setup-nix@"
+                + "2" * 40,
+            ),
+            "every and only every Terraform job must use Setup Nix",
+        ),
         "duplicate source checkout": (
             replace_once(workflow, checkout_step, checkout_step + "\n" + checkout_step),
             "source checkout cardinality",
+        ),
+        "add differently named source checkout after verification": (
+            replace_once(
+                workflow,
+                verify_step + setup_step,
+                verify_step
+                + checkout_step.replace(
+                    "- name: Checkout called workflow source",
+                    "- name: Replace verified workflow source",
+                    1,
+                )
+                + setup_step,
+            ),
+            "called-workflow checkout destination cardinality changed",
+        ),
+        "duplicate setup execution": (
+            replace_once(
+                workflow,
+                setup_step,
+                setup_step
+                + setup_step.replace("- name: Setup Nix", "- name: Setup Nix again", 1),
+            ),
+            "every and only every Terraform job must use Setup Nix",
         ),
         "remove late verification": (
             replace_once(workflow, policy_step, without_late_verification_step),
@@ -365,6 +491,39 @@ def test_negative_mutations(workflow: str) -> None:
         "move late verification after policy": (
             replace_once(workflow, policy_step, invocation_before_verification_step),
             "late policy-source verification: missing 'bash \"$POLICY_RUNNER\"",
+        ),
+        "duplicate verified policy invocation": (
+            replace_once(
+                workflow,
+                policy_invocation,
+                policy_invocation + "\n" + policy_invocation,
+            ),
+            "verified materialized policy helper must execute exactly once",
+        ),
+        "add unverified worktree policy invocation": (
+            replace_once(
+                workflow,
+                policy_invocation,
+                policy_invocation
+                + "\n"
+                + '          bash "$WORKFLOW_SOURCE/scripts/tofu-plan-policy-ci" '
+                + '"$WORKFLOW_SOURCE/scripts/tofu-plan-policy.py" "$PLAN_JSON"',
+            ),
+            "policy path may only identify its immutable source and private copy",
+        ),
+        "add differently named policy step": (
+            replace_once(
+                workflow,
+                policy_step,
+                policy_step
+                + "\n"
+                + policy_step.replace(
+                    "- name: Plan JSON policy gate",
+                    "- name: Run plan policy again",
+                    1,
+                ),
+            ),
+            "exact-source plan policy may execute only in its named guarded step",
         ),
         "run consumer policy copy": (
             replace_once(
@@ -390,6 +549,14 @@ def test_negative_mutations(workflow: str) -> None:
             ),
             "late policy-source verification: missing 'cat-file blob \"${EXPECTED_WORKFLOW_SHA}:${policy_script_path}\"'",
         ),
+        "materialize helper from head": (
+            replace_once(
+                workflow,
+                'cat-file blob "${EXPECTED_WORKFLOW_SHA}:${policy_runner_path}"',
+                'cat-file blob "HEAD:${policy_runner_path}"',
+            ),
+            "late policy-source verification: missing 'cat-file blob \"${EXPECTED_WORKFLOW_SHA}:${policy_runner_path}\"'",
+        ),
         "materialize policy from worktree": (
             replace_once(
                 workflow,
@@ -397,6 +564,14 @@ def test_negative_mutations(workflow: str) -> None:
                 'cp "$WORKFLOW_SOURCE/$policy_script_path" "$POLICY_SCRIPT"',
             ),
             "late policy-source verification: missing 'cat-file blob \"${EXPECTED_WORKFLOW_SHA}:${policy_script_path}\"'",
+        ),
+        "materialize helper from worktree": (
+            replace_once(
+                workflow,
+                'git -C "$WORKFLOW_SOURCE" cat-file blob "${EXPECTED_WORKFLOW_SHA}:${policy_runner_path}" > "$POLICY_RUNNER"',
+                'cp "$WORKFLOW_SOURCE/$policy_runner_path" "$POLICY_RUNNER"',
+            ),
+            "late policy-source verification: missing 'cat-file blob \"${EXPECTED_WORKFLOW_SHA}:${policy_runner_path}\"'",
         ),
         "download policy again": (
             replace_once(
@@ -594,6 +769,13 @@ def test_verification_behavior(workflow: str) -> None:
 
         runner = source / "scripts/tofu-plan-policy-ci"
         original_runner = runner.read_text()
+        runner.write_text(original_runner + "\n# hostile helper mutation\n")
+        helper_failure = run_shell(executable_late_script, late_env)
+        assert helper_failure.returncode != 0, (
+            "late verification accepted a consumer-modified policy helper"
+        )
+        runner.write_text(original_runner)
+
         git(source, "update-index", "--skip-worktree", "scripts/tofu-plan-policy-ci")
         runner.write_text(original_runner + "\n# skip-worktree-hidden mutation\n")
         assert git(source, "status", "--porcelain=v1", "--", "scripts/tofu-plan-policy-ci") == ""
@@ -602,6 +784,26 @@ def test_verification_behavior(workflow: str) -> None:
             "late verification accepted a skip-worktree-hidden policy mutation"
         )
         git(source, "update-index", "--no-skip-worktree", "scripts/tofu-plan-policy-ci")
+        runner.write_text(original_runner)
+
+        restored_success = run_shell(executable_late_script, late_env)
+        assert restored_success.returncode == 0, (
+            f"restored exact policy bytes failed\nstdout:\n{restored_success.stdout}"
+            f"\nstderr:\n{restored_success.stderr}"
+        )
+
+        runner.write_text(original_runner + "\n# bytes from an unrelated valid ref\n")
+        git(source, "add", "scripts/tofu-plan-policy-ci")
+        git(source, "commit", "--quiet", "-m", "unrelated source ref")
+        unrelated_sha = git(source, "rev-parse", "HEAD")
+        assert unrelated_sha != sha
+        assert run_shell(initial_script, env).returncode != 0, (
+            "initial verification accepted a checkout at an unrelated valid ref"
+        )
+        assert run_shell(executable_late_script, late_env).returncode != 0, (
+            "late verification accepted policy-helper bytes from an unrelated valid ref"
+        )
+        git(source, "reset", "--hard", sha)
 
 
 def main() -> None:
