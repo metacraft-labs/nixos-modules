@@ -127,6 +127,32 @@
           '';
         };
 
+        # ── RA6 enrollment (signed /v1/manifest) ──────────────────────────────
+        enrollSecretFile = mkOption {
+          type = types.nullOr types.path;
+          default = null;
+          example = "/run/agenix/vm-harness-serve/enroll-secret";
+          description = ''
+            Path to the per-host RA6 enrollment secret (agenix-darwin). When set,
+            the daemon signs `GET /v1/manifest` with an identity whose `keyId`
+            derives from it (HMAC-SHA256). Passed via `--enroll-secret-file`;
+            launchd has no LoadCredential, so the daemon reads it directly (must
+            be readable by {option}`user`). Null leaves the daemon RA1-only.
+          '';
+        };
+        identityTtlSec = mkOption {
+          type = types.nullOr types.int;
+          default = null;
+          example = 3600;
+          description = "Signed-identity lifetime in seconds (`--identity-ttl-sec`); only with {option}`enrollSecretFile`.";
+        };
+        hostId = mkOption {
+          type = types.nullOr types.str;
+          default = null;
+          example = "m3";
+          description = "Stable host identifier in the signed manifest (`--host-id`); only with {option}`enrollSecretFile`.";
+        };
+
         extraPackages = mkOption {
           type = types.listOf types.package;
           default = [ ];
@@ -274,6 +300,19 @@
             ++ optionals (cfg.workerExe != null) [
               "--worker-exe"
               (toString cfg.workerExe)
+            ]
+            # RA6: sign /v1/manifest when an enrollment secret is provided.
+            ++ optionals (cfg.enrollSecretFile != null) [
+              "--enroll-secret-file"
+              (toString cfg.enrollSecretFile)
+            ]
+            ++ optionals (cfg.identityTtlSec != null) [
+              "--identity-ttl-sec"
+              (toString cfg.identityTtlSec)
+            ]
+            ++ optionals (cfg.hostId != null) [
+              "--host-id"
+              cfg.hostId
             ];
 
             EnvironmentVariables = {

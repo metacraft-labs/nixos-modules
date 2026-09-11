@@ -63,6 +63,10 @@
       credName = "token";
       # $CREDENTIALS_DIRECTORY is exposed to the unit as %d.
       tokenCredPath = "%d/${credName}";
+      # RA6 enrollment secret (the per-host HMAC key the signed /v1/manifest keyId
+      # derives from), staged the same LoadCredential way as the bearer token.
+      enrollCredName = "enroll-secret";
+      enrollCredPath = "%d/${enrollCredName}";
       runtimeDir = "vm-harness-serve";
       portFile = "/run/${runtimeDir}/port";
     in
@@ -128,6 +132,41 @@
             is handed to the daemon via systemd `LoadCredential`, so the token is
             copied into the unit's private credentials store and never placed in
             the world-readable Nix store. Required when {option}`enable` is true.
+          '';
+        };
+
+        # ── RA6 enrollment (signed /v1/manifest) ──────────────────────────────
+        enrollSecretFile = mkOption {
+          type = types.nullOr types.path;
+          default = null;
+          example = "/run/agenix/vm-harness-serve/enroll-secret";
+          description = ''
+            Path to the per-host RA6 enrollment secret (a decrypted agenix
+            secret). When set, the daemon signs `GET /v1/manifest` with an
+            identity whose `keyId` derives from this secret (HMAC-SHA256), and the
+            central GARM's `garm-serve-manifest-verify` preflight enrolls that
+            keyId. Handed to the daemon via `LoadCredential` (never the store,
+            never argv). Null leaves the daemon RA1-only (no signed manifest).
+          '';
+        };
+        identityTtlSec = mkOption {
+          type = types.nullOr types.int;
+          default = null;
+          example = 3600;
+          description = ''
+            Signed-identity lifetime in seconds (`serve --identity-ttl-sec`). Only
+            meaningful with {option}`enrollSecretFile`. Null uses the daemon
+            default (3600).
+          '';
+        };
+        hostId = mkOption {
+          type = types.nullOr types.str;
+          default = null;
+          example = "high-mem-server";
+          description = ''
+            Stable host identifier embedded in the signed manifest
+            (`serve --host-id`). Only meaningful with {option}`enrollSecretFile`.
+            Null lets the daemon derive it.
           '';
         };
 
@@ -310,15 +349,25 @@
             # credential setup + the execve, avoiding the credential-race the
             # garm module documents.
             Type = "exec";
-            ExecStart = lib.concatStringsSep " " [
-              (lib.getExe cfg.package)
-              "serve"
-              "--listen ${cfg.listenAddress}:${toString cfg.port}"
-              "--backend ${cfg.backend}"
-              "--auth-token-file ${tokenCredPath}"
-              "--port-file ${portFile}"
-            ];
-            LoadCredential = [ "${credName}:${toString cfg.authTokenFile}" ];
+            ExecStart = lib.concatStringsSep " " (
+              [
+                (lib.getExe cfg.package)
+                "serve"
+                "--listen ${cfg.listenAddress}:${toString cfg.port}"
+                "--backend ${cfg.backend}"
+                "--auth-token-file ${tokenCredPath}"
+                "--port-file ${portFile}"
+              ]
+              # RA6: sign /v1/manifest when an enrollment secret is provided.
+              ++ optional (cfg.enrollSecretFile != null) "--enroll-secret-file ${enrollCredPath}"
+              ++ optional (cfg.identityTtlSec != null) "--identity-ttl-sec ${toString cfg.identityTtlSec}"
+              ++ optional (cfg.hostId != null) "--host-id ${cfg.hostId}"
+            );
+            LoadCredential =
+              [ "${credName}:${toString cfg.authTokenFile}" ]
+              ++ optional (
+                cfg.enrollSecretFile != null
+              ) "${enrollCredName}:${toString cfg.enrollSecretFile}";
             # Fail fast + loud if the agenix secret is missing at start.
             # (unitConfig below.)
 
