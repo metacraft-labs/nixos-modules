@@ -27,11 +27,13 @@
 let
   inherit (builtins)
     attrNames
+    concatMap
     concatStringsSep
     elem
     filter
     foldl'
     hasAttr
+    head
     length
     listToAttrs
     map
@@ -386,6 +388,122 @@ let
     else
       terraformRef "data.github_team.${teamDataName teamSlug}.id";
 
+  # Org-wide team grants: "this team reaches every repository in the model".
+  #
+  # `governance.orgWideTeamRepositories` is a list of { teamSlug, permission }
+  # rules, each expanded here over `governance.repositories` rather than
+  # enumerated by the consumer. The expansion is the point: a repository added to
+  # the model later inherits the grant without anyone remembering to extend the
+  # rule. Enumerating instead would turn every new repo into a silent hole in an
+  # access policy whose whole content is the word "all".
+  #
+  # Where a rule and an explicit `governance.teamRepositories` entry cover the
+  # same (team, repo) pair, the STRONGER permission wins — not whichever list it
+  # came from. Both directions of that matter, and picking a side breaks one of
+  # them. Letting the explicit entry always win means a repo left at `push`
+  # quietly defeats a rule promising `maintain` everywhere. Letting the rule
+  # always win means a deliberate `admin` grant is silently downgraded the day
+  # someone adds a blanket rule. Taking the max is the only reading under which
+  # "the team reaches every repo at >= this level" and "a deliberate stronger
+  # grant is never weakened by a blanket rule" are both true.
+  permissionRank = {
+    pull = 1;
+    read = 1;
+    triage = 2;
+    push = 3;
+    write = 3;
+    maintain = 4;
+    admin = 5;
+  };
+  rankOf = permission: permissionRank.${permission} or null;
+
+  orgWideTeamRepositories = governance.orgWideTeamRepositories or [ ];
+
+  # A rule's own permission must be rankable. A custom repository role cannot be
+  # compared against the built-in ladder, so a rule naming one could be honoured
+  # on repos with no explicit grant and silently skipped on repos that have one —
+  # a rule that is true in some places and not others is worse than no rule.
+  unrankableRules = filter (rule: rankOf rule.permission == null) orgWideTeamRepositories;
+  duplicateRuleSlugs =
+    filter (slug: length (filter (rule: rule.teamSlug == slug) orgWideTeamRepositories) > 1)
+      (
+        attrNames (
+          listToAttrs (
+            map (rule: {
+              name = rule.teamSlug;
+              value = true;
+            }) orgWideTeamRepositories
+          )
+        )
+      );
+
+  checkedOrgWideRules =
+    if unrankableRules != [ ] then
+      throw (
+        "orgWideTeamRepositories: permission must be one of "
+        + concatStringsSep ", " (sort (a: b: a < b) (attrNames permissionRank))
+        + "; got "
+        + concatStringsSep ", " (map (rule: "${rule.teamSlug}=${rule.permission}") unrankableRules)
+      )
+    else if duplicateRuleSlugs != [ ] then
+      throw (
+        "orgWideTeamRepositories: more than one rule for team(s) "
+        + concatStringsSep ", " duplicateRuleSlugs
+      )
+    else
+      orgWideTeamRepositories;
+
+  orgWideRulePermission =
+    teamSlug:
+    let
+      matches = filter (rule: rule.teamSlug == teamSlug) checkedOrgWideRules;
+    in
+    if matches == [ ] then null else (head matches).permission;
+
+  # Repository names and team slugs cannot contain ":", so this key is unambiguous.
+  teamGrantKey = teamSlug: repository: "${teamSlug}:${repository}";
+  explicitTeamGrants = listToAttrs (
+    map (grant: {
+      name = teamGrantKey grant.teamSlug grant.repository;
+      value = true;
+    }) governance.teamRepositories
+  );
+
+  # Explicit grants, raised to the rule level where the rule is stronger. An
+  # unrankable EXPLICIT permission (a custom role) is left exactly as written:
+  # the engine cannot know whether a custom role outranks `maintain`, and
+  # guessing could either strip privileges or invent them.
+  resolvedExplicitGrants = map (
+    grant:
+    let
+      rulePermission = orgWideRulePermission grant.teamSlug;
+      explicitRank = rankOf grant.permission;
+    in
+    if rulePermission == null || explicitRank == null then
+      grant
+    else if explicitRank >= rankOf rulePermission then
+      grant
+    else
+      grant // { permission = rulePermission; }
+  ) governance.teamRepositories;
+
+  # Every repo a rule covers that has no explicit grant for that team.
+  orgWideOnlyGrants = concatMap (
+    rule:
+    map
+      (repo: {
+        inherit (rule) teamSlug permission;
+        repository = repo.name;
+      })
+      (
+        filter (
+          repo: !(explicitTeamGrants ? ${teamGrantKey rule.teamSlug repo.name})
+        ) governance.repositories
+      )
+  ) checkedOrgWideRules;
+
+  effectiveTeamRepositories = resolvedExplicitGrants ++ orgWideOnlyGrants;
+
   teamResources = listToAttrs (
     map (team: {
       name = teamKey team.slug;
@@ -448,7 +566,7 @@ let
           value = true;
         })
         (
-          (map (grant: grant.teamSlug) governance.teamRepositories)
+          (map (grant: grant.teamSlug) effectiveTeamRepositories)
           ++ (map (m: m.teamSlug) (governance.teamMemberships or [ ]))
         )
     )
@@ -479,7 +597,7 @@ let
       });
 
   teamRepositoryResources =
-    listToResourceAttrs governance.teamRepositories
+    listToResourceAttrs effectiveTeamRepositories
       (grant: "team-repository:${grant.teamSlug}:${grant.repository}")
       (grant: {
         team_id = teamRef grant.teamSlug;
