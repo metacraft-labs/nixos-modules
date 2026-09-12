@@ -156,6 +156,13 @@ jobs:
         shell: bash
         run: bash .github/setup-nix/tests/verify-nix-config-test.sh
 
+      # The credential path that makes a `type = "git"` private flake input
+      # fetchable. `access-tokens` does not cover it — Nix shells out to git,
+      # which reads ~/.netrc and not Nix's own netrc. See write-netrc.sh.
+      - name: Run the netrc contract test
+        shell: bash
+        run: bash .github/setup-nix/tests/write-netrc-test.sh
+
   test-mcl-secret-integration:
     runs-on: eph-linux-x64-g2
     steps:
