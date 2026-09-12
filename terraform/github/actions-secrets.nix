@@ -1,12 +1,17 @@
 # Company-agnostic standalone GitHub Actions **secrets** engine.
 #
-# Unlike the full governance engine (terraform/github/governance.nix, which is
-# the Layer-0 bootstrap root and manages repos/teams/branch-protection alongside
-# a few bootstrap secrets), this is a NORMAL terraform/ root that manages ONLY
-# repository Actions secrets from the rendered, GitHub-encrypted payloads. It
-# rides the standard terraform-ci matrix (credential_mode = github-app), so any
-# secret change is plan-comment-apply like every other resource — per the
-# principle that the bootstrap root holds only Layer-0, everything else is normal.
+# Unlike the full governance engine (terraform/github/governance.nix, which maps
+# an org inventory of repos/teams/branch-protection), this engine manages ONLY
+# Actions secrets from rendered, GitHub-encrypted payloads. Two uses, following
+# the principle that the bootstrap root holds only Layer 0 and everything else
+# is normal:
+#
+#   * a NORMAL terraform/ root for ordinary per-repo application secrets, riding
+#     the standard terraform-ci matrix (credential_mode = github-app) so any
+#     secret change is plan-comment-apply like every other resource; and
+#   * the small Layer-0 bootstrap/ root holding only the chicken-and-egg secrets
+#     the pipeline itself authenticates with (the CI App credentials and the CI
+#     agenix key), which the pipeline must not be able to rewrite.
 #
 # Consumers supply their reviewed manifest + rendered managedDoc/payloadDoc; this
 # emits the github provider, the S3 backend, and one github_actions_secret per
@@ -35,8 +40,7 @@ let
     replaceStrings
     ;
 
-  resourceKey =
-    value: "secret_${replaceStrings [ "/" ":" "." ] [ "_" "_" "_" ] value}";
+  resourceKey = value: "secret_${replaceStrings [ "/" ":" "." ] [ "_" "_" "_" ] value}";
 
   managedIds = managedDoc.providerIds or [ ];
   payloads = payloadDoc.payloads or { };

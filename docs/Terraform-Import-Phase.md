@@ -47,10 +47,15 @@ what is in scope.
 
 Translate the reviewed inventory into a **committed data model** in the repo:
 
-- GitHub: `bootstrap/github/<org>-governance-prod/governance.nix` — the repos,
+- GitHub: `terraform/github/<org>-governance-prod/governance.nix` — the repos,
   teams, memberships, branch protection, Environments, Actions permissions and
   variables, and labels to manage. Feeds the shared
-  [`governance.nix` engine](../terraform/github/README.md).
+  [`governance.nix` engine](../terraform/github/README.md). The governance root
+  is a **managed** root: org policy is not something the pipeline depends on to
+  run, so it lives under `terraform/` and is PR-driven (see
+  [root layering](./Terraform-Root-Layering.md#which-layer-a-root-belongs-to)).
+  During M5/M6 it is held out of the steady-state matrix by
+  `adoption_pending: true`, not by living in `bootstrap/`.
 - Cloudflare: `terraform/cloudflare/<name>-prod/inventory.md` — the reviewed
   zones/DNS/Pages/R2 adoption set (Cloudflare's adoption set is inherently
   per-repo data).
@@ -83,8 +88,8 @@ Generate credential-free `import {}` blocks from the reviewed data model:
   --root-dir "$PWD" --scope all
 ```
 
-The output lands in `.result/bootstrap/github/<org>-governance-prod/imports.tf`
-and is **never committed** — its presence would make OpenTofu's mocked test
+The output lands in `.result/terraform/github/<org>-governance-prod/imports.tf`
+(the generator mirrors whichever layer holds the root) and is **never committed** — its presence would make OpenTofu's mocked test
 context attempt provider imports, breaking offline tests. Each root's
 `IMPORTS.md` documents the resource-class-by-resource-class import IDs and an
 imperative `tofu import` fallback.
@@ -140,7 +145,20 @@ files.
 
 The only permitted non-import creates are the GitHub governance-app org secrets
 (`GH_GOVERNANCE_APP_*`), bootstrapped separately via
-`just github-governance-app-secrets-apply`.
+`just github-governance-app-secrets-apply` — and a consumer that bootstraps them
+through that targeted path, rather than through the governance plan, permits
+*none*, so its allow-set is legitimately empty.
+
+**This gate is an M6 fixture, not the steady-state design.** It exists to make
+adoption a provable no-op: state changes, reality does not. It has nothing to
+say about ordinary governance changes, and it must not be widened to let them
+through. A change that genuinely adds or updates resources is not part of the
+import — it is an M7 change and goes through the normal PR plan/apply path,
+with the reusable workflow's own destroy/replace/policy/sensitive gates. If the
+reviewed model carries entries that do not exist yet (no import id, so they
+plan as creates), do not relax the gate for them: land them as an ordinary PR
+after M6. Leaving them in the import run is what makes an import plan
+unappliable.
 
 ### M7 — Drift detection and steady state
 

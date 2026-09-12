@@ -108,7 +108,18 @@ branch protection, Environments, Actions permissions/variables, issue labels)
 plus a **secret manifest** and the GitHub-encrypted **payloads** rendered by
 `github-governance-secrets-render` into `github_*` Terraform resources, and
 exposes the rich `output` block the bootstrap helper reads. It is the engine
-behind each org's `bootstrap/github/<name>-governance-prod` root.
+behind each org's `terraform/github/<name>-governance-prod` root.
+
+**That root is Layer 1+, not Layer 0.** Org governance is policy, not pipeline
+plumbing: nothing the CI/CD pipeline needs in order to run lives in it, so it
+carries a `metadata.json` (`credential_mode: "github-app"`), is discovered by
+`terraform/ci/terraform-ci-matrix`, and is plan-comment-applied like every other
+managed root. The genuinely Layer-0 slice — the Actions secrets holding the CI
+App credentials and the CI agenix key — belongs in a separate, small
+`bootstrap/github/<name>-governance-secrets-prod` root built on
+[`actions-secrets.nix`](#actions-secretsnix--standalone-actions-secrets-engine),
+so the pipeline's own credentials are never writable by the pipeline. See
+[root layering](../../docs/Terraform-Root-Layering.md#which-layer-a-root-belongs-to).
 
 Everything company-specific is a parameter; the machinery (name sanitizers,
 list→resource mappers, the secret-manifest validation that throws on unknown or
@@ -188,12 +199,13 @@ org — owner / root-config / repo-root are parameters.
   is the negative control.
 
 - **`github-governance-import-blocks`** — credential-free generator that reads a
-  repo's reviewed `bootstrap/<root-config>/governance.nix` and emits OpenTofu
+  repo's reviewed `terraform/<root-config>/governance.nix` (falling back to
+  `bootstrap/<root-config>/` for a Layer-0 root) and emits OpenTofu
   `import {}` blocks. `--owner`, `--root-config`, `--root-dir`, `--scope`. Output
-  stays under `.result/` and is never committed. Scopes include
-  `vulnerability-alerts` and `dependabot-security-updates`; `security_and_analysis`
-  has no scope of its own because it is a nested block on `github_repository`
-  and rides the `repositories` import.
+  stays under `.result/<layer>/<root-config>/` and is never committed. Scopes
+  include `vulnerability-alerts` and `dependabot-security-updates`;
+  `security_and_analysis` has no scope of its own because it is a nested block on
+  `github_repository` and rides the `repositories` import.
 - **`github-governance-import-ci`** — the CI harness (plan / gated apply) that
   runs the generator + plan and **refuses any non-import action** (≥1 import, 0
   add/change/destroy/replace; typed confirm for apply). Driven by env
@@ -231,13 +243,30 @@ To adopt secrets, a consumer adds entries to `secrets/manifest.nix` (optionally
 with `sets` / `rotationHandler`), places `.age` sources under `secrets/actions/`,
 then runs render → reviewed governance plan/apply.
 
+## `actions-secrets.nix` — standalone Actions-secrets engine
+
+Emits only `github_actions_secret` resources from rendered, GitHub-encrypted
+payloads — no repos, no teams, no org settings. Two distinct uses:
+
+- as a **managed** root (`terraform/github/secrets-<name>-prod`, `credential_mode:
+  github-app`) for ordinary per-repo application secrets, which are
+  plan-comment-applied like anything else; and
+- as the small **Layer-0** root (`bootstrap/github/<name>-governance-secrets-prod`)
+  holding only the chicken-and-egg secrets the pipeline authenticates with.
+
+Resource keys and attribute shape match `governance.nix` exactly
+(`github_actions_secret.secret_<providerId>`, `key_id` + `value_encrypted`), so
+state and the targeted `github-bootstrap` secret flows are interchangeable
+between the two engines.
+
 ## `github-bootstrap` — GitHub Layer-0 driver
 
 Org-admin driver for the GitHub side of Layer 0: the CI-enabling repo settings
 (the `production` Environment, deploy-branch protection, OIDC role-ARN Actions
-variables, CODEOWNERS) and the org governance root. Human-applied, out-of-band —
-never through the pipeline it enables, because the pipeline depends on these
-settings and secrets to run.
+variables, CODEOWNERS) and the small governance-secrets root. Human-applied,
+out-of-band — never through the pipeline it enables, because the pipeline
+depends on these settings and secrets to run. It is **not** the path for the org
+governance root itself: that is Layer 1+ and runs through the PR workflow.
 
 Subcommands: `plan` / `apply` / `outputs`, plus the targeted
 `governance-app-secrets-{plan,apply}` (writes the two `GH_GOVERNANCE_APP_*` org

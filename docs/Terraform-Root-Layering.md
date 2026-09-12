@@ -7,6 +7,47 @@ root and when to split them into a new root. It pairs with the
 (`docs/runbooks/Terraform-Root-Layering.runbook.md`) that lists only its own
 current roots, state prefixes, and apply-role boundaries.
 
+## Which Layer a Root Belongs To
+
+This is the first question, and it has a narrow answer. **Layer 0 (`bootstrap/`)
+is only what the CI/CD pipeline depends on to run**: the remote-state bucket and
+lock table, the OIDC provider and the plan/apply/drift roles, the CI agenix
+keypair and the App credentials CI authenticates as, the deploy Environment and
+the branch protection that gates apply, and the break-glass role. Those are
+applied out-of-band by a human admin precisely because the pipeline cannot be
+what provisions its own credentials — see
+[Bootstrap layer separation](./Terraform-Agent-Development-Methodology.md#bootstrap-layer-separation).
+
+**Everything else is Layer 1+ and runs through the PR workflow.** Manual apply
+is a property of the root-of-trust, not a privilege that attaches to whatever
+happens to be important, org-wide, or hard to review. Use this test:
+
+> Would applying this root through CI make it possible for a faulty change to
+> destroy the pipeline's ability to run and fix itself?
+
+If no, it is Layer 1+, it lives under `terraform/`, it carries a
+`metadata.json`, and it is plan-comment-applied like every other root. Blast
+radius alone is not a Layer-0 criterion — a root can be large, org-wide, and
+still belong on the PR path; that is what plan review, the sensitive-change
+label, and the destroy/replace gates are for.
+
+Two corollaries worth stating, because they are easy to get wrong:
+
+- **GitHub org governance is Layer 1+.** Repositories, teams, memberships,
+  team grants, branch protection, rulesets, Environments, Actions
+  permissions/variables and labels are org policy, not pipeline plumbing. A
+  governance root belongs under `terraform/github/<org>-governance-prod` with
+  `credential_mode: "github-app"`. The one genuinely Layer-0 slice — the
+  Actions secrets holding the CI App credentials and the CI agenix key — is a
+  *separate*, small `bootstrap/` root, so that the pipeline's own credentials
+  are never writable by the pipeline.
+- **A root does not "graduate" out of `bootstrap/` on maturity.** There is no
+  probation period. The only reason a root is ever excluded from the
+  steady-state matrix is that it is mid-adoption, and that is expressed by
+  `adoption_pending: true` in its `metadata.json` under `terraform/` — not by
+  parking it in `bootstrap/`. See the
+  [import phase](./Terraform-Import-Phase.md) (M5-M7).
+
 ## Root Metadata
 
 Every managed root under `terraform/<provider>/<environment>` must include a

@@ -14,6 +14,15 @@ from CI triggers, CODEOWNERS-gated) and use the shared drivers in this repo:
 `terraform/aws/aws-bootstrap` and `terraform/github/github-bootstrap`. Each
 consumer repo wraps them in thin `just` targets.
 
+Keep this layer **small**. Manual apply is the cost of being the root of trust,
+not a general-purpose escape hatch, and every root parked here is a root that
+never gets a plan comment, a drift check, or a reviewed diff. If a root would
+not take the pipeline down when applied badly, it is Layer 1+ and belongs under
+`terraform/` — see
+[root layering](./Terraform-Root-Layering.md#which-layer-a-root-belongs-to).
+GitHub **org governance** in particular is Layer 1+: only the Actions secrets
+the pipeline authenticates with are Layer 0.
+
 This runbook uses placeholders — substitute your repo's values:
 
 - `<name>` — the bootstrap root name (e.g. the org-prefixed `…-prod`).
@@ -91,10 +100,12 @@ Run **after** the AWS bootstrap (GitHub state lives in the shared S3 backend).
    just github-bootstrap-apply github/<name>
    ```
 
-2. **Governance root (if present).** For the org governance root, the two
-   `GH_GOVERNANCE_APP_*` org secrets are bootstrapped with a targeted,
-   confirmation-gated plan so normal governance CI can authenticate with the
-   dedicated GitHub App:
+2. **Governance-secrets root (if present).** The two `GH_GOVERNANCE_APP_*`
+   secrets — and the CI agenix key alongside them — are bootstrapped with a
+   targeted, confirmation-gated plan so normal governance CI can authenticate
+   with the dedicated GitHub App. This root holds *only* those credentials; the
+   org governance model itself is a managed root under `terraform/github/` and
+   is never applied from here:
 
    ```bash
    just github-governance-app-secrets-plan
