@@ -31,34 +31,143 @@
 #
 # Usage: write-netrc.sh            (reads SETUP_NIX_GITHUB_TOKEN from the env)
 #        SETUP_NIX_NETRC_HOME=DIR  (test seam; defaults to $HOME)
-set -uo pipefail
+set -euo pipefail
 
-home="${SETUP_NIX_NETRC_HOME:-$HOME}"
 token="${SETUP_NIX_GITHUB_TOKEN:-}"
-
-mkdir -p "$home/.config/nix"
 
 if [[ -z "$token" ]]; then
   echo "netrc: no github token supplied; git+https fetches of private repos will fail"
   exit 0
 fi
 
-for netrc in "$home/.netrc" "$home/.config/nix/netrc"; do
-  umask 077
-  [[ -e "$netrc" ]] || : > "$netrc"
-  # Idempotent: this action can run more than once in a job, and appending a
-  # second stanza for the same machine would leave git using whichever it read
-  # first — a confusing, order-dependent failure if the tokens ever differ.
-  if ! grep -qE '^[[:space:]]*machine[[:space:]]+github\.com[[:space:]]*$' "$netrc" 2>/dev/null; then
-    {
-      # `login` is ignored by GitHub for PAT-over-https; x-access-token is the
-      # documented placeholder.
-      printf 'machine github.com\n'
-      printf '  login x-access-token\n'
-      printf '  password %s\n' "$token"
-    } >> "$netrc"
+if [[ "$token" == *$'\n'* || "$token" == *$'\r'* ]]; then
+  echo "netrc: refusing a github token containing a line break" >&2
+  exit 1
+fi
+
+netrc_home="${SETUP_NIX_NETRC_HOME:-${HOME:?HOME is not set}}"
+
+umask 077
+temporary_file=""
+
+cleanup_temporary_files() {
+  cleanup_status=$?
+  trap - EXIT
+  if [[ -n "$temporary_file" ]]; then
+    if [[ -e "$temporary_file" || -L "$temporary_file" ]]; then
+      rm -f -- "$temporary_file" || cleanup_status=1
+    fi
   fi
-  chmod 0600 "$netrc"
-done
+  exit "$cleanup_status"
+}
+
+trap cleanup_temporary_files EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+mkdir -p "$netrc_home/.config/nix"
+
+write_netrc() {
+  netrc="$1"
+  netrc_directory="${netrc%/*}"
+
+  # Replacing a symlink would sever an intentionally managed credential file,
+  # while following it would make the atomic rename target a different path.
+  # Persistent runners must surface that configuration instead of guessing.
+  if [[ -L "$netrc" ]]; then
+    echo "netrc: refusing to replace symlink: $netrc" >&2
+    return 1
+  fi
+  if [[ -e "$netrc" && ! -f "$netrc" ]]; then
+    echo "netrc: refusing to replace non-regular file: $netrc" >&2
+    return 1
+  fi
+
+  temporary_file="$(mktemp "$netrc_directory/.write-netrc.XXXXXX")"
+
+  # mktemp already obeys the restrictive umask. Keep an explicit chmod both as
+  # defence in depth and as a fail-closed check before credential bytes exist.
+  chmod 0600 "$temporary_file"
+
+  if [[ -e "$netrc" ]]; then
+    # A netrc machine entry starts at `machine HOST` and continues until the
+    # next machine/default/macdef entry. This removes every github.com record,
+    # whether its fields share the machine line or use conventional following
+    # lines, while emitting unrelated records without reconstructing them.
+    awk '
+      {
+        original = $0
+        parsed = $0
+        sub(/^[[:space:]]+/, "", parsed)
+        sub(/\r$/, "", parsed)
+
+        # A macdef body is opaque until its terminating blank line. In
+        # particular, a body line beginning with "machine github.com" is data,
+        # not a credential record boundary.
+        if (in_macdef) {
+          print original
+          if (parsed == "") in_macdef = 0
+          next
+        }
+
+        split(parsed, fields, /[[:space:]]+/)
+        keyword = tolower(fields[1])
+
+        if (keyword == "machine") {
+          host = tolower(fields[2])
+          dropping_github = (host == "github.com")
+          if (!dropping_github) {
+            print original
+          }
+          next
+        }
+
+        if (keyword == "macdef") {
+          dropping_github = 0
+          in_macdef = 1
+          print original
+          next
+        }
+
+        if (keyword == "default") {
+          dropping_github = 0
+        }
+
+        # Comments and visual separators are not credential fields. Preserve
+        # them byte-for-byte even when they sit between a removed GitHub record
+        # and the next machine/default record.
+        if (parsed == "" || substr(parsed, 1, 1) == "#") {
+          print original
+          next
+        }
+
+        if (!dropping_github) {
+          print original
+        }
+      }
+    ' "$netrc" > "$temporary_file"
+  fi
+
+  {
+    # `login` is ignored by GitHub for PAT-over-https; x-access-token is the
+    # documented placeholder.
+    printf 'machine github.com\n'
+    printf '  login x-access-token\n'
+    printf '  password %s\n' "$token"
+  } >> "$temporary_file"
+
+  chmod 0600 "$temporary_file"
+  mv -f -- "$temporary_file" "$netrc"
+  # The published pathname no longer exists. Stop tracking it so EXIT cannot
+  # remove an unrelated file that is later created at the old random name.
+  temporary_file=""
+}
+
+# Each file has its own atomic publication boundary. A failure while publishing
+# the second file returns nonzero; rerunning safely converges both files because
+# write_netrc removes every prior GitHub stanza before installing the new one.
+write_netrc "$netrc_home/.netrc"
+write_netrc "$netrc_home/.config/nix/netrc"
 
 echo "netrc: github.com credential written for git+https flake inputs"
