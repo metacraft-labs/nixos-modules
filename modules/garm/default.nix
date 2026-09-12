@@ -672,6 +672,7 @@
           runnerBootstrapTimeout = cp.runnerBootstrapTimeout;
           runnerGroup = cp.runnerGroup;
           enabled = cp.enabled;
+          aliasClasses = cp.aliasClasses;
           # (provider, manifestFile) candidates, in a STABLE order (the balancer
           # steps priorities down this list under `pack`).
           candidates = map (pn: {
@@ -1146,6 +1147,13 @@
                 log "capabilityPool '$cpname': provider '$prov' derive failed — skipped"
                 continue
               fi
+              # RC5 transitional bridge: append legacy alias class names verbatim
+              # (NOT linted — a name, not a proven capability) so a job still
+              # written `runs-on: <legacy-class>` matches this expanded pool by
+              # GitHub's subset rule while it migrates to capability labels.
+              # Dropping the alias (empty aliasClasses) removes the tag.
+              cpaliases="$(echo "$cp" | jq -r '(.aliasClasses // []) | join(",")')"
+              [ -n "$cpaliases" ] && tags="$tags,$cpaliases"
               if [ "$balance" = "pack" ]; then
                 prio=$(( base - idx )); [ "$prio" -lt 0 ] && prio=0
               else
@@ -3648,6 +3656,21 @@
                     type = types.str;
                     default = "";
                     description = "The `services.garm.github.<name>.credentialsName` the expanded pools authenticate with.";
+                  };
+                  aliasClasses = mkOption {
+                    type = types.listOf types.str;
+                    default = [ ];
+                    example = [ "eph-linux-x64" ];
+                    description = ''
+                      RC5 transitional legacy class names appended VERBATIM as tags
+                      to every pool this capabilityPool expands into (same semantics
+                      as `pools.<name>.aliasClasses`). A job still written
+                      `runs-on: <legacy-class>` then matches an expanded pool by
+                      GitHub's subset rule while it migrates to a capability label
+                      set. NEVER linted against the manifest (it is a name, not a
+                      proven capability). Keep while any consumer still names the
+                      legacy class; empty it to end the bridge.
+                    '';
                   };
                   image = mkOption {
                     type = types.str;
