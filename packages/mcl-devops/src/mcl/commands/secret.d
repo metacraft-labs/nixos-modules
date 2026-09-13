@@ -601,9 +601,9 @@ private int verifySecret(string secretFile, string[] recipients, string[] identi
         writeln();
         writefln("WARNING: stanza count (%d) != declared recipient count (%d).",
             stanzaTypes.length, recipients.length);
-        writeln("  This usually means `mcl secret re-encrypt` wasn't run after editing");
+        writeln("  This usually means `mcl-devops secret re-encrypt` wasn't run after editing");
         writeln("  the recipients list for service `", service, "`.");
-        writeln("  Fix: mcl secret re-encrypt --machine <machine> --service ", service);
+        writeln("  Fix: mcl-devops secret re-encrypt --machine <machine> --service ", service);
     }
 
     return 0;

@@ -139,7 +139,7 @@ CachePushPlan cachePushPlan(CachePushRequest request)
         case CacheBackend.none:
             return CachePushPlan(
                 commandName: "cache push skipped",
-                argv: ["mcl", "cache", "push-closure", "--backend", "none"] ~ request.storePaths,
+                argv: ["mcl-devops", "cache", "push-closure", "--backend", "none"] ~ request.storePaths,
                 controller: "none",
                 substituters: substituters,
                 externalCommand: false,

@@ -122,7 +122,7 @@ top@{ config, ... }:
               ];
               environment.etc."production-cutover-fixture".source = fixture;
               environment.systemPackages = [
-                self'.packages.mcl
+                self'.packages.mcl-devops
                 pkgs.attic-client
                 pkgs.jq
                 pkgs.openssh
@@ -151,7 +151,7 @@ top@{ config, ... }:
                 };
                 services.mcl-deployment-ssh-apply = {
                   enable = true;
-                  package = self'.packages.mcl;
+                  package = self'.packages.mcl-devops;
                   targetName = targetName;
                   manifestPrincipal = "mcl-deployment";
                   manifestPublicKeys = [ manifestPublicKey ];
@@ -214,7 +214,7 @@ top@{ config, ... }:
                 controller.succeed(f"nix path-info {shlex.quote(closure)}")
                 substituter = "http://attic:8080/${atticCacheName}"
                 controller.succeed(
-                    "mcl cache push-closure "
+                    "mcl-devops cache push-closure "
                     "--backend attic "
                     "--cache ${atticCacheName} "
                     "--target ${targetName} "
@@ -233,7 +233,7 @@ top@{ config, ... }:
                 restored_health = f"restored|5|test -e {closure}"
                 controller.succeed(
                     "${fakeClosureEnv} GITHUB_RUN_ID=9001 GITHUB_SHA=9999999999999999999999999999999999999999 "
-                    "mcl deploy-plan "
+                    "mcl-devops deploy-plan "
                     "--target ${targetName} "
                     f"--desired-system-path {shlex.quote(closure)} "
                     "--git-revision 9999999999999999999999999999999999999999 "
@@ -252,7 +252,7 @@ top@{ config, ... }:
 
             with subtest("shadow deploy is dry-run only and does not switch target"):
                 controller.succeed(
-                    "mcl deploy-ssh ${targetName} "
+                    "mcl-devops deploy-ssh ${targetName} "
                     "--manifest /tmp/cutover-manifest.json "
                     "--state-dir /tmp/shadow-state "
                     "--ssh-host target "
@@ -268,7 +268,7 @@ top@{ config, ... }:
                     "jq -s -e 'any(.[]; .phase == \"cache-push\" and .backend.controller == \"attic\" and .command.status == \"succeeded\")' /tmp/shadow-events.jsonl"
                 )
                 controller.succeed(
-                    "jq -s -e '[.[] | select(.phase == \"activate-requested\" and .command.name == \"mcl deploy-reconcile --dry-run\" and .command.status == \"pending\")] | length == 1' /tmp/shadow-events.jsonl"
+                    "jq -s -e '[.[] | select(.phase == \"activate-requested\" and .command.name == \"mcl-devops deploy-reconcile --dry-run\" and .command.status == \"pending\")] | length == 1' /tmp/shadow-events.jsonl"
                 )
                 controller.succeed(
                     "jq -s -e 'all(.[]; ((.command.argv | join(\" \") | ascii_downcase) | contains(\"cachix deploy activate\") | not))' /tmp/shadow-events.jsonl"
@@ -278,7 +278,7 @@ top@{ config, ... }:
                 target.succeed("install -d -m 0755 /var/lib/mcl-test")
                 target.succeed("printf 'success\\n' > /var/lib/mcl-test/next-generation")
                 controller.succeed(
-                    "mcl deploy-ssh ${targetName} "
+                    "mcl-devops deploy-ssh ${targetName} "
                     "--manifest /tmp/cutover-manifest.json "
                     "--state-dir /tmp/cutover-state "
                     "--ssh-host target "
@@ -295,7 +295,7 @@ top@{ config, ... }:
 
             with subtest("monitoring and event artifacts show healthy final generation"):
                 target.succeed(
-                    "mcl deploy-status summarize /var/log/mcl/deployments/${targetName}.jsonl "
+                    "mcl-devops deploy-status summarize /var/log/mcl/deployments/${targetName}.jsonl "
                     "--output /tmp/cutover-summary.md "
                     "--json-output /tmp/cutover-summary.json"
                 )
@@ -329,7 +329,7 @@ top@{ config, ... }:
                 target.succeed("printf 'failed-health\\n' > /var/lib/mcl-test/next-generation")
                 controller.succeed(
                     "${fakeClosureEnv} GITHUB_RUN_ID=9002 GITHUB_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "
-                    "mcl deploy-plan "
+                    "mcl-devops deploy-plan "
                     "--target ${targetName} "
                     f"--desired-system-path {shlex.quote(closure)} "
                     "--git-revision aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "
@@ -348,7 +348,7 @@ top@{ config, ... }:
                     "--state-dir /tmp/cutover-state"
                 )
                 controller.fail(
-                    "mcl deploy-ssh ${targetName} "
+                    "mcl-devops deploy-ssh ${targetName} "
                     "--manifest /tmp/rollback-manifest.json "
                     "--state-dir /tmp/cutover-state "
                     "--ssh-host target "
@@ -464,11 +464,11 @@ top@{ config, ... }:
               workflow = Path("${workflow}").read_text()
               setup_nix = Path("${setupNix}").read_text()
               cutover_doc = Path("${docs}/production-cutover.md").read_text()
-              deploy_spec = Path("${repoRoot}/packages/mcl/src/mcl/commands/deploy_spec.d").read_text()
+              deploy_spec = Path("${repoRoot}/packages/mcl-devops/src/mcl/commands/deploy_spec.d").read_text()
 
               assert gate["defaultCutoverPath"]["usesCachixDeploy"] is False, gate
               assert gate["defaultCutoverPath"]["cacheBackend"] == "attic", gate
-              assert gate["defaultCutoverPath"]["activation"] == "mcl deploy-ssh or mcl deploy-reconcile", gate
+              assert gate["defaultCutoverPath"]["activation"] == "mcl-devops deploy-ssh or mcl-devops deploy-reconcile", gate
               assert gate["firstTargetSelection"]["selectedProductionTarget"] is None, gate
               assert gate["firstTargetSelection"]["simulationTarget"]["production"] is False, gate
               assert gate["m7FullTopology"]["requiredBeforeFirstProductionTarget"] is True, gate

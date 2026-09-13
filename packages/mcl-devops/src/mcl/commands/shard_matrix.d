@@ -116,7 +116,7 @@ unittest
     else
     {
         import mcl.utils.path : rootDir;
-        auto flakeRef = rootDir.buildPath("packages/mcl/src/mcl/utils/test/nix/shard-matrix-ok");
+        auto flakeRef = rootDir.buildPath("packages/mcl-devops/src/mcl/utils/test/nix/shard-matrix-ok");
     }
 
     {
@@ -142,7 +142,7 @@ unittest
 unittest
 {
     import mcl.utils.path : rootDir;
-    auto flakeRef = rootDir.buildPath("packages/mcl/src/src/mcl/utils/test/nix/shard-matrix-no-shards");
+    auto flakeRef = rootDir.buildPath("packages/mcl-devops/src/src/mcl/utils/test/nix/shard-matrix-no-shards");
 
     auto shards = generateShardMatrix(flakeRef);
     assert(shards.include == []);

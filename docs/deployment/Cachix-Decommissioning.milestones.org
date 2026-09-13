@@ -8,7 +8,7 @@ about removing *our own use* of Cachix — NOT about removing Cachix support fro
 the tooling.
 
 *Reusable Cachix capabilities stay.* ~nixos-modules~ is general-purpose; its
-Cachix features (the ~mcl deploy-spec~ command and ~mcl.utils.cachix~, the
+Cachix features (the ~mcl-devops deploy-spec~ command and ~mcl.utils.cachix~, the
 ~cachix-deploy-metrics~ package/module, the Cachix cache-push backend, the
 ~deployment-cachix-fallback-simulation~ guardrail) remain available for anyone
 who wants them. Consumers instantiate policy; the library provides recipes.
@@ -26,8 +26,8 @@ binary-cache push/substitution, our monitoring of the Cachix Deploy API, our
   remains.
 
 * DONE  Cachix Deploy usage removed
-  The production activation path is Attic-only (~mcl deploy-ssh~ /
-  ~mcl deploy-reconcile~ / the pull-agent + forced-command ssh-apply). The
+  The production activation path is Attic-only (~mcl-devops deploy-ssh~ /
+  ~mcl-devops deploy-reconcile~ / the pull-agent + forced-command ssh-apply). The
   Cachix Deploy recipes were removed in ~metacraft-labs/infra~; infra tests now
   *enforce* that Cachix Deploy is not a production activation path or rollback
   fallback.

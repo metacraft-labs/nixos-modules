@@ -1,6 +1,6 @@
 # Secret Integration Test
 
-Integration tests for the `mcl secret` CLI command, exercising the full
+Integration tests for the `mcl-devops secret` CLI command, exercising the full
 encrypt / decrypt / re-encrypt flow against a real NixOS configuration.
 
 ## Running
@@ -17,7 +17,7 @@ Three components work together:
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `modules/host-info.nix`                  | NixOS option module — defines `mcl.host-info.configPath` (must be a valid relative subpath, validated via `lib.path.subpath.isValid`). Changed from `types.path` to `types.str` to avoid Nix store coercion. |
 | `modules/secrets.nix`                    | NixOS option module — defines `mcl.secrets.services.<name>.recipients` and derives the on-disk secrets directory from `configPath + "/secrets"`.                                                             |
-| `packages/mcl/src/mcl/commands/secret.d` | D CLI implementation — `mcl secret edit`, `re-encrypt`, and `re-encrypt-all` subcommands. Resolves `configPath` and `recipients` via `nix eval`, then invokes `age` for encryption/decryption.               |
+| `packages/mcl-devops/src/mcl/commands/secret.d` | D CLI implementation — `mcl-devops secret edit`, `re-encrypt`, and `re-encrypt-all` subcommands. Resolves `configPath` and `recipients` via `nix eval`, then invokes `age` for encryption/decryption.               |
 
 ### Key invariant
 
@@ -48,7 +48,7 @@ path (`/nix/store/...`), which would be read-only.
    - `test-secret-machine-vm` — a valid machine whose name ends in `-vm`,
      used to verify VM filtering in `list`.
 2. A `writeShellApplication` check that runs `test-mcl-secret.sh` with
-   `mcl`, `age`, `git`, and `nix` on `PATH`.
+   `mcl-devops`, `age`, `git`, and `nix` on `PATH`.
 
 The valid machines use test SSH keys from `test-keys/` and set
 `age.identityPaths` so their NixOS toplevels evaluate cleanly under
@@ -58,15 +58,15 @@ The valid machines use test SSH keys from `test-keys/` and set
 
 | Test | Subcommand                  | What it verifies                                                                                                                           |
 | ---- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1    | `mcl secret edit`           | Creates a new `.age` secret and decrypts it back                                                                                           |
-| 2    | `mcl secret edit`           | Edits an existing secret (overwrites ciphertext)                                                                                           |
-| 3    | `mcl secret re-encrypt`     | Re-encrypts a service folder; content is preserved                                                                                         |
-| 4    | `mcl secret re-encrypt-all` | Re-encrypts all services using `configPath`-derived paths                                                                                  |
-| 5    | `mcl secret list`           | Single machine, tree output: lists services and secrets                                                                                    |
-| 6    | `mcl secret list --json`    | Single machine, JSON output: service/secret keys                                                                                           |
-| 7    | `mcl secret list`           | All machines: machine name + indented services                                                                                             |
-| 8    | `mcl secret list`           | Resilience: `broken-machine` yields an ERROR marker (tree) / `__error__` (JSON) and is logged to stderr, while healthy machines still list |
-| 9    | `mcl secret list`           | VM filtering: `-vm` machine hidden by default, shown with `--include-vms`                                                                  |
+| 1    | `mcl-devops secret edit`           | Creates a new `.age` secret and decrypts it back                                                                                           |
+| 2    | `mcl-devops secret edit`           | Edits an existing secret (overwrites ciphertext)                                                                                           |
+| 3    | `mcl-devops secret re-encrypt`     | Re-encrypts a service folder; content is preserved                                                                                         |
+| 4    | `mcl-devops secret re-encrypt-all` | Re-encrypts all services using `configPath`-derived paths                                                                                  |
+| 5    | `mcl-devops secret list`           | Single machine, tree output: lists services and secrets                                                                                    |
+| 6    | `mcl-devops secret list --json`    | Single machine, JSON output: service/secret keys                                                                                           |
+| 7    | `mcl-devops secret list`           | All machines: machine name + indented services                                                                                             |
+| 8    | `mcl-devops secret list`           | Resilience: `broken-machine` yields an ERROR marker (tree) / `__error__` (JSON) and is logged to stderr, while healthy machines still list |
+| 9    | `mcl-devops secret list`           | VM filtering: `-vm` machine hidden by default, shown with `--include-vms`                                                                  |
 
 ### Test environment setup
 

@@ -33,6 +33,7 @@
     ./repro-deploy-agent-https.nix
     ./consumer-flake-attic.nix
     ./linux-vm-cloud-init
+    ./mcl-devops-rename.nix
     ./netbird-with-agenix.nix
     ./packages-ci-matrix.nix
     ./pre-commit.nix

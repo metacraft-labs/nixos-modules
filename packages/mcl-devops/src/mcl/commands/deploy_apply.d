@@ -491,7 +491,7 @@ int deployApplyImpl(DeployApplyArgs args, DeployApplyDependencies deps)
         ));
     }
 
-    emit("activate-requested", "mcl deploy-apply", ["mcl", "deploy-apply"], "succeeded", 0,
+    emit("activate-requested", "mcl-devops deploy-apply", ["mcl-devops", "deploy-apply"], "succeeded", 0,
         "", "command_failed", "", [
             "sequence": JSONValue(cast(long) manifestSequence(manifest)),
             "dryRun": JSONValue(args.dryRun),
@@ -500,7 +500,7 @@ int deployApplyImpl(DeployApplyArgs args, DeployApplyDependencies deps)
     if (args.dryRun)
     {
         markDeploymentState(args.stateDir, manifest, "succeeded", "Dry-run verified signed manifest.");
-        emit("complete", "mcl deploy-apply --dry-run", ["mcl", "deploy-apply", "--dry-run"], "succeeded", 0);
+        emit("complete", "mcl-devops deploy-apply --dry-run", ["mcl-devops", "deploy-apply", "--dry-run"], "succeeded", 0);
         return 0;
     }
 
@@ -550,7 +550,7 @@ int deployApplyImpl(DeployApplyArgs args, DeployApplyDependencies deps)
         {
             markDeploymentState(args.stateDir, manifest, "failed",
                 "Already-current lifecycle recovery hook is required.");
-            emit("complete", "mcl deploy-apply", ["mcl", "deploy-apply"],
+            emit("complete", "mcl-devops deploy-apply", ["mcl-devops", "deploy-apply"],
                 "failed", 1,
                 "Already-current lifecycle recovery hook is required",
                 "missing_already_current_recovery_hook", "", [
@@ -567,7 +567,7 @@ int deployApplyImpl(DeployApplyArgs args, DeployApplyDependencies deps)
         {
             markDeploymentState(args.stateDir, manifest, "failed",
                 "Already-current lifecycle recovery failed.");
-            emit("complete", "mcl deploy-apply", ["mcl", "deploy-apply"],
+            emit("complete", "mcl-devops deploy-apply", ["mcl-devops", "deploy-apply"],
                 "failed", recovery.exitCode,
                 "Already-current lifecycle recovery failed",
                 "already_current_recovery_failed", recovery.stderr.stderrSummary, [
@@ -581,7 +581,7 @@ int deployApplyImpl(DeployApplyArgs args, DeployApplyDependencies deps)
 
         markDeploymentState(args.stateDir, manifest, "succeeded",
             "Desired system generation was already current.");
-        emit("complete", "mcl deploy-apply", ["mcl", "deploy-apply"],
+        emit("complete", "mcl-devops deploy-apply", ["mcl-devops", "deploy-apply"],
             "succeeded", 0, "", "command_failed", "", [
                 "previousGeneration": JSONValue(previous),
                 "newGeneration": JSONValue(previous),
@@ -602,7 +602,7 @@ int deployApplyImpl(DeployApplyArgs args, DeployApplyDependencies deps)
     {
         markDeploymentState(args.stateDir, manifest, "failed",
             "Retry budget exhausted before exact-current recovery.");
-        emit("complete", "mcl deploy-apply", ["mcl", "deploy-apply"],
+        emit("complete", "mcl-devops deploy-apply", ["mcl-devops", "deploy-apply"],
             "failed", 1,
             "Retry budget exhausted before exact-current recovery",
             "retry_budget_exhausted", "", [
@@ -677,7 +677,7 @@ int deployApplyImpl(DeployApplyArgs args, DeployApplyDependencies deps)
             deferred
                 ? "Readiness hook deferred deployment; retry budget was not consumed."
                 : "Readiness hook failed.");
-        emit("complete", "mcl deploy-apply", ["mcl", "deploy-apply"],
+        emit("complete", "mcl-devops deploy-apply", ["mcl-devops", "deploy-apply"],
             deferred ? "skipped" : "failed",
             deferred ? deployApplyDeferredExitCode : 1,
             deferred ? "Deployment readiness conditions are not met."
@@ -880,7 +880,7 @@ int deployApplyImpl(DeployApplyArgs args, DeployApplyDependencies deps)
 
     markDeploymentState(args.stateDir, manifest, state, stateMessage);
     auto succeeded = state == "succeeded";
-    emit("complete", "mcl deploy-apply", ["mcl", "deploy-apply"],
+    emit("complete", "mcl-devops deploy-apply", ["mcl-devops", "deploy-apply"],
         succeeded ? "succeeded" : "failed", succeeded ? 0 : 1,
         succeeded ? "" : "Deployment did not converge",
         succeeded ? "command_failed" : "deployment_failed", "", [
@@ -1397,7 +1397,7 @@ unittest
     assert(events[0]["metadata"]["dryRun"].boolean);
     assert(events[1]["deploymentId"].str == "deploy-darwin-dry-run");
     assert(events[1]["phase"].str == "complete");
-    assert(events[1]["command"]["name"].str == "mcl deploy-apply --dry-run");
+    assert(events[1]["command"]["name"].str == "mcl-devops deploy-apply --dry-run");
     assert(events[1]["command"]["status"].str == "succeeded");
 
     // The otherwise-identical non-dry invocation must fail closed during

@@ -156,7 +156,7 @@ int deploySpecImpl(DeploySpecArgs args, DeploySpecDependencies deps, string depl
                 pkg.output,
                 usePrecomputedMatrix ? "precomputed CI matrix" : "nix-eval-jobs",
                 usePrecomputedMatrix
-                    ? ["mcl", "deploy-spec", "--precalc-matrix"]
+                    ? ["mcl-devops", "deploy-spec", "--precalc-matrix"]
                     : ["nix-eval-jobs", "--flake", deployableServerMachinesAttrPath],
                 "succeeded",
                 0,
@@ -193,7 +193,7 @@ int deploySpecImpl(DeploySpecArgs args, DeploySpecDependencies deps, string depl
                     pkg.name,
                     pkg.output,
                     "cache availability check",
-                    ["mcl", "deploy-spec"],
+                    ["mcl-devops", "deploy-spec"],
                     pkg.cachedAt.empty ? "failed" : "succeeded",
                     pkg.cachedAt.empty ? 1 : 0,
                     closure,
@@ -240,7 +240,7 @@ int deploySpecImpl(DeploySpecArgs args, DeploySpecDependencies deps, string depl
                 target,
                 systemPath,
                 "deploy spec reuse",
-                ["mcl", "deploy-spec"],
+                ["mcl-devops", "deploy-spec"],
                 "skipped",
                 0,
                 Nullable!ClosureSummary.init,
@@ -271,7 +271,7 @@ int deploySpecImpl(DeploySpecArgs args, DeploySpecDependencies deps, string depl
     // Final Results runner.
     //
     //   * Redundant: the matrix-build step in the reusable workflow already
-    //     ran `mcl cache push-closure` for every machine on the per-machine
+    //     ran `mcl-devops cache push-closure` for every machine on the per-machine
     //     runner where the closure was actually built. By the time deploy_spec
     //     runs on the aggregator (Final Results) runner, the closure narinfos
     //     are on the configured Cachix cache and the activation only needs

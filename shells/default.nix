@@ -64,7 +64,7 @@
 
           shellHook = ''
             export REPO_ROOT="$PWD"
-            export PATH="$REPO_ROOT/packages/mcl/build:$PATH"
+            export PATH="$REPO_ROOT/packages/mcl-devops/build:$PATH"
             figlet -t "Metacraft Nixos Modules"
           ''
           + config.pre-commit.installationScript;

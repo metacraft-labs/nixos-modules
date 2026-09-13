@@ -89,8 +89,8 @@ rehearsal defines the operator artifact format.
 
 The NixOS and nix-darwin modules wrap scheduled polls in `flock -n` using a
 per-target runtime lock file, so an overlapping timer invocation exits without
-starting another poll. Independently of those wrappers, `mcl deploy-agent`,
-`mcl deploy-apply`, and desired-state recording take a shared internal
+starting another poll. Independently of those wrappers, `mcl-devops deploy-agent`,
+`mcl-devops deploy-apply`, and desired-state recording take a shared internal
 per-target state lock under `stateDir/locks`. The internal lock is held from
 durable snapshot validation through the state transition, activation, events,
 and final status. Direct CLI callers therefore cannot bypass serialization,
@@ -117,7 +117,7 @@ inside the declaratively protected root-owned state directory it creates an
 absent `locks` child as `root:root` mode `0700`, or narrows a legitimate
 root-owned legacy `0750`/`0755` directory to `0700`. It binds the child with
 no-follow directory descriptors, refuses symlinks, non-directories, unexpected
-owners/groups or modes, and revalidates the inode after migration before `mcl`
+owners/groups or modes, and revalidates the inode after migration before `mcl-devops`
 can execute. Generic CLI callers remain fail-closed and never repair unsafe
 existing state.
 
@@ -150,7 +150,7 @@ Retry handling is bounded:
 
 ## Platform Activation And Lifecycle Hooks
 
-`mcl deploy-apply` and `mcl deploy-agent` default to
+`mcl-devops deploy-apply` and `mcl-devops deploy-agent` default to
 `--activation-mode nixos`. That mode retains the existing detached
 `systemd-run` invocation of `switch-to-configuration`; existing callers do not
 need new arguments.
@@ -270,7 +270,7 @@ enable, nix-darwin may load the job before advancing `/run/current-system`; the
 launcher waits up to 120 seconds for
 `/run/current-system/sw/bin/mcl-deploy-agent`, reports a diagnostic, and exits
 75 if that bounded activation window expires. Once available, that stable
-wrapper resolves the current generation's `mcl`, trust file, and lifecycle
+wrapper resolves the current generation's `mcl-devops`, trust file, and lifecycle
 hooks. Agent-package changes therefore leave the plist and launcher identical,
 so an agent can activate its own replacement without launchd unloading it.
 
@@ -339,7 +339,7 @@ Current automated coverage:
 - NixOS VM test proving the service-held lock rejects a concurrent contender
   and releases after the service exits.
 - NixOS VM test proving absent and legitimate legacy lock directories become
-  exact `root:root` `0700` before `mcl`, while symlink, non-directory,
+  exact `root:root` `0700` before `mcl-devops`, while symlink, non-directory,
   hardlinked, wrong-owner, and wrong-group objects fail closed without mutation
   or deployment.
 - Darwin activation integration populates every restore, generation, lifecycle

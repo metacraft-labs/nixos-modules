@@ -1395,7 +1395,7 @@ bool isCached(in Package pkg, string binaryCacheHttpEndpoint, in string[string] 
     // the job at its 6 h hard ceiling (observed on PRs against
     // ``nix-blockchain-development`` and on the same repo's main
     // branch CI -- ``Generate Shard Matrix`` consistently times out
-    // at 6 h with orphan ``nix-eval-jobs`` and ``.mcl-wrapped``
+    // at 6 h with orphan ``nix-eval-jobs`` and ``.mcl-devops-wrapped``
     // processes still running).  Cap each request at 10 s to connect
     // and 30 s of total transfer time so a single misbehaving
     // narinfo lookup degrades gracefully instead of taking down the

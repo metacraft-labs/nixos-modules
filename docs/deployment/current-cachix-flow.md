@@ -3,25 +3,25 @@
 The current production-capable deploy path is the reusable GitHub Actions
 workflow documented in [current-flow-inventory.json](current-flow-inventory.json).
 As of c056211 the in-CI Cachix Deploy activation was removed: the
-`run-cachix-deploy` gate, the `mcl deploy-spec` activation step, and all
+`run-cachix-deploy` gate, the `mcl-devops deploy-spec` activation step, and all
 `CACHIX_*` workflow inputs no longer exist. A single `push-deployment-caches`
 gate now controls deployment-closure publication to the Attic deployment cache
 backend, and activation is performed out-of-band by an operator via
-`mcl deploy-ssh` / `mcl deploy-reconcile`.
+`mcl-devops deploy-ssh` / `mcl-devops deploy-reconcile`.
 
 ## CI Flow
 
 1. `compute-mcl-ref` computes the reusable workflow revision and exposes an
-   `mcl` command such as `nix run ...#mcl`.
-2. `shard-matrix` runs `mcl shard-matrix` to discover systems and shard work.
-3. `eval-matrix` runs `mcl ci-matrix --flake-attribute-path ... --is-initial`
+   `mcl-devops` command such as `nix run ...#mcl-devops`.
+2. `shard-matrix` runs `mcl-devops shard-matrix` to discover systems and shard work.
+3. `eval-matrix` runs `mcl-devops ci-matrix --flake-attribute-path ... --is-initial`
    for each evaluation shard and uploads matrix artifacts.
-4. `merge-matrices` runs `mcl merge-ci-matrices` and publishes the merged
+4. `merge-matrices` runs `mcl-devops merge-ci-matrices` and publishes the merged
    package table.
 5. `build` runs `nix build -L --no-link --keep-going --show-trace
 '.#${{ matrix.attrPath }}'` for each matrix item.
 6. When `inputs.push-deployment-caches` is true, `build` runs
-   `mcl cache push-closure` for each deployment target and the configured
+   `mcl-devops cache push-closure` for each deployment target and the configured
    `deployment-cache-push-backends` (`attic` by default, with `none` as the
    only non-Attic option), using the Attic CI transport (`--transport
 attic-ci`).
@@ -29,8 +29,8 @@ attic-ci`).
    to self-hosted Linux fleet runner labels. It prints the final matrix and
    updates the pull request comment.
 8. There is no longer an in-CI activation step. The removed `run-cachix-deploy`
-   gate and `mcl deploy-spec` step have no replacement in the workflow;
-   activation happens out-of-band via `mcl deploy-ssh` / `mcl deploy-reconcile`.
+   gate and `mcl-devops deploy-spec` step have no replacement in the workflow;
+   activation happens out-of-band via `mcl-devops deploy-ssh` / `mcl-devops deploy-reconcile`.
 
 ## Target Activation Flow
 
@@ -43,9 +43,9 @@ deployment cache.
 Activation is performed out-of-band by an operator after CI publishes the
 closure. The supported activation paths are:
 
-- `mcl deploy-ssh` for a supervised, signed, forced-command SSH push to a
+- `mcl-devops deploy-ssh` for a supervised, signed, forced-command SSH push to a
   single target; and
-- `mcl deploy-reconcile` for the state-directory reconciler / pull-agent path.
+- `mcl-devops deploy-reconcile` for the state-directory reconciler / pull-agent path.
 
 A manual `cachix deploy activate` fallback remains available to operators only
 as an explicit rollback window during the operational retirement; it is not part
@@ -62,7 +62,7 @@ captured — gaps the previous Cachix Deploy path left outside the workflow.
 | Store path           | Build matrix `matrix.output`                                                                        | Expected to be a NixOS system toplevel.                                                     |
 | Closure size         | Not recorded by the workflow today                                                                  | M1+ event emission should record closure count and bytes.                                   |
 | Attic cache          | GitHub variables `ATTIC_CACHE`, `ATTIC_SUBSTITUTER`, `ATTIC_TRUSTED_PUBLIC_KEY`                     | Used when `deployment-cache-push-backends` includes `attic`.                                |
-| Substituters         | GitHub variable `SUBSTITUTERS` plus default cache URLs supplied to `mcl`                            | Used for Nix setup and cache-status checks.                                                 |
+| Substituters         | GitHub variable `SUBSTITUTERS` plus default cache URLs supplied to `mcl-devops`                            | Used for Nix setup and cache-status checks.                                                 |
 | Trusted public keys  | GitHub variable `TRUSTED_PUBLIC_KEYS`                                                               | Required for substituter trust on runners.                                                  |
 | Results runner       | Workflow input `results-runner`, JSON default `["self-hosted", "nixos", "x86-64-v2", "bare-metal"]` | Keeps deploy orchestration on self-hosted runners by default.                               |
 | Deploy token         | Removed in c056211 (`CACHIX_ACTIVATE_TOKEN` no longer passed to CI)                                 | There is no in-CI activation step; activation is out-of-band.                               |
@@ -123,4 +123,4 @@ alone.
 - The current Cachix Deploy metrics exporter observes Cachix Deploy API status
   only; it is not fed by the new event stream.
 - There is no deployment correlation id propagated through the workflow,
-  `mcl`, target logs, metrics, and status artifacts.
+  `mcl-devops`, target logs, metrics, and status artifacts.

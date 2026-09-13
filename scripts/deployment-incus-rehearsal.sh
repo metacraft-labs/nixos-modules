@@ -184,7 +184,7 @@ attic-cache rehearsal plan:
   2. Start atticd in ${cache_container} on port 8080 and proxy it to 127.0.0.1:${host_port}.
   3. Create public Attic cache ${cache_name} with a deterministic test token.
   4. Build a small host fixture closure.
-  5. Run mcl cache push-closure with --backend attic, --substituter, and --require-substitute.
+  5. Run mcl-devops cache push-closure with --backend attic, --substituter, and --require-substitute.
   6. Restore the fixture from Attic inside ${client_container} using nix copy.
   7. Remove containers unless MCL_ATTIC_INCUS_KEEP=1 is set.
 EOF
@@ -338,7 +338,7 @@ run_attic_cache() {
   public_key="$("${attic_client_pkg}/bin/attic" cache info "$cache_name" 2>&1 | sed -n 's/.*Public Key: //p')"
   [[ -n "$public_key" ]] || die "failed to discover Attic public key"
 
-  nix "${nix_features[@]}" run "$repo_root#mcl" -- cache push-closure \
+  nix "${nix_features[@]}" run "$repo_root#mcl-devops" -- cache push-closure \
     --backend attic \
     --cache "$cache_name" \
     --target "$client_container" \
@@ -749,9 +749,9 @@ def event(event_type, **fields):
     events.append(record)
 
 runtime_commands = [
-    "mcl deploy-plan --synthetic-rehearsal",
-    "mcl deploy-reconcile --synthetic-rehearsal",
-    "mcl deploy-ssh --synthetic-rehearsal",
+    "mcl-devops deploy-plan --synthetic-rehearsal",
+    "mcl-devops deploy-reconcile --synthetic-rehearsal",
+    "mcl-devops deploy-ssh --synthetic-rehearsal",
 ]
 
 if scenario == "full-topology":

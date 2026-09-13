@@ -105,7 +105,7 @@
                     assert outputs["workflow_sha"] == expected_ref, (name, outputs)
                     expected_cmd = (
                         "nix --option download-attempts 5 run --accept-flake-config "
-                        f"github:metacraft-labs/nixos-modules/{expected_ref}#mcl"
+                        f"github:metacraft-labs/nixos-modules/{expected_ref}#mcl-devops"
                     )
                     assert outputs["mcl_flake_cmd"] == expected_cmd, (name, outputs)
                     assert "{" not in outputs["mcl_flake_cmd"], (name, outputs)

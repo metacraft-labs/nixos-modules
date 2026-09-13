@@ -40,9 +40,35 @@ let
       "generateShardMatrix"
     ]
   );
+
+  # metacraft-cli.md §2.5 — "the deprecation shim fails. It does not forward."
+  #
+  # During the rename window this package still ships `bin/mcl`, but invoking
+  # it prints the new name plus the arguments it was given and exits non-zero
+  # without doing anything. A forwarding shim would keep stale call sites alive,
+  # and those are exactly the sites that become dangerous once the name `mcl`
+  # is rebound to the (unrelated) end-user client — a loud failure now is
+  # cheaper than a silent retarget later.
+  #
+  # REMOVE THIS STUB before the new `mcl` client is published: at no instant may
+  # two packages provide `bin/mcl`. `checks/mcl-devops-rename.nix` enforces both
+  # halves of that (exactly one provider, and during the window it is this stub).
+  deprecationStub = pkgs.writeShellScript "mcl-renamed-to-mcl-devops" ''
+    {
+      echo "mcl: this tool has been renamed to 'mcl-devops'."
+      if [ "$#" -gt 0 ]; then
+        echo "mcl: you invoked : mcl $*"
+        echo "mcl: run instead : mcl-devops $*"
+      else
+        echo "mcl: run 'mcl-devops' instead."
+      fi
+      echo "mcl: this stub deliberately does not forward; see metacraft-specs/infrastructure/metacraft-cli.md section 2.5."
+    } >&2
+    exit 64
+  '';
 in
 pkgs.buildDubPackage rec {
-  pname = "mcl";
+  pname = "mcl-devops";
   version = "unstable";
 
   src = lib.fileset.toSource {
@@ -82,6 +108,12 @@ pkgs.buildDubPackage rec {
     runHook preInstall
     install -Dm755 ./build/${pname} -t $out/bin/
     runHook postInstall
+  '';
+
+  # Installed in postInstall rather than postFixup so that `wrapProgram` below
+  # (which runs in postFixup and touches only ${pname}) never wraps the stub.
+  postInstall = ''
+    install -Dm755 ${deprecationStub} $out/bin/mcl
   '';
 
   dontStrip = true;

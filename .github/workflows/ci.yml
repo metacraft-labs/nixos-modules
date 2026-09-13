@@ -49,8 +49,8 @@ jobs:
           substituters: ${{ vars.SUBSTITUTERS }}
           devshell: default
 
-      - name: Build and test the `mcl` command
-        run: dub test --root packages/mcl -- -e 'fetchJson|(coda\.)|nix.run|nix.build'
+      - name: Build and test the `mcl-devops` command
+        run: dub test --root packages/mcl-devops -- -e 'fetchJson|(coda\.)|nix.run|nix.build'
 
   # Regression test for the setup-nix action: a devShell that fails to build
   # must make the action fail (not silently report success and surface later as
@@ -169,7 +169,7 @@ jobs:
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
 
-      - name: Run mcl secret integration tests
+      - name: Run mcl-devops secret integration tests
         run: nix run .#checks.x86_64-linux.secret-integration
 
   ci:

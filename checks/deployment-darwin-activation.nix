@@ -95,7 +95,7 @@
         pkgs.runCommand "deployment-darwin-activation-integration"
           {
             nativeBuildInputs = [
-              self'.packages.mcl
+              self'.packages.mcl-devops
               pkgs.coreutils
               pkgs.jq
               pkgs.nix
@@ -130,7 +130,7 @@
               local sequence=$2
               local output=$3
               shift 3
-              mcl deploy-plan \
+              mcl-devops deploy-plan \
                 --target m3 \
                 --system aarch64-darwin \
                 --desired-system-path "$desired" \
@@ -158,7 +158,7 @@
             success_state="$MCL_DARWIN_TEST_ROOT/success-state"
             success_events="$MCL_DARWIN_TEST_ROOT/success-events.jsonl"
             make_manifest ${desiredGeneration} 1 "$success_manifest"
-            mcl deploy-apply \
+            mcl-devops deploy-apply \
               --manifest "$success_manifest" \
               --target m3 \
               --trusted-manifest-public-key ${pkgs.lib.escapeShellArg manifestPublicKey} \
@@ -192,7 +192,7 @@
             failure_state="$MCL_DARWIN_TEST_ROOT/activation-failure-state"
             failure_events="$MCL_DARWIN_TEST_ROOT/activation-failure-events.jsonl"
             make_manifest ${failingGeneration} 2 "$failure_manifest"
-            if mcl deploy-apply \
+            if mcl-devops deploy-apply \
               --manifest "$failure_manifest" \
               --target m3 \
               --trusted-manifest-public-key ${pkgs.lib.escapeShellArg manifestPublicKey} \
@@ -229,7 +229,7 @@
               --rollback-mode automatic \
               --rollback-max-attempts 1 \
               --on-health-check-failure rollback
-            if mcl deploy-apply \
+            if mcl-devops deploy-apply \
               --manifest "$health_manifest" \
               --target m3 \
               --trusted-manifest-public-key ${pkgs.lib.escapeShellArg manifestPublicKey} \
@@ -262,7 +262,7 @@
             deferred_events="$MCL_DARWIN_TEST_ROOT/deferred-events.jsonl"
             make_manifest ${desiredGeneration} 4 "$deferred_manifest"
             for poll in 1 2 3; do
-              mcl deploy-agent \
+              mcl-devops deploy-agent \
                 --manifest "$deferred_manifest" \
                 --target m3 \
                 --trusted-manifest-public-key ${pkgs.lib.escapeShellArg manifestPublicKey} \
@@ -325,7 +325,7 @@
             fatal_generation='printf generation > "$MCL_DARWIN_TEST_ROOT/unexpected-generation"; exit 97'
             fatal_switch='printf switch > "$MCL_DARWIN_TEST_ROOT/unexpected-switch"; exit 97'
             fatal_rollback='printf rollback > "$MCL_DARWIN_TEST_ROOT/unexpected-rollback"; exit 97'
-            mcl deploy-apply \
+            mcl-devops deploy-apply \
               --manifest "$dry_manifest" \
               --target m3 \
               --trusted-manifest-public-key ${pkgs.lib.escapeShellArg manifestPublicKey} \
@@ -372,7 +372,7 @@
                 and .[0].metadata.sequence == 5
                 and .[0].metadata.dryRun == true
                 and .[1].phase == "complete"
-                and .[1].command.name == "mcl deploy-apply --dry-run"
+                and .[1].command.name == "mcl-devops deploy-apply --dry-run"
                 and .[1].command.status == "succeeded"' \
               "$dry_events" >/dev/null
 
@@ -467,7 +467,7 @@
               profile_link=$(readlink "$dry_profile")
               generation_link=$(readlink "$dry_profile-1-link")
 
-              SSH_ORIGINAL_COMMAND= mcl deploy-apply \
+              SSH_ORIGINAL_COMMAND= mcl-devops deploy-apply \
                 --manifest - \
                 --target m3 \
                 --trusted-manifest-public-key ${pkgs.lib.escapeShellArg manifestPublicKey} \
@@ -519,7 +519,7 @@
               events_sha=$(sha256sum "$events" | cut -d' ' -f1)
 
               set +e
-              SSH_ORIGINAL_COMMAND= mcl deploy-apply \
+              SSH_ORIGINAL_COMMAND= mcl-devops deploy-apply \
                 --manifest - \
                 --target m3 \
                 --trusted-manifest-public-key ${pkgs.lib.escapeShellArg manifestPublicKey} \
@@ -583,7 +583,7 @@
             # native Darwin activation and must fail before state or events.
             non_dry_state="$MCL_DARWIN_TEST_ROOT/non-dry-poison-state"
             non_dry_events="$MCL_DARWIN_TEST_ROOT/non-dry-poison-events.jsonl"
-            if mcl deploy-apply \
+            if mcl-devops deploy-apply \
               --manifest "$dry_manifest" \
               --target m3 \
               --trusted-manifest-public-key ${pkgs.lib.escapeShellArg manifestPublicKey} \
