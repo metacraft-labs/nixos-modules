@@ -68,9 +68,119 @@ trap 'exit 143' TERM
 
 mkdir -p "$netrc_home/.config/nix"
 
-write_netrc() {
-  netrc="$1"
-  netrc_directory="${netrc%/*}"
+filter_existing_netrc() {
+  # This helper runs before setup-nix has established a Nix toolchain. Keep the
+  # parser in Bash so a deliberately minimal runner PATH is sufficient. The
+  # implementation is line-oriented because a macdef body is opaque until its
+  # terminating blank line; interpreting tokens inside one could mistake macro
+  # data for a credential record.
+  local line=""
+  local line_has_newline=0
+  local parsed_line=""
+  local keyword=""
+  local host=""
+  local in_macdef=0
+  local dropping_github=0
+  local emitted_bytes=0
+  local emitted_newline=1
+  # Bash 3.2 treats literal capture parentheses on the right-hand side of
+  # `=~` as shell syntax. Passing the expressions through variables keeps them
+  # regular-expression data while still populating BASH_REMATCH.
+  local keyword_pattern='^[[:space:]]*([^[:space:]]+)'
+  local machine_host_pattern='^[[:space:]]*[^[:space:]]+[[:space:]]+([^[:space:]]+)'
+
+  while :; do
+    line=""
+    if IFS= read -r line; then
+      line_has_newline=1
+    elif [[ -n "$line" ]]; then
+      line_has_newline=0
+    else
+      break
+    fi
+
+    # read removes only LF. Retain a CR for byte-identical output, but exclude
+    # it from token and blank-line recognition for CRLF-formatted files.
+    parsed_line="${line%$'\r'}"
+
+    if [[ "$in_macdef" -eq 1 ]]; then
+      if [[ "$line_has_newline" -eq 1 ]]; then
+        printf '%s\n' "$line"
+        emitted_newline=1
+      else
+        printf '%s' "$line"
+        emitted_newline=0
+      fi
+      emitted_bytes=1
+
+      if [[ "$parsed_line" =~ ^[[:space:]]*$ ]]; then
+        in_macdef=0
+      fi
+    else
+      keyword=""
+      host=""
+      if [[ "$parsed_line" =~ $keyword_pattern ]]; then
+        keyword="${BASH_REMATCH[1]}"
+      fi
+
+      # Spell out ASCII case folding instead of using ${value,,}, which was
+      # added after the Bash 3.2 still shipped by macOS.
+      case "$keyword" in
+        [Mm][Aa][Cc][Hh][Ii][Nn][Ee])
+          if [[ "$parsed_line" =~ $machine_host_pattern ]]; then
+            host="${BASH_REMATCH[1]}"
+          fi
+          dropping_github=0
+          case "$host" in
+            [Gg][Ii][Tt][Hh][Uu][Bb].[Cc][Oo][Mm]) dropping_github=1 ;;
+          esac
+          ;;
+        [Mm][Aa][Cc][Dd][Ee][Ff])
+          dropping_github=0
+          in_macdef=1
+          ;;
+        [Dd][Ee][Ff][Aa][Uu][Ll][Tt])
+          dropping_github=0
+          ;;
+      esac
+
+      # Comments and visual separators are not credential fields. Preserve
+      # them even while removing the surrounding GitHub credential record.
+      if [[ "$dropping_github" -eq 0 || -z "$keyword" || "$keyword" == \#* ]]; then
+        if [[ "$line_has_newline" -eq 1 ]]; then
+          printf '%s\n' "$line"
+          emitted_newline=1
+        else
+          printf '%s' "$line"
+          emitted_newline=0
+        fi
+        emitted_bytes=1
+      fi
+    fi
+
+    if [[ "$line_has_newline" -eq 0 ]]; then
+      break
+    fi
+  done
+
+  # A machine stanza appended after an unterminated macdef would still be part
+  # of the macro body, so git would never see the credential. Refuse to
+  # publish a replacement instead of reporting success with a malformed file.
+  if [[ "$in_macdef" -eq 1 ]]; then
+    echo "netrc: refusing to append after an unterminated macdef" >&2
+    return 65
+  fi
+
+  # A final unrelated field without LF is preserved verbatim by the loop. Add
+  # only the structural separator required to keep the new machine record from
+  # becoming part of that field.
+  if [[ "$emitted_bytes" -eq 1 && "$emitted_newline" -eq 0 ]]; then
+    printf '\n'
+  fi
+}
+
+validate_netrc_target() {
+  local netrc="$1"
 
   # Replacing a symlink would sever an intentionally managed credential file,
   # while following it would make the atomic rename target a different path.
@@ -83,6 +193,16 @@ write_netrc() {
     echo "netrc: refusing to replace non-regular file: $netrc" >&2
     return 1
   fi
+}
+
+write_netrc() {
+  netrc="$1"
+  netrc_directory="${netrc%/*}"
+
+  # Validate again immediately before reading. The up-front validation below
+  # prevents a known-invalid second destination from partially rotating the
+  # first; this second check narrows the remaining check/use window.
+  validate_netrc_target "$netrc"
 
   temporary_file="$(mktemp "$netrc_directory/.write-netrc.XXXXXX")"
 
@@ -95,58 +215,7 @@ write_netrc() {
     # next machine/default/macdef entry. This removes every github.com record,
     # whether its fields share the machine line or use conventional following
     # lines, while emitting unrelated records without reconstructing them.
-    awk '
-      {
-        original = $0
-        parsed = $0
-        sub(/^[[:space:]]+/, "", parsed)
-        sub(/\r$/, "", parsed)
-
-        # A macdef body is opaque until its terminating blank line. In
-        # particular, a body line beginning with "machine github.com" is data,
-        # not a credential record boundary.
-        if (in_macdef) {
-          print original
-          if (parsed == "") in_macdef = 0
-          next
-        }
-
-        split(parsed, fields, /[[:space:]]+/)
-        keyword = tolower(fields[1])
-
-        if (keyword == "machine") {
-          host = tolower(fields[2])
-          dropping_github = (host == "github.com")
-          if (!dropping_github) {
-            print original
-          }
-          next
-        }
-
-        if (keyword == "macdef") {
-          dropping_github = 0
-          in_macdef = 1
-          print original
-          next
-        }
-
-        if (keyword == "default") {
-          dropping_github = 0
-        }
-
-        # Comments and visual separators are not credential fields. Preserve
-        # them byte-for-byte even when they sit between a removed GitHub record
-        # and the next machine/default record.
-        if (parsed == "" || substr(parsed, 1, 1) == "#") {
-          print original
-          next
-        }
-
-        if (!dropping_github) {
-          print original
-        }
-      }
-    ' "$netrc" > "$temporary_file"
+    filter_existing_netrc < "$netrc" > "$temporary_file"
   fi
 
   {
@@ -167,7 +236,11 @@ write_netrc() {
 # Each file has its own atomic publication boundary. A failure while publishing
 # the second file returns nonzero; rerunning safely converges both files because
 # write_netrc removes every prior GitHub stanza before installing the new one.
-write_netrc "$netrc_home/.netrc"
-write_netrc "$netrc_home/.config/nix/netrc"
+user_netrc="$netrc_home/.netrc"
+nix_netrc="$netrc_home/.config/nix/netrc"
+validate_netrc_target "$user_netrc"
+validate_netrc_target "$nix_netrc"
+write_netrc "$user_netrc"
+write_netrc "$nix_netrc"
 
 echo "netrc: github.com credential written for git+https flake inputs"

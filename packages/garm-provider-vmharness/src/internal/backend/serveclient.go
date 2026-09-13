@@ -113,6 +113,13 @@ type execRequest struct {
 	Argv       []string `json:"argv"`
 	Stdin      string   `json:"stdin"`
 	TimeoutSec int      `json:"timeoutSec"`
+	// UserData carries raw cloud-init user-data bytes (e.g. the rendered runner
+	// bootstrap). When non-empty the daemon materializes it to a per-request
+	// 0600 temp file and appends `--user-data <path>` to the worker argv, so
+	// the token-bearing bytes reach the remote guest without the client needing
+	// a filesystem path on the daemon host. omitempty keeps the wire clean (and
+	// backward compatible with a daemon that predates the field) when unset.
+	UserData string `json:"userData,omitempty"`
 }
 
 // Info issues GET /v1/info and returns the decoded capability report. A wrong
@@ -151,7 +158,16 @@ func (c *ServeClient) Info(ctx context.Context) (map[string]any, error) {
 // stream that ends without an exit event is an error (carrying any `error`
 // event message), mirroring the Nim client's contract exactly.
 func (c *ServeClient) ExecStream(ctx context.Context, argv []string, onEvent func(ExecEvent)) (int, error) {
-	reqBody, err := json.Marshal(execRequest{V: ProtocolVersion, Argv: argv})
+	return c.ExecStreamWithUserData(ctx, argv, "", onEvent)
+}
+
+// ExecStreamWithUserData is ExecStream plus a cloud-init user-data payload. When
+// userData is non-empty the daemon writes it to a per-request 0600 temp file and
+// appends `--user-data <path>` to the worker argv (see serve/server.applyUserData),
+// so the rendered runner bootstrap reaches a remote ephemeral guest. userData may
+// carry a runner registration token and is never logged by the client or daemon.
+func (c *ServeClient) ExecStreamWithUserData(ctx context.Context, argv []string, userData string, onEvent func(ExecEvent)) (int, error) {
+	reqBody, err := json.Marshal(execRequest{V: ProtocolVersion, Argv: argv, UserData: userData})
 	if err != nil {
 		return -1, err
 	}

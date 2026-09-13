@@ -39,7 +39,10 @@ const testToken = "unit-bearer-3f9a2c"
 // fakeServe records exec argvs and replies with the RA1 wire contract.
 type fakeServe struct {
 	execArgv [][]string
-	exitCode int
+	// execUserData records the /v1/exec `userData` field per request (parallel
+	// to execArgv) so a test can prove the rendered bootstrap crosses the wire.
+	execUserData []string
+	exitCode     int
 }
 
 func (f *fakeServe) handler() http.Handler {
@@ -69,6 +72,7 @@ func (f *fakeServe) handler() http.Handler {
 			return
 		}
 		f.execArgv = append(f.execArgv, req.Argv)
+		f.execUserData = append(f.execUserData, req.UserData)
 		fl, _ := w.(http.Flusher)
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		w.WriteHeader(http.StatusOK)
@@ -145,6 +149,45 @@ func TestRemoteCreateIncusRecipe(t *testing.T) {
 	assertContains(t, argv, "--base-image", "runner-linux")
 	if !hasFlag(argv, "--ephemeral") || !hasFlag(argv, "--keep") {
 		t.Fatalf("incus create argv missing --ephemeral/--keep: %v", argv)
+	}
+}
+
+func TestRemoteCreateShipsBootstrapAsUserData(t *testing.T) {
+	// RB2: the rendered runner bootstrap must cross the wire as /v1/exec
+	// `userData` so the daemon can inject it as the guest's cloud-init user-data.
+	b, fs, closeFn := newFakeBackend(t, "incus", 0)
+	defer closeFn()
+	const bootstrap = "#!/bin/bash\n# runner install (JIT token redacted)\n./config.sh --jitconfig XYZ\n"
+	if _, err := b.Create(context.Background(), CreateArgs{
+		Name:        "job-77",
+		SourceImage: "runner-linux",
+		Bootstrap:   []byte(bootstrap),
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if len(fs.execUserData) != 1 {
+		t.Fatalf("expected 1 exec, got %d", len(fs.execUserData))
+	}
+	if fs.execUserData[0] != bootstrap {
+		t.Fatalf("userData over the wire = %q, want the rendered bootstrap %q", fs.execUserData[0], bootstrap)
+	}
+	// The bootstrap travels alongside the argv, never inside it (the daemon
+	// stages it to a file and appends --user-data itself).
+	if hasFlag(fs.execArgv[0], "--user-data") {
+		t.Fatalf("bootstrap must not be baked into argv: %v", fs.execArgv[0])
+	}
+}
+
+func TestRemoteCreateWithoutBootstrapSendsNoUserData(t *testing.T) {
+	// The noop test recipe (and any create with no rendered tools) sends an
+	// empty userData, so the daemon appends no --user-data flag.
+	b, fs, closeFn := newFakeBackend(t, "noop", 0)
+	defer closeFn()
+	if _, err := b.Create(context.Background(), CreateArgs{Name: "job-0"}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if len(fs.execUserData) != 1 || fs.execUserData[0] != "" {
+		t.Fatalf("expected empty userData, got %q", fs.execUserData)
 	}
 }
 

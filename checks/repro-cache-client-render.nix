@@ -16,8 +16,17 @@ top@{ ... }:
   # retired; see Binary-Caches.md §"Client CLI Surface".)
   #
   # The home-manager module class shares the SAME renderer + option schema (one
-  # definition in modules/mcl-reprobuild), so this render proof covers it too;
+  # definition, in reprobuild's own nix/modules/reprobuild.nix, which this repo
+  # re-exports as mcl-reprobuild), so this render proof covers it too;
   # ~/dotfiles additionally evaluates the home config as its own build.
+  #
+  # It also gates the PER-USER DAEMON: Distribution-And-Packaging M4 made
+  # `enableUserDaemon` render a NixOS `systemd.user` unit (not only a
+  # home-manager one), and a unit file that exists is not a daemon that runs.
+  # The subtest below boots a lingering user, waits for the unit to reach
+  # `active`, and then makes `repro` complete an IPC round-trip with it —
+  # cross-checking the pid the daemon reports over the socket against the pid
+  # systemd supervises.
   #
   # NON-VACUITY: the assertions check the EXACT 130-hex key string, the exact
   # url, and the exact priority line. A missing key, a wrong key, or a wrong
@@ -62,6 +71,11 @@ top@{ ... }:
             { ... }:
             {
               imports = [ flake.modules.nixos.mcl-reprobuild ];
+              # Spelled with the LEGACY `programs.reprobuild` path on purpose:
+              # the canonical path is `services.reprobuild` now, and this is
+              # what proves the compatibility aliases this repo layers on the
+              # re-exported module actually forward definitions. If the aliases
+              # regress, nothing below renders and every subtest fails.
               programs.reprobuild = {
                 enable = true;
                 package = reproPkg;
@@ -70,6 +84,16 @@ top@{ ... }:
                 # the module must wire `repro shell hook <shell>` into the
                 # interactive shell init (asserted in /etc/bashrc below).
                 enableShellHook = true;
+                enableUserDaemon = true;
+              };
+
+              users.users.alice = {
+                isNormalUser = true;
+                uid = 1000;
+                # Without linger there is no systemd user manager at boot, the
+                # unit would merely exist on disk, and the daemon subtest would
+                # be asserting nothing.
+                linger = true;
               };
             };
 
@@ -108,6 +132,37 @@ top@{ ... }:
                 assert (
                     "priority = ${toString cachePriority}" in conf
                 ), f"missing/wrong priority: {conf!r}"
+
+            with subtest("the per-user daemon unit is ACTIVE and `repro` answers on its socket"):
+                import re
+
+                host.wait_for_unit("user@1000.service")
+                su = "su alice -c 'XDG_RUNTIME_DIR=/run/user/1000 PATH=/run/current-system/sw/bin:$PATH {}'"
+
+                host.wait_until_succeeds(
+                    su.format("systemctl --user is-active repro-daemon.service"), timeout=90
+                )
+                state = host.succeed(
+                    su.format("systemctl --user show -p ActiveState --value repro-daemon.service")
+                ).strip()
+                assert state == "active", f"repro-daemon.service ActiveState={state!r}"
+
+                # NON-VACUITY: `repro daemon status` EXITS 0 and prints
+                # "repro daemon: not-running" when nothing answers, so the
+                # assertion is on the text, not on the exit code.
+                status = host.succeed(su.format("repro daemon status"))
+                print(status)
+                assert "repro daemon: running" in status, f"daemon did not answer: {status!r}"
+
+                main_pid = host.succeed(
+                    su.format("systemctl --user show -p MainPID --value repro-daemon.service")
+                ).strip()
+                assert main_pid not in ("", "0"), f"no MainPID: {main_pid!r}"
+                m = re.search(r"^pid: (\d+)$", status, re.M)
+                assert m, f"no pid line in status: {status!r}"
+                assert m.group(1) == main_pid, (
+                    f"daemon answered with pid {m.group(1)}, systemd supervises {main_pid}"
+                )
 
             with subtest("enableShellHook wires `repro shell hook` into interactive bash init"):
                 # NixOS writes programs.bash.interactiveShellInit into /etc/bashrc.

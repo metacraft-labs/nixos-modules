@@ -35,11 +35,11 @@
 //     tested for real against a live `vm-harness serve --backend noop`.
 //   - "incus" and a generic fallback — the production-shaped ephemeral path
 //     (`run --ephemeral --keep` to launch + return, `ephemeral-destroy` to
-//     reclaim). Per-target refinements (hyperv's --golden-image, tart's
-//     run-backgrounding) and remote runner-bootstrap SHIPPING (the rendered
-//     user-data must reach the remote guest — the current serve protocol takes
-//     a file path local to the daemon) are RB2 follow-ups; they are called out
-//     rather than half-implemented.
+//     reclaim). The rendered runner bootstrap is shipped to the remote guest as
+//     cloud-init user-data over the /v1/exec `userData` field (RB2); the daemon
+//     stages it to a temp file and points `--user-data` at it. Per-target
+//     refinements (hyperv's --golden-image, tart's run-backgrounding) remain
+//     follow-ups, called out rather than half-implemented.
 package backend
 
 import (
@@ -86,10 +86,12 @@ var noopRecipe = remoteRecipe{
 // ephemeralRecipe: the production-shaped per-job path used by incus/libvirt and
 // as the generic fallback. `run --ephemeral --keep` launches the per-job guest
 // and returns immediately (the guest keeps running the injected runner);
-// `ephemeral-destroy` reclaims it. NOTE (RB2): the rendered runner bootstrap is
-// NOT yet shipped to the remote guest here — the serve protocol's --user-data
-// takes a path local to the daemon; shipping the bytes over the wire is an RB2
-// deliverable. RB1's tested path is noop.
+// `ephemeral-destroy` reclaims it. RB2: the rendered runner bootstrap
+// (CreateArgs.Bootstrap) is shipped to the remote guest as cloud-init user-data
+// — Create sends it in the /v1/exec `userData` field and the daemon materializes
+// it to a temp file it points `--user-data` at (see serve/server.applyUserData),
+// so the remote `run --ephemeral` injects it exactly as the local path would.
+// The recipe stays argv-only; user-data travels alongside the argv, not in it.
 var ephemeralRecipe = remoteRecipe{
 	create: func(target string, args CreateArgs) []string {
 		argv := []string{"run", "--ephemeral", "--backend", target, "--baseline", args.Name}
@@ -133,7 +135,11 @@ func (b *RemoteBackend) Create(ctx context.Context, args CreateArgs) (Instance, 
 		return Instance{}, fmt.Errorf("remote Create: instance name is required")
 	}
 	argv := b.recipe().create(b.TargetBackend, args)
-	code, err := b.Client.ExecStream(ctx, argv, logToStderr("create "+args.Name))
+	// Ship the rendered runner bootstrap (if any) as cloud-init user-data. It is
+	// empty for the noop test recipe and whenever GARM supplied no tools, in
+	// which case ExecStreamWithUserData sends nothing extra (omitempty) and the
+	// daemon appends no --user-data flag.
+	code, err := b.Client.ExecStreamWithUserData(ctx, argv, string(args.Bootstrap), logToStderr("create "+args.Name))
 	if err != nil {
 		return Instance{}, fmt.Errorf("remote Create %s: %w", args.Name, err)
 	}

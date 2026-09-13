@@ -122,7 +122,38 @@ assert_rotated_file() {
 
 echo "write-netrc-test: exercising $target"
 
-# ── §1 rotation: one-line and multiline GitHub records are replaced ────────
+# ── §1 pre-Nix PATH: the real parser must not depend on awk ─────────────────
+minimal_path="$test_root/minimal-pre-nix-path"
+minimal_home="$test_root/minimal-pre-nix-home"
+mkdir -p "$minimal_path"
+write_rotation_fixtures "$minimal_home"
+for command_name in bash chmod mkdir mktemp mv rm; do
+  command_path="$(command -v "$command_name")"
+  ln -s "$command_path" "$minimal_path/$command_name"
+done
+
+assertion_rc=1
+if [[ ! -e "$minimal_path/awk" ]] && ! PATH="$minimal_path" command -v awk >/dev/null 2>&1; then
+  assertion_rc=0
+fi
+check "the deliberately minimal pre-Nix PATH contains no awk" "$assertion_rc"
+
+minimal_output="$test_root/minimal-pre-nix-output"
+PATH="$minimal_path" \
+  SETUP_NIX_NETRC_HOME="$minimal_home" \
+  SETUP_NIX_GITHUB_TOKEN="new-minimal-token" \
+  bash "$target" > "$minimal_output" 2>&1
+minimal_rc=$?
+check "runs successfully on a deliberately awk-free pre-Nix PATH" "$minimal_rc"
+! grep -Fq 'new-minimal-token' "$minimal_output"
+check "awk-free execution does not print the token" $?
+assert_rotated_file "$minimal_home/.netrc" 'awk-free user netrc' 'new-minimal-token'
+assert_rotated_file "$minimal_home/.config/nix/netrc" 'awk-free Nix netrc' 'new-minimal-token'
+
+! grep -Eq '(^|[^[:alnum:]_])awk([^[:alnum:]_]|$)' "$target"
+check "the production writer contains no awk command" $?
+
+# ── §2 rotation: one-line and multiline GitHub records are replaced ────────
 rotation_home="$test_root/rotation-home"
 write_rotation_fixtures "$rotation_home"
 
@@ -148,7 +179,7 @@ grep -Fq 'keep-cache-token' "$rotation_home/.config/nix/netrc" &&
   grep -Fq 'keep-default-token' "$rotation_home/.config/nix/netrc"
 check "Nix netrc preserves unrelated machine and default entries" $?
 
-# ── §2 parser boundaries: case/spacing/CRLF/macdef/EOF remain safe ──────────
+# ── §3 parser boundaries: case/spacing/CRLF/macdef/EOF remain safe ──────────
 parser_home="$test_root/parser-home"
 mkdir -p "$parser_home/.config/nix"
 printf '  MaChInE\tGitHub.COM\r\n\tlogin stale-crlf\r\n\tpassword stale-crlf-token\r\n# keep-crlf-comment\r\n\r\n  DEFAULT\r\n\tlogin keep-default-crlf\r\n\tpassword keep-default-crlf-token' > "$parser_home/.netrc"
@@ -177,6 +208,21 @@ grep -Fq 'machine github.com login macro-data password keep-macro-data' "$parser
   grep -Fq 'keep-example-parser-token' "$parser_home/.config/nix/netrc" &&
   ! grep -Fq 'stale-macro' "$parser_home/.config/nix/netrc"
 check "macdef body is opaque while the following real GitHub record is removed" $?
+parser_expected_user="$test_root/parser-expected-user-netrc"
+printf '# keep-crlf-comment\r\n\r\n  DEFAULT\r\n\tlogin keep-default-crlf\r\n\tpassword keep-default-crlf-token\nmachine github.com\n  login x-access-token\n  password new-parser-token\n' > "$parser_expected_user"
+cmp -s "$parser_expected_user" "$parser_home/.netrc"
+check "CRLF and unterminated unrelated bytes are preserved around the required record separator" $?
+parser_expected_nix="$test_root/parser-expected-nix-netrc"
+printf '%s\n' \
+  'macdef deploy' \
+  'machine github.com login macro-data password keep-macro-data' \
+  '' \
+  'machine example.test login keep-example password keep-example-parser-token' \
+  'machine github.com' \
+  '  login x-access-token' \
+  '  password new-parser-token' > "$parser_expected_nix"
+cmp -s "$parser_expected_nix" "$parser_home/.config/nix/netrc"
+check "opaque macdef and unrelated record bytes are preserved exactly" $?
 assertion_rc=1
 [[ "$(grep -xc 'machine github.com' "$parser_home/.netrc")" -eq 1 ]] &&
   [[ "$(grep -xc 'machine github.com' "$parser_home/.config/nix/netrc")" -eq 1 ]] &&
@@ -188,7 +234,36 @@ assertion_rc=1
   assertion_rc=0
 check "parser-edge files are mode 600" "$assertion_rc"
 
-# ── §3 idempotence: the same token produces byte-identical contents ────────
+# An unterminated macdef has no safe point at which to append a machine stanza:
+# doing so would leave the credential inside the opaque macro body. The parser
+# must fail without publishing or leaking the proposed token.
+unterminated_home="$test_root/unterminated-macdef-home"
+mkdir -p "$unterminated_home/.config/nix"
+printf '%s\n' \
+  'machine example.test login keep password keep-unterminated-user' \
+  'macdef deploy' \
+  'machine github.com login macro-data password keep-opaque-data' > "$unterminated_home/.netrc"
+printf '%s\n' 'default login keep password keep-unterminated-nix' > "$unterminated_home/.config/nix/netrc"
+cp "$unterminated_home/.netrc" "$test_root/unterminated-user-before"
+cp "$unterminated_home/.config/nix/netrc" "$test_root/unterminated-nix-before"
+unterminated_output="$test_root/unterminated-macdef-output"
+SETUP_NIX_NETRC_HOME="$unterminated_home" \
+  SETUP_NIX_GITHUB_TOKEN="new-unterminated-token" \
+  bash "$target" > "$unterminated_output" 2>&1
+unterminated_rc=$?
+assertion_rc=1
+[[ "$unterminated_rc" -ne 0 ]] && assertion_rc=0
+check "an unterminated macdef fails closed" "$assertion_rc"
+cmp -s "$test_root/unterminated-user-before" "$unterminated_home/.netrc" &&
+  cmp -s "$test_root/unterminated-nix-before" "$unterminated_home/.config/nix/netrc"
+check "unterminated macdef failure leaves both destinations unchanged" $?
+assertion_rc=1
+[[ -z "$(find "$unterminated_home" -name '.write-netrc.*' -print -quit)" ]] && assertion_rc=0
+check "unterminated macdef failure cleans its temporary file" "$assertion_rc"
+! grep -Fq 'new-unterminated-token' "$unterminated_output"
+check "unterminated macdef failure does not print the token" $?
+
+# ── §4 idempotence: the same token produces byte-identical contents ────────
 cp "$rotation_home/.netrc" "$test_root/netrc-before-repeat"
 cp "$rotation_home/.config/nix/netrc" "$test_root/nix-netrc-before-repeat"
 SETUP_NIX_NETRC_HOME="$rotation_home" SETUP_NIX_GITHUB_TOKEN="new-rotation-token" \
@@ -199,7 +274,7 @@ cmp -s "$test_root/netrc-before-repeat" "$rotation_home/.netrc" &&
   cmp -s "$test_root/nix-netrc-before-repeat" "$rotation_home/.config/nix/netrc"
 check "a repeated identical token is byte-idempotent in both files" $?
 
-# ── §4 atomic publication: destination changes only at same-dir rename ───────
+# ── §5 atomic publication: destination changes only at same-dir rename ───────
 atomic_home="$test_root/atomic-home"
 write_rotation_fixtures "$atomic_home"
 shim_dir="$test_root/atomic-shims"
@@ -240,7 +315,7 @@ check "atomically renames both managed netrc files" "$assertion_rc"
 assert_rotated_file "$atomic_home/.netrc" 'user netrc after atomic observation' 'new-atomic-token'
 assert_rotated_file "$atomic_home/.config/nix/netrc" 'Nix netrc after atomic observation' 'new-atomic-token'
 
-# ── §5 no token: preserve existing bytes, modes, and absent directories ────────
+# ── §6 no token: preserve existing bytes, modes, and absent directories ────────
 no_token_home="$test_root/no-token-home"
 write_rotation_fixtures "$no_token_home"
 chmod 0640 "$no_token_home/.netrc"
@@ -286,8 +361,22 @@ assertion_rc=1
 [[ ! -e "$linebreak_home" ]] && assertion_rc=0
 check "line-breaking token rejection is non-destructive" "$assertion_rc"
 
-# ── §6 fail closed: injected filesystem failures cannot report success ────────────
-for failure_mode in mkdir write awk chmod mv; do
+carriage_home="$test_root/carriage-token-home"
+carriage_output="$test_root/carriage-token-output"
+SETUP_NIX_NETRC_HOME="$carriage_home" SETUP_NIX_GITHUB_TOKEN=$'invalid\rcredential' \
+  bash "$target" > "$carriage_output" 2>&1
+carriage_rc=$?
+assertion_rc=1
+[[ "$carriage_rc" -ne 0 ]] && assertion_rc=0
+check "a carriage-return token is rejected" "$assertion_rc"
+! grep -Fq 'invalid' "$carriage_output" && ! grep -Fq 'credential' "$carriage_output"
+check "carriage-return rejection does not print token fragments" $?
+assertion_rc=1
+[[ ! -e "$carriage_home" ]] && assertion_rc=0
+check "carriage-return rejection is non-destructive" "$assertion_rc"
+
+# ── §7 fail closed: injected filesystem failures cannot report success ────────────
+for failure_mode in mkdir write chmod mv; do
   failure_home="$test_root/failure-$failure_mode-home"
   write_rotation_fixtures "$failure_home"
   cp "$failure_home/.netrc" "$test_root/failure-$failure_mode-netrc-before"
@@ -324,23 +413,23 @@ for failure_mode in mkdir write awk chmod mv; do
   check "a forced $failure_mode failure leaves no temporary credential file" "$assertion_rc"
 done
 
-# A pending signal while the filtering child exits must run the EXIT cleanup
-# and preserve the old destinations.
+# A pending signal after the credential bytes reach the unpublished temporary
+# file must run the EXIT cleanup and preserve the old destinations.
 signal_home="$test_root/signal-home"
 write_rotation_fixtures "$signal_home"
 cp "$signal_home/.netrc" "$test_root/signal-netrc-before"
 cp "$signal_home/.config/nix/netrc" "$test_root/signal-nix-netrc-before"
 signal_shims="$test_root/signal-shims"
 mkdir -p "$signal_shims"
-# These single-quoted lines are the literal source of the generated shim.
+# These single-quoted lines are the literal source of the generated Bash hook.
 # shellcheck disable=SC2016
 printf '%s\n' \
-  '#!/usr/bin/env bash' \
-  'kill -TERM "$PPID"' \
-  'exit 0' > "$signal_shims/awk"
-chmod 0700 "$signal_shims/awk"
+  'printf() {' \
+  '  builtin printf "$@"' \
+  '  if [[ "$1" == *password* ]]; then kill -TERM "$$"; fi' \
+  '}' > "$signal_shims/bash-env"
 signal_output="$test_root/signal-output"
-PATH="$signal_shims:$PATH" \
+BASH_ENV="$signal_shims/bash-env" \
   SETUP_NIX_NETRC_HOME="$signal_home" \
   SETUP_NIX_GITHUB_TOKEN="new-signal-token" \
   bash "$target" > "$signal_output" 2>&1
@@ -350,7 +439,7 @@ assertion_rc=1
 check "TERM is propagated as exit 143" "$assertion_rc"
 cmp -s "$test_root/signal-netrc-before" "$signal_home/.netrc" &&
   cmp -s "$test_root/signal-nix-netrc-before" "$signal_home/.config/nix/netrc"
-check "TERM before publication leaves both destinations unchanged" $?
+check "TERM after staging the token leaves both destinations unchanged" $?
 assertion_rc=1
 [[ -z "$(find "$signal_home" -name '.write-netrc.*' -print -quit)" ]] && assertion_rc=0
 check "TERM cleans the unpublished credential file" "$assertion_rc"
@@ -392,15 +481,15 @@ check "an unremovable temporary credential remains protected at mode 600" "$asse
 check "cleanup failure does not print the token" $?
 
 # Symlinked credentials on persistent runners are configuration, not scratch
-# paths. Fail closed without changing either the links or their targets.
+# paths. Put the symlink at the second managed path to prove both targets are
+# validated before the first one can be changed.
 symlink_home="$test_root/symlink-home"
 symlink_targets="$test_root/symlink-targets"
 mkdir -p "$symlink_home/.config/nix" "$symlink_targets"
-printf '%s\n' 'machine example.test login keep password keep-user-link-target' > "$symlink_targets/user-netrc"
+printf '%s\n' 'machine example.test login keep password keep-user-before-nix-link' > "$symlink_home/.netrc"
 printf '%s\n' 'default login keep password keep-nix-link-target' > "$symlink_targets/nix-netrc"
-ln -s "$symlink_targets/user-netrc" "$symlink_home/.netrc"
 ln -s "$symlink_targets/nix-netrc" "$symlink_home/.config/nix/netrc"
-cp "$symlink_targets/user-netrc" "$test_root/symlink-user-target-before"
+cp "$symlink_home/.netrc" "$test_root/symlink-user-before"
 cp "$symlink_targets/nix-netrc" "$test_root/symlink-nix-target-before"
 symlink_output="$test_root/symlink-output"
 SETUP_NIX_NETRC_HOME="$symlink_home" SETUP_NIX_GITHUB_TOKEN="new-symlink-token" \
@@ -410,19 +499,41 @@ assertion_rc=1
 [[ "$symlink_rc" -ne 0 ]] && assertion_rc=0
 check "a symlinked managed netrc fails closed" "$assertion_rc"
 assertion_rc=1
-[[ -L "$symlink_home/.netrc" ]] && [[ -L "$symlink_home/.config/nix/netrc" ]] &&
-  [[ "$(readlink "$symlink_home/.netrc")" == "$symlink_targets/user-netrc" ]] &&
+[[ -f "$symlink_home/.netrc" ]] && [[ ! -L "$symlink_home/.netrc" ]] &&
+  [[ -L "$symlink_home/.config/nix/netrc" ]] &&
   [[ "$(readlink "$symlink_home/.config/nix/netrc")" == "$symlink_targets/nix-netrc" ]] &&
   assertion_rc=0
-check "symlink failure preserves both link identities" "$assertion_rc"
-cmp -s "$test_root/symlink-user-target-before" "$symlink_targets/user-netrc" &&
+check "second-target symlink failure preserves both path identities" "$assertion_rc"
+cmp -s "$test_root/symlink-user-before" "$symlink_home/.netrc" &&
   cmp -s "$test_root/symlink-nix-target-before" "$symlink_targets/nix-netrc"
-check "symlink failure preserves both targets" $?
+check "second-target symlink failure leaves the first file and link target unchanged" $?
 assertion_rc=1
 [[ -z "$(find "$symlink_home" -name '.write-netrc.*' -print -quit)" ]] && assertion_rc=0
 check "symlink failure creates no temporary credential" "$assertion_rc"
 ! grep -Fq 'new-symlink-token' "$symlink_output"
 check "symlink failure does not print the token" $?
+
+# Directories, devices, sockets, and FIFOs are not files this action may
+# replace. A directory exercises the common non-regular branch portably.
+nonregular_home="$test_root/nonregular-home"
+mkdir -p "$nonregular_home/.netrc" "$nonregular_home/.config/nix"
+printf '%s\n' 'default login keep password keep-nonregular-nix' > "$nonregular_home/.config/nix/netrc"
+cp "$nonregular_home/.config/nix/netrc" "$test_root/nonregular-nix-before"
+nonregular_output="$test_root/nonregular-output"
+SETUP_NIX_NETRC_HOME="$nonregular_home" SETUP_NIX_GITHUB_TOKEN="new-nonregular-token" \
+  bash "$target" > "$nonregular_output" 2>&1
+nonregular_rc=$?
+assertion_rc=1
+[[ "$nonregular_rc" -ne 0 ]] && assertion_rc=0
+check "a non-regular managed netrc fails closed" "$assertion_rc"
+[[ -d "$nonregular_home/.netrc" ]] &&
+  cmp -s "$test_root/nonregular-nix-before" "$nonregular_home/.config/nix/netrc"
+check "non-regular failure preserves both managed targets" $?
+assertion_rc=1
+[[ -z "$(find "$nonregular_home" -name '.write-netrc.*' -print -quit)" ]] && assertion_rc=0
+check "non-regular failure creates no temporary credential" "$assertion_rc"
+! grep -Fq 'new-nonregular-token' "$nonregular_output"
+check "non-regular failure does not print the token" $?
 
 # A failure on the second rename cannot be a transaction across two separate
 # pathnames. It must still be fail-visible and preserve per-file atomicity; a
@@ -501,7 +612,7 @@ for invocation in 1 2 3 4 5 6 7 8; do
 done
 check "concurrent rotations do not print the token" "$assertion_rc"
 
-# ── §7 reusable-workflow secret contract and precedence ────────────────────────
+# ── §8 reusable-workflow secret contract and precedence ────────────────────────
 for workflow_and_count in \
   'reusable-lint.yml:1' \
   'reusable-flake-checks-ci-matrix.yml:5'; do
@@ -536,7 +647,7 @@ for workflow_and_count in \
   check "$workflow_name keeps NIX_GITHUB_TOKEN first at every token input" $?
 done
 
-# ── §8 negative controls: the suite rejects specific production regressions ─
+# ── §9 negative controls: the suite rejects specific production regressions ─
 if [[ "${SETUP_NIX_SKIP_WRITE_NETRC_MUTATIONS:-0}" != "1" ]]; then
   run_rejected_mutation() { # run_rejected_mutation <name> <expected-failure> <sed-expression>
     mutation_name="$1"
@@ -571,12 +682,31 @@ if [[ "${SETUP_NIX_SKIP_WRITE_NETRC_MUTATIONS:-0}" != "1" ]]; then
   run_rejected_mutation \
     'stale GitHub credential retention' \
     'user netrc contains no old GitHub credential' \
-    's/dropping_github = (host == "github.com")/dropping_github = 0/'
+    's/dropping_github=1/dropping_github=0/'
+  # This inserts a behavior-neutral probe before the real Bash parser. The
+  # normal PATH can satisfy it; the deliberately sparse production analogue
+  # must reject the reintroduced dependency by actually executing the mutant.
+  # shellcheck disable=SC2016
+  run_rejected_mutation \
+    'reintroduced pre-Nix awk dependency' \
+    'runs successfully on a deliberately awk-free pre-Nix PATH' \
+    's@^    filter_existing_netrc < "$netrc" > "$temporary_file"$@    awk "BEGIN { exit 0 }"; &@'
+  run_rejected_mutation \
+    'unterminated macdef acceptance' \
+    'an unterminated macdef fails closed' \
+    's/return 65/return 0/'
+  # Limit the edit to the validation condition so CRLF parsing remains intact
+  # and the intended carriage-return-token assertion must kill the mutant.
+  # shellcheck disable=SC2016
+  run_rejected_mutation \
+    'carriage-return token acceptance' \
+    'a carriage-return token is rejected' \
+    '/^if \[\[ "$token"/s/\\r/\\x/'
   # shellcheck disable=SC2016
   run_rejected_mutation \
     'omission of the git-visible user netrc' \
     'user netrc contains exactly one github.com stanza' \
-    '/^write_netrc "$netrc_home\/\.netrc"$/d'
+    '/^write_netrc "$user_netrc"$/d'
   run_rejected_mutation \
     'disabled failure propagation' \
     'a forced mkdir failure returns nonzero' \

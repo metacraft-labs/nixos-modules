@@ -44,7 +44,18 @@
     # still parse the current manifests (`repro workspace status`) and still
     # satisfy the installed managed-hook contract
     # (`repro hooks protocol --require=2 --hook-contract=...`).
-    reprobuild.url = "github:metacraft-labs/reprobuild/3a7ef0d7c16ba4d5f2e0e188dcba582847e938a3";
+    #
+    # THIS INPUT NOW ALSO SUPPLIES THE MODULES, not just the packages.
+    # Distribution-And-Packaging M4 moved `mcl-reprobuild` and
+    # `mcl-repro-binary-cache` into reprobuild's own flake
+    # (`nixosModules.reprobuild`, `darwinModules.reprobuild`,
+    # `homeManagerModules.reprobuild`, `nixosModules.repro-binary-cache`);
+    # `modules/mcl-reprobuild` and `modules/mcl-repro-binary-cache` here are
+    # thin re-exports of them and hold no schema of their own. So this pin must
+    # name a revision that carries reprobuild's `nix/modules/` directory — a pin
+    # older than that makes `modules/` fail to evaluate, not merely ship a stale
+    # `repro`.
+    reprobuild.url = "github:metacraft-labs/reprobuild/c2afe9923eddf4cb00111d4afcc8434baf1c5535";
 
     nixpkgs.follows = "nixos-2511";
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
