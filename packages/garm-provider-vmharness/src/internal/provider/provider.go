@@ -750,6 +750,44 @@ function Initialize-RunnerToolchain {
 	}
 	Write-Host "runner toolchain verified: $gitVersion"
 	Write-Host "runner toolchain verified: $bashVersion"
+	# git-lfs lives in PortableGit's cmd\ and mingw64\bin\, but the golden put
+	# only bin\ on PATH -- bin\ has bash/sh/git yet no git-lfs.exe. Because git
+	# pre-exists, Install-RunnerToolchain never ran, so those dirs were never
+	# added. actions/checkout with lfs:true then fails before fetching. Put the
+	# directory that actually holds git-lfs.exe on PATH.
+	if ($null -eq (Get-Command git-lfs -ErrorAction SilentlyContinue)) {
+		$gitSrc = (Get-Command git).Source
+		$gitDir = Split-Path -Parent $gitSrc
+		if ($gitDir -like '*\bin' -or $gitDir -like '*\cmd') {
+			$root = Split-Path -Parent $gitDir
+		} else {
+			$root = $gitDir
+		}
+		$candidates = @(
+			(Join-Path $root 'cmd'),
+			(Join-Path $root 'mingw64\bin'),
+			(Join-Path $PortableGitInstallDir 'cmd'),
+			(Join-Path $PortableGitInstallDir 'mingw64\bin')
+		)
+		foreach ($cand in $candidates) {
+			if (Test-Path -LiteralPath (Join-Path $cand 'git-lfs.exe')) {
+				Add-RunnerPathEntry $cand
+				break
+			}
+		}
+	}
+	if ($null -eq (Get-Command git-lfs -ErrorAction SilentlyContinue)) {
+		Fail-Install 'git-lfs is not on PATH after provisioning (golden may need a git-lfs retrofit)'
+	}
+	try {
+		$gitLfsVersion = (& git-lfs version 2>&1 | Out-String).Trim()
+	} catch {
+		Fail-Install "git-lfs is on PATH but not executable: $($_.Exception.Message)"
+	}
+	if ([string]::IsNullOrWhiteSpace($gitLfsVersion)) {
+		Fail-Install 'git-lfs version produced no output'
+	}
+	Write-Host "runner toolchain verified: $gitLfsVersion"
 }
 
 if ([string]::IsNullOrWhiteSpace($MetadataURL)) {
