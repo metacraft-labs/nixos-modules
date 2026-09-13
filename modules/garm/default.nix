@@ -905,17 +905,36 @@
           # ---- (3) Orgs: create-missing (idempotent) --------------------------
           # org-add does NOT call GitHub; it stores the org + starts a pool mgr.
           declared_org_names="$(jq -r '.orgs[].name' "$manifest" | sort -u)"
+          # When a shared webhook secret is staged (reconcile.webhookSecretFile),
+          # use it for BOTH create and drift-correction so a fresh/rebuilt DB
+          # reproduces the exact secret GitHub already signs with. Otherwise fall
+          # back to a per-org random secret (legacy behaviour).
+          webhook_secret=""
+          if [ -n "''${CREDENTIALS_DIRECTORY:-}" ] && [ -s "$CREDENTIALS_DIRECTORY/reconcile-webhook-secret" ]; then
+            webhook_secret="$(tr -d '\n' < "$CREDENTIALS_DIRECTORY/reconcile-webhook-secret")"
+          fi
           jq -c '.orgs[]' "$manifest" | while read -r o; do
             oname="$(echo "$o" | jq -r '.name')"
             ocreds="$(echo "$o" | jq -r '.credentials')"
             if gcli organization list --name "$oname" 2>/dev/null | jq -e --arg n "$oname" '.[]?|select(.name==$n)' >/dev/null; then
               log "org '$oname' present"
+              # Drift-correct the webhook secret to the shared value (no-op if it
+              # already matches; the API takes the secret write-only).
+              if [ -n "$webhook_secret" ]; then
+                oid="$(gcli organization list --name "$oname" 2>/dev/null | jq -r --arg n "$oname" '.[]?|select(.name==$n)|.id' | head -n1)"
+                [ -n "$oid" ] && garm-cli organization update "$oid" --webhook-secret "$webhook_secret" >/dev/null 2>&1 \
+                  && log "org '$oname' webhook secret aligned to the shared value"
+              fi
+            elif [ -n "$webhook_secret" ]; then
+              garm-cli organization add --name "$oname" --credentials "$ocreds" \
+                --webhook-secret "$webhook_secret" >/dev/null
+              log "org '$oname' created (credentials=$ocreds, shared webhook secret)"
             else
               garm-cli organization add --name "$oname" --credentials "$ocreds" \
                 --random-webhook-secret >/dev/null 2>&1 || \
                 garm-cli organization add --name "$oname" --credentials "$ocreds" \
                   --webhook-secret "$(openssl rand -hex 16)" >/dev/null
-              log "org '$oname' created (credentials=$ocreds)"
+              log "org '$oname' created (credentials=$ocreds, random webhook secret)"
             fi
           done
 
@@ -2782,6 +2801,20 @@
             '';
           };
 
+          webhookSecretFile = mkOption {
+            type = types.nullOr types.path;
+            default = null;
+            description = ''
+              Optional path to a file holding the org webhook HMAC secret
+              (staged via LoadCredential). When set, the reconcile creates each
+              org with THIS secret (`--webhook-secret`) instead of a per-org
+              random one, so a rebuilt/fresh controller DB reproduces the exact
+              secret GitHub already signs deliveries with — no manual
+              `organization update --webhook-secret` afterwards. Null (default)
+              ⇒ the legacy `--random-webhook-secret` behaviour.
+            '';
+          };
+
           forgeEndpoint = mkOption {
             type = types.str;
             default = "github.com";
@@ -4340,9 +4373,13 @@
               Group = cfg.group;
               StateDirectory = "garm";
               WorkingDirectory = stateDir;
-              LoadCredential = lib.optional (
-                rcfg.adminPasswordFile != null
-              ) "reconcile-admin-password:${toString rcfg.adminPasswordFile}";
+              LoadCredential =
+                lib.optional (
+                  rcfg.adminPasswordFile != null
+                ) "reconcile-admin-password:${toString rcfg.adminPasswordFile}"
+                ++ lib.optional (
+                  rcfg.webhookSecretFile != null
+                ) "reconcile-webhook-secret:${toString rcfg.webhookSecretFile}";
               # Retry a few times if garm is still coming up.
               Restart = "on-failure";
               RestartSec = "5s";

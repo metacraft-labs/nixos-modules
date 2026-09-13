@@ -182,6 +182,15 @@
       };
 
       config = mkIf cfg.enable {
+        # The textfile-collector output dir must EXIST before the hardened unit
+        # starts: with `ProtectSystem = "strict"` + `ReadWritePaths = [ dir ]`,
+        # systemd bind-mounts it read-write, and a missing dir fails mount-
+        # namespace setup outright (`226/NAMESPACE: … No such file or directory`)
+        # — the unit never runs. Create it world-writable so both node-exporter
+        # (which READS the .prom snapshots) and this DynamicUser service (which
+        # WRITES them) can use it without a shared owner.
+        systemd.tmpfiles.rules = [ "d ${cfg.textfileDir} 0777 root root -" ];
+
         systemd.services.garm-fleet-external-checks = {
           description = "GARM fleet external checks (GitHub App token + webhook delivery)";
           after = [ "network-online.target" ];
