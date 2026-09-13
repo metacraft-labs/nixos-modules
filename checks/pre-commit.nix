@@ -1,7 +1,18 @@
 { inputs, ... }:
 {
   flake.modules.flake.git-hooks =
-    { ... }:
+    { self, ... }:
+    let
+      # Entering repo A's devShell while standing in repo B installs A's hook
+      # config into B: upstream resolves its target as
+      # `git rev-parse --show-toplevel` (the CWD's repo, not the flake's) and
+      # replaces an existing `.pre-commit-config.yaml` SYMLINK without question.
+      # It cost metacraft-labs/infra a day of silently running REPROBUILD's hooks
+      # instead of prettier/nixfmt/editorconfig. See lib/git-hooks-repo-guard.nix.
+      repoGuard = import ../lib/git-hooks-repo-guard.nix {
+        expectedFlakeNixHash = builtins.hashFile "sha256" (self + "/flake.nix");
+      };
+    in
     {
       imports = [
         # Import git-hooks flake-parts module
@@ -19,8 +30,15 @@
               in
               pkgs.mkShell {
                 packages = enabledPackages ++ [ package ];
+                # Was an unconditional `ln -fvs` into $PWD — the same hijack
+                # as upstream's, but without even its regular-file check.
                 shellHook = ''
-                  ln -fvs ${configFile} .pre-commit-config.yaml
+                  ${repoGuard}
+                  if _mcl_hooks_same_repo; then
+                    ln -fvs ${configFile} .pre-commit-config.yaml
+                  else
+                    _mcl_hooks_explain_skip
+                  fi
                   echo "Running Pre-commit checks"
                   echo "========================="
                 '';
