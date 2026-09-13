@@ -39,9 +39,9 @@
       # estate, which is what "exactly one package provides bin/mcl" requires:
       # the property cannot be decided from evaluation alone.  Every one of
       # these is already a member of `checks`, so CI realises them regardless.
-      packageInventory = lib.concatMapStringsSep "\n" (
-        name: "${name}\t${scannedPackages.${name}}"
-      ) (lib.attrNames scannedPackages);
+      packageInventory = lib.concatMapStringsSep "\n" (name: "${name}\t${scannedPackages.${name}}") (
+        lib.attrNames scannedPackages
+      );
 
       # A synthetic SECOND provider of `bin/mcl`, used only as the positive
       # control for the provider counter.  It is installed nowhere.
@@ -86,12 +86,30 @@
               PATTERNS = [
                   ("command invocation",
                    re.compile(r'(?<![\w./$-])mcl(?=[ \t]+(?:' + VERB_RE + r')(?![\w-]))')),
+                  # The trailing guard excludes `-` only, NOT `.`.  A lookahead
+                  # that also excluded `.` would miss `pkgs.mcl.override` and
+                  # `self'.packages.mcl.overrideAttrs` -- and the latter is the
+                  # single reference this rename actually tripped over.  A
+                  # pattern blind to the exact class that has already bitten us
+                  # is not a falsifier.
                   ("package attribute",
-                   re.compile(r'(?<![\w-])(?:pkgs|packages(?:\.\$\{[^}]+\})?)\.mcl(?![\w.-])')),
+                   re.compile(r'(?<![\w-])(?:pkgs|packages(?:\.\$\{[^}]+\})?)\.mcl(?![\w-])')),
+                  # `mcl` as a quoted argv element -- `["mcl", "deploy-apply"]`.
+                  # The tool emits its own argv into the deployment event log in
+                  # exactly this shape, and no other pattern here can see it.
+                  # \x22 / \x27 are the quote characters, spelled in hex so this
+                  # pattern survives being embedded in a Nix indented string.
+                  ("quoted argv element",
+                   re.compile(r'(?<![\w-])([\x22\x27])mcl\1\s*[,\]\)]')),
+                  # Deliberately stops at `.`: `#mcl.shard-matrix` is the
+                  # `flake.mcl.shard-matrix` OUTPUT namespace that every consumer
+                  # flake declares (see flake.nix and infra/flake.nix), i.e. a
+                  # machine-declared name that 2.4 keeps, not the package
+                  # attribute.  `#mcl` with nothing after it is the package.
                   ("flake attribute",
                    re.compile(r'#mcl(?![\w.-])')),
                   ("binary path",
-                   re.compile(r'(?<![\w.-])bin/mcl(?![\w.-])')),
+                   re.compile(r'(?<![\w.-])bin/mcl(?![\w-])')),
                   ("source tree path",
                    re.compile(r'(?<![\w.-])packages/mcl(?![\w-])')),
                   ("tool named in prose",
@@ -134,6 +152,23 @@
               # ---- the assertion, computed first, reported last -----------
               clean, scanned = search(REPO)
 
+              # An absence assertion is also satisfied by a walk that never
+              # happened.  `search()` returns ([], 0) just as happily for a
+              # mis-rooted, empty or unreadable tree as for a clean one, and
+              # the planted control below runs against a temporary directory,
+              # so it cannot tell the difference either.  This floor is what
+              # makes "0 stale references" a statement about THIS repository:
+              # nixos-modules has ~760 scannable text files, and any run that
+              # sees fewer than half of them is reporting on something else.
+              MIN_SCANNED = 400
+              if scanned < MIN_SCANNED:
+                  raise SystemExit(
+                      f"the stale-reference search scanned only {scanned} files "
+                      f"under {REPO} (expected at least {MIN_SCANNED}). The tree "
+                      "it was pointed at is not this repository, so a clean "
+                      "result would mean nothing."
+                  )
+
               # ---- the POSITIVE CONTROL, in the same run, through the same
               # ---- `search()` that produced `clean`.  One planted reference
               # ---- per pattern, so a single pattern rotting is caught rather
@@ -141,6 +176,12 @@
               planted = {
                   "planted-command.sh":    "mcl deploy-apply --manifest -\n",
                   "planted-attribute.nix": "{ x = pkgs.mcl; }\n",
+                  # The dotted form gets its own control because it is the one
+                  # a naive lookahead silently drops, and the one that actually
+                  # survived this rename's first pass.
+                  "planted-attribute-dotted.nix":
+                                           "y = self'.packages.mcl.overrideAttrs (_: { });\n",
+                  "planted-argv.d":        'auto argv = ["mcl", "deploy-apply"];\n',
                   "planted-flakeref.sh":   "nix run .#mcl -- hosts scan\n",
                   "planted-binpath.nix":   "exec /run/current-system/sw/bin/mcl\n",
                   "planted-srcpath.md":    "see packages/mcl/AGENTS.md\n",
@@ -149,6 +190,8 @@
               expected_kinds = {
                   "planted-command.sh":    "command invocation",
                   "planted-attribute.nix": "package attribute",
+                  "planted-attribute-dotted.nix": "package attribute",
+                  "planted-argv.d":        "quoted argv element",
                   "planted-flakeref.sh":   "flake attribute",
                   "planted-binpath.nix":   "binary path",
                   "planted-srcpath.md":    "source tree path",
