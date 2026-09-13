@@ -609,10 +609,13 @@
             from pathlib import Path
 
             workflow = Path("${terraformWorkflow}").read_text()
-            assert "POLICY_RUNNER_URL=" in workflow
+            assert 'POLICY_RUNNER="$policy_dir/tofu-plan-policy-ci"' in workflow
+            assert 'POLICY_SCRIPT="$policy_dir/tofu-plan-policy.py"' in workflow
+            assert 'cat-file blob "''${EXPECTED_WORKFLOW_SHA}:''${policy_script_path}"' in workflow
+            assert 'cat-file blob "''${EXPECTED_WORKFLOW_SHA}:''${policy_runner_path}"' in workflow
             assert "tofu-plan-policy-ci" in workflow
             expected = (
-                'bash /tmp/tofu-plan-policy-ci /tmp/tofu-plan-policy.py "$PLAN_JSON" "'
+                'bash "$POLICY_RUNNER" "$POLICY_SCRIPT" "$PLAN_JSON" "'
                 + "$"
                 + '{POLICY_ARGS[@]}"'
             )
@@ -621,6 +624,21 @@
 
             cd ${../.}
             python3 scripts/tests/test_policy.py
+            touch "$out"
+          '';
+
+      checks.reusable-terraform-source-identity =
+        pkgs.runCommand "reusable-terraform-source-identity"
+          {
+            nativeBuildInputs = [
+              pkgs.bash
+              pkgs.gitMinimal
+              pkgs.python3
+            ];
+          }
+          ''
+            cd ${../.}
+            python3 scripts/tests/test_reusable_terraform_source_identity.py
             touch "$out"
           '';
     };

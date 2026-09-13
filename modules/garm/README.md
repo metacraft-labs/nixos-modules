@@ -65,9 +65,12 @@ services.garm = {
 ```
 
 Orgs and scale sets carry GitHub-side state (a message-queue subscription, a
-numeric id) and are therefore NOT part of `config.toml`; they are provisioned at
-runtime with `garm-cli` against the live, App-authenticated org (see §4). Only the
-credentials, provider, metrics, and controller URLs are declarative.
+numeric id) and are therefore NOT part of `config.toml`; they are applied with
+`garm-cli` against the live, App-authenticated org (see §4). They are still
+declared here: `services.garm.scaleSets` (and the orgs those entries reference)
+is rendered into a desired-state manifest that the `garm-reconcile` oneshot
+converges idempotently once `services.garm.reconcile.enable` is set (default
+`false`).
 
 ---
 
@@ -237,8 +240,10 @@ above + `/metrics` served + the declarative egress option.
 <stateDir>/app-key.pem` — using the App ID / installation ID from
   > `services.garm.github` and the **module-staged PEM**. Every input is still
   > declarative (module options + LoadCredential); only the final `garm-cli`
-  > registration is a runtime step, exactly like org/scale-set creation. A future
-  > reconcile activation can automate this idempotently.
+  > registration is a runtime step, exactly like org/scale-set creation. Setting
+  > `services.garm.reconcile.enable` automates that step idempotently: the
+  > `garm-reconcile` oneshot adds the credential when absent and updates it when
+  > drifted, from the same declared App id / installation id / staged PEM.
 
 - **Controller URLs** (`metadata_url`, `callback_url`) go in `[default]` and must be
   guest-reachable (host bridge IP).
@@ -259,7 +264,8 @@ above + `/metrics` served + the declarative egress option.
 
 ## 4. Provisioning orgs + scale sets at runtime
 
-Scale sets carry GitHub-side state, so after the daemon is up:
+Scale sets carry GitHub-side state, so they are applied after the daemon is up.
+The `garm-reconcile` oneshot below does this for you; the equivalent by hand is:
 
 ```bash
 # org (references the declarative App creds by name)
@@ -274,9 +280,87 @@ garm-cli scaleset add --org <ORG_ID> --provider-name vmharness \
 ```
 
 The `services.garm.scaleSets.<name>` option records the **intended** policy so a
-host config documents its concurrency in one place; a future reconcile activation
-can apply it. `garm-cli controller update --minimum-job-age-backoff 0` makes
-scale-to-zero react eagerly.
+host config documents its concurrency in one place, and `garm-reconcile` applies
+it: with `services.garm.reconcile.enable = true` (default `false`) a oneshot runs
+after `garm.service` and converges the forge endpoint, credentials, orgs, and
+scale sets to the declared shape — creating what is missing, updating what has
+drifted, and doing nothing on a second run. Undeclared entities are left alone
+unless `reconcile.pruneUnmanaged` is also set. `garm-cli controller update
+--minimum-job-age-backoff 0` makes scale-to-zero react eagerly.
+
+---
+
+## 4a. Capability POOLS + classic runners (RC2 / RB3)
+
+Scale sets name **one** class and pin it to one host. **Pools** register
+*classic* runners advertising a **capability label set**, so
+`runs-on: [self-hosted, linux, x64, x86-64-v3]` matches **any** runner that
+proves all those labels. The reconcile applies pools via `garm-cli pool`
+(id-tracked in `managed-pool-ids.json` — GARM pools have no name).
+
+`services.garm.mode` (`scaleSets` | `pools`, default `scaleSets`) **declares**
+which model a host is authoritative for; it gates nothing structurally — pools
+and scale sets reconcile **additively** whenever declared, so they run in
+parallel through the cutover (RC5 retires the scale sets).
+
+**RC2 — explicit pools, labels DERIVED from the host manifest.** A
+`services.garm.pools.<name>` binds a `provider` + label set + `minIdleRunners` +
+`maxRunners` + `priority`. Give the backing provider a `manifestFile` (the
+host's RA6-verified `/v1/manifest`, written by the controller's manifest-verify
+step) and the reconcile **derives** the runner's tag set from it with the RC1
+`runner-label-tool` — proven hardware, not a hand-kept class name. A declared
+`labels` set is then **linted** `advertised ⊆ derived` (fail-closed: an
+over-advertised pool is refused). `policyLabels` (e.g. `ephemeral`, `org:<name>`)
+are the attested labels a hardware manifest cannot prove, appended after
+derivation. With no `manifestFile`, `labels` is used verbatim (the escape hatch
+for a guest OS the host manifest cannot describe — a Windows VM on a Linux host).
+
+**RB3 — capability→host placement + balancing.** A
+`services.garm.capabilityPools.<name>` is a **host-agnostic** declaration —
+`requires` (the labels a host must prove), candidate `providers` (default: every
+provider with a `manifestFile`), and a `balance` policy — that the reconcile
+**expands into one concrete pool per qualifying host** (a candidate qualifies iff
+its derived labels ⊇ `requires`). This is the structural fix for the "GPU hosts
+idle while one host saturates" imbalance: a generic Linux pool expands across
+**all** qualifying hosts, so a job is no longer pinned to one.
+
+- `balance = "spread"` (default): every qualifying host's pool gets the same
+  `basePriority`, distributing jobs across equivalent hosts.
+- `balance = "pack"`: qualifying hosts get **descending, distinct** priorities in
+  candidate order — one host fills before the next (bin-packing).
+
+Give a more-specific capability (`requires = [ "gpu" ]`) a higher `basePriority`
+than a generic pool so a specialised job prefers a specialised host. Both gates
+are hermetic module checks: `t_garm_pools_labels` (RC2) and
+`t_garm_capability_placement` (RB3).
+
+**RC5 — cutover completion: alias classes + scale-set retirement.** The
+migration off scale sets is phased class-by-class (no flag day), bridged by
+`services.garm.pools.<name>.aliasClasses` — a list of **legacy scale-set class
+names** the pool advertises **alongside** its derived capability labels. A
+consumer still writing `runs-on: eph-linux-x64` matches the aliased pool by
+GitHub's subset rule and keeps running while it migrates. An alias is a name, not
+a hardware claim, so — like `policyLabels` — it is **never linted** against the
+manifest. Keep the alias while any consumer still names the old class; then drop
+it (empty `aliasClasses`) as the **final** step — after which a job still naming
+the retired class matches no pool and stays queued (the deliberate, visible end
+of the bridge).
+
+Scale sets are **retired** by declaring the END state — `mode = "pools"`,
+`scaleSets = { }`, and `reconcile.pruneUnmanaged = true` — so the reconcile keeps
+the declared pools and **prunes** any live scale set no longer declared (it
+disables then deletes each). **Rollback** is symmetric and additive: re-add the
+`scaleSets.<name>` entries and the reconcile recreates them beside the pools (the
+coexistence path RC2 already exercises). The hermetic gate
+`t_pools_cutover_complete` (RC5) proves all three: the over-provision
+recording-rule + alert (promtool), alias resolution + drop, and the
+render-and-prune retirement. The live 48h no-regression soak is the operator's
+post-cutover validation — see the runbook.
+
+The **thundering-herd** signal that watches the cutover is the
+`garm:overprovision_ratio` recording rule + `GarmFleetOverProvision` alert in
+`modules/garm-fleet-alerts` (runners created ÷ jobs served over a window; ~1 in
+the coordinated pool topology).
 
 ---
 
@@ -366,6 +450,85 @@ Key series (namespace `garm_`): `garm_health` (gauge, alert on `== 0`),
 - `rate(garm_runner_errors_total[15m]) > 0` → provider create/delete failures.
 - `garm_github_rate_limit_remaining < 100` → App rate-limit pressure.
 
+You do not have to hand-roll these. `services.garm-fleet-alerts` (see
+[`modules/garm-fleet-alerts/README.md`](../garm-fleet-alerts/README.md)) ships a
+parametric alert-rule library covering the whole runner chain — controller
+health, pool-manager status, provider error rates, GitHub rate limit, and fleet
+starvation — and renders it into `services.prometheus.ruleFiles`. Enable it and
+tune `thresholds` instead of writing the rules above by hand; the three bullets
+here are just the smallest useful subset if you are not using the module.
+
+---
+
+## 6a. Central-GARM recovery + DB backup (RE2)
+
+When the fleet collapses onto **one** central controller (the Runner-Fleet
+campaign's Phase-B end state), that controller is a deliberate provisioning
+**SPOF**. GARM is **DB-as-truth**: on start it reconciles desired-vs-actual
+against GitHub, and GitHub re-queues any job whose runner disappeared — so a
+crashed controller loses **no jobs** as long as it comes back fast over a
+**surviving DB**. Two option blocks harden that, and they compose with the
+`healthcheck` watchdog (which recovers a process-*alive*-but-API-*dead* garm):
+
+**`recovery`** — the fast declarative restart posture (default `enable = true`):
+
+| option | default | effect |
+|---|---|---|
+| `restartSec` | `"5s"` | `RestartSec` — respawn delay after a crash |
+| `startLimitIntervalSec` | `"300s"` | widened `StartLimitIntervalSec` |
+| `startLimitBurst` | `50` | `StartLimitBurst` |
+| `targetRecoverySeconds` | `30` | the documented RTO (informational + gate bound) |
+| `warmStandby.enable` | `false` | see the trade-off below |
+| `warmStandby.host` | `null` | informational standby host |
+
+The start-limit widening is the load-bearing SPOF property: systemd's **default**
+(5 restarts / 10s) would drop the crown-jewel controller into a permanent
+`failed` state on a brief crash-loop. The widened window keeps it recovering;
+only a garm that exceeds the generous burst is genuinely broken (bad config,
+disk full) and is then **left failed on purpose**, so RE1's
+`up==0`/`GarmControllerDown` pages a human instead of hiding a hard fault behind
+an endless loop.
+
+> **Warm-standby trade-off.** A *second live controller* against the same forge
+> would double-provision (split-brain), because both would reconcile the same
+> desired state. So `warmStandby` here is **not** two live controllers — it is
+> the DB backup continuously shipped to a standby host that can be **promoted**
+> by restoring the DB and starting garm (a seconds-to-minutes runbook step).
+> It is heavier than fast-restart and only pays off on **host** loss; most
+> deploys should leave it off and rely on fast-restart + backup. Enabling it
+> asserts `backup.enable` **and** a `backup.remoteCommand` (the ship-to-standby
+> feed) are set — otherwise it would promise an HA that ships nothing.
+
+**`backup`** — online SQLite snapshot + off-host hook (default `enable = false`):
+
+| option | default | effect |
+|---|---|---|
+| `enable` | `false` | install `garm-db-backup` oneshot + timer |
+| `interval` | `"15min"` | snapshot cadence |
+| `dir` | `/var/backup/garm` | local rotated snapshot dir (put it on a **different** filesystem than `stateDir`) |
+| `retain` | `24` | snapshots kept |
+| `compress` | `true` | gzip each snapshot |
+| `remoteCommand` | `null` | operator hook: ship `$1` / `$GARM_DB_SNAPSHOT` off-host |
+
+Snapshots use SQLite's own `.backup` (a consistent copy of committed pages under
+a shared lock — **not** `cp`, which can catch a torn WAL write) and are
+`PRAGMA integrity_check`-verified before publication. Restore with the installed
+**`garm-db-restore <snapshot>`** tool: it stops garm, swaps the snapshot into
+`stateDir`, and restarts — garm then reconciles the restored DB against the
+forge. A **cross-host** restore requires the same `database.passphraseFile` the
+snapshot was encrypted with (GARM field-encrypts the DB); the restore refuses a
+snapshot that fails its integrity check.
+
+The `remoteCommand` runs as the garm user from `garm-db-backup.service`, so any
+transport credentials it needs must be reachable there (e.g. a `LoadCredential`
+you add to that unit). The module ships **no transport** — only the hook — so it
+stays company-agnostic.
+
+The gate `t_central_garm_recovery` proves all of this hermetically: the RE1
+down-signal alerts fire, a SIGKILL'd controller recovers within the RTO with a
+new PID, the DB survives the crash, and a **destroyed** DB is recovered from a
+backup (with a non-vacuity control that a wiped DB genuinely loses state).
+
 ---
 
 ## 7. Eval-time resource guard (M5 guard promoted to a module assertion)
@@ -390,26 +553,34 @@ still applies on top for transient host load.
 
 ---
 
-## 8. Known cosmetic log noise: `%!s(<nil>)`
+## 8. `%!s(<nil>)` in consolidate logs — a real bug, patched here
 
-Every consolidate cycle GARM may log:
+On an **unpatched** GARM, every consolidate cycle may log:
 
 ```
 failed to consolidate runner state ... provider binary <path> returned error: %!s(<nil>)
 ```
 
-This is a **GARM-side** Go formatting artifact, **not** a provider bug. In
-`runner/providers/v0.1.1/external.go` GARM wraps the provider's error with
-`NewProviderError("... returned error: %s", execPath, err)`; when `err` is a
-nil-valued wrapped error in the consolidate/GetInstance path, `%s` renders it as
-`%!s(<nil>)`. The `garm-provider-vmharness` provider returns clean results:
-`ListInstances`/`List` return `(nil, nil)` on the empty case (verified in
-`internal/backend/virsh.go` `listFiltered` and `internal/provider/provider.go`
-`ListInstances`), and `DeleteInstance` treats absence as success (idempotent). The
-noise is **cosmetic** — it does not affect correctness (all M4/M5 phases were green
-with VMs correctly created and destroyed). We do **not** patch the vendored GARM
-(read-only in this workspace); the fix belongs upstream (guard the log/format on a
-non-nil error). Tracked here for operators who see it.
+This is a **GARM-side** bug, **not** a provider bug. In
+`runner/providers/v0.1.1/external.go`, `ListInstances` guards the provider
+exec with an inverted `if err == nil` — every sibling command in that file uses
+`if err != nil`. On a **successful** provider run GARM therefore takes the
+failure branch: it formats the nil error with `%s` (hence `%!s(<nil>)`) **and
+returns an empty instance slice**, so scale-set runner-state consolidation never
+sees the runners the provider actually reported. The message is not cosmetic —
+it comes with genuine runner state drift.
+
+The `garm-provider-vmharness` provider is correct: `ListInstances`/`List` return
+`(nil, nil)` on the empty case (verified in `internal/backend/virsh.go`
+`listFiltered` and `internal/provider/provider.go` `ListInstances`), and
+`DeleteInstance` treats absence as success (idempotent).
+
+The GARM package in this repo carries the one-line fix:
+`packages/garm/default.nix` applies
+`packages/garm/patches/fix-listinstances-inverted-error-check.patch`, and the
+upstream submission material lives in
+`upstream-patches/garm-listinstances-inverted-error-check/`. Operators who still
+see the message are running an unpatched GARM.
 
 ---
 

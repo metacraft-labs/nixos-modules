@@ -66,7 +66,8 @@ while IFS= read -r root; do
     (.state_key | nonempty_string)
     and (.backend_config_file | nonempty_string)
     and (.state_sensitivity | IN("standard", "sensitive"))
-    and (.credential_mode | IN("aws-oidc", "agenix-token", "none"))
+    and (.credential_mode | IN("aws-oidc", "agenix-token", "github-app", "none"))
+    and (.credential_mode != "github-app" or (.github_app_owner | nonempty_string))
     and (
       (has("backend_uses_aws_oidc") | not)
       or (.backend_uses_aws_oidc | type == "boolean")
@@ -90,6 +91,15 @@ while IFS= read -r root; do
   ' "$metadata_file" >/dev/null 2>&1; then
     echo "Terraform root '${root}' is missing or has invalid metadata.json." >&2
     failures=$((failures + 1)); continue
+  fi
+
+  # Roots still in the import/adoption phase (methodology M5/M6) are driven by
+  # the provider-specific import workflow, not the steady-state matrix — their
+  # state is empty, so a steady-state plan/apply would try to (re)create live
+  # resources. Skip them until the import completes and the flag is removed.
+  if [[ "$(jq -r '.adoption_pending // false' "$metadata_file")" == true ]]; then
+    echo "Skipping '${root}' (adoption_pending: managed by the import workflow)." >&2
+    continue
   fi
 
   credential_mode="$(jq -r '.credential_mode' "$metadata_file")"
@@ -134,6 +144,7 @@ while IFS= read -r root; do
     --arg agenix_plan_secret_path "$agenix_plan_secret_path" \
     --arg agenix_apply_secret_path "$agenix_apply_secret_path" \
     --arg smoke_test_command "$smoke_test_command" \
+    --arg github_app_owner "$(jq -r '.github_app_owner // ""' "$metadata_file")" \
     '{
       root: $root,
       config: $config,
@@ -148,7 +159,8 @@ while IFS= read -r root; do
       credentials_env_name: $credentials_env_name,
       agenix_plan_secret_path: $agenix_plan_secret_path,
       agenix_apply_secret_path: $agenix_apply_secret_path,
-      smoke_test_command: $smoke_test_command
+      smoke_test_command: $smoke_test_command,
+      github_app_owner: $github_app_owner
     }')"
   rows+=("$row")
 done < <(cd "$root_dir" && find terraform -name metadata.json -exec dirname {} \; 2>/dev/null | sort)

@@ -27,6 +27,7 @@ import (
 	"os"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/cloudbase/garm-provider-common/cloudconfig"
 	garmErrors "github.com/cloudbase/garm-provider-common/errors"
@@ -117,6 +118,26 @@ func NewWithConfig(cfg *config.Config) (*Provider, error) {
 			BackendID:     string(config.BackendQemuWindowsArm),
 			GuestOS:       "windows",
 			StateDir:      cfg.StateDir,
+		}
+	case config.BackendRemote:
+		// RB1 remote-target mode: an RPC client to a remote `vm-harness serve`
+		// daemon instead of a local-exec backend. The bearer token is resolved
+		// at construction from the inline value / token file / env (agenix /
+		// LoadCredential friendly); a stateless RemoteBackend then drives the
+		// remote lifecycle over the RA1 protocol.
+		if cfg.Remote == nil {
+			return nil, fmt.Errorf("backend %q requires a [remote] section", cfg.Backend)
+		}
+		token, err := cfg.Remote.ResolveToken()
+		if err != nil {
+			return nil, err
+		}
+		b = &backend.RemoteBackend{
+			Client: backend.NewServeClient(
+				cfg.Remote.Endpoint, token,
+				time.Duration(cfg.Remote.RequestTimeoutSec)*time.Second),
+			TargetBackend: cfg.Remote.TargetBackend,
+			GuestOS:       cfg.Remote.GuestOS,
 		}
 	default:
 		return nil, fmt.Errorf("unsupported backend %q", cfg.Backend)
@@ -729,6 +750,44 @@ function Initialize-RunnerToolchain {
 	}
 	Write-Host "runner toolchain verified: $gitVersion"
 	Write-Host "runner toolchain verified: $bashVersion"
+	# git-lfs lives in PortableGit's cmd\ and mingw64\bin\, but the golden put
+	# only bin\ on PATH -- bin\ has bash/sh/git yet no git-lfs.exe. Because git
+	# pre-exists, Install-RunnerToolchain never ran, so those dirs were never
+	# added. actions/checkout with lfs:true then fails before fetching. Put the
+	# directory that actually holds git-lfs.exe on PATH.
+	if ($null -eq (Get-Command git-lfs -ErrorAction SilentlyContinue)) {
+		$gitSrc = (Get-Command git).Source
+		$gitDir = Split-Path -Parent $gitSrc
+		if ($gitDir -like '*\bin' -or $gitDir -like '*\cmd') {
+			$root = Split-Path -Parent $gitDir
+		} else {
+			$root = $gitDir
+		}
+		$candidates = @(
+			(Join-Path $root 'cmd'),
+			(Join-Path $root 'mingw64\bin'),
+			(Join-Path $PortableGitInstallDir 'cmd'),
+			(Join-Path $PortableGitInstallDir 'mingw64\bin')
+		)
+		foreach ($cand in $candidates) {
+			if (Test-Path -LiteralPath (Join-Path $cand 'git-lfs.exe')) {
+				Add-RunnerPathEntry $cand
+				break
+			}
+		}
+	}
+	if ($null -eq (Get-Command git-lfs -ErrorAction SilentlyContinue)) {
+		Fail-Install 'git-lfs is not on PATH after provisioning (golden may need a git-lfs retrofit)'
+	}
+	try {
+		$gitLfsVersion = (& git-lfs version 2>&1 | Out-String).Trim()
+	} catch {
+		Fail-Install "git-lfs is on PATH but not executable: $($_.Exception.Message)"
+	}
+	if ([string]::IsNullOrWhiteSpace($gitLfsVersion)) {
+		Fail-Install 'git-lfs version produced no output'
+	}
+	Write-Host "runner toolchain verified: $gitLfsVersion"
 }
 
 if ([string]::IsNullOrWhiteSpace($MetadataURL)) {

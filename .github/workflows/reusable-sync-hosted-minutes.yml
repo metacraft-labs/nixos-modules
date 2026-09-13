@@ -1,0 +1,88 @@
+# RD3 companion cron — write the org's remaining included-minutes verdict into
+# the `GH_HOSTED_OK` org Actions variable, so `reusable-choose-runner.yml` can
+# decide hosted-vs-self-hosted for free (no per-run billing API call, no admin
+# token in every workflow — research-github-free-ci-hybrid.md §3.4).
+#
+# Campaign: Runner-Fleet-Capability-Pools-And-Remote-Driving, milestone RD3.
+#
+# This is a REUSABLE workflow (workflow_call). A `schedule:` trigger must live in
+# the repo it runs in, so an ops repo wraps it:
+#
+#   # .github/workflows/sync-hosted-minutes.yml  (in an ops repo, per org)
+#   name: sync-hosted-minutes
+#   on:
+#     schedule: [{ cron: '*/30 * * * *' }]
+#     workflow_dispatch:
+#   jobs:
+#     sync:
+#       uses: metacraft-labs/nixos-modules/.github/workflows/reusable-sync-hosted-minutes.yml@main
+#       with:
+#         org: metacraft-labs
+#         min_minutes_remaining: 300
+#       secrets:
+#         billing_token: ${{ secrets.ORG_BILLING_READ_TOKEN }}
+#         variables_token: ${{ secrets.ORG_VARIABLES_WRITE_TOKEN }}
+#
+# Tokens (operator prerequisite):
+#   * billing_token   — org billing READ (classic PAT admin:org/repo, or a
+#                       GitHub App install token with org billing:read). Reads
+#                       GET /orgs/{org}/settings/billing/actions.
+#   * variables_token — org VARIABLES write (fine-grained: Organization
+#                       "Variables" read/write). Writes GH_HOSTED_OK.
+#     GITHUB_TOKEN cannot do either, so both are required secrets.
+
+name: sync-hosted-minutes
+
+on:
+  workflow_call:
+    inputs:
+      org:
+        description: 'The organization whose included minutes gate GH_HOSTED_OK.'
+        type: string
+        required: true
+      min_minutes_remaining:
+        description: 'Flip GH_HOSTED_OK to false once remaining minutes drop below this buffer.'
+        type: number
+        default: 300
+    secrets:
+      billing_token:
+        description: 'Org billing-read token.'
+        required: true
+      variables_token:
+        description: 'Org variables-write token (may equal billing_token if it has both scopes).'
+        required: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - id: compute
+        env:
+          GH_TOKEN: ${{ secrets.billing_token }}
+          ORG: ${{ inputs.org }}
+          MIN_REMAIN: ${{ inputs.min_minutes_remaining }}
+        run: |
+          set -euo pipefail
+          resp="$(gh api -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/orgs/${ORG}/settings/billing/actions")"
+          included="$(printf '%s' "$resp" | jq -r '.included_minutes // 0')"
+          used="$(printf '%s' "$resp" | jq -r '.total_minutes_used // 0')"
+          remaining=$(( included - used ))
+          if [ "$remaining" -ge "$MIN_REMAIN" ]; then
+            ok=true
+          else
+            ok=false
+          fi
+          printf 'ok=%s\n' "$ok" >> "$GITHUB_OUTPUT"
+          printf 'remaining=%s\n' "$remaining" >> "$GITHUB_OUTPUT"
+          printf 'sync-hosted-minutes: %s of %s min used on %s -> GH_HOSTED_OK=%s (buffer %s)\n' \
+            "$used" "$included" "$ORG" "$ok" "$MIN_REMAIN"
+      - name: Write GH_HOSTED_OK org variable
+        env:
+          GH_TOKEN: ${{ secrets.variables_token }}
+          ORG: ${{ inputs.org }}
+          OK: ${{ steps.compute.outputs.ok }}
+        run: |
+          set -euo pipefail
+          gh variable set GH_HOSTED_OK --org "$ORG" --visibility all --body "$OK"
+          printf 'sync-hosted-minutes: GH_HOSTED_OK set to %s for org %s\n' "$OK" "$ORG"

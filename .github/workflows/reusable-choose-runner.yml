@@ -1,0 +1,123 @@
+# RD3 — private-repo hybrid CI: free GitHub-hosted while included minutes remain,
+# self-hosted once they are exhausted, with NO paid usage.
+#
+# Campaign: Runner-Fleet-Capability-Pools-And-Remote-Driving, milestone RD3
+# (gate `t_private_repo_hybrid_fallback`).
+#
+# GitHub has NO native GitHub-hosted <-> self-hosted fallback, so a PREFLIGHT
+# job must decide `runs-on` before any downstream job dispatches. The decision
+# is driven, cheapest-first, by:
+#
+#   1. repo visibility  — a PUBLIC repo always gets free hosted runners.
+#   2. the org variable `GH_HOSTED_OK` — written every ~30-60 min by the
+#      companion cron (`reusable-sync-hosted-minutes.yml`) from the org's
+#      remaining included minutes. "true" -> hosted, "false" -> self-hosted.
+#      This is the production default: no per-run billing API call, no admin
+#      token in every workflow (research-github-free-ci-hybrid.md §3.4).
+#   3. a live billing check — only if `GH_HOSTED_OK` is unset AND a billing-read
+#      token is supplied (the §3.3 preflight). Belt-and-braces / bootstrap.
+#   4. no signal at all -> self-hosted (fail-safe; never risk a blocked/paid job).
+#
+# Downstream jobs consume the decision as:
+#   runs-on: ${{ fromJson(needs.choose.outputs.runs_on) }}
+#
+# Because the org budget is $0 with prevent_further_usage (RD1), even a wrong
+# estimate can only ever produce a FAILED hosted job, never a bill — caught by
+# the caller's `continue-on-error` + `if: failure()` self-hosted retry safety net
+# (see docs/CI-Hybrid-Runner-Selection.md).
+
+name: choose-runner
+
+on:
+  workflow_call:
+    inputs:
+      preferred:
+        description: 'The GitHub-hosted runner to prefer when hosted is free/affordable.'
+        type: string
+        default: 'ubuntu-latest'
+      fallback:
+        description: 'Self-hosted runner labels as a JSON array string.'
+        type: string
+        default: '["self-hosted","linux","x64"]'
+      min_minutes_remaining:
+        description: 'Live-check buffer: only spend hosted minutes if at least this many remain.'
+        type: number
+        default: 300
+    outputs:
+      runs_on:
+        description: 'JSON array for `runs-on` — hosted (single element) or the self-hosted label set.'
+        value: ${{ jobs.decide.outputs.runs_on }}
+      hosted:
+        description: '"true" if the decision selected a GitHub-hosted runner, else "false".'
+        value: ${{ jobs.decide.outputs.hosted }}
+    secrets:
+      billing_token:
+        description: 'Org billing-READ token (admin:org/repo). Omit for public repos and for the GH_HOSTED_OK path.'
+        required: false
+
+jobs:
+  decide:
+    # The preflight itself is cheap and must always be able to run for free:
+    # ubuntu-latest is free on public repos and consumes a negligible slice of
+    # the included allowance on private ones.
+    runs-on: ubuntu-latest
+    outputs:
+      runs_on: ${{ steps.pick.outputs.runs_on }}
+      hosted: ${{ steps.pick.outputs.hosted }}
+    steps:
+      - id: pick
+        env:
+          PREFERRED: ${{ inputs.preferred }}
+          FALLBACK: ${{ inputs.fallback }}
+          MIN_REMAIN: ${{ inputs.min_minutes_remaining }}
+          IS_PRIVATE: ${{ github.event.repository.private }}
+          GH_HOSTED_OK: ${{ vars.GH_HOSTED_OK }}
+          ORG: ${{ github.repository_owner }}
+          GH_TOKEN: ${{ secrets.billing_token }}
+        run: |
+          set -euo pipefail
+
+          hosted="$(jq -cn --arg r "$PREFERRED" '[$r]')"
+
+          emit() {
+            # $1 = runs_on JSON, $2 = "true"/"false" hosted, $3 = human reason
+            printf 'runs_on=%s\n' "$1" >> "$GITHUB_OUTPUT"
+            printf 'hosted=%s\n' "$2" >> "$GITHUB_OUTPUT"
+            printf 'choose-runner: %s -> %s\n' "$3" "$1"
+          }
+
+          # 1. Public repo: standard hosted runners are free + unlimited.
+          if [ "${IS_PRIVATE:-}" = "false" ]; then
+            emit "$hosted" "true" "public repo (free hosted)"
+            exit 0
+          fi
+
+          # 2. Private repo: the cron-written org variable is the cheap signal.
+          case "${GH_HOSTED_OK:-}" in
+            true)
+              emit "$hosted" "true" "private repo, GH_HOSTED_OK=true"
+              exit 0
+              ;;
+            false)
+              emit "$FALLBACK" "false" "private repo, GH_HOSTED_OK=false (minutes exhausted)"
+              exit 0
+              ;;
+          esac
+
+          # 3. GH_HOSTED_OK unset and a billing token present: live check.
+          if [ -n "${GH_TOKEN:-}" ]; then
+            resp="$(gh api -H "X-GitHub-Api-Version: 2022-11-28" \
+              "/orgs/${ORG}/settings/billing/actions")"
+            included="$(printf '%s' "$resp" | jq -r '.included_minutes // 0')"
+            used="$(printf '%s' "$resp" | jq -r '.total_minutes_used // 0')"
+            remaining=$(( included - used ))
+            if [ "$remaining" -ge "$MIN_REMAIN" ]; then
+              emit "$hosted" "true" "private repo, ${remaining}m remaining (>= ${MIN_REMAIN})"
+            else
+              emit "$FALLBACK" "false" "private repo, only ${remaining}m remaining (< ${MIN_REMAIN})"
+            fi
+            exit 0
+          fi
+
+          # 4. No signal at all: fail safe to self-hosted (never risk a bill/block).
+          emit "$FALLBACK" "false" "private repo, no billing signal (safe default)"

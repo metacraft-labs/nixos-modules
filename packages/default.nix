@@ -68,6 +68,20 @@
           '';
         };
         cachix-deploy-metrics = pkgs.callPackage ./cachix-deploy-metrics { };
+        # Cross-repo sealer for the fleet-alerting receiver secrets (ntfy topic +
+        # token, Healthchecks ping URL). Shared by every Metacraft infra repo per
+        # policies/alerting-methodology.md. Operates on the consumer repo's flake.
+        seal-alerting-secrets = pkgs.writeShellApplication {
+          name = "seal-alerting-secrets";
+          runtimeInputs = [
+            pkgs.age
+            pkgs.jq
+            pkgs.nix
+          ];
+          text = ''
+            exec bash ${../scripts/seal-alerting-secrets.sh} "$@"
+          '';
+        };
         consumer-flake-cachix-inventory-tool = pkgs.writeShellApplication {
           name = "consumer-flake-cachix-inventory";
           runtimeInputs = [ pkgs.python3 ];
@@ -126,6 +140,18 @@
         # `garm-provider-vmharness` (env+stdin/stdout JSON protocol; shells to
         # virsh/vm-harness). Wired into `services.garm` as an optional provider.
         garm-provider-vmharness = pkgs.callPackage ./garm-provider-vmharness { };
+        # Runner-Fleet-Capability-Pools-And-Remote-Driving RE3/RE4 — the AWS
+        # burst provider `garm-provider-aws` (cloudbase's EC2 external provider)
+        # + a Metacraft Labs Apache-2.0 spot/InstanceMarketOptions patch. Wired
+        # into `services.garm` as an optional `backend = "aws"` provider; drives
+        # the queue-driven burst tier with an always-warm floor.
+        garm-provider-aws = pkgs.callPackage ./garm-provider-aws { };
+        # Runner-Fleet-Capability-Pools-And-Remote-Driving RA2 — the vm-harness
+        # CLI/daemon binary. Its single binary includes `vm-harness serve` (the
+        # RA1 remoting daemon), which `services.vm-harness-serve` packages into a
+        # hardened systemd unit. Vendored (like garm-provider-vmharness) to keep
+        # this repo's flake.lock free of vm-harness's own input tree.
+        vm-harness = pkgs.callPackage ./vm-harness { };
       }
       // optionalAttrs isLinux {
         deployment-event-metrics = pkgs.callPackage ./deployment-event-metrics { };

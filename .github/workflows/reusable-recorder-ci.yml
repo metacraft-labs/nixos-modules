@@ -22,12 +22,12 @@ on:
     inputs:
       runners:
         description: >
-          JSON array of runner labels to run the lint-and-test job across, as a
-          matrix. Each element is a `runs-on` value (a label string like
-          "eph-linux-x64", or a JSON array of labels). Defaults to the standard
-          three self-hosted Nix classes.
+          JSON array of runner values to run the lint-and-test job across, as a
+          matrix. Each element is a `runs-on` value — an RC1 capability label set
+          (a JSON array of labels), or a bare label string. Defaults to the three
+          self-hosted Nix legs as minimal capability label sets.
         type: string
-        default: '["eph-linux-x64", "eph-linux-arm64", "eph-macos-arm64"]'
+        default: '[["self-hosted","linux","x64"], ["self-hosted","linux","arm64"], ["self-hosted","macos","arm64"]]'
       prepare-recipe:
         description: >
           Optional `just` recipe run after setup-dev-env, before lint/test, for

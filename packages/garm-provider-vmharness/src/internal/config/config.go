@@ -24,6 +24,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 )
@@ -53,7 +54,66 @@ const (
 	// BackendQemuWindowsArm shells to vm-harness's qemu Windows ARM backend on
 	// Apple-silicon macOS hosts.
 	BackendQemuWindowsArm BackendKind = "qemu-windows-arm"
+	// BackendRemote is the RB1 remote-target mode: instead of exec-ing a LOCAL
+	// vm-harness/virsh/incus, the provider is an RPC CLIENT to a remote
+	// `vm-harness serve` daemon (RA1 protocol v1) over an authenticated
+	// HTTP/JSON endpoint (bearer token, typically bound to a NetBird overlay).
+	// The remote daemon runs the SAME vm-harness CLI, so a remote exec of
+	// `run --ephemeral --backend <target> …` / `ephemeral-destroy …` is
+	// byte-equivalent to the local path. The provider stays STATELESS: it
+	// keeps no local lifecycle state and recovers instance/host liveness from
+	// the remote serve (its `/v1/info`), never from a local store. See
+	// config.RemoteConfig and backend.RemoteBackend.
+	BackendRemote BackendKind = "remote"
 )
+
+// DefaultAuthTokenEnv is the environment variable the remote-target mode reads
+// the bearer token from when neither an inline token nor a token file is set.
+// It matches the variable `vm-harness serve` itself documents ($VMH_SERVE_TOKEN),
+// so a single per-host secret can be handed to both ends via systemd
+// LoadCredential / an EnvironmentFile.
+const DefaultAuthTokenEnv = "VMH_SERVE_TOKEN"
+
+// RemoteConfig configures the RB1 remote-target mode ([remote] TOML table). It
+// is COMPANY-AGNOSTIC: it names an endpoint + how to obtain the bearer token +
+// which vm-harness backend the remote host drives — no Metacraft host or
+// credential is baked in. Present (and Backend == "remote") ⇒ the provider is
+// an RPC client to `Endpoint` instead of a local-exec backend.
+type RemoteConfig struct {
+	// Endpoint is the remote `vm-harness serve` address as host:port (the
+	// NetBird overlay IP + port the daemon binds). Required in remote mode.
+	Endpoint string `toml:"endpoint"`
+
+	// TargetBackend is the vm-harness backend id the REMOTE host drives
+	// (eg "incus", "libvirt", "hyperv", "tart-macos", or "noop" for the
+	// hermetic gate). It is forwarded verbatim as the remote `--backend` and
+	// selects the per-target lifecycle recipe. Required in remote mode.
+	TargetBackend string `toml:"target_backend"`
+
+	// AuthToken is the bearer token inline. DISCOURAGED (it lands in the Nix
+	// store when set from the module); prefer AuthTokenFile or AuthTokenEnv so
+	// the secret is provisioned at runtime via LoadCredential/agenix.
+	AuthToken string `toml:"auth_token"`
+
+	// AuthTokenFile is a path the bearer token is read from (first line,
+	// whitespace-trimmed). systemd `LoadCredential` / agenix friendly.
+	AuthTokenFile string `toml:"auth_token_file"`
+
+	// AuthTokenEnv is the environment variable name the token is read from when
+	// AuthToken and AuthTokenFile are both empty. Empty ⇒ DefaultAuthTokenEnv
+	// ($VMH_SERVE_TOKEN).
+	AuthTokenEnv string `toml:"auth_token_env"`
+
+	// GuestOS is the reported guest OS for instances created through this
+	// remote (surfaced in ProviderInstance.os_name when the golden-image map
+	// carries none). Defaults to "linux".
+	GuestOS string `toml:"guest_os"`
+
+	// RequestTimeoutSec bounds a single non-streaming RPC (eg /v1/info). 0 ⇒ a
+	// conservative built-in default. The create/delete streams are NOT bounded
+	// here — the remote worker owns the job lifetime (its own --timeout-sec).
+	RequestTimeoutSec int `toml:"request_timeout_sec"`
+}
 
 // GoldenImage maps a pool label/flavor to a concrete libvirt source.
 //
@@ -277,6 +337,40 @@ type Config struct {
 	// service-wide default (for example QEMU user networking's 10.0.2.2 host).
 	GuestMetadataURL string `toml:"guest_metadata_url"`
 	GuestCallbackURL string `toml:"guest_callback_url"`
+
+	// ---- Remote-target mode (RB1) --------------------------------------
+	// Consulted only when Backend == "remote": the endpoint + auth material +
+	// remote backend id for the RPC client to a `vm-harness serve` daemon.
+	Remote *RemoteConfig `toml:"remote"`
+}
+
+// ResolveToken returns the bearer token for the remote endpoint, resolved (in
+// priority order) from the inline value, the token file, or the environment
+// variable. It is resolved at call time so a runtime-provisioned secret
+// (LoadCredential / agenix) is picked up without a config rebuild.
+func (r *RemoteConfig) ResolveToken() (string, error) {
+	if r.AuthToken != "" {
+		return r.AuthToken, nil
+	}
+	if r.AuthTokenFile != "" {
+		data, err := os.ReadFile(r.AuthTokenFile)
+		if err != nil {
+			return "", fmt.Errorf("reading remote auth_token_file %q: %w", r.AuthTokenFile, err)
+		}
+		tok := strings.TrimSpace(string(data))
+		if tok == "" {
+			return "", fmt.Errorf("remote auth_token_file %q is empty", r.AuthTokenFile)
+		}
+		return tok, nil
+	}
+	envName := r.AuthTokenEnv
+	if envName == "" {
+		envName = DefaultAuthTokenEnv
+	}
+	if tok := strings.TrimSpace(os.Getenv(envName)); tok != "" {
+		return tok, nil
+	}
+	return "", fmt.Errorf("remote-target mode: no bearer token (set auth_token, auth_token_file, or $%s)", envName)
 }
 
 // Defaults returns a Config populated with sensible defaults for fields the
@@ -312,6 +406,17 @@ func (c *Config) applyDefaults() {
 	if c.StateDir == "" {
 		c.StateDir = "/var/lib/garm-provider-vmharness"
 	}
+	if c.Backend == BackendRemote && c.Remote != nil {
+		if c.Remote.TargetBackend == "" {
+			c.Remote.TargetBackend = string(BackendIncus)
+		}
+		if c.Remote.AuthTokenEnv == "" {
+			c.Remote.AuthTokenEnv = DefaultAuthTokenEnv
+		}
+		if c.Remote.GuestOS == "" {
+			c.Remote.GuestOS = "linux"
+		}
+	}
 }
 
 // Validate returns an error if the config is internally inconsistent.
@@ -329,8 +434,33 @@ func (c *Config) Validate() error {
 		if c.VMHarnessPath == "" {
 			return fmt.Errorf("backend %q requires vm_harness_path", c.Backend)
 		}
+	case BackendRemote:
+		if c.Remote == nil {
+			return fmt.Errorf("backend %q requires a [remote] section (endpoint + auth material)", c.Backend)
+		}
+		if c.Remote.Endpoint == "" {
+			return fmt.Errorf("backend %q requires remote.endpoint (host:port of the vm-harness serve daemon)", c.Backend)
+		}
+		if !strings.Contains(c.Remote.Endpoint, ":") {
+			return fmt.Errorf("remote.endpoint %q must be host:port", c.Remote.Endpoint)
+		}
+		if c.Remote.TargetBackend == "" {
+			return fmt.Errorf("backend %q requires remote.target_backend (the vm-harness backend id the remote host drives)", c.Backend)
+		}
+		// The token is resolved lazily (LoadCredential/agenix at runtime), but
+		// at least ONE source must be declared so a misconfiguration fails at
+		// parse time rather than on the first CreateInstance.
+		if c.Remote.AuthToken == "" && c.Remote.AuthTokenFile == "" {
+			envName := c.Remote.AuthTokenEnv
+			if envName == "" {
+				envName = DefaultAuthTokenEnv
+			}
+			if strings.TrimSpace(os.Getenv(envName)) == "" {
+				return fmt.Errorf("backend %q requires a bearer token (remote.auth_token, remote.auth_token_file, or $%s)", c.Backend, envName)
+			}
+		}
 	default:
-		return fmt.Errorf("unsupported backend %q (supported: %q, %q, %q, %q, %q, %q)", c.Backend, BackendLibvirt, BackendIncus, BackendTartLinuxArm, BackendTartMacos, BackendUtmWindowsArm, BackendQemuWindowsArm)
+		return fmt.Errorf("unsupported backend %q (supported: %q, %q, %q, %q, %q, %q, %q)", c.Backend, BackendLibvirt, BackendIncus, BackendTartLinuxArm, BackendTartMacos, BackendUtmWindowsArm, BackendQemuWindowsArm, BackendRemote)
 	}
 	return nil
 }

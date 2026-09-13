@@ -195,6 +195,69 @@ let
 
   sortedRepoNames = sort (a: b: a < b) (map (repo: repo.name) governance.repositories);
 
+  # `security_and_analysis` carries exactly the two sub-blocks that provider
+  # 6.12.1 both writes and reads back, and that GitHub still returns under the
+  # same names: secret_scanning and secret_scanning_push_protection.
+  #
+  # Everything else in the provider's schema is deliberately not expressible
+  # here, because declaring it produces a permanent, unappliable diff:
+  #
+  #   * `advanced_security` — GitHub renamed it to `code_security` in the API
+  #     response. The provider still SENDS advanced_security and still READS
+  #     advanced_security, so the read path can never populate what the
+  #     configuration declares. It is also the paid Code Security product on
+  #     private repositories, which is a second reason not to hand consumers a
+  #     knob for it here.
+  #   * `code_security`, `secret_scanning_ai_detection`,
+  #     `secret_scanning_non_provider_patterns` — schema-only in the provider:
+  #     `calculateSecurityAndAnalysis` never sends them and
+  #     `flattenSecurityAndAnalysis` never reads them.
+  #
+  # Whether a repository SHOULD carry the block at all is the consumer's
+  # decision, recorded in its inventory. Omitting it leaves the attribute
+  # Computed, which is the correct state for a repository whose security
+  # settings are not governed here (e.g. private repositories on a plan that
+  # does not include Secret Protection).
+  securityAndAnalysisStatuses = [
+    "enabled"
+    "disabled"
+  ];
+  securityAndAnalysisFields = [
+    "secretScanning"
+    "secretScanningPushProtection"
+  ];
+  securityAndAnalysisBlock =
+    repo:
+    let
+      sa = repo.securityAndAnalysis;
+      unsupported = filter (field: !(elem field securityAndAnalysisFields)) (attrNames sa);
+      missing = filter (field: !(hasAttr field sa)) securityAndAnalysisFields;
+      badStatuses = filter (field: !(elem sa.${field} securityAndAnalysisStatuses)) (
+        filter (field: hasAttr field sa) securityAndAnalysisFields
+      );
+    in
+    if unsupported != [ ] then
+      throw (
+        "unsupported securityAndAnalysis fields on ${repo.name}: "
+        + "${concatStringsSep ", " unsupported} "
+        + "(only ${concatStringsSep ", " securityAndAnalysisFields} round-trip through provider 6.12.1)"
+      )
+    else if missing != [ ] then
+      throw (
+        "missing securityAndAnalysis fields on ${repo.name}: ${concatStringsSep ", " missing} "
+        + "(an omitted sub-block is left Computed and drifts silently, so all of them are required together)"
+      )
+    else if badStatuses != [ ] then
+      throw (
+        "securityAndAnalysis fields on ${repo.name} must be \"enabled\" or \"disabled\": "
+        + concatStringsSep ", " badStatuses
+      )
+    else
+      {
+        secret_scanning = [ { status = sa.secretScanning; } ];
+        secret_scanning_push_protection = [ { status = sa.secretScanningPushProtection; } ];
+      };
+
   repositoryResources = listToResourceAttrs governance.repositories (repo: "repo:${repo.name}") (
     repo:
     {
@@ -257,7 +320,46 @@ let
     // optionalAttrs (repo ? squashMergeCommitMessage) {
       squash_merge_commit_message = repo.squashMergeCommitMessage;
     }
+    // optionalAttrs (repo ? securityAndAnalysis) {
+      security_and_analysis = [ (securityAndAnalysisBlock repo) ];
+    }
   );
+
+  # Dependabot alerts and Dependabot security updates are free on every GitHub
+  # plan and both visibilities, and each is its own importable resource keyed by
+  # bare repository name. The deprecated `github_repository.vulnerability_alerts`
+  # field is deliberately not used: it is scheduled for removal, and its read
+  # path sits behind the provider's `security_and_analysis != nil` guard, so it
+  # stops refreshing (silently) for any token that is less than admin on a repo.
+  #
+  # Model every repository, not only the enabled ones — a disabled feature
+  # imports cleanly as `enabled = false`, whereas an unmodelled repository is a
+  # creation waiting to happen.
+  vulnerabilityAlertResources =
+    listToResourceAttrs (governance.vulnerabilityAlerts or [ ])
+      (row: "vulnerability-alerts:${row.repository}")
+      (row: {
+        repository = row.repository;
+        enabled = row.enabled;
+      });
+
+  dependabotSecurityUpdateResources =
+    listToResourceAttrs (governance.dependabotSecurityUpdates or [ ])
+      (row: "dependabot-security-updates:${row.repository}")
+      (row: {
+        repository = row.repository;
+        enabled = row.enabled;
+      });
+
+  countEnabled = rows: length (filter (row: row.enabled) rows);
+  repositoriesWithSecurityAndAnalysis = filter (
+    repo: repo ? securityAndAnalysis
+  ) governance.repositories;
+  countSecurityAndAnalysis =
+    field:
+    length (
+      filter (repo: repo.securityAndAnalysis.${field} == "enabled") repositoriesWithSecurityAndAnalysis
+    );
 
   branchDefaultResources =
     listToResourceAttrs governance.repositories (repo: "branch-default:${repo.name}")
@@ -585,6 +687,12 @@ let
     // optionalAttrs (repositoryCollaboratorResources != { }) {
       github_repository_collaborator = repositoryCollaboratorResources;
     }
+    // optionalAttrs (vulnerabilityAlertResources != { }) {
+      github_repository_vulnerability_alerts = vulnerabilityAlertResources;
+    }
+    // optionalAttrs (dependabotSecurityUpdateResources != { }) {
+      github_repository_dependabot_security_updates = dependabotSecurityUpdateResources;
+    }
     // optionalAttrs (teamResources != { }) { github_team = teamResources; }
     // optionalAttrs (teamMembershipResources != { }) {
       github_team_membership = teamMembershipResources;
@@ -708,7 +816,48 @@ in
 
     github_governance_outside_collaborator_count = {
       value = countAttrs repositoryCollaboratorResources;
-      description = "Direct outside collaborator resources emitted by the governance model.";
+      description = ''
+        Direct repository collaborator grants emitted by the governance model.
+        These are grants held on the repository itself, from
+        `collaborators?affiliation=direct`. Team-derived access (`affiliation=all`)
+        is NOT a collaborator grant and must never be recorded as one: it would
+        survive removal from the team and defeat team-based revocation.
+      '';
+    };
+
+    github_governance_vulnerability_alerts_count = {
+      value = countAttrs vulnerabilityAlertResources;
+      description = "Repositories whose Dependabot alerts state is governed by this model.";
+    };
+
+    github_governance_vulnerability_alerts_enabled_count = {
+      value = countEnabled (governance.vulnerabilityAlerts or [ ]);
+      description = "Governed repositories with Dependabot alerts enabled.";
+    };
+
+    github_governance_dependabot_security_updates_count = {
+      value = countAttrs dependabotSecurityUpdateResources;
+      description = "Repositories whose Dependabot security updates state is governed by this model.";
+    };
+
+    github_governance_dependabot_security_updates_enabled_count = {
+      value = countEnabled (governance.dependabotSecurityUpdates or [ ]);
+      description = "Governed repositories with Dependabot security updates enabled.";
+    };
+
+    github_governance_security_and_analysis_count = {
+      value = length repositoriesWithSecurityAndAnalysis;
+      description = "Repositories carrying a governed security_and_analysis block.";
+    };
+
+    github_governance_secret_scanning_enabled_count = {
+      value = countSecurityAndAnalysis "secretScanning";
+      description = "Governed repositories with secret scanning enabled.";
+    };
+
+    github_governance_secret_scanning_push_protection_enabled_count = {
+      value = countSecurityAndAnalysis "secretScanningPushProtection";
+      description = "Governed repositories with secret scanning push protection enabled.";
     };
 
     github_governance_team_repository_count = {

@@ -5,14 +5,17 @@ on:
   workflow_call:
     inputs:
       runner:
-        description: 'JSON-encoded runner class (single-name self-hosted class, e.g. "eph-linux-x64")'
-        default: '["eph-linux-x64"]'
+        description: 'JSON-encoded runner label set (RC1 capability labels, e.g. ["self-hosted","linux","x64"])'
+        default: '["self-hosted","linux","x64"]'
         required: false
         type: string
 
     secrets:
       NIX_GITHUB_TOKEN:
         description: GitHub token to add as access-token in nix.conf
+        required: false
+      GH_READ_METACRAFT_PRIVATE_REPOS:
+        description: 'Legacy org-wide read token used only when NIX_GITHUB_TOKEN is unset (optional)'
         required: false
       NIX_GITLAB_TOKEN:
         description: GitLab token to add as access-token in nix.conf
@@ -28,7 +31,7 @@ jobs:
         uses: metacraft-labs/nixos-modules/.github/setup-nix@main
         with:
           push-to-cache: false
-          nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
+          nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN || secrets.GH_READ_METACRAFT_PRIVATE_REPOS }}
           nix-gitlab-token: ${{ secrets.NIX_GITLAB_TOKEN }}
           nix-gitlab-domain: ${{ vars.NIX_GITLAB_DOMAIN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}

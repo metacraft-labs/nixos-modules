@@ -13,11 +13,11 @@ nix run .#checks.x86_64-linux.secret-integration
 
 Three components work together:
 
-| Component                                | Role                                                                                                                                                                                                         |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `modules/host-info.nix`                  | NixOS option module — defines `mcl.host-info.configPath` (must be a valid relative subpath, validated via `lib.path.subpath.isValid`). Changed from `types.path` to `types.str` to avoid Nix store coercion. |
-| `modules/secrets.nix`                    | NixOS option module — defines `mcl.secrets.services.<name>.recipients` and derives the on-disk secrets directory from `configPath + "/secrets"`.                                                             |
-| `packages/mcl-devops/src/mcl/commands/secret.d` | D CLI implementation — `mcl-devops secret edit`, `re-encrypt`, and `re-encrypt-all` subcommands. Resolves `configPath` and `recipients` via `nix eval`, then invokes `age` for encryption/decryption.               |
+| Component                                       | Role                                                                                                                                                                                                         |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `modules/host-info.nix`                         | NixOS option module — defines `mcl.host-info.configPath` (must be a valid relative subpath, validated via `lib.path.subpath.isValid`). Changed from `types.path` to `types.str` to avoid Nix store coercion. |
+| `modules/secrets.nix`                           | NixOS option module — defines `mcl.secrets.services.<name>.recipients` and derives the on-disk secrets directory from `configPath + "/secrets"`.                                                             |
+| `packages/mcl-devops/src/mcl/commands/secret.d` | D CLI implementation — the `edit`, `re-encrypt`, `re-encrypt-all`, `verify`, and `list` subcommands. Resolves `configPath` and `recipients` via `nix eval`, then invokes `age` for encryption/decryption.    |
 
 ### Key invariant
 
@@ -56,8 +56,8 @@ The valid machines use test SSH keys from `test-keys/` and set
 
 `test-mcl-secret.sh` covers these scenarios:
 
-| Test | Subcommand                  | What it verifies                                                                                                                           |
-| ---- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Test | Subcommand                         | What it verifies                                                                                                                           |
+| ---- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | 1    | `mcl-devops secret edit`           | Creates a new `.age` secret and decrypts it back                                                                                           |
 | 2    | `mcl-devops secret edit`           | Edits an existing secret (overwrites ciphertext)                                                                                           |
 | 3    | `mcl-devops secret re-encrypt`     | Re-encrypts a service folder; content is preserved                                                                                         |
@@ -67,6 +67,10 @@ The valid machines use test SSH keys from `test-keys/` and set
 | 7    | `mcl-devops secret list`           | All machines: machine name + indented services                                                                                             |
 | 8    | `mcl-devops secret list`           | Resilience: `broken-machine` yields an ERROR marker (tree) / `__error__` (JSON) and is logged to stderr, while healthy machines still list |
 | 9    | `mcl-devops secret list`           | VM filtering: `-vm` machine hidden by default, shown with `--include-vms`                                                                  |
+
+`mcl-devops secret verify` (decrypts a secret and checks the declared recipients
+against the `.age` header) has no scenario here yet — it is the one subcommand
+this check does not cover.
 
 ### Test environment setup
 

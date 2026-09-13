@@ -58,6 +58,15 @@
       # for the host system. Consumers/tests may override `package`.
       defaultPackage = withSystem pkgs.stdenv.hostPlatform.system ({ config, ... }: config.packages.garm);
 
+      # The RC1 `runner-label-tool` (manifest → label DERIVATION + `advertised ⊆
+      # derived` linter) — the JIT-registration mechanism RC2 pools call at
+      # reconcile time to compute a classic runner's capability-label array from
+      # a host's RA6-verified `/v1/manifest`. Defaulted from this flake so the
+      # module is self-contained; overridable by consumers/tests.
+      defaultLabelTool = withSystem pkgs.stdenv.hostPlatform.system (
+        { config, ... }: config.packages.runner-label-tool
+      );
+
       # Default to this flake's `garm-provider-vmharness` package (M1). Consumers
       # may override `providers.<name>.package`.
       defaultVmharnessPackage = withSystem pkgs.stdenv.hostPlatform.system (
@@ -80,6 +89,22 @@
       appKeyCredName = name: "app-key-${name}";
       stagedPemPath = name: "${stateDir}/app-key-${sanitizeName name}.pem";
 
+      # RB2: systemd LoadCredential id + on-disk staged path for a REMOTE
+      # provider's `vm-harness serve` bearer token. Mirrors the App-PEM staging
+      # exactly (LoadCredential source -> stable 0600 path under stateDir the
+      # provider reads), so the central GARM's per-host serve token never enters
+      # the store and is read from a path that is stable across the render ->
+      # daemon boundary. A remote provider whose token comes from an ENV var
+      # (`remote.authTokenFile == null`) is untouched by this — the env path is
+      # the infra layer's responsibility (EnvironmentFile / LoadCredential value).
+      serveTokenCredName = name: "serve-token-${name}";
+      stagedServeTokenPath = name: "${stateDir}/serve-token-${sanitizeName name}";
+      # Remote providers that stage their token from a FILE source (the central
+      # topology's shape): backend = "remote" AND remote.authTokenFile set.
+      enabledRemoteTokenProviders = lib.filterAttrs (
+        _: p: providerIsRemote p && p.remote.authTokenFile != null
+      ) enabledProviders;
+
       # ----- Per-provider config.toml (a DIFFERENT file from garm's config) ---
       # It holds NO secrets — only the virsh/qemu-img/vm-harness binary paths,
       # the libvirt URI/network OR the incus bridge + static-IPv4 params, the
@@ -91,6 +116,20 @@
       # [images.*] blocks would be appended to the derivation's store PATH.)
       providerIsIncus = p: p.backend == "incus";
       providerIsLibvirt = p: p.backend == "libvirt";
+      # RB1: remote-target mode — the provider is an RPC client to a remote
+      # `vm-harness serve` daemon instead of a local-exec backend. It needs no
+      # local hypervisor tools (no virsh/incus/kvm), only network reach to the
+      # endpoint + the bearer token; the strict M0 sandbox posture already
+      # permits outbound TCP, so a remote provider relaxes nothing.
+      providerIsRemote = p: p.backend == "remote";
+      # RE3/RE4: the AWS burst backend. `garm-provider-aws` is a pure-Go cloud
+      # provider — it reaches EC2 over the network via the AWS SDK and needs NO
+      # local hypervisor tools, socket groups, or /dev/kvm. Like `remote` it
+      # relaxes NOTHING in the systemd sandbox (the strict M0 posture already
+      # permits outbound TCP); it only needs its region/subnet config plus AWS
+      # credentials, which the infra layer supplies via the forwarded env chain
+      # (role/IMDS/EnvironmentFile) so no secret ever enters the Nix store.
+      providerIsAws = p: p.backend == "aws";
       providerIsVMHarnessRun =
         p:
         builtins.elem p.backend [
@@ -106,6 +145,16 @@
           "PATH"
         ]
         ++ lib.optional (providerIsIncus p) "HOME"
+        # RB1: when the remote token is supplied via an environment variable
+        # (not a file), the provider process must inherit that variable. GARM
+        # forwards ONLY the vars listed here, so add the configured name. The
+        # infra layer supplies its value (EnvironmentFile / systemd LoadCredential).
+        ++ lib.optional (providerIsRemote p && p.remote.authTokenFile == null) p.remote.authTokenEnv
+        # RE3: forward the AWS credential/region/TLS env-var NAMES the provider
+        # needs. GARM propagates ONLY the vars listed here; their VALUES are
+        # supplied by the infra layer (systemd EnvironmentFile / LoadCredential /
+        # IMDS role), so no AWS secret is ever baked into the store.
+        ++ lib.optionals (providerIsAws p) p.aws.forwardEnv
         ++ lib.optionals (providerIsVMHarnessRun p) [
           "MCL_RUNNER_SHARED_NIX_STORE"
           "MCL_RUNNER_SHARED_REPRO_STORE"
@@ -172,13 +221,61 @@
         + optionalString (p.guestCallbackURL != null) ''
           guest_callback_url = "${p.guestCallbackURL}"
         '';
-      mkProviderConfigText =
+      # RB1: the [remote] section. COMPANY-AGNOSTIC — the endpoint + target
+      # backend + how to obtain the bearer token, with NO baked-in host. The
+      # token itself never enters the store: `auth_token_file` points at a path
+      # (agenix / LoadCredential-staged) resolved at runtime, or the provider
+      # reads `auth_token_env` from the environment (value supplied by infra).
+      mkRemoteKeys =
+        name: p:
+        ''
+          [remote]
+          endpoint = "${p.remote.endpoint}"
+          target_backend = "${p.remote.targetBackend}"
+          guest_os = "${p.remote.guestOS}"
+          auth_token_env = "${p.remote.authTokenEnv}"
+        ''
+        # RB2: when the token is staged from a FILE, the provider reads it from
+        # the STABLE staged path under stateDir (the ExecStartPre copy of the
+        # LoadCredential-mounted secret), NOT the agenix source directly — the
+        # same indirection the App PEMs use. The token never enters the store.
+        + optionalString (p.remote.authTokenFile != null) ''
+          auth_token_file = "${stagedServeTokenPath name}"
+        ''
+        + optionalString (p.remote.requestTimeoutSec > 0) ''
+          request_timeout_sec = ${toString p.remote.requestTimeoutSec}
+        '';
+      # RE3: the `garm-provider-aws` config.toml (config/config.go). It carries
+      # ONLY the region, the subnet, and the credential TYPE — never a secret.
+      # `credential_type = "role"` (the default) makes the provider use the AWS
+      # SDK default credential chain (forwarded env vars / shared-credentials
+      # file / instance-profile IMDS), all supplied by infra. `static` is
+      # accepted for completeness, but the access/secret keys are NOT rendered
+      # here (that would leak them into the store); infra must instead supply
+      # them through the same env chain (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+      # / AWS_SESSION_TOKEN) or a mounted shared-credentials file. NOTE: unlike
+      # the vm-harness backends, this config carries NO golden-image map — the
+      # AMI is a per-pool value (`burstPools.<name>.image`), not a provider one.
+      mkAwsKeys =
         p:
+        ''
+          region = "${p.aws.region}"
+          subnet_id = "${p.aws.subnetId}"
+
+          [credentials]
+          credential_type = "${p.aws.credentialType}"
+        '';
+      mkProviderConfigText =
+        name: p:
         ''
           backend = "${p.backend}"
         ''
         + (
-          if providerIsIncus p then
+          if providerIsRemote p then
+            mkRemoteKeys name p
+          else if providerIsAws p then
+            mkAwsKeys p
+          else if providerIsIncus p then
             mkIncusKeys p
           else if providerIsVMHarnessRun p then
             mkVMHarnessRunKeys p
@@ -195,7 +292,7 @@
           '') p.images
         );
       mkProviderConfigFile =
-        name: p: pkgs.writeText "garm-provider-${sanitizeName name}.toml" (mkProviderConfigText p);
+        name: p: pkgs.writeText "garm-provider-${sanitizeName name}.toml" (mkProviderConfigText name p);
 
       # The `[[provider]]` block per enabled provider. External-provider keys per
       # config/external.go: provider_executable / config_file / interface_version.
@@ -205,7 +302,11 @@
         name = "${name}"
         provider_type = "external"
         description = "${
-          if providerIsIncus p then
+          if providerIsRemote p then
+            "remote ephemeral runners via a vm-harness serve daemon (${p.remote.targetBackend})"
+          else if providerIsAws p then
+            "AWS EC2 burst ephemeral runners (garm-provider-aws, region ${p.aws.region})"
+          else if providerIsIncus p then
             "incus Linux container ephemeral runners via vm-harness"
           else
             "libvirt/KVM Windows ephemeral runners via vm-harness"
@@ -330,6 +431,25 @@
         '') enabledGithub
       );
 
+      # RB2: stage each remote provider's `vm-harness serve` bearer token from
+      # its LoadCredential-mounted secret to a STABLE 0600 path under stateDir
+      # (owned by the service user, outside the store), mirroring stageGithubPems
+      # above. The provider config's `auth_token_file` points at this stable path
+      # (see mkRemoteKeys), so the value survives the render -> daemon boundary
+      # regardless of the tmpfs credentials dir's lifetime. Failure to stage a
+      # declared token is fatal — the same posture as a missing App PEM.
+      stageServeTokens = lib.concatStrings (
+        lib.mapAttrsToList (name: _p: ''
+          if [ -n "$cred_dir" ] && [ -f "$cred_dir/${serveTokenCredName name}" ]; then
+            install -m 0600 /dev/null "${stagedServeTokenPath name}"
+            tr -d '[:space:]' < "$cred_dir/${serveTokenCredName name}" > "${stagedServeTokenPath name}"
+          else
+            echo "garm-render-config: services.garm.providers.${name}.backend = \"remote\" sets remote.authTokenFile but the serve-token credential '${serveTokenCredName name}' was not staged" >&2
+            exit 1
+          fi
+        '') enabledRemoteTokenProviders
+      );
+
       # First-run/refresh renderer. Resolves the two secrets, then substitutes
       # them into the template to produce the runtime config under $STATE_DIR.
       #
@@ -386,6 +506,9 @@
           # stateDir (owned by the service user, outside the store).
           ${stageGithubPems}
 
+          # RB2: stage the remote providers' serve bearer tokens (central GARM).
+          ${stageServeTokens}
+
           tmp="$(mktemp "${renderedConfig}.XXXXXX")"
           sed \
             -e "s|@DB_PASSPHRASE@|$db_passphrase|" \
@@ -433,15 +556,142 @@
         runnerGroup = ss.runnerGroup;
       }) cfg.scaleSets;
 
+      # RE3/RE4: DESIRED burst pools — one per burstPools.<name>. The
+      # floor-vs-lazy policy is resolved HERE: `lazy` forces the effective
+      # min-idle to 0 (pure scale-to-zero) regardless of minIdleRunners, while
+      # `floor` keeps minIdleRunners warm. The spot policy (RE4) is rendered
+      # into a per-pool `extraSpecs` JSON string exactly as garm forwards it to
+      # the provider (BootstrapInstance.ExtraSpecs), which the garm-provider-aws
+      # spot patch consumes to set InstanceMarketOptions.
+      desiredBurstPools = lib.mapAttrsToList (
+        _: bp:
+        let
+          effectiveMinIdle = if bp.floorPolicy == "lazy" then 0 else bp.minIdleRunners;
+          extraSpecs = lib.optionalAttrs bp.spot.enable (
+            {
+              market_type = "spot";
+              spot_instance_type = bp.spot.instanceType;
+              spot_instance_interruption_behavior = bp.spot.interruptionBehavior;
+              on_demand_fallback = bp.spot.onDemandFallback;
+            }
+            // lib.optionalAttrs (bp.spot.maxPrice != "") { spot_max_price = bp.spot.maxPrice; }
+          );
+        in
+        {
+          name = bp.poolName;
+          org = bp.org;
+          credentials = bp.credentials;
+          provider = bp.provider;
+          image = bp.image;
+          flavor = bp.flavor;
+          osType = bp.osType;
+          osArch = bp.osArch;
+          labels = bp.labels;
+          maxRunners = bp.maxRunners;
+          minIdleRunners = effectiveMinIdle;
+          floorPolicy = bp.floorPolicy;
+          priority = bp.priority;
+          jobAgeBackoff = bp.jobAgeBackoff;
+          runnerBootstrapTimeout = bp.runnerBootstrapTimeout;
+          ephemeral = bp.ephemeral;
+          enabled = bp.enabled;
+          # A JSON STRING (not an object) — this is passed to `garm-cli pool
+          # add --extra-specs` verbatim and forwarded to the provider as
+          # BootstrapInstance.ExtraSpecs. Empty ({}) for an on-demand pool.
+          extraSpecs = builtins.toJSON extraSpecs;
+        }
+      ) cfg.burstPools;
+
+      # The RA6-verified manifest file backing a named provider (empty when the
+      # provider has none). Used to DERIVE a pool's capability-label tag set at
+      # reconcile time (RC2 JIT label derivation) and to QUALIFY a provider for a
+      # capability (RB3 placement).
+      providerManifestOf =
+        pname:
+        let
+          p = cfg.providers.${pname} or null;
+        in
+        if p != null && p.manifestFile != null then toString p.manifestFile else "";
+
+      # RC2: DESIRED on-prem capability pools — one per pools.<name>. The tag set
+      # is DERIVED at reconcile time from the backing provider's manifestFile
+      # (emitted here); `labels` is the operator-declared advertised set the
+      # reconcile LINTS ⊆ derived (fail-closed), and `policyLabels` are the
+      # attested labels appended after derivation.
+      desiredPools = lib.mapAttrsToList (_: pl: {
+        name = pl.poolName;
+        org = pl.org;
+        credentials = pl.credentials;
+        provider = pl.provider;
+        manifestFile = providerManifestOf pl.provider;
+        labels = pl.labels;
+        policyLabels = pl.policyLabels;
+        # RC5: legacy class names this pool also advertises during the cutover.
+        aliasClasses = pl.aliasClasses;
+        image = pl.image;
+        flavor = pl.flavor;
+        osType = pl.osType;
+        osArch = pl.osArch;
+        maxRunners = pl.maxRunners;
+        minIdleRunners = pl.minIdleRunners;
+        priority = pl.priority;
+        runnerBootstrapTimeout = pl.runnerBootstrapTimeout;
+        runnerGroup = pl.runnerGroup;
+        enabled = pl.enabled;
+        extraSpecs = "{}";
+      }) cfg.pools;
+
+      # RB3: DESIRED capability pools — one per capabilityPools.<name>, each
+      # carrying its candidate providers (resolved to (name, manifestFile) pairs)
+      # so the reconcile can QUALIFY each candidate against `requires` and expand
+      # into one concrete GARM pool per qualifying host, priced by `balance`.
+      # Candidates default to every enabled provider that has a manifestFile.
+      desiredCapabilityPools = lib.mapAttrsToList (
+        _: cp:
+        let
+          candidateNames =
+            if cp.providers != [ ] then
+              cp.providers
+            else
+              lib.attrNames (lib.filterAttrs (_: p: p.enable && p.manifestFile != null) cfg.providers);
+        in
+        {
+          name = cp.name or "";
+          requires = cp.requires;
+          balance = cp.balance;
+          basePriority = cp.basePriority;
+          org = cp.org;
+          credentials = cp.credentials;
+          image = cp.image;
+          flavor = cp.flavor;
+          osType = cp.osType;
+          osArch = cp.osArch;
+          policyLabels = cp.policyLabels;
+          maxRunners = cp.maxRunners;
+          minIdleRunners = cp.minIdleRunners;
+          runnerBootstrapTimeout = cp.runnerBootstrapTimeout;
+          runnerGroup = cp.runnerGroup;
+          enabled = cp.enabled;
+          aliasClasses = cp.aliasClasses;
+          # (provider, manifestFile) candidates, in a STABLE order (the balancer
+          # steps priorities down this list under `pack`).
+          candidates = map (pn: {
+            provider = pn;
+            manifestFile = providerManifestOf pn;
+          }) candidateNames;
+        }
+      ) (lib.mapAttrs (n: cp: cp // { name = n; }) cfg.capabilityPools);
+
       # DESIRED orgs — the DISTINCT (org, credentials) pairs referenced by the
-      # declared scale sets. Each managed org is created against its credential.
+      # declared scale sets, burst pools, capability pools AND on-prem pools.
+      # Each managed org is created against its credential.
       desiredOrgs =
         let
           pairs = lib.filter (o: o.name != "") (
             map (ss: {
               name = ss.org;
               credentials = ss.credentials;
-            }) desiredScaleSets
+            }) (desiredScaleSets ++ desiredBurstPools ++ desiredPools ++ desiredCapabilityPools)
           );
         in
         lib.unique pairs;
@@ -475,6 +725,17 @@
           credentials = desiredCreds;
           orgs = desiredOrgs;
           scaleSets = desiredScaleSets;
+          # RE3/RE4: the desired AWS burst pools, consumed by the RC2/RB3
+          # pool-reconcile wiring via `garm-cli pool`.
+          burstPools = desiredBurstPools;
+          # RC2: on-prem capability pools (tags DERIVED from the backing
+          # provider's manifestFile). RB3: capability pools expanded per
+          # qualifying host with a pack/spread balancer.
+          pools = desiredPools;
+          capabilityPools = desiredCapabilityPools;
+          # The declared provisioning model (informational — the reconcile
+          # applies whatever is declared; see services.garm.mode).
+          mode = cfg.mode;
           pruneUnmanaged = rcfg.pruneUnmanaged;
         }
       );
@@ -483,6 +744,7 @@
         name = "garm-reconcile";
         runtimeInputs = [
           cfg.package
+          cfg.labelToolPackage
           pkgs.coreutils
           pkgs.jq
           pkgs.curl
@@ -643,17 +905,36 @@
           # ---- (3) Orgs: create-missing (idempotent) --------------------------
           # org-add does NOT call GitHub; it stores the org + starts a pool mgr.
           declared_org_names="$(jq -r '.orgs[].name' "$manifest" | sort -u)"
+          # When a shared webhook secret is staged (reconcile.webhookSecretFile),
+          # use it for BOTH create and drift-correction so a fresh/rebuilt DB
+          # reproduces the exact secret GitHub already signs with. Otherwise fall
+          # back to a per-org random secret (legacy behaviour).
+          webhook_secret=""
+          if [ -n "''${CREDENTIALS_DIRECTORY:-}" ] && [ -s "$CREDENTIALS_DIRECTORY/reconcile-webhook-secret" ]; then
+            webhook_secret="$(tr -d '\n' < "$CREDENTIALS_DIRECTORY/reconcile-webhook-secret")"
+          fi
           jq -c '.orgs[]' "$manifest" | while read -r o; do
             oname="$(echo "$o" | jq -r '.name')"
             ocreds="$(echo "$o" | jq -r '.credentials')"
             if gcli organization list --name "$oname" 2>/dev/null | jq -e --arg n "$oname" '.[]?|select(.name==$n)' >/dev/null; then
               log "org '$oname' present"
+              # Drift-correct the webhook secret to the shared value (no-op if it
+              # already matches; the API takes the secret write-only).
+              if [ -n "$webhook_secret" ]; then
+                oid="$(gcli organization list --name "$oname" 2>/dev/null | jq -r --arg n "$oname" '.[]?|select(.name==$n)|.id' | head -n1)"
+                [ -n "$oid" ] && garm-cli organization update "$oid" --webhook-secret "$webhook_secret" >/dev/null 2>&1 \
+                  && log "org '$oname' webhook secret aligned to the shared value"
+              fi
+            elif [ -n "$webhook_secret" ]; then
+              garm-cli organization add --name "$oname" --credentials "$ocreds" \
+                --webhook-secret "$webhook_secret" >/dev/null
+              log "org '$oname' created (credentials=$ocreds, shared webhook secret)"
             else
               garm-cli organization add --name "$oname" --credentials "$ocreds" \
                 --random-webhook-secret >/dev/null 2>&1 || \
                 garm-cli organization add --name "$oname" --credentials "$ocreds" \
                   --webhook-secret "$(openssl rand -hex 16)" >/dev/null
-              log "org '$oname' created (credentials=$ocreds)"
+              log "org '$oname' created (credentials=$ocreds, random webhook secret)"
             fi
           done
 
@@ -733,6 +1014,201 @@
             fi
           done
 
+          # ---- (4b) POOLS (RC2) + CAPABILITY POOLS (RB3) ----------------------
+          # GARM pools have NO name of their own (they are identified by a UUID
+          # and MATCHED by tags), so the reconcile persists a logical-name →
+          # pool-id map under stateDir and reconciles each declared/expanded pool
+          # idempotently against it. Tags for a manifest-backed pool are DERIVED
+          # from the RA6-verified manifest via `runner-label-tool` (RC1) — the
+          # JIT-registration label array is proven hardware, not a hand-kept
+          # class name.
+          pool_state="$state_dir/managed-pool-ids.json"
+          [ -f "$pool_state" ] || echo '{}' > "$pool_state"
+          # Names we (re)applied THIS run — the prune boundary for pools.
+          applied_pools="$(mktemp)"
+
+          # derive_tags MANIFEST_FILE DECLARED_CSV POLICY_CSV
+          #   Compute a pool's classic-runner tag set. With a manifest: derive the
+          #   proven hardware labels (RA6→RC1), LINT any declared set (advertised
+          #   ⊆ derived, FAIL-CLOSED), then append policy labels. Without a
+          #   manifest: the declared set verbatim + policy. Prints a CSV tag list;
+          #   non-zero on a lint/derive failure (no pool for an over-advertised or
+          #   unverifiable host — never a guessed label set).
+          derive_tags() {
+            local mf="$1" declared="$2" policy="$3" derived=""
+            if [ -n "$mf" ]; then
+              if [ ! -r "$mf" ]; then
+                log "ERROR: manifest '$mf' not readable — cannot derive labels"
+                return 1
+              fi
+              if ! derived="$(runner-label-tool derive -m "$mf" 2>/dev/null | paste -sd, -)"; then
+                log "ERROR: runner-label-tool derive failed on '$mf' (fail-closed)"
+                return 1
+              fi
+              if [ -n "$declared" ] && ! runner-label-tool lint -m "$mf" -a "$declared" >/dev/null 2>&1; then
+                log "ERROR: declared labels ($declared) NOT proven by '$mf' (advertised ⊄ derived) — refusing pool"
+                return 1
+              fi
+              printf '%s' "$derived''${policy:+,$policy}"
+            else
+              printf '%s' "$declared''${policy:+,$policy}"
+            fi
+          }
+
+          # qualifies MANIFEST_FILE REQUIRES_CSV — RB3 placement predicate: the
+          # host's derived label set must be a SUPERSET of the required labels.
+          qualifies() {
+            local mf="$1" req="$2" derived lbl
+            { [ -n "$mf" ] && [ -r "$mf" ]; } || return 1
+            derived="$(runner-label-tool derive -m "$mf" 2>/dev/null)" || return 1
+            IFS=',' read -ra _reqs <<< "$req"
+            for lbl in "''${_reqs[@]}"; do
+              [ -z "$lbl" ] && continue
+              echo "$derived" | grep -qxF "$lbl" || return 1
+            done
+            return 0
+          }
+
+          # pool_apply LNAME OID PROVIDER TAGS IMAGE FLAVOR OSTYPE OSARCH MIN MAX PRIO BOOT ENABLED GROUP EXTRAS
+          pool_apply() {
+            local lname="$1" oid="$2" prov="$3" tags="$4" image="$5" flavor="$6"
+            local ostype="$7" osarch="$8" minr="$9" maxr="''${10}" prio="''${11}"
+            local boot="''${12}" enabled="''${13}" group="''${14}" extras="''${15}"
+            local group_flag="" enabled_flag extras_flag="" pid out tmp
+            [ -n "$group" ] && [ "$group" != "null" ] && group_flag="--runner-group=$group"
+            if [ "$enabled" = "true" ]; then enabled_flag="--enabled=true"; else enabled_flag="--enabled=false"; fi
+            [ -n "$extras" ] && [ "$extras" != "{}" ] && extras_flag="--extra-specs=$extras"
+            echo "$lname" >> "$applied_pools"
+            pid="$(jq -r --arg n "$lname" '.[$n] // ""' "$pool_state")"
+            if [ -n "$pid" ] && gcli pool show "$pid" >/dev/null 2>&1; then
+              # shellcheck disable=SC2086
+              garm-cli pool update "$pid" --image "$image" --flavor "$flavor" \
+                --tags "$tags" $enabled_flag --min-idle-runners "$minr" \
+                --max-runners "$maxr" --priority "$prio" \
+                --runner-bootstrap-timeout "$boot" $group_flag $extras_flag >/dev/null
+              log "pool '$lname' (id=$pid) reconciled (provider=$prov tags=[$tags] prio=$prio max=$maxr min=$minr)"
+            else
+              # shellcheck disable=SC2086
+              out="$(garm-cli --format json pool add --org "$oid" --provider-name "$prov" \
+                --image "$image" --flavor "$flavor" --tags "$tags" $enabled_flag \
+                --min-idle-runners "$minr" --max-runners "$maxr" --priority "$prio" \
+                --os-type "$ostype" --os-arch "$osarch" \
+                --runner-bootstrap-timeout "$boot" $group_flag $extras_flag)"
+              pid="$(echo "$out" | jq -r '.id // empty')"
+              if [ -z "$pid" ]; then
+                log "ERROR: pool '$lname' add returned no id"
+                return 1
+              fi
+              tmp="$(mktemp)"
+              jq --arg n "$lname" --arg id "$pid" '.[$n]=$id' "$pool_state" > "$tmp" && mv "$tmp" "$pool_state"
+              log "pool '$lname' created (id=$pid provider=$prov tags=[$tags] prio=$prio max=$maxr min=$minr)"
+            fi
+          }
+
+          # (i) explicit on-prem capability pools (RC2)
+          jq -c '.pools[]?' "$manifest" | while read -r pl; do
+            plname="$(echo "$pl" | jq -r '.name')"
+            plorg="$(echo "$pl" | jq -r '.org')"
+            oid="$(org_id_for "$plorg")"
+            if [ -z "$oid" ]; then
+              log "WARNING: pool '$plname' org '$plorg' has no id; skipping"
+              continue
+            fi
+            mf="$(echo "$pl" | jq -r '.manifestFile // ""')"
+            declared="$(echo "$pl" | jq -r '.labels | join(",")')"
+            policy="$(echo "$pl" | jq -r '.policyLabels | join(",")')"
+            if ! tags="$(derive_tags "$mf" "$declared" "$policy")"; then
+              log "ERROR: pool '$plname' label derivation failed — skipping (fail-closed)"
+              continue
+            fi
+            # RC5: append legacy alias class names verbatim (NOT linted — a name,
+            # not a hardware claim). A job still using `runs-on: <legacy-class>`
+            # then matches this pool by GitHub's subset rule. Dropping the alias
+            # (empty aliasClasses) removes the tag, and the legacy-named job stays
+            # queued — the deliberate end of the cutover bridge.
+            aliases="$(echo "$pl" | jq -r '.aliasClasses | join(",")')"
+            [ -n "$aliases" ] && tags="$tags,$aliases"
+            pool_apply "$plname" "$oid" \
+              "$(echo "$pl" | jq -r '.provider')" "$tags" \
+              "$(echo "$pl" | jq -r '.image')" "$(echo "$pl" | jq -r '.flavor')" \
+              "$(echo "$pl" | jq -r '.osType')" "$(echo "$pl" | jq -r '.osArch')" \
+              "$(echo "$pl" | jq -r '.minIdleRunners')" "$(echo "$pl" | jq -r '.maxRunners')" \
+              "$(echo "$pl" | jq -r '.priority')" "$(echo "$pl" | jq -r '.runnerBootstrapTimeout')" \
+              "$(echo "$pl" | jq -r '.enabled')" "$(echo "$pl" | jq -r '.runnerGroup // ""')" \
+              "$(echo "$pl" | jq -r '.extraSpecs // "{}"')"
+          done
+
+          # (ii) capability pools (RB3): EXPAND per qualifying host + balance.
+          jq -c '.capabilityPools[]?' "$manifest" | while read -r cp; do
+            cpname="$(echo "$cp" | jq -r '.name')"
+            cporg="$(echo "$cp" | jq -r '.org')"
+            oid="$(org_id_for "$cporg")"
+            if [ -z "$oid" ]; then
+              log "WARNING: capabilityPool '$cpname' org '$cporg' has no id; skipping"
+              continue
+            fi
+            req="$(echo "$cp" | jq -r '.requires | join(",")')"
+            balance="$(echo "$cp" | jq -r '.balance')"
+            base="$(echo "$cp" | jq -r '.basePriority')"
+            policy="$(echo "$cp" | jq -r '.policyLabels | join(",")')"
+            # Qualify each candidate (derived ⊇ requires), preserving order.
+            idx=0
+            echo "$cp" | jq -c '.candidates[]?' | while read -r cand; do
+              prov="$(echo "$cand" | jq -r '.provider')"
+              mf="$(echo "$cand" | jq -r '.manifestFile // ""')"
+              if ! qualifies "$mf" "$req"; then
+                log "capabilityPool '$cpname': provider '$prov' does NOT prove [$req] — skipped"
+                continue
+              fi
+              # tags = the host's FULL derived set (+ policy) — a qualifying host
+              # advertises everything it proves, so narrower jobs match too.
+              if ! tags="$(derive_tags "$mf" "" "$policy")"; then
+                log "capabilityPool '$cpname': provider '$prov' derive failed — skipped"
+                continue
+              fi
+              # RC5 transitional bridge: append legacy alias class names verbatim
+              # (NOT linted — a name, not a proven capability) so a job still
+              # written `runs-on: <legacy-class>` matches this expanded pool by
+              # GitHub's subset rule while it migrates to capability labels.
+              # Dropping the alias (empty aliasClasses) removes the tag.
+              cpaliases="$(echo "$cp" | jq -r '(.aliasClasses // []) | join(",")')"
+              [ -n "$cpaliases" ] && tags="$tags,$cpaliases"
+              if [ "$balance" = "pack" ]; then
+                prio=$(( base - idx )); [ "$prio" -lt 0 ] && prio=0
+              else
+                prio="$base"   # spread: equal priority ⇒ distribute across hosts
+              fi
+              pool_apply "$cpname@$prov" "$oid" "$prov" "$tags" \
+                "$(echo "$cp" | jq -r '.image')" "$(echo "$cp" | jq -r '.flavor')" \
+                "$(echo "$cp" | jq -r '.osType')" "$(echo "$cp" | jq -r '.osArch')" \
+                "$(echo "$cp" | jq -r '.minIdleRunners')" "$(echo "$cp" | jq -r '.maxRunners')" \
+                "$prio" "$(echo "$cp" | jq -r '.runnerBootstrapTimeout')" \
+                "$(echo "$cp" | jq -r '.enabled')" "$(echo "$cp" | jq -r '.runnerGroup // ""')" \
+                "{}"
+              idx=$(( idx + 1 ))
+            done
+          done
+
+          # (iii) AWS burst pools (RE3/RE4) — explicit labels + spot extra-specs.
+          jq -c '.burstPools[]?' "$manifest" | while read -r bp; do
+            bpname="$(echo "$bp" | jq -r '.name')"
+            bporg="$(echo "$bp" | jq -r '.org')"
+            oid="$(org_id_for "$bporg")"
+            if [ -z "$oid" ]; then
+              log "WARNING: burst pool '$bpname' org '$bporg' has no id; skipping"
+              continue
+            fi
+            tags="$(echo "$bp" | jq -r '.labels | join(",")')"
+            pool_apply "$bpname" "$oid" \
+              "$(echo "$bp" | jq -r '.provider')" "$tags" \
+              "$(echo "$bp" | jq -r '.image')" "$(echo "$bp" | jq -r '.flavor')" \
+              "$(echo "$bp" | jq -r '.osType')" "$(echo "$bp" | jq -r '.osArch')" \
+              "$(echo "$bp" | jq -r '.minIdleRunners')" "$(echo "$bp" | jq -r '.maxRunners')" \
+              "$(echo "$bp" | jq -r '.priority')" "$(echo "$bp" | jq -r '.runnerBootstrapTimeout')" \
+              "$(echo "$bp" | jq -r '.enabled')" "" \
+              "$(echo "$bp" | jq -c '.extraSpecs // "{}"' | jq -r 'if type=="string" then . else tojson end')"
+          done
+
           # ---- (5) Prune (GUARDED, opt-in) ------------------------------------
           prune="$(jq -r '.pruneUnmanaged' "$manifest")"
           if [ "$prune" = "true" ]; then
@@ -765,6 +1241,26 @@
                 fi
               done
             done
+            # Prune undeclared POOLS: any logical name in the id-map that was NOT
+            # (re)applied this run. Pools are matched via the persisted map (they
+            # have no name), so a pool whose declaration/qualification vanished is
+            # disabled and deleted, and dropped from the map.
+            if [ -f "$pool_state" ]; then
+              jq -r 'keys[]' "$pool_state" | while read -r lname; do
+                if ! grep -qxF "$lname" "$applied_pools" 2>/dev/null; then
+                  pid="$(jq -r --arg n "$lname" '.[$n] // ""' "$pool_state")"
+                  [ -n "$pid" ] || continue
+                  garm-cli pool update "$pid" --enabled=false >/dev/null 2>&1 || true
+                  if garm-cli pool delete "$pid" >/dev/null 2>&1; then
+                    log "pruned undeclared pool '$lname' (id=$pid)"
+                  else
+                    log "WARNING: could not delete undeclared pool '$lname' (id=$pid) — may still have runners"
+                  fi
+                  tmp="$(mktemp)"
+                  jq --arg n "$lname" 'del(.[$n])' "$pool_state" > "$tmp" && mv "$tmp" "$pool_state"
+                fi
+              done
+            fi
             # Prune undeclared credentials (only those we recognise as managed —
             # here: any credential not in the declared set is pruned ONLY when
             # prune is on, and never the built-in ones GARM seeds).
@@ -909,6 +1405,138 @@
         '';
       };
 
+      # ----- RE2 CENTRAL-GARM RECOVERY / DB BACKUP --------------------------
+      # The Runner-Fleet campaign collapses the per-host GARMs into ONE central
+      # controller (RB2). That controller is a deliberate SPOF for provisioning,
+      # bought back (campaign :architecture_decision:) with alerting (RE1/RE1b)
+      # + this recovery posture. GARM is DB-as-truth: on start it reconciles
+      # desired-vs-actual against GitHub, and GitHub re-queues any job whose
+      # runner vanished — so NO job is permanently lost across a controller
+      # crash as long as (a) the process comes back fast and (b) the SQLite DB
+      # under `stateDir` survives. This block hardens both.
+      rcvcfg = cfg.recovery;
+      bcfg = cfg.backup;
+
+      # The live GARM DB (SQLite) + its WAL sidecars, all under the persistent
+      # StateDirectory. `.backup` produces a CONSISTENT online snapshot even
+      # while garm holds the DB open (it copies committed pages under a shared
+      # lock — unlike `cp`, which can catch a torn WAL write).
+      dbBackupScript = pkgs.writeShellApplication {
+        name = "garm-db-backup";
+        runtimeInputs = [
+          pkgs.coreutils
+          pkgs.sqlite
+          pkgs.gzip
+        ];
+        text = ''
+          set -euo pipefail
+
+          db="${dbFile}"
+          out_dir="${bcfg.dir}"
+          retain=${toString bcfg.retain}
+
+          log() { echo "garm-db-backup: $*"; }
+
+          if [ ! -f "$db" ]; then
+            log "no DB at $db yet (garm never initialised its store) — nothing to back up"
+            exit 0
+          fi
+
+          mkdir -p "$out_dir"
+          ts="$(date -u +%Y%m%dT%H%M%SZ)"
+          work="$(mktemp -d "$out_dir/.snap-$ts.XXXXXX")"
+          trap 'rm -rf "$work"' EXIT
+          snap="$work/garm.sqlite"
+
+          # Consistent online snapshot: sqlite's own backup API, not `cp`.
+          sqlite3 "$db" ".backup '$snap'"
+          # Prove it is a well-formed DB before we publish it as a restore point.
+          if ! sqlite3 "$snap" 'PRAGMA integrity_check;' | grep -qx 'ok'; then
+            log "ERROR: snapshot failed integrity_check — discarding" >&2
+            exit 1
+          fi
+
+          final="$out_dir/garm-$ts.sqlite"
+          ${optionalString bcfg.compress ''
+            gzip -c "$snap" > "$work/garm.sqlite.gz"
+            final="$out_dir/garm-$ts.sqlite.gz"
+          ''}
+          ${optionalString (!bcfg.compress) ''
+            cp "$snap" "$work/garm.sqlite.plain"
+          ''}
+          # Publish atomically (rename within the same dir).
+          ${
+            if bcfg.compress then
+              ''mv "$work/garm.sqlite.gz" "$final"''
+            else
+              ''mv "$work/garm.sqlite.plain" "$final"''
+          }
+          log "wrote snapshot $final"
+
+          # Rotate: keep the newest `retain` snapshots, delete older ones.
+          # shellcheck disable=SC2012
+          ls -1t "$out_dir"/garm-*.sqlite* 2>/dev/null \
+            | tail -n +$(( retain + 1 )) \
+            | while IFS= read -r old; do log "rotating out $old"; rm -f "$old"; done
+
+          ${optionalString (bcfg.remoteCommand != null) ''
+            # Operator-supplied off-host ship (binary cache / sibling / standby).
+            # It receives the snapshot path as $1 and in $GARM_DB_SNAPSHOT.
+            log "shipping $final via remoteCommand"
+            export GARM_DB_SNAPSHOT="$final"
+            ${bcfg.remoteCommand} "$final"
+            log "remoteCommand completed"
+          ''}
+        '';
+      };
+
+      # Emergency DB restore. NOT a systemd unit — an operator tool (documented
+      # in the runbook). Stops garm, swaps a chosen snapshot into place under
+      # stateDir, then restarts. A cross-host restore requires the SAME database
+      # passphrase the snapshot was encrypted with (`database.passphraseFile`),
+      # since GARM field-encrypts the DB — the restore refuses to guess.
+      dbRestoreScript = pkgs.writeShellApplication {
+        name = "garm-db-restore";
+        runtimeInputs = [
+          pkgs.coreutils
+          pkgs.sqlite
+          pkgs.gzip
+          pkgs.systemd
+        ];
+        text = ''
+          set -euo pipefail
+
+          db="${dbFile}"
+          usage() { echo "usage: garm-db-restore <snapshot.sqlite[.gz]>" >&2; exit 2; }
+          [ "$#" -eq 1 ] || usage
+          src="$1"
+          [ -f "$src" ] || { echo "garm-db-restore: no such snapshot: $src" >&2; exit 2; }
+
+          echo "garm-db-restore: stopping garm.service"
+          systemctl stop garm.service || true
+
+          tmp="$(mktemp)"
+          case "$src" in
+            *.gz) gzip -dc "$src" > "$tmp" ;;
+            *)    cp "$src" "$tmp" ;;
+          esac
+          if ! sqlite3 "$tmp" 'PRAGMA integrity_check;' | grep -qx 'ok'; then
+            echo "garm-db-restore: snapshot failed integrity_check — refusing to restore" >&2
+            rm -f "$tmp"; exit 1
+          fi
+
+          # Move aside any stale WAL/SHM so the restored file is authoritative.
+          rm -f "$db-wal" "$db-shm"
+          install -o ${cfg.user} -g ${cfg.group} -m 0600 "$tmp" "$db"
+          rm -f "$tmp"
+          echo "garm-db-restore: restored $src -> $db"
+
+          echo "garm-db-restore: starting garm.service"
+          systemctl start garm.service
+          echo "garm-db-restore: done (garm will reconcile the restored DB against the forge)"
+        '';
+      };
+
       # ----- The reusable provider submodule ---------------------------------
       # One named instance per `services.garm.providers.<name>`; the attr name is
       # the GARM `[[provider]].name` referenced by scale sets.
@@ -942,10 +1570,17 @@
                 "tart-macos"
                 "utm-windows-arm"
                 "qemu-windows-arm"
+                "remote"
+                "aws"
               ];
               default = "libvirt";
               description = ''
-                vm-harness backend the provider drives. `libvirt` boots per-job
+                vm-harness backend the provider drives. `remote` (RB1) makes the
+                provider an RPC CLIENT to a remote `vm-harness serve` daemon
+                (configured under `remote.*`) instead of a local-exec backend —
+                the foundation for the central-GARM topology where one controller
+                drives every host's VMs/containers over the network. All other
+                values are LOCAL-exec backends. `libvirt` boots per-job
                 Windows-11 VMs from a golden qcow2 (the Ephemeral-Windows-Runners
                 path); `incus` launches per-job Linux SYSTEM CONTAINERS from a
                 runner image (the Ephemeral-Linux-Runners path);
@@ -1385,6 +2020,208 @@
                 }
               );
             };
+
+            # ----- RB1 remote-target mode -------------------------------------
+            # Consulted only when `backend = "remote"`. COMPANY-AGNOSTIC: an
+            # endpoint + how to obtain the bearer token + the vm-harness backend
+            # the REMOTE host drives — no Metacraft host or secret is baked in.
+            # The concrete endpoint/token wiring (NetBird IPs, agenix secrets)
+            # is an infra-layer concern that CONSUMES these options.
+            remote = mkOption {
+              default = { };
+              description = ''
+                Remote-target mode configuration (RB1). Only used when
+                `backend = "remote"`, in which case the provider is an RPC client
+                to a remote `vm-harness serve` daemon instead of a local backend.
+              '';
+              type = types.submodule {
+                options = {
+                  endpoint = mkOption {
+                    type = types.str;
+                    default = "";
+                    example = "100.72.0.5:8873";
+                    description = ''
+                      Remote `vm-harness serve` address as host:port — typically a
+                      NetBird overlay IP (the control channel is NEVER exposed on
+                      the public internet). Required when `backend = "remote"`.
+                    '';
+                  };
+                  targetBackend = mkOption {
+                    type = types.enum [
+                      "incus"
+                      "libvirt"
+                      "hyperv"
+                      "tart-macos"
+                      "tart-linux-arm"
+                      "noop"
+                    ];
+                    default = "incus";
+                    description = ''
+                      vm-harness backend id the REMOTE host drives (forwarded as
+                      the remote `--backend`). `noop` is the sanctioned test
+                      backend used by the `t_garm_provider_remote` gate.
+                    '';
+                  };
+                  authTokenFile = mkOption {
+                    type = types.nullOr types.path;
+                    default = null;
+                    description = ''
+                      Path the provider reads the bearer token from
+                      (`auth_token_file`). Point it at an agenix secret path or a
+                      systemd `LoadCredential`-staged file — the token NEVER enters
+                      the Nix store. When null, the provider reads the token from
+                      the `authTokenEnv` environment variable instead.
+                    '';
+                  };
+                  authTokenEnv = mkOption {
+                    type = types.str;
+                    default = "VMH_SERVE_TOKEN";
+                    description = ''
+                      Environment variable the bearer token is read from when
+                      `authTokenFile` is null (`auth_token_env`). Its value is
+                      supplied by the infra layer (systemd `EnvironmentFile` /
+                      `LoadCredential`); this module only forwards the variable
+                      name to the provider process. Matches the variable
+                      `vm-harness serve` itself documents, so one per-host secret
+                      serves both ends.
+                    '';
+                  };
+                  guestOS = mkOption {
+                    type = types.str;
+                    default = "linux";
+                    description = ''
+                      Reported guest OS for instances created through this remote
+                      when the golden-image map carries no os_name (`guest_os`).
+                    '';
+                  };
+                  requestTimeoutSec = mkOption {
+                    type = types.ints.unsigned;
+                    default = 0;
+                    description = ''
+                      Bounds a single non-streaming RPC (`/v1/info`).
+                      0 (default) uses a built-in timeout. The create/delete
+                      streams are bounded by the remote worker's own
+                      `--timeout-sec`, not this.
+                    '';
+                  };
+                };
+              };
+            };
+
+            # RC2/RB3: the RA6-verified capability manifest for the HOST this
+            # provider drives. When a `pools`/`capabilityPools` entry is backed
+            # by this provider, the reconcile reads this file, runs
+            # `runner-label-tool derive` on it, and uses the proven labels as the
+            # pool's classic-runner tag set (JIT label DERIVATION — ties RC1 to
+            # RA6). COMPANY-AGNOSTIC: the path is an infra concern — infra points
+            # it at the file its `garm-serve-manifest-verify` oneshot writes
+            # after fetching + verifying the host's signed `GET /v1/manifest`.
+            # null (default) ⇒ pools backed by this provider must declare their
+            # labels explicitly (no derivation).
+            manifestFile = mkOption {
+              type = types.nullOr types.path;
+              default = null;
+              example = "/run/garm/manifests/hms.json";
+              description = ''
+                Path to the host's RA6-verified capability manifest JSON (the
+                `GET /v1/manifest` payload, already signature-verified by the
+                controller). The pool reconcile derives this provider-backed
+                pool's capability labels from it via `runner-label-tool derive`.
+                The manifest is a store-safe, secret-free artifact (hardware
+                facts, not credentials). null ⇒ no derivation for pools on this
+                provider; they must set their labels explicitly.
+              '';
+            };
+
+            # ----- RE3 AWS burst backend --------------------------------------
+            # Consulted only when `backend = "aws"`. COMPANY-AGNOSTIC: the
+            # region + subnet + credential TYPE and the names of the env vars
+            # that carry the credentials — with NO Metacraft account, region,
+            # AMI, or secret baked in. The concrete AWS account/region/subnet/AMI
+            # + agenix-staged credentials are an infra-layer concern that
+            # CONSUMES these options (a HELD prerequisite: the operator must
+            # provision the AWS account + a runner AMI + the CI IAM role/creds).
+            aws = mkOption {
+              default = { };
+              description = ''
+                AWS burst backend configuration (RE3). Only used when
+                `backend = "aws"`, in which case the provider is
+                `garm-provider-aws` provisioning ephemeral EC2 runners. The
+                instance type, AMI, and spot policy are PER-POOL values (see
+                `services.garm.burstPools`), not provider-wide — this block holds
+                only the account-scoped region/subnet/credentials.
+              '';
+              type = types.submodule {
+                options = {
+                  region = mkOption {
+                    type = types.str;
+                    default = "";
+                    example = "eu-central-1";
+                    description = ''
+                      AWS region the burst runners launch in (`region`). Pick one
+                      close to the artifact caches / NetBird gateway. Required
+                      when `backend = "aws"`.
+                    '';
+                  };
+                  subnetId = mkOption {
+                    type = types.str;
+                    default = "";
+                    example = "subnet-0123456789abcdef0";
+                    description = ''
+                      Default VPC subnet the runners are placed in (`subnet_id`).
+                      A per-pool `subnet_id` extra-spec can override it. Required
+                      when `backend = "aws"`.
+                    '';
+                  };
+                  credentialType = mkOption {
+                    type = types.enum [
+                      "role"
+                      "static"
+                    ];
+                    default = "role";
+                    description = ''
+                      How `garm-provider-aws` obtains AWS credentials
+                      (`credentials.credential_type`). `role` (the default and
+                      recommended) uses the AWS SDK default credential chain —
+                      the forwarded env vars, a mounted shared-credentials file,
+                      or the instance-profile IMDS — so NO secret enters the Nix
+                      store. `static` is accepted for completeness, but the
+                      access/secret keys are deliberately NOT rendered into the
+                      store config; supply them to the same env chain instead
+                      (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` /
+                      `AWS_SESSION_TOKEN`) via the infra layer.
+                    '';
+                  };
+                  forwardEnv = mkOption {
+                    type = types.listOf types.str;
+                    default = [
+                      "AWS_ACCESS_KEY_ID"
+                      "AWS_SECRET_ACCESS_KEY"
+                      "AWS_SESSION_TOKEN"
+                      "AWS_REGION"
+                      "AWS_DEFAULT_REGION"
+                      "AWS_SHARED_CREDENTIALS_FILE"
+                      "AWS_WEB_IDENTITY_TOKEN_FILE"
+                      "AWS_ROLE_ARN"
+                      "AWS_CONTAINER_CREDENTIALS_FULL_URI"
+                      "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI"
+                      "SSL_CERT_FILE"
+                      "SSL_CERT_DIR"
+                    ];
+                    description = ''
+                      Environment-variable NAMES forwarded to the
+                      `garm-provider-aws` process (GARM propagates only the vars
+                      it is told to). Their VALUES are supplied by the infra
+                      layer (systemd `EnvironmentFile` / `LoadCredential` / an
+                      instance-profile), so credentials never enter the store.
+                      The default set covers the AWS SDK default credential chain
+                      plus the TLS CA-bundle vars the SDK needs to reach the EC2
+                      API. Override to narrow or extend it.
+                    '';
+                  };
+                };
+              };
+            };
           };
         };
 
@@ -1457,6 +2294,46 @@
           default = defaultPackage;
           defaultText = lib.literalMD "this flake's `garm` package (garm daemon + garm-cli)";
           description = "Package providing the `garm` daemon and `garm-cli` binaries.";
+        };
+
+        labelToolPackage = mkOption {
+          type = types.package;
+          default = defaultLabelTool;
+          defaultText = lib.literalMD "this flake's `runner-label-tool` package";
+          description = ''
+            The RC1 `runner-label-tool` package (manifest → label derivation +
+            `advertised ⊆ derived` linter). The pool reconcile (RC2/RB3) runs its
+            `derive`/`lint` subcommands to compute a classic runner's capability
+            labels from a host's RA6-verified `/v1/manifest`. Company-agnostic.
+          '';
+        };
+
+        mode = mkOption {
+          type = types.enum [
+            "scaleSets"
+            "pools"
+          ];
+          default = "scaleSets";
+          description = ''
+            The runner-provisioning MODEL this controller advertises. This is a
+            DECLARATION of intent for the Phase-C cutover, NOT a hard switch:
+            both `scaleSets` and `pools`/`capabilityPools` reconcile ADDITIVELY
+            whenever they are non-empty, so a controller can run scale sets and
+            capability pools side by side during the migration (RC5 retires the
+            scale sets). Concretely:
+
+            - `scaleSets` (default): single-name scale sets — a job names exactly
+              one class (`runs-on: eph-linux-x64`). The historical model.
+            - `pools`: GARM POOLS + classic runners advertising RC1 CAPABILITY
+              LABEL SETS (`runs-on: [self-hosted, linux, x64, x86-64-v3]` matches
+              any runner proving all those labels). Set this once a host's pools
+              are declared so the intent is legible and tooling/alerts can key on
+              `garm_pool_*` rather than `garm_scaleset_*`.
+
+            The value gates NOTHING structurally — declaring `services.garm.pools`
+            provisions pools regardless — but it records which model is
+            authoritative for a host and is the flag infra flips at cutover.
+          '';
         };
 
         stateDir = mkOption {
@@ -1678,6 +2555,180 @@
           };
         };
 
+        # ---- RE2 central-GARM RECOVERY posture (fast declarative restart) -----
+        # The Runner-Fleet campaign (RB2) collapses the fleet onto ONE central
+        # GARM — a deliberate provisioning SPOF. GARM is DB-as-truth: on start it
+        # reconciles desired-vs-actual against GitHub, and GitHub re-queues any
+        # job whose runner disappeared. So the pragmatic recovery mechanism for a
+        # DB-as-truth single controller is a FAST, MONITORED declarative restart
+        # with the DB on persistent storage — a crashed controller is back in
+        # seconds and reconciles the surviving DB, losing no jobs. This block
+        # tunes that restart and records the RTO the `t_central_garm_recovery`
+        # gate measures against.
+        #
+        # This is COMPLEMENTARY to `healthcheck` (which recovers a
+        # process-ALIVE-but-API-DEAD garm via an external probe): `recovery`
+        # governs the ordinary crash path (main process exits) that
+        # `Restart=always` already handles — it makes that path FAST and, above
+        # all, makes it never permanently give up on the SPOF.
+        recovery = {
+          enable =
+            mkEnableOption "the RE2 fast-restart recovery posture for the central GARM"
+            // {
+              default = true;
+              example = false;
+            };
+
+          restartSec = mkOption {
+            type = types.str;
+            default = "5s";
+            description = ''
+              `RestartSec` for `garm.service` — how long systemd waits after a
+              crash before respawning. Kept short so the DB-as-truth reconcile
+              resumes quickly; a fresh garm rebinds the API and reconciles the
+              persistent SQLite DB in seconds.
+            '';
+          };
+
+          startLimitIntervalSec = mkOption {
+            type = types.str;
+            default = "300s";
+            description = ''
+              `StartLimitIntervalSec` for `garm.service`. systemd's DEFAULT
+              (10s / 5 bursts) would put a briefly crash-looping garm into a
+              PERMANENT `failed` state and stop restarting it — unacceptable for
+              a fleet SPOF. This widens the window so a transient loop keeps
+              being recovered; only a garm that exceeds `startLimitBurst` starts
+              in this window is genuinely broken (bad config, disk full) and is
+              then LEFT failed on purpose, so `up==0`/`GarmControllerDown`
+              (RE1) pages a human instead of hiding a hard fault behind an
+              endless restart.
+            '';
+          };
+
+          startLimitBurst = mkOption {
+            type = types.ints.positive;
+            default = 50;
+            description = ''
+              `StartLimitBurst` for `garm.service` — how many restarts are
+              allowed within `startLimitIntervalSec` before systemd gives up and
+              pages (see above). Generous by design: transient recovery must
+              never hit the ceiling; a real fault will.
+            '';
+          };
+
+          targetRecoverySeconds = mkOption {
+            type = types.ints.positive;
+            default = 30;
+            description = ''
+              The documented RECOVERY-TIME OBJECTIVE (RTO) for a crashed central
+              GARM: the wall-clock budget from process death to a re-bound,
+              serving API on the persistent DB. Informational for operators + the
+              runbook, and the bound the `t_central_garm_recovery` gate asserts
+              the measured single-crash recovery stays within.
+            '';
+          };
+
+          warmStandby = {
+            enable =
+              mkEnableOption ''
+                a documented WARM-STANDBY posture for the central GARM. NOTE the
+                trade-off: GARM is DB-as-truth and reconciles against GitHub, so
+                running a SECOND live controller against the same forge risks a
+                split-brain double-provision. Warm standby here therefore does
+                NOT mean two live controllers — it means the DB backup
+                (`services.garm.backup`) is continuously shipped to a standby
+                host, which can be PROMOTED by restoring that DB + starting garm
+                (a documented, seconds-to-minutes manual/scripted step in the
+                runbook). It is heavier than fast-restart and only pays off when
+                the whole HOST is lost, not merely the process — most deploys
+                should leave this off and rely on fast-restart + backup
+              '';
+
+            host = mkOption {
+              type = types.nullOr types.str;
+              default = null;
+              description = ''
+                Informational: the standby host the DB backup is shipped to
+                (surfaced in the runbook / promotion step). The actual shipping
+                is `backup.remoteCommand`; this only records the intent.
+              '';
+            };
+          };
+        };
+
+        # ---- RE2 GARM DB backup (online SQLite snapshot + off-host ship) ------
+        # Fast-restart (above) covers a crashed PROCESS on a live host — the DB
+        # survives on `stateDir`. This covers the DB itself: periodic CONSISTENT
+        # snapshots (sqlite `.backup`, not `cp`) rotated locally and optionally
+        # shipped off-host, so a corrupted DB or a lost host is recoverable with
+        # `garm-db-restore`. Opt-in (needs a destination); disabled by default.
+        backup = {
+          enable = mkOption {
+            type = types.bool;
+            default = false;
+            description = ''
+              Enable periodic online backups of the GARM SQLite DB via a
+              `garm-db-backup` systemd oneshot + timer. Consistent snapshots
+              (sqlite's own `.backup`, integrity-checked) are written to
+              `backup.dir`, rotated to `backup.retain`, and optionally shipped
+              off-host by `backup.remoteCommand`. Restore with the installed
+              `garm-db-restore <snapshot>` tool.
+            '';
+          };
+
+          interval = mkOption {
+            type = types.str;
+            default = "15min";
+            description = ''
+              How often the backup timer fires (`OnUnitActiveSec` / `OnBootSec`,
+              a systemd time span). One consistent snapshot per interval.
+            '';
+          };
+
+          dir = mkOption {
+            type = types.path;
+            default = "/var/backup/garm";
+            description = ''
+              Directory the local rotated snapshots are written to. Should live
+              on PERSISTENT storage (ideally a different filesystem than
+              `stateDir`, so a lost/corrupted DB volume does not take the backups
+              with it). Created 0700, owned by the garm user.
+            '';
+          };
+
+          retain = mkOption {
+            type = types.ints.positive;
+            default = 24;
+            description = ''
+              Number of newest local snapshots to keep; older ones are rotated
+              out on each run. With the default 15min interval, 24 covers ~6h.
+            '';
+          };
+
+          compress = mkOption {
+            type = types.bool;
+            default = true;
+            description = "gzip each snapshot (`garm-<ts>.sqlite.gz`).";
+          };
+
+          remoteCommand = mkOption {
+            type = types.nullOr types.str;
+            default = null;
+            example = "rsync -a \"$1\" backup-host:/srv/garm-db/";
+            description = ''
+              Optional operator-supplied command run after each successful local
+              snapshot to ship it OFF-HOST (a sibling host, the binary cache, an
+              object store — the warm-standby feed). It receives the snapshot
+              path as `$1` and in `$GARM_DB_SNAPSHOT`, and runs as the garm user
+              from the backup service (so any credentials it needs must be
+              reachable there — e.g. a `LoadCredential` you add via
+              `systemd.services.garm-db-backup`). Company-agnostic: the module
+              ships no transport, only the hook.
+            '';
+          };
+        };
+
         # ---- Declarative reconcile (PM5 "declarative reconcile", pulled fwd) --
         # A post-boot systemd oneshot that makes GARM's DB-resident state (forge
         # endpoints, credentials, orgs, scale sets) track the module's declared
@@ -1747,6 +2798,20 @@
               Null (default) ⇒ a strong password is generated once and persisted
               under stateDir (mode 0600). Changing an already-initialised
               controller's admin password is NOT attempted.
+            '';
+          };
+
+          webhookSecretFile = mkOption {
+            type = types.nullOr types.path;
+            default = null;
+            description = ''
+              Optional path to a file holding the org webhook HMAC secret
+              (staged via LoadCredential). When set, the reconcile creates each
+              org with THIS secret (`--webhook-secret`) instead of a per-org
+              random one, so a rebuilt/fresh controller DB reproduces the exact
+              secret GitHub already signs deliveries with — no manual
+              `organization update --webhook-secret` afterwards. Null (default)
+              ⇒ the legacy `--random-webhook-secret` behaviour.
             '';
           };
 
@@ -2095,6 +3160,610 @@
             )
           );
         };
+
+        # RE3/RE4: AWS BURST pools. Unlike scale sets (single-name, GitHub-owned
+        # scheduling), burst uses GARM POOLS in `pack`+`--priority` mode so the
+        # cloud tier fills ONLY after the higher-priority on-prem pools are
+        # saturated (spill). Each pool keeps an always-warm FLOOR
+        # (`min-idle-runners`), a hard ceiling (`max-runners`), one-job
+        # `--ephemeral` auto-terminate, and an anti-overprovision backoff. RE4
+        # adds an optional spot policy whose fields are rendered into the pool's
+        # `extra_specs` and consumed by the garm-provider-aws spot patch.
+        #
+        # Like scale sets, pools carry GitHub-side state and are applied at
+        # runtime via `garm-cli pool` (the RC2 pool-reconcile wiring); this
+        # option captures the DECLARATIVE desired state, emitted into the
+        # reconcile manifest as `burstPools`. COMPANY-AGNOSTIC: no account,
+        # region, or AMI is baked in — those come from the `aws` provider block
+        # and per-pool `image`/`flavor`, all set by infra.
+        burstPools = mkOption {
+          default = { };
+          description = ''
+            Declarative AWS burst pools keyed by pool name. Each binds an
+            `aws`-backed `provider` + a label set + a warm floor
+            (`minIdleRunners`) + a ceiling (`maxRunners`) + a spill `priority` +
+            an optional `spot` policy. Applied at runtime via `garm-cli pool`
+            since pools carry GitHub-side state.
+          '';
+          type = types.attrsOf (
+            types.submodule (
+              { name, ... }:
+              {
+                options = {
+                  provider = mkOption {
+                    type = types.str;
+                    default = "aws";
+                    description = "The named `services.garm.providers.<provider>` (backend = \"aws\") that backs this burst pool.";
+                  };
+                  poolName = mkOption {
+                    type = types.str;
+                    default = name;
+                    defaultText = lib.literalMD "the attribute name";
+                    description = "The GARM pool name (defaults to the attribute name).";
+                  };
+                  org = mkOption {
+                    type = types.str;
+                    default = "";
+                    example = "my-org";
+                    description = "The GitHub organization the pool belongs to (the `garm-cli pool add --org` target).";
+                  };
+                  credentials = mkOption {
+                    type = types.str;
+                    default = "";
+                    example = "my-app";
+                    description = "The `services.garm.github.<name>.credentialsName` the pool's org authenticates with.";
+                  };
+                  image = mkOption {
+                    type = types.str;
+                    default = "";
+                    example = "ami-0123456789abcdef0";
+                    description = ''
+                      The runner AMI id passed as the pool `--image`. A HELD infra
+                      concern — the operator bakes/points at a runner AMI in their
+                      account. Required for a live pool.
+                    '';
+                  };
+                  flavor = mkOption {
+                    type = types.str;
+                    default = "";
+                    example = "m6i.large";
+                    description = "The EC2 instance type passed as the pool `--flavor`.";
+                  };
+                  osType = mkOption {
+                    type = types.enum [
+                      "linux"
+                      "windows"
+                    ];
+                    default = "linux";
+                    description = "Runner OS type reported to GARM/GitHub.";
+                  };
+                  osArch = mkOption {
+                    type = types.str;
+                    default = "amd64";
+                    description = "Runner OS architecture.";
+                  };
+                  labels = mkOption {
+                    type = types.listOf types.str;
+                    default = [ ];
+                    example = [
+                      "self-hosted"
+                      "linux"
+                      "x64"
+                      "aws"
+                      "x86-64-v3"
+                    ];
+                    description = ''
+                      The capability label set runners in this pool advertise
+                      (`--tags`). A `runs-on` whose labels are a subset matches.
+                      Include an `aws` label so cloud-burst jobs can be targeted
+                      or observed distinctly.
+                    '';
+                  };
+                  maxRunners = mkOption {
+                    type = types.ints.positive;
+                    default = 4;
+                    description = ''
+                      Hard ceiling on concurrent EC2 runners in this pool
+                      (`--max-runners`). The primary AWS spend bound; pair with an
+                      AWS budget alarm as a backstop.
+                    '';
+                  };
+                  minIdleRunners = mkOption {
+                    type = types.ints.unsigned;
+                    default = 1;
+                    description = ''
+                      The always-warm FLOOR (`--min-idle-runners`): idle runners
+                      GARM keeps pre-booted and refills after consumption. This is
+                      the part you pay for 24/7 — keep it small (1-2). See
+                      `floorPolicy`: when set to `lazy` the EFFECTIVE floor is 0
+                      regardless of this value. Must be <= maxRunners.
+                    '';
+                  };
+                  floorPolicy = mkOption {
+                    type = types.enum [
+                      "floor"
+                      "lazy"
+                    ];
+                    default = "floor";
+                    description = ''
+                      The floor-vs-pure-lazy policy knob. `floor` (default) keeps
+                      `minIdleRunners` warm at all times (fast first job, small
+                      standing cost). `lazy` forces the effective min-idle to 0 —
+                      pure scale-to-zero, pay-per-job, cold start on the first
+                      queued job. This is the single knob that flips the pool
+                      between "keep N warm always" and "cost nothing when idle".
+                    '';
+                  };
+                  priority = mkOption {
+                    type = types.ints.unsigned;
+                    default = 10;
+                    description = ''
+                      Pool priority for the controller's `pack` balancer
+                      (`--priority`). LOWER numbers fill first, so give the
+                      on-prem pools a lower priority than this cloud pool and AWS
+                      becomes the SPILL tier — provisioned only once the local
+                      fleet is saturated. Larger == later == cloud-last.
+                    '';
+                  };
+                  jobAgeBackoff = mkOption {
+                    type = types.ints.unsigned;
+                    default = 30;
+                    description = ''
+                      Seconds GARM waits after a `workflow_job` queued event
+                      before creating a NEW runner (`--minimum-job-age-backoff`),
+                      giving an existing idle runner a chance to grab the job
+                      first — the anti-overprovision guard that keeps a burst from
+                      launching more EC2 than the queue truly needs.
+                    '';
+                  };
+                  runnerBootstrapTimeout = mkOption {
+                    type = types.ints.positive;
+                    default = 20;
+                    description = "Minutes before a runner that has not joined GitHub is considered failed and replaced (`--runner-bootstrap-timeout`). Raise for slow AMIs.";
+                  };
+                  ephemeral = mkOption {
+                    type = types.bool;
+                    default = true;
+                    description = ''
+                      One-job `--ephemeral` runners: each EC2 instance runs
+                      exactly one job then GARM terminates it, so there is no idle
+                      burn beyond the floor. Default true — the whole cost model
+                      depends on it; leave it on.
+                    '';
+                  };
+                  enabled = mkOption {
+                    type = types.bool;
+                    default = true;
+                    description = "Whether the burst pool is enabled.";
+                  };
+                  spot = mkOption {
+                    default = { };
+                    description = ''
+                      RE4 spot policy. When `enable` is true the pool's
+                      `extra_specs` request EC2 spot (InstanceMarketOptions),
+                      cutting burst cost; the garm-provider-aws spot patch
+                      consumes them. Leave disabled for on-demand burst.
+                    '';
+                    type = types.submodule {
+                      options = {
+                        enable = mkOption {
+                          type = types.bool;
+                          default = false;
+                          description = "Launch this pool's burst runners as EC2 spot instances.";
+                        };
+                        maxPrice = mkOption {
+                          type = types.str;
+                          default = "";
+                          example = "0.05";
+                          description = ''
+                            Maximum hourly USD price for a spot runner
+                            (`spot_max_price`). Empty (recommended) caps at the
+                            on-demand price. Only consulted when `enable`.
+                          '';
+                        };
+                        instanceType = mkOption {
+                          type = types.enum [
+                            "one-time"
+                            "persistent"
+                          ];
+                          default = "one-time";
+                          description = ''
+                            Spot request type (`spot_instance_type`). `one-time`
+                            (default) suits ephemeral one-job runners; the pool
+                            re-requests fresh anyway, so `persistent` is rarely
+                            needed. Only consulted when `enable`.
+                          '';
+                        };
+                        interruptionBehavior = mkOption {
+                          type = types.enum [
+                            "terminate"
+                            "stop"
+                            "hibernate"
+                          ];
+                          default = "terminate";
+                          description = ''
+                            What EC2 does to an interrupted spot runner
+                            (`spot_instance_interruption_behavior`). `terminate`
+                            (default) is correct for ephemeral runners — the
+                            interrupted instance is torn down, GitHub re-queues the
+                            job, and GARM's reconcile drops the vanished runner and
+                            spills/refills. Only consulted when `enable`.
+                          '';
+                        };
+                        onDemandFallback = mkOption {
+                          type = types.bool;
+                          default = true;
+                          description = ''
+                            When a spot request fails with a capacity/price error,
+                            retry the SAME launch on-demand (`on_demand_fallback`)
+                            rather than starving the queue — the burst still lands,
+                            at on-demand cost. Default true. Only consulted when
+                            `enable`.
+                          '';
+                        };
+                      };
+                    };
+                  };
+                };
+              }
+            )
+          );
+        };
+
+        # RC2: on-prem capability POOLS. A pool = provider + capability label set
+        # + min-idle + max + priority (the campaign's pool definition). Unlike a
+        # scale set — which names ONE class and is pinned to ONE host — a pool
+        # registers CLASSIC runners advertising an RC1 CAPABILITY LABEL SET, so
+        # `runs-on: [self-hosted, linux, x64, x86-64-v3]` matches ANY runner that
+        # proves all those labels. The tag set is DERIVED at reconcile time from
+        # the backing provider's RA6-verified `manifestFile` (JIT label
+        # derivation — RC1 mechanism over RA6 manifest), not hand-maintained;
+        # `policyLabels` adds the attested labels the manifest cannot prove
+        # (`ephemeral`, `org:<name>`, `dev-env-ready`). If the provider has no
+        # manifestFile, the explicit `labels` set is used verbatim (escape hatch).
+        #
+        # Pools carry GitHub-side state, so they are applied at RUNTIME via
+        # `garm-cli pool` by the reconcile (idempotent, id-tracked — GARM pools
+        # have no name, so the reconcile persists a logical-name → pool-id map).
+        # Emitted into the reconcile manifest as `pools`. ADDITIVE: declaring
+        # pools does not touch `scaleSets`, so both models run in parallel for
+        # the RC5 cutover.
+        pools = mkOption {
+          default = { };
+          description = ''
+            Declarative on-prem capability pools keyed by pool name. Each binds a
+            `provider` + a capability label set (DERIVED from the provider's
+            RA6-verified `manifestFile`, or the explicit `labels` when none) + a
+            warm floor (`minIdleRunners`) + a ceiling (`maxRunners`) + a match
+            `priority`. Applied at runtime via `garm-cli pool` since pools carry
+            GitHub-side state. Coexists with `scaleSets` (RC5 retires those).
+          '';
+          type = types.attrsOf (
+            types.submodule (
+              { name, ... }:
+              {
+                options = {
+                  provider = mkOption {
+                    type = types.str;
+                    default = "vmharness";
+                    description = "The named `services.garm.providers.<provider>` that backs this pool (typically a `backend = \"remote\"` provider targeting a host's `vm-harness serve`).";
+                  };
+                  poolName = mkOption {
+                    type = types.str;
+                    default = name;
+                    defaultText = lib.literalMD "the attribute name";
+                    description = ''
+                      The LOGICAL pool name. GARM pools have no name of their own
+                      (they are identified by UUID + matched by tags); the
+                      reconcile persists a logical-name → pool-id map under
+                      stateDir so this pool is reconciled idempotently and pruned
+                      when removed. Defaults to the attribute name.
+                    '';
+                  };
+                  org = mkOption {
+                    type = types.str;
+                    default = "";
+                    example = "my-org";
+                    description = "The GitHub organization the pool belongs to (the `garm-cli pool add --org` target).";
+                  };
+                  credentials = mkOption {
+                    type = types.str;
+                    default = "";
+                    example = "my-app";
+                    description = "The `services.garm.github.<name>.credentialsName` the pool's org authenticates with.";
+                  };
+                  image = mkOption {
+                    type = types.str;
+                    default = "golden";
+                    description = "Image identifier resolved against the backing provider's `images` map (`--image`).";
+                  };
+                  flavor = mkOption {
+                    type = types.str;
+                    default = "default";
+                    description = "Provider flavor passed as `--flavor` (the vm-harness backends ignore it; kept for parity with the GARM CLI).";
+                  };
+                  osType = mkOption {
+                    type = types.enum [
+                      "windows"
+                      "linux"
+                      "macos"
+                    ];
+                    default = "linux";
+                    description = "Runner OS type reported to GARM/GitHub.";
+                  };
+                  osArch = mkOption {
+                    type = types.str;
+                    default = "amd64";
+                    description = "Runner OS architecture.";
+                  };
+                  labels = mkOption {
+                    type = types.listOf types.str;
+                    default = [ ];
+                    example = [
+                      "self-hosted"
+                      "linux"
+                      "x64"
+                      "x86-64-v3"
+                    ];
+                    description = ''
+                      The capability label set. When the backing provider has a
+                      `manifestFile`, the reconcile DERIVES the tag set from it
+                      (`runner-label-tool derive`) and this list, if non-empty, is
+                      LINTED against the derived set (`advertised ⊆ derived`,
+                      fail-closed) — so a pool can never advertise a capability
+                      the host has not proven. When the provider has NO
+                      manifestFile, this list IS the tag set, verbatim.
+                    '';
+                  };
+                  policyLabels = mkOption {
+                    type = types.listOf types.str;
+                    default = [ ];
+                    example = [
+                      "ephemeral"
+                      "org:metacraft-labs"
+                    ];
+                    description = ''
+                      Attested / policy labels APPENDED to the derived hardware
+                      labels. The RA6 manifest cannot prove these (they are
+                      policy, not hardware): `ephemeral`, `org:<name>`,
+                      `dev-env-ready`, etc. Outside the manifest-governed
+                      vocabulary, so they are never linted away.
+                    '';
+                  };
+                  aliasClasses = mkOption {
+                    type = types.listOf types.str;
+                    default = [ ];
+                    example = [ "eph-linux-x64" ];
+                    description = ''
+                      RC5 CUTOVER ALIASES — legacy single-name scale-set class
+                      names this pool ALSO advertises so a consumer still naming
+                      `runs-on: eph-linux-x64` keeps routing to the pool until it
+                      migrates to a capability label set. Each alias is appended
+                      verbatim to the pool's tags (a classic runner in the pool
+                      registers with both its derived capability labels AND these
+                      legacy names), so GitHub's subset match serves a legacy-named
+                      job from the aliased pool.
+
+                      This is NOT a hardware capability, so — like `policyLabels` —
+                      an alias is NEVER linted against the manifest (it is a name,
+                      not a claim). It is the transitional bridge that lets the
+                      scale-set→pool migration proceed class-by-class instead of as
+                      a flag day: keep the alias while any consumer still names the
+                      old class, then DROP it (empty this list) as the FINAL RC5
+                      step. Once dropped, a job still naming the retired class
+                      matches no pool and stays queued — the intended, visible end
+                      of the alias.
+                    '';
+                  };
+                  maxRunners = mkOption {
+                    type = types.ints.positive;
+                    default = 2;
+                    description = "Concurrency CAP — the maximum concurrent runners in this pool (`--max-runners`). Keep `maxRunners * <provider>.memoryMb` within the backing host's RAM headroom.";
+                  };
+                  minIdleRunners = mkOption {
+                    type = types.ints.unsigned;
+                    default = 0;
+                    description = "Warm-pool size (`--min-idle-runners`): pre-booted idle runners kept ready. 0 (default) == scale-to-zero. Must be <= maxRunners.";
+                  };
+                  priority = mkOption {
+                    type = types.ints.unsigned;
+                    default = 0;
+                    description = ''
+                      GARM pool match priority (`--priority`). When multiple pools
+                      match the same labels, GARM tries them in DESCENDING
+                      priority order (higher = tried first). The RB3
+                      `capabilityPools` balancer sets this automatically across
+                      equivalent hosts; for a hand-declared pool leave it 0 unless
+                      you want a specific host preferred.
+                    '';
+                  };
+                  runnerBootstrapTimeout = mkOption {
+                    type = types.ints.positive;
+                    default = 20;
+                    description = "Minutes before a runner that has not joined GitHub is considered failed and replaced (`--runner-bootstrap-timeout`).";
+                  };
+                  runnerGroup = mkOption {
+                    type = types.str;
+                    default = "";
+                    description = "Optional GitHub runner group (`--runner-group`); empty leaves it in `Default`.";
+                  };
+                  enabled = mkOption {
+                    type = types.bool;
+                    default = true;
+                    description = "Whether the pool is enabled.";
+                  };
+                };
+              }
+            )
+          );
+        };
+
+        # RB3: fleet-aware placement + capability→host mapping. A capabilityPool
+        # is a LOGICAL, host-agnostic pool declaration: "provision runners with
+        # capability X on EVERY host that PROVES X, balanced by policy Y". The
+        # reconcile EXPANDS it into one concrete GARM pool per QUALIFYING provider
+        # — a candidate provider qualifies iff its RA6-verified `manifestFile`
+        # derives a label set ⊇ `requires`. This is the structural fix for the
+        # "GPU servers 95% idle vs hms saturated" imbalance: a generic Linux
+        # capabilityPool expands across ALL qualifying Linux hosts, so a job is no
+        # longer pinned to one host — GitHub/GARM place it on whichever qualifying
+        # host is free, per the `balance` policy.
+        capabilityPools = mkOption {
+          default = { };
+          description = ''
+            Declarative CAPABILITY pools keyed by name. Each names the capability
+            labels a host must PROVE (`requires`), the candidate `providers` to
+            consider, and a `balance` policy (`pack`/`spread`). The reconcile
+            expands it into one concrete GARM pool per qualifying provider (host),
+            each advertising THAT host's derived label set, with `priority`
+            assigned by the balancer. Placement is driven entirely by the RA6
+            capability manifests.
+          '';
+          type = types.attrsOf (
+            types.submodule (
+              { name, ... }:
+              {
+                options = {
+                  requires = mkOption {
+                    type = types.listOf types.str;
+                    default = [ ];
+                    example = [
+                      "linux"
+                      "x64"
+                      "gpu"
+                    ];
+                    description = ''
+                      The capability labels a candidate host must PROVE (its
+                      derived manifest labels must be a superset) to back this
+                      pool. E.g. `[ "gpu" ]` restricts placement to GPU hosts;
+                      `[ "x86-64-v3" ]` to v3-capable hosts; `[ ]` matches every
+                      candidate (a generic pool).
+                    '';
+                  };
+                  providers = mkOption {
+                    type = types.listOf types.str;
+                    default = [ ];
+                    description = ''
+                      Candidate `services.garm.providers.<name>` to consider for
+                      placement. Empty (default) ⇒ every enabled provider that has
+                      a `manifestFile` is a candidate. A candidate that does not
+                      PROVE `requires` is skipped (no pool created for it).
+                    '';
+                  };
+                  balance = mkOption {
+                    type = types.enum [
+                      "spread"
+                      "pack"
+                    ];
+                    default = "spread";
+                    description = ''
+                      Balancing policy across the qualifying hosts:
+
+                      - `spread` (default): every qualifying host's pool gets the
+                        SAME `basePriority`, so GARM/GitHub distribute jobs across
+                        equivalent hosts rather than hammering one. This is what
+                        keeps the idle GPU/second-Linux hosts in rotation.
+                      - `pack`: qualifying hosts get DESCENDING priorities in a
+                        stable order, so one host fills to capacity before the
+                        next is touched (bin-packing — useful to keep as many
+                        hosts idle/powered-down as possible).
+                    '';
+                  };
+                  basePriority = mkOption {
+                    type = types.ints.unsigned;
+                    default = 100;
+                    description = ''
+                      The priority assigned to qualifying pools under `spread`, or
+                      the HIGHEST priority (first host) under `pack` (subsequent
+                      hosts step down by one). Give a more-specific capabilityPool
+                      (e.g. gpu) a HIGHER basePriority than a generic one so a
+                      specialised job prefers a specialised host.
+                    '';
+                  };
+                  org = mkOption {
+                    type = types.str;
+                    default = "";
+                    description = "The GitHub organization the expanded pools belong to.";
+                  };
+                  credentials = mkOption {
+                    type = types.str;
+                    default = "";
+                    description = "The `services.garm.github.<name>.credentialsName` the expanded pools authenticate with.";
+                  };
+                  aliasClasses = mkOption {
+                    type = types.listOf types.str;
+                    default = [ ];
+                    example = [ "eph-linux-x64" ];
+                    description = ''
+                      RC5 transitional legacy class names appended VERBATIM as tags
+                      to every pool this capabilityPool expands into (same semantics
+                      as `pools.<name>.aliasClasses`). A job still written
+                      `runs-on: <legacy-class>` then matches an expanded pool by
+                      GitHub's subset rule while it migrates to a capability label
+                      set. NEVER linted against the manifest (it is a name, not a
+                      proven capability). Keep while any consumer still names the
+                      legacy class; empty it to end the bridge.
+                    '';
+                  };
+                  image = mkOption {
+                    type = types.str;
+                    default = "golden";
+                    description = "Image identifier for the expanded pools (`--image`).";
+                  };
+                  flavor = mkOption {
+                    type = types.str;
+                    default = "default";
+                    description = "Provider flavor for the expanded pools (`--flavor`).";
+                  };
+                  osType = mkOption {
+                    type = types.enum [
+                      "windows"
+                      "linux"
+                      "macos"
+                    ];
+                    default = "linux";
+                    description = "Runner OS type for the expanded pools.";
+                  };
+                  osArch = mkOption {
+                    type = types.str;
+                    default = "amd64";
+                    description = "Runner OS architecture for the expanded pools.";
+                  };
+                  policyLabels = mkOption {
+                    type = types.listOf types.str;
+                    default = [ ];
+                    description = "Attested/policy labels appended to each expanded pool's derived labels (see `pools.<name>.policyLabels`).";
+                  };
+                  maxRunners = mkOption {
+                    type = types.ints.positive;
+                    default = 2;
+                    description = "Per-host concurrency cap for each expanded pool (`--max-runners`).";
+                  };
+                  minIdleRunners = mkOption {
+                    type = types.ints.unsigned;
+                    default = 0;
+                    description = "Per-host warm floor for each expanded pool (`--min-idle-runners`). Must be <= maxRunners.";
+                  };
+                  runnerBootstrapTimeout = mkOption {
+                    type = types.ints.positive;
+                    default = 20;
+                    description = "Runner bootstrap timeout (minutes) for each expanded pool.";
+                  };
+                  runnerGroup = mkOption {
+                    type = types.str;
+                    default = "";
+                    description = "Optional GitHub runner group for the expanded pools.";
+                  };
+                  enabled = mkOption {
+                    type = types.bool;
+                    default = true;
+                    description = "Whether the expanded pools are enabled.";
+                  };
+                };
+              }
+            )
+          );
+        };
       };
 
       config = mkIf cfg.enable (
@@ -2158,7 +3827,12 @@
             ) "${cfg.dbPassphraseCredentialName}:${toString cfg.dbPassphraseFile}"
             ++ lib.mapAttrsToList (name: g: "${appKeyCredName name}:${toString g.appKeyFile}") (
               lib.filterAttrs (_: g: g.appKeyFile != null) enabledGithub
-            );
+            )
+            # RB2: one serve-token credential per remote provider that sources
+            # its bearer token from a file (the central GARM topology).
+            ++ lib.mapAttrsToList (
+              name: p: "${serveTokenCredName name}:${toString p.remote.authTokenFile}"
+            ) enabledRemoteTokenProviders;
 
           # The bare on-disk SOURCE paths behind `loadCredential` (the `path`
           # halves, without the `id:` prefixes). On the real hosts the App-PEM
@@ -2188,7 +3862,12 @@
             ++ lib.optional (cfg.dbPassphraseFile != null) (toString cfg.dbPassphraseFile)
             ++ lib.mapAttrsToList (_: g: toString g.appKeyFile) (
               lib.filterAttrs (_: g: g.appKeyFile != null) enabledGithub
-            );
+            )
+            # RB2: the serve-token source paths, asserted present (AssertPathExists)
+            # so a genuinely missing token is a legible failure one phase earlier.
+            ++ lib.mapAttrsToList (
+              _: p: toString p.remote.authTokenFile
+            ) enabledRemoteTokenProviders;
 
           # The dedicated-user base (shared by both provider postures).
           userBaseServiceConfig = {
@@ -2258,8 +3937,13 @@
           };
 
           # A dedicated static `garm` user is required whenever a provider is on
-          # OR the reconcile is enabled.
-          needsDedicatedUser = providerOn || rcfg.enable;
+          # OR the reconcile is enabled OR the RE2 DB backup is enabled — the
+          # backup oneshot runs as a STABLE user that owns the rotated snapshots
+          # and reads garm's StateDirectory, and the restore tool re-owns the
+          # restored DB to it; a DynamicUser (the bare forge-less M0 boot) has no
+          # stable uid for either. The central GARM always has providers, so this
+          # only matters for a provider-less controller that still wants backups.
+          needsDedicatedUser = providerOn || rcfg.enable || bcfg.enable;
 
           # Posture selector: strict M0 DynamicUser (nothing on), the strict
           # static-user posture (reconcile on, no provider), libvirt relaxations
@@ -2268,7 +3952,7 @@
           # when both are on.
           postureServiceConfig =
             if !providerOn then
-              (if rcfg.enable then staticStrictServiceConfig else m0ServiceConfig)
+              (if rcfg.enable || bcfg.enable then staticStrictServiceConfig else m0ServiceConfig)
             else if anyLibvirt then
               libvirtRelaxServiceConfig
             else
@@ -2286,6 +3970,32 @@
               assertion = cfg.providers ? ${ss.provider};
               message = "services.garm.scaleSets.${n}.provider = \"${ss.provider}\" does not name a declared services.garm.providers.<name> (have: ${lib.concatStringsSep ", " (lib.attrNames cfg.providers)}).";
             }) cfg.scaleSets
+            # RC2: a pool's warm floor can never exceed its concurrency cap.
+            ++ lib.mapAttrsToList (n: pl: {
+              assertion = pl.minIdleRunners <= pl.maxRunners;
+              message = "services.garm.pools.${n}: minIdleRunners (${toString pl.minIdleRunners}) must be <= maxRunners (${toString pl.maxRunners}).";
+            }) cfg.pools
+            # RC2: a pool must reference a declared provider.
+            ++ lib.mapAttrsToList (n: pl: {
+              assertion = cfg.providers ? ${pl.provider};
+              message = "services.garm.pools.${n}.provider = \"${pl.provider}\" does not name a declared services.garm.providers.<name> (have: ${lib.concatStringsSep ", " (lib.attrNames cfg.providers)}).";
+            }) cfg.pools
+            # RB3: a capabilityPool's per-host floor can never exceed its cap.
+            ++ lib.mapAttrsToList (n: cp: {
+              assertion = cp.minIdleRunners <= cp.maxRunners;
+              message = "services.garm.capabilityPools.${n}: minIdleRunners (${toString cp.minIdleRunners}) must be <= maxRunners (${toString cp.maxRunners}).";
+            }) cfg.capabilityPools
+            # RB3: every named candidate provider must be declared.
+            ++ lib.concatMap (
+              n:
+              let
+                cp = cfg.capabilityPools.${n};
+              in
+              map (prov: {
+                assertion = cfg.providers ? ${prov};
+                message = "services.garm.capabilityPools.${n}.providers: \"${prov}\" does not name a declared services.garm.providers.<name> (have: ${lib.concatStringsSep ", " (lib.attrNames cfg.providers)}).";
+              }) cp.providers
+            ) (lib.attrNames cfg.capabilityPools)
             # W1: a balloon floor must sit strictly BELOW the ceiling it floors,
             # and only the libvirt backend renders a domain XML to put it in.
             # Both are eval-time failures rather than silent no-ops: the provider
@@ -2298,6 +4008,12 @@
             ++ lib.mapAttrsToList (n: p: {
               assertion = p.currentMemoryMb == 0 || providerIsLibvirt p;
               message = "services.garm.providers.${n}: currentMemoryMb is only honoured by the libvirt backend (this provider's backend = \"${p.backend}\"); it has no effect on incus containers or vm-harness-run VMs.";
+            }) cfg.providers
+            # RB1: a remote-target provider needs an endpoint. (The token is
+            # resolved at runtime — file or env — so it cannot be asserted here.)
+            ++ lib.mapAttrsToList (n: p: {
+              assertion = !(providerIsRemote p) || p.remote.endpoint != "";
+              message = "services.garm.providers.${n}: backend = \"remote\" requires remote.endpoint (host:port of the vm-harness serve daemon).";
             }) cfg.providers
             # Resource-guard (eval time): the sum over all scale sets of
             # maxRunners * (its provider's per-VM RAM) must fit the declared host
@@ -2352,9 +4068,29 @@
             ++ lib.mapAttrsToList (name: p: {
               assertion = p.backend != "incus" || (p.incusIPv4CIDR != "" && p.incusIPv4Gateway != "");
               message = "services.garm.providers.${name}.backend = \"incus\" requires incusIPv4CIDR and incusIPv4Gateway (incusbr0 DHCP does not lease; the provider injects a static IPv4 per container).";
-            }) enabledProviders;
+            }) enabledProviders
+            # RE2: warm standby is a DB-shipping posture, not a second live
+            # controller — so it is meaningless without the backup feed. Fail
+            # eval rather than silently promise an HA that ships nothing.
+            ++ [
+              {
+                assertion =
+                  !rcvcfg.warmStandby.enable || (bcfg.enable && bcfg.remoteCommand != null);
+                message = ''
+                  services.garm.recovery.warmStandby.enable requires
+                  services.garm.backup.enable = true AND a
+                  services.garm.backup.remoteCommand that ships the DB snapshot to
+                  the standby host — warm standby here means "the standby carries a
+                  current DB it can be promoted from", not a second live GARM.
+                '';
+              }
+            ];
 
-          environment.systemPackages = [ cfg.package ];
+          environment.systemPackages = [
+            cfg.package
+          ]
+          # RE2: the emergency DB restore tool ships wherever backup is enabled.
+          ++ lib.optional bcfg.enable dbRestoreScript;
 
           networking.firewall = {
             allowedTCPPorts = mkIf cfg.openFirewall [ cfg.apiServer.port ];
@@ -2388,7 +4124,10 @@
           # Each enabled libvirt provider writes per-job artifacts into its
           # poolDir; provision each owned garm:libvirtd (0771). The incus daemon
           # owns container storage, so incus providers need no host pool dir.
-          systemd.tmpfiles.rules = map (dir: "d ${dir} 0771 ${cfg.user} libvirtd - -") libvirtPoolDirs;
+          systemd.tmpfiles.rules =
+            map (dir: "d ${dir} 0771 ${cfg.user} libvirtd - -") libvirtPoolDirs
+            # RE2: the DB snapshot dir, garm-owned + private.
+            ++ lib.optional bcfg.enable "d ${bcfg.dir} 0700 ${cfg.user} ${cfg.group} - -";
 
           systemd.services.garm = {
             description = "GitHub Actions Runner Manager (garm)";
@@ -2431,7 +4170,20 @@
             # the observed 243s — it passed on all 8 of them. See
             # `credentialSourcePaths` above, and `Type = "exec"` below for the
             # actual repair.
-            unitConfig.AssertPathExists = credentialSourcePaths;
+            unitConfig = {
+              AssertPathExists = credentialSourcePaths;
+            }
+            # RE2 recovery posture: widen the start-limit window so a briefly
+            # crash-looping central GARM (the fleet SPOF) is never dropped into a
+            # permanent `failed` state by systemd's default 10s/5-burst limiter —
+            # it keeps being restarted until it either recovers or exceeds the
+            # generous burst, at which point it is LEFT failed so RE1's
+            # `up==0`/GarmControllerDown pages a human instead of a hard fault
+            # hiding behind an endless loop.
+            // lib.optionalAttrs rcvcfg.enable {
+              StartLimitIntervalSec = rcvcfg.startLimitIntervalSec;
+              StartLimitBurst = rcvcfg.startLimitBurst;
+            };
 
             # The provider child inherits the unit PATH (GARM forwards PATH via
             # environment_variables). libvirt: cdrkit(genisoimage)+qemu+libvirt
@@ -2533,8 +4285,11 @@
               # Restart policy. Opt-outable via healthcheck.startupBindVerify.
               ExecStartPost = lib.optional (hcfg.enable && hcfg.startupBindVerify) (lib.getExe bindVerifyScript);
               ExecReload = "${pkgs.coreutils}/bin/kill -HUP $MAINPID";
+              # Restart=always: the DB-as-truth central GARM always comes back and
+              # reconciles the persistent DB (RE2). RestartSec is the recovery
+              # posture's fast-respawn knob.
               Restart = "always";
-              RestartSec = "5s";
+              RestartSec = if rcvcfg.enable then rcvcfg.restartSec else "5s";
 
               StateDirectory = "garm";
               StateDirectoryMode = "0700";
@@ -2618,9 +4373,13 @@
               Group = cfg.group;
               StateDirectory = "garm";
               WorkingDirectory = stateDir;
-              LoadCredential = lib.optional (
-                rcfg.adminPasswordFile != null
-              ) "reconcile-admin-password:${toString rcfg.adminPasswordFile}";
+              LoadCredential =
+                lib.optional (
+                  rcfg.adminPasswordFile != null
+                ) "reconcile-admin-password:${toString rcfg.adminPasswordFile}"
+                ++ lib.optional (
+                  rcfg.webhookSecretFile != null
+                ) "reconcile-webhook-secret:${toString rcfg.webhookSecretFile}";
               # Retry a few times if garm is still coming up.
               Restart = "on-failure";
               RestartSec = "5s";
@@ -2674,6 +4433,59 @@
               # If the machine was asleep, do not fire a burst of catch-up runs.
               AccuracySec = "10s";
               Unit = "garm-healthcheck.service";
+            };
+          };
+
+          # ---- RE2 DB BACKUP: online SQLite snapshot oneshot + timer ---------
+          # Runs as the garm user (reads the 0700 stateDir DB), writes a
+          # consistent, integrity-checked, rotated snapshot to backup.dir, and
+          # optionally ships it off-host via remoteCommand. It is a SEPARATE unit
+          # from garm.service, so its lighter sandbox never touches the
+          # controller's hardening; it only needs read of stateDir + write of
+          # backup.dir.
+          systemd.services.garm-db-backup = mkIf bcfg.enable {
+            description = "Online backup of the GARM SQLite DB (RE2 recovery)";
+            documentation = [ "https://github.com/cloudbase/garm" ];
+            # Only meaningful once garm has created its store; not a hard require
+            # (the timer keeps taking snapshots regardless, and the script no-ops
+            # if the DB is not there yet).
+            after = [ "garm.service" ];
+            serviceConfig = {
+              Type = "oneshot";
+              ExecStart = lib.getExe dbBackupScript;
+              User = cfg.user;
+              Group = cfg.group;
+              # Snapshot the live DB under stateDir; write the snapshot dir.
+              # stateDir is READ-WRITE (not read-only): a WAL-mode SQLite source
+              # needs to touch the `-shm`/`-wal` sidecars to take even a read
+              # lock, and the garm user owns stateDir already — sqlite's own
+              # locking makes the concurrent `.backup` connection safe.
+              ProtectSystem = "strict";
+              ReadWritePaths = [
+                stateDir
+                bcfg.dir
+              ];
+              NoNewPrivileges = true;
+              ProtectHome = true;
+              PrivateTmp = true;
+              ProtectKernelTunables = true;
+              ProtectKernelModules = true;
+              ProtectControlGroups = true;
+              RestrictSUIDSGID = true;
+              LockPersonality = true;
+              UMask = "0077";
+            };
+          };
+
+          systemd.timers.garm-db-backup = mkIf bcfg.enable {
+            description = "Periodic GARM DB backup (RE2 recovery)";
+            wantedBy = [ "timers.target" ];
+            timerConfig = {
+              OnBootSec = bcfg.interval;
+              OnUnitActiveSec = bcfg.interval;
+              AccuracySec = "1min";
+              Persistent = true;
+              Unit = "garm-db-backup.service";
             };
           };
         }

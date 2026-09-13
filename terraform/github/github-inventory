@@ -277,6 +277,30 @@ gh_request() {
   rm -f "$tmp" "$err"
 }
 
+# Some GitHub endpoints answer with a bare status code and no body: 204 means
+# "on", 404 means "off". `gh api` reports the 404 as a failure, so the plain
+# gh_request wrapper would record it as an error rather than as a fact. Capture
+# the boolean instead.
+gh_boolean_request() {
+  local endpoint="$1"
+  local output="$2"
+  local status
+
+  set +e
+  gh api --hostname "$github_host" \
+    -H "Accept: application/vnd.github+json" \
+    -H "X-GitHub-Api-Version: 2022-11-28" \
+    "$endpoint" >/dev/null 2>&1
+  status=$?
+  set -e
+
+  jq -n \
+    --arg endpoint "$endpoint" \
+    --argjson enabled "$( ((status == 0)) && echo true || echo false)" \
+    '{success: true, errors: [], result: {enabled: $enabled}, request: {endpoint: $endpoint}}' \
+    >"$output"
+}
+
 inventory_rows_from_file() {
   local file="$1"
   shift
@@ -351,6 +375,20 @@ write_inventory_markdown() {
     select(.success)
     | .result[]?
     | "| github_outside_collaborator | \(.login | md) | \($owner)/\(.login | md) | review | existing | M5 | type=\(.type // "unknown" | md) |"
+  ' >>"$inventory"
+
+  inventory_rows_from_file "${raw_dir}/org-security-managers.json" --arg owner "$owner" '
+    def md: tostring | gsub("[\r\n]"; " ") | gsub("\\|"; "\\|");
+    select(.success)
+    | .result[]?
+    | "| github_organization_security_manager | \(.slug // .name | md) | \(.slug // .name | md) | review | existing | M5 | team |"
+  ' >>"$inventory"
+
+  inventory_rows_from_file "${raw_dir}/org-code-security-configurations.json" --arg owner "$owner" '
+    def md: tostring | gsub("[\r\n]"; " ") | gsub("\\|"; "\\|");
+    select(.success)
+    | .result[]?
+    | "| (unmanageable) code_security_configuration | \(.name | md) | \($owner)/\(.id | tostring) | deferred | manual | - | enforcement=\(.enforcement // "unknown" | md) target=\(.target_type // "unknown" | md) no resource in provider 6.12.1 |"
   ' >>"$inventory"
 
   inventory_rows_from_file "${raw_dir}/teams.json" --arg owner "$owner" '
@@ -453,7 +491,41 @@ write_inventory_markdown() {
         def md: tostring | gsub("[\r\n]"; " ") | gsub("\\|"; "\\|");
         select(.success)
         | .result[]?
-        | "| github_repository_collaborator | \($repo | md):\(.login | md) | \($owner)/\($repo | md)/\(.login | md) | review | existing | M5 | permissions=\((.permissions // {}) | keys | join(",")) |"
+        | "| github_repository_collaborator | \($repo | md):\(.login | md) | \($owner)/\($repo | md)/\(.login | md) | review | existing | M5 | affiliation=direct role=\(.role_name // "unknown" | md) |"
+      ' >>"$inventory"
+
+    inventory_rows_from_file "${raw_dir}/repo-${safe}.json" \
+      --arg owner "$owner" --arg repo "$repo" '
+        def md: tostring | gsub("[\r\n]"; " ") | gsub("\\|"; "\\|");
+        def status($k): (.security_and_analysis[$k].status // "absent");
+        select(.success)
+        | .result
+        | select(.security_and_analysis != null)
+        | "| github_repository.security_and_analysis | \($repo | md) | \($owner)/\($repo | md) | review | existing | M5 | secret_scanning=\(status("secret_scanning") | md) push_protection=\(status("secret_scanning_push_protection") | md) code_security=\(status("code_security") | md) visibility=\(.visibility // "unknown" | md) |"
+      ' >>"$inventory"
+
+    inventory_rows_from_file "${raw_dir}/vulnerability-alerts-${safe}.json" \
+      --arg owner "$owner" --arg repo "$repo" '
+        def md: tostring | gsub("[\r\n]"; " ") | gsub("\\|"; "\\|");
+        select(.success)
+        | .result
+        | "| github_repository_vulnerability_alerts | \($repo | md) | \($owner)/\($repo | md) | review | existing | M5 | enabled=\(.enabled | tostring) |"
+      ' >>"$inventory"
+
+    inventory_rows_from_file "${raw_dir}/automated-security-fixes-${safe}.json" \
+      --arg owner "$owner" --arg repo "$repo" '
+        def md: tostring | gsub("[\r\n]"; " ") | gsub("\\|"; "\\|");
+        select(.success)
+        | .result
+        | "| github_repository_dependabot_security_updates | \($repo | md) | \($owner)/\($repo | md) | review | existing | M5 | enabled=\(.enabled // false | tostring) paused=\(.paused // false | tostring) |"
+      ' >>"$inventory"
+
+    inventory_rows_from_file "${raw_dir}/private-vulnerability-reporting-${safe}.json" \
+      --arg owner "$owner" --arg repo "$repo" '
+        def md: tostring | gsub("[\r\n]"; " ") | gsub("\\|"; "\\|");
+        select(.success)
+        | .result
+        | "| (unmanageable) private_vulnerability_reporting | \($repo | md) | \($owner)/\($repo | md) | deferred | manual | - | enabled=\(.enabled // false | tostring) no resource in provider 6.12.1 |"
       ' >>"$inventory"
 
     inventory_rows_from_file "${raw_dir}/repo-teams-${safe}.json" \
@@ -629,6 +701,11 @@ gh_request "/orgs/${owner}/actions/permissions" "${raw_dir}/org-actions-permissi
 gh_request "/orgs/${owner}/actions/permissions/selected-actions" "${raw_dir}/org-actions-selected-actions.json" get 1 || true
 gh_request "/orgs/${owner}/actions/permissions/workflow" "${raw_dir}/org-actions-workflow-permissions.json" get 1 || true
 gh_request "/orgs/${owner}/custom-repository-roles" "${raw_dir}/org-custom-repository-roles.json" paginate 1 || true
+# Code security configurations are the mechanism GitHub steers organizations
+# toward, and provider 6.12.1 has no resource for them. Capture them anyway, so
+# the report says whether they have started being used out of band.
+gh_request "/orgs/${owner}/code-security/configurations" "${raw_dir}/org-code-security-configurations.json" paginate 1 || true
+gh_request "/orgs/${owner}/security-managers" "${raw_dir}/org-security-managers.json" paginate 1 || true
 
 if [[ -s "${raw_dir}/teams.json" ]]; then
   while IFS= read -r team_slug; do
@@ -680,7 +757,27 @@ while IFS= read -r repo; do
   gh_request "/repos/${owner}/${encoded_repo}/actions/variables?per_page=100" "${raw_dir}/repo-actions-variables-${safe}.json" paginate || true
   gh_request "/repos/${owner}/${encoded_repo}/actions/secrets?per_page=100" "${raw_dir}/repo-actions-secrets-${safe}.json" paginate || true
   gh_request "/repos/${owner}/${encoded_repo}/dependabot/secrets?per_page=100" "${raw_dir}/repo-dependabot-secrets-${safe}.json" paginate || true
-  gh_request "/repos/${owner}/${encoded_repo}/collaborators?affiliation=all&per_page=100" "${raw_dir}/repo-collaborators-${safe}.json" paginate || true
+  # Collaborators are captured under THREE distinct affiliations, and the
+  # distinction is load-bearing rather than decorative.
+  #
+  # `affiliation=direct` is the only one that corresponds to a
+  # `github_repository_collaborator` resource: a grant held on the repository
+  # itself. `affiliation=all` returns EFFECTIVE access — direct grants plus
+  # team-derived plus organization-owner-derived — and an adoption transform
+  # that reads it as if it were direct will invent collaborator rows for access
+  # that is really a team grant. Those rows cannot be imported (there is no
+  # direct collaboration to import), and if they were created instead, removing
+  # someone from a team would no longer revoke their access. Keep the effective
+  # set under a name that cannot be mistaken for a resource inventory.
+  gh_request "/repos/${owner}/${encoded_repo}/collaborators?affiliation=direct&per_page=100" "${raw_dir}/repo-collaborators-${safe}.json" paginate || true
+  gh_request "/repos/${owner}/${encoded_repo}/collaborators?affiliation=outside&per_page=100" "${raw_dir}/repo-outside-collaborators-${safe}.json" paginate || true
+  gh_request "/repos/${owner}/${encoded_repo}/collaborators?affiliation=all&per_page=100" "${raw_dir}/repo-effective-access-${safe}.json" paginate || true
+  # Free security posture. `security_and_analysis` already rides the per-repo
+  # GET above (admin tokens only); these two are separate endpoints that the
+  # repository object does not carry.
+  gh_boolean_request "/repos/${owner}/${encoded_repo}/vulnerability-alerts" "${raw_dir}/vulnerability-alerts-${safe}.json"
+  gh_request "/repos/${owner}/${encoded_repo}/automated-security-fixes" "${raw_dir}/automated-security-fixes-${safe}.json" get 1 || true
+  gh_request "/repos/${owner}/${encoded_repo}/private-vulnerability-reporting" "${raw_dir}/private-vulnerability-reporting-${safe}.json" get 1 || true
   gh_request "/repos/${owner}/${encoded_repo}/teams?per_page=100" "${raw_dir}/repo-teams-${safe}.json" paginate || true
   gh_request "/repos/${owner}/${encoded_repo}/labels?per_page=100" "${raw_dir}/labels-${safe}.json" paginate || true
   gh_request "/repos/${owner}/${encoded_repo}/topics" "${raw_dir}/topics-${safe}.json" || true

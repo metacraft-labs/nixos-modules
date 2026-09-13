@@ -17,14 +17,31 @@
     ./garm-service-boot.nix
     ./garm-api-watchdog.nix
     ./garm-multi-provider.nix
+    ./garm-aws-burst.nix
+    ./garm-aws-spot.nix
+    ./garm-webhook-delivery.nix
+    ./garm-pools-labels.nix
+    ./garm-pools-cutover-complete.nix
+    ./garm-capability-placement.nix
+    ./fleet-alerting.nix
+    ./alertmanager-routing.nix
+    ./fit-monitoring.nix
+    ./hybrid-ci-runner.nix
+    ./ci-runs-on-capability.nix
     ./garm-reconcile.nix
     ./garm-stale-scaleset-job-reaped.nix
     ./garm-incus-runner-host.nix
     ./garm-incus-storage-pool-source.nix
     ./garm-macos-runner-install-wrapper.nix
     ./garm-provider-vmharness-backend.nix
+    ./garm-provider-remote.nix
+    ./garm-central-multi-host.nix
+    ./garm-central-recovery.nix
     ./garm-provider-vmharness-protocol.nix
     ./garm-provider-vmharness-windows-toolchain.nix
+    ./vmharness-serve-linux-deploy.nix
+    ./vmharness-serve-win-libvirt.nix
+    ./runner-label-taxonomy.nix
     ./s3-artifact-store.nix
     ./repro-binary-cache-systemd.nix
     ./repro-binary-cache-cross-host.nix
@@ -35,6 +52,7 @@
     ./linux-vm-cloud-init
     ./mcl-devops-rename.nix
     ./netbird-with-agenix.nix
+    ./ci-build-batching.nix
     ./packages-ci-matrix.nix
     ./pre-commit.nix
     ./secret-integration

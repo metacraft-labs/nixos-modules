@@ -108,7 +108,18 @@ branch protection, Environments, Actions permissions/variables, issue labels)
 plus a **secret manifest** and the GitHub-encrypted **payloads** rendered by
 `github-governance-secrets-render` into `github_*` Terraform resources, and
 exposes the rich `output` block the bootstrap helper reads. It is the engine
-behind each org's `bootstrap/github/<name>-governance-prod` root.
+behind each org's `terraform/github/<name>-governance-prod` root.
+
+**That root is Layer 1+, not Layer 0.** Org governance is policy, not pipeline
+plumbing: nothing the CI/CD pipeline needs in order to run lives in it, so it
+carries a `metadata.json` (`credential_mode: "github-app"`), is discovered by
+`terraform/ci/terraform-ci-matrix`, and is plan-comment-applied like every other
+managed root. The genuinely Layer-0 slice — the Actions secrets holding the CI
+App credentials and the CI agenix key — belongs in a separate, small
+`bootstrap/github/<name>-governance-secrets-prod` root built on
+[`actions-secrets.nix`](#actions-secretsnix--standalone-actions-secrets-engine),
+so the pipeline's own credentials are never writable by the pipeline. See
+[root layering](../../docs/Terraform-Root-Layering.md#which-layer-a-root-belongs-to).
 
 Everything company-specific is a parameter; the machinery (name sanitizers,
 list→resource mappers, the secret-manifest validation that throws on unknown or
@@ -135,6 +146,31 @@ org's inventory and secret facts. Only the mapper is shared. See
 [`governance.example.nix`](./governance.example.nix) for a minimal renderable
 model and [`tests/test-render.sh`](./tests/test-render.sh) for the offline check.
 
+### Security posture the engine models
+
+Three free-on-every-plan dimensions, all optional and all rendered only when the
+consumer's inventory supplies them:
+
+| Inventory field                      | Resource                                        | Notes                                                                                                                                                                 |
+| ------------------------------------ | ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `repositories[].securityAndAnalysis` | `github_repository.security_and_analysis`       | `secretScanning` + `secretScanningPushProtection`, both required together. Nested block — rides the existing `github_repository` import, so it needs no import block. |
+| `vulnerabilityAlerts[]`              | `github_repository_vulnerability_alerts`        | `{ repository, enabled }`, imported by bare repository name.                                                                                                          |
+| `dependabotSecurityUpdates[]`        | `github_repository_dependabot_security_updates` | `{ repository, enabled }`, imported by bare repository name.                                                                                                          |
+
+Two constraints are enforced rather than documented. `advancedSecurity` and the
+other `security_and_analysis` sub-blocks are rejected at eval time: GitHub
+renamed `advanced_security` to `code_security` in its responses while provider
+6.12.1 still sends and reads `advanced_security`, and `code_security`,
+`secret_scanning_ai_detection` and `secret_scanning_non_provider_patterns` are
+schema-only — declaring any of them yields a permanent diff and no API call. And
+the two sub-blocks must be supplied together, because an omitted one is left
+Computed and drifts silently.
+
+Model **every** repository in the two list-shaped dimensions, not only the
+enabled ones: a disabled feature imports cleanly as `enabled = false`, whereas an
+unmodelled repository is a creation waiting to happen. Seed from observed values;
+enabling is a later, separately reviewed change against a populated state.
+
 Verifying an extraction is a no-op is the same as for the AWS module: render the
 original `root.nix` and the thin caller with identical data and `diff` the
 `nix eval --json | jq -S` output — empty diff == zero plan diff == safe.
@@ -146,13 +182,30 @@ one-time [import phase](../../docs/Terraform-Import-Phase.md)). None hardcode an
 org — owner / root-config / repo-root are parameters.
 
 - **`github-inventory`** — read-only inventory of the org (repos, branch
-  protection, Environments, Actions vars/permissions, labels, team grants) into
-  `.result/` as raw JSON + a redacted `inventory.md`. Secret values are never
-  read. `--owner <org>` (or `GITHUB_OWNER`), `--all-repos`.
+  protection, Environments, Actions vars/permissions, labels, team grants,
+  security posture) into `.result/` as raw JSON + a redacted `inventory.md`.
+  Secret values are never read. `--owner <org>` (or `GITHUB_OWNER`),
+  `--all-repos`.
+
+  Collaborators are captured under three affiliations and they are **not**
+  interchangeable. `repo-collaborators-*.json` is `affiliation=direct` and is
+  the only one that corresponds to a `github_repository_collaborator`;
+  `repo-outside-collaborators-*.json` is `affiliation=outside`; and
+  `repo-effective-access-*.json` is `affiliation=all` — effective access,
+  including team-derived and owner-derived grants. Reading the last one as if it
+  were the first produces import blocks for collaborations that do not exist,
+  and, if applied as creations, direct grants that survive removal from the
+  team. [`tests/test-collaborator-affiliation.sh`](./tests/test-collaborator-affiliation.sh)
+  is the negative control.
+
 - **`github-governance-import-blocks`** — credential-free generator that reads a
-  repo's reviewed `bootstrap/<root-config>/governance.nix` and emits OpenTofu
+  repo's reviewed `terraform/<root-config>/governance.nix` (falling back to
+  `bootstrap/<root-config>/` for a Layer-0 root) and emits OpenTofu
   `import {}` blocks. `--owner`, `--root-config`, `--root-dir`, `--scope`. Output
-  stays under `.result/` and is never committed.
+  stays under `.result/<layer>/<root-config>/` and is never committed. Scopes
+  include `vulnerability-alerts` and `dependabot-security-updates`;
+  `security_and_analysis` has no scope of its own because it is a nested block on
+  `github_repository` and rides the `repositories` import.
 - **`github-governance-import-ci`** — the CI harness (plan / gated apply) that
   runs the generator + plan and **refuses any non-import action** (≥1 import, 0
   add/change/destroy/replace; typed confirm for apply). Driven by env
@@ -190,13 +243,30 @@ To adopt secrets, a consumer adds entries to `secrets/manifest.nix` (optionally
 with `sets` / `rotationHandler`), places `.age` sources under `secrets/actions/`,
 then runs render → reviewed governance plan/apply.
 
+## `actions-secrets.nix` — standalone Actions-secrets engine
+
+Emits only `github_actions_secret` resources from rendered, GitHub-encrypted
+payloads — no repos, no teams, no org settings. Two distinct uses:
+
+- as a **managed** root (`terraform/github/secrets-<name>-prod`, `credential_mode:
+  github-app`) for ordinary per-repo application secrets, which are
+  plan-comment-applied like anything else; and
+- as the small **Layer-0** root (`bootstrap/github/<name>-governance-secrets-prod`)
+  holding only the chicken-and-egg secrets the pipeline authenticates with.
+
+Resource keys and attribute shape match `governance.nix` exactly
+(`github_actions_secret.secret_<providerId>`, `key_id` + `value_encrypted`), so
+state and the targeted `github-bootstrap` secret flows are interchangeable
+between the two engines.
+
 ## `github-bootstrap` — GitHub Layer-0 driver
 
 Org-admin driver for the GitHub side of Layer 0: the CI-enabling repo settings
 (the `production` Environment, deploy-branch protection, OIDC role-ARN Actions
-variables, CODEOWNERS) and the org governance root. Human-applied, out-of-band —
-never through the pipeline it enables, because the pipeline depends on these
-settings and secrets to run.
+variables, CODEOWNERS) and the small governance-secrets root. Human-applied,
+out-of-band — never through the pipeline it enables, because the pipeline
+depends on these settings and secrets to run. It is **not** the path for the org
+governance root itself: that is Layer 1+ and runs through the PR workflow.
 
 Subcommands: `plan` / `apply` / `outputs`, plus the targeted
 `governance-app-secrets-{plan,apply}` (writes the two `GH_GOVERNANCE_APP_*` org

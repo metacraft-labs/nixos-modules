@@ -353,6 +353,10 @@ runs:
 
     - name: Configure Nix
       shell: bash
+      # Through the environment, never onto a command line, where anything
+      # able to read /proc could see it.
+      env:
+        SETUP_NIX_GITHUB_TOKEN: ${{ inputs.nix-github-token }}
       run: |
         mkdir -p $HOME/.config/nix
 
@@ -392,6 +396,12 @@ runs:
 
         touch "$HOME/.config/nix/netrc"
         chmod 0600 "$HOME/.config/nix/netrc"
+
+        # `access-tokens` above only reaches Nix's OWN GitHub/GitLab fetchers
+        # (`github:` / `gitlab:` refs). A `type = "git"` input over https is
+        # fetched by shelling out to git, which never sees it — see the header
+        # of write-netrc.sh for the full reasoning and the real failure it fixes.
+        bash "${{ github.action_path }}/write-netrc.sh"
 
     # Writing nix.conf is not the same as the setting being IN EFFECT, and the
     # gap between those two is where the defect of the third-party installer

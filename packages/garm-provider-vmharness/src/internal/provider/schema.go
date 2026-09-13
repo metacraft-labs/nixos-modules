@@ -24,8 +24,42 @@ const configJSONSchema = `{
 	"properties": {
 		"backend": {
 			"type": "string",
-			"enum": ["libvirt", "incus", "tart-linux-arm", "tart-macos", "utm-windows-arm", "qemu-windows-arm"],
-			"description": "VM management backend: 'libvirt' (Windows/Linux VMs), 'incus' (Linux system containers), or an Apple-silicon vm-harness backend."
+			"enum": ["libvirt", "incus", "tart-linux-arm", "tart-macos", "utm-windows-arm", "qemu-windows-arm", "remote"],
+			"description": "VM management backend: 'libvirt' (Windows/Linux VMs), 'incus' (Linux system containers), an Apple-silicon vm-harness backend, or 'remote' (RB1: an RPC client to a remote vm-harness serve daemon instead of local exec)."
+		},
+		"remote": {
+			"type": "object",
+			"description": "RB1 remote-target mode (consulted only when backend == 'remote'): drive a remote 'vm-harness serve' daemon over the RA1 RPC instead of a local backend. Company-agnostic — no host or credential is baked in.",
+			"properties": {
+				"endpoint": {
+					"type": "string",
+					"description": "Remote 'vm-harness serve' address as host:port (typically a NetBird overlay IP)."
+				},
+				"target_backend": {
+					"type": "string",
+					"description": "vm-harness backend id the REMOTE host drives (forwarded as the remote --backend), eg 'incus', 'libvirt', 'hyperv', 'tart-macos', or 'noop'."
+				},
+				"auth_token": {
+					"type": "string",
+					"description": "Bearer token inline (DISCOURAGED — prefer auth_token_file/auth_token_env so the secret is not stored)."
+				},
+				"auth_token_file": {
+					"type": "string",
+					"description": "Path the bearer token is read from (systemd LoadCredential / agenix friendly)."
+				},
+				"auth_token_env": {
+					"type": "string",
+					"description": "Environment variable the bearer token is read from when the inline/file sources are empty (default VMH_SERVE_TOKEN)."
+				},
+				"guest_os": {
+					"type": "string",
+					"description": "Reported guest OS for created instances when the golden-image map carries none (default 'linux')."
+				},
+				"request_timeout_sec": {
+					"type": "integer",
+					"description": "Bounds a single non-streaming RPC (/v1/info). 0 uses a built-in default; the create/delete streams are bounded by the remote worker's own --timeout-sec."
+				}
+			}
 		},
 		"virsh_path": {
 			"type": "string",
