@@ -34,7 +34,7 @@ capability **only if the job genuinely needs it** (see
 | --- | --- | --- |
 | `eph-linux-x64` | `[self-hosted, linux, x64]` | add `x86-64-v3` only if the job needs AVX2/v3 |
 | `eph-linux-x64-gpu` | `[self-hosted, linux, x64, gpu]` | |
-| `eph-linux-x64-nested` | `[self-hosted, linux, x64, nested]` | add `docker` only if a container runtime is needed specifically |
+| `eph-linux-x64-nested` | `[self-hosted, linux, x64]` | container runtimes and nested VMs are universal across the fleet — no extra label (see below) |
 | `eph-linux-arm64` | `[self-hosted, linux, arm64]` | |
 | `eph-macos-arm64` | `[self-hosted, macos, arm64]` | |
 | `eph-win-x64` | `[self-hosted, windows, x64]` | |
@@ -77,10 +77,17 @@ jobs:
     runs-on: [self-hosted, linux, x64, gpu]
 ```
 
-The narrowing labels are: `gpu`, `nested`, `docker`, `podman`, `rr-hw-counters`,
-`x86-64-v2/v3/v4`, and the hypervisor labels `incus`/`libvirt`/`hyperv`/`tart`.
-Prefer requesting the **capability** (`nested`), not the **mechanism** that
-provides it (`incus`).
+The narrowing labels are: `gpu`, `rr-hw-counters`, `benchmark`, `x86-64-v2/v3/v4`,
+and the hypervisor labels `incus`/`libvirt`/`hyperv`/`tart`. Prefer requesting
+the **capability** (`gpu`), not the **mechanism** that provides it (`incus`).
+
+**Container and nested-VM support are universal, not routing labels.** Every
+runner in the fleet can run Docker/Podman containers and boot nested VMs, so
+`docker`, `podman`, and `nested` are **not** targetable capability labels — do
+not add them to a `runs-on` array. A job needing a container runtime or a nested
+VM simply targets the OS/arch it needs and uses containers/nested virt directly.
+(They were narrowing labels in an earlier draft of the taxonomy and were removed
+once every runner image gained universal container + nested-VM support.)
 
 ### 3. Lint (the over-constrained checker)
 
