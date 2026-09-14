@@ -27,6 +27,7 @@
     ./alertmanager-routing.nix
     ./fit-monitoring.nix
     ./hybrid-ci-runner.nix
+    ./runner-mode-switch.nix
     ./ci-runs-on-capability.nix
     ./garm-reconcile.nix
     ./garm-stale-scaleset-job-reaped.nix
