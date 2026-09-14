@@ -13,6 +13,12 @@
   # Organizations management/payer account. Set false for member-account
   # bootstraps (e.g. a dedicated per-org prod account) to skip them.
   manageCostAllocation ? true,
+  # The GitHub Actions OIDC provider is account-global: only one owner may
+  # create it. When two repos share an AWS account, the owning repo keeps
+  # `true` (creates the `aws_iam_openid_connect_provider`) and every other repo
+  # sets `false` to look it up as a `data` source and reference the same ARN
+  # instead of recreating it (which would fail with EntityAlreadyExists).
+  manageGithubOidcProvider ? true,
   ...
 }:
 let
@@ -213,6 +219,13 @@ let
     "arn:aws:iam::${awsAccountId}:role/${orgLabel}BreakGlassOperator"
     "arn:aws:iam::${awsAccountId}:role/aws-reserved/sso.amazonaws.com/*/AWSReservedSSO_AdministratorAccess_*"
   ];
+  # Account-global OIDC provider ARN, whether this bootstrap owns the provider
+  # (resource) or references a peer-owned one (data source).
+  githubOidcProviderArn =
+    if manageGithubOidcProvider then
+      "\${aws_iam_openid_connect_provider.github_actions.arn}"
+    else
+      "\${data.aws_iam_openid_connect_provider.github_actions.arn}";
   breakGlassAssumeRolePolicy = builtins.toJSON {
     Version = "2012-10-17";
     Statement = [
@@ -243,11 +256,6 @@ in
         version = "~> 4.0";
       };
     };
-  };
-
-  data.aws_caller_identity.current = { };
-  data.tls_certificate.github_actions = {
-    url = "https://${githubTokenHost}";
   };
 
   locals = {
@@ -315,12 +323,6 @@ in
 
       point_in_time_recovery.enabled = true;
       server_side_encryption.enabled = true;
-    };
-
-    aws_iam_openid_connect_provider.github_actions = {
-      url = "https://${githubTokenHost}";
-      client_id_list = [ "sts.amazonaws.com" ];
-      thumbprint_list = [ "\${data.tls_certificate.github_actions.certificates[0].sha1_fingerprint}" ];
     };
 
     aws_iam_role.terraform_plan = {
@@ -419,6 +421,19 @@ in
     };
   }
   // (
+    # Account-global: only the owning repo creates it (see manageGithubOidcProvider).
+    if manageGithubOidcProvider then
+      {
+        aws_iam_openid_connect_provider.github_actions = {
+          url = "https://${githubTokenHost}";
+          client_id_list = [ "sts.amazonaws.com" ];
+          thumbprint_list = [ "\${data.tls_certificate.github_actions.certificates[0].sha1_fingerprint}" ];
+        };
+      }
+    else
+      { }
+  )
+  // (
     if manageCostAllocation then
       {
         aws_ce_cost_allocation_tag = builtins.mapAttrs (_name: tagKey: {
@@ -437,7 +452,13 @@ in
       { }
   );
 
-  data.aws_iam_policy_document = {
+  data = {
+    aws_caller_identity.current = { };
+    tls_certificate.github_actions = {
+      url = "https://${githubTokenHost}";
+    };
+
+    aws_iam_policy_document = {
     state_bucket_tls.statement = [
       {
         sid = "DenyInsecureTransport";
@@ -540,7 +561,7 @@ in
         principals = [
           {
             type = "Federated";
-            identifiers = [ "\${aws_iam_openid_connect_provider.github_actions.arn}" ];
+            identifiers = [ githubOidcProviderArn ];
           }
         ];
         condition = [
@@ -570,7 +591,7 @@ in
         principals = [
           {
             type = "Federated";
-            identifiers = [ "\${aws_iam_openid_connect_provider.github_actions.arn}" ];
+            identifiers = [ githubOidcProviderArn ];
           }
         ];
         condition = githubApplyAssumeConditions;
@@ -584,7 +605,7 @@ in
         principals = [
           {
             type = "Federated";
-            identifiers = [ "\${aws_iam_openid_connect_provider.github_actions.arn}" ];
+            identifiers = [ githubOidcProviderArn ];
           }
         ];
         condition = [
@@ -607,7 +628,19 @@ in
       }
     ];
 
-  };
+    };
+  }
+  // (
+    # Peer-owned account-global OIDC provider: look it up instead of creating it.
+    if manageGithubOidcProvider then
+      { }
+    else
+      {
+        aws_iam_openid_connect_provider.github_actions = {
+          url = "https://${githubTokenHost}";
+        };
+      }
+  );
 
   output = {
     expected_aws_account_id = {
