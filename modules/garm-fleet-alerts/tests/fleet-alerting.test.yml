@@ -423,6 +423,176 @@ tests:
         alertname: GarmFleetOverProvision
         exp_alerts: []
 
+  # ── GarmListenerSessionShortfall / GarmListenerPollStalled ─────────────────
+  # A scale-set controller opens ONE GitHub message session per scale set and
+  # long-polls it. When a worker's session dies and is never re-opened, GARM
+  # logs nothing at all — no error, no warning, no backoff — so the arithmetic
+  # below is the only signal that exists. Both alerts are duration-gated: a
+  # controlled restart drops every session in the same scrape and must not page.
+  - interval: 1m
+    name: 'listeners that die and never come back page; 10m into the shortfall is not enough'
+    input_series:
+      - series: 'garm_scaleset_info{instance="high-mem-server", id="5", scaleset_owner="acme", name="eph-linux-x64"}'
+        values: '1x40'
+      - series: 'garm_scaleset_info{instance="high-mem-server", id="6", scaleset_owner="acme", name="eph-win-x64"}'
+        values: '1x40'
+      - series: 'garm_scaleset_info{instance="high-mem-server", id="7", scaleset_owner="acme", name="eph-macos-arm64"}'
+        values: '1x40'
+      - series: 'garm_github_operations_total{instance="high-mem-server", operation="CreateMessageSession", scope="Organization"}'
+        values: '3x40'
+      # one listener drops at t=10m and is never re-created
+      - series: 'garm_github_operations_total{instance="high-mem-server", operation="DeleteMessageSession", scope="Organization"}'
+        values: '0+0x9 1+0x31'
+    promql_expr_test:
+      - expr: garm:listener_entities_declared
+        eval_time: 20m
+        exp_samples:
+          - labels: '{__name__="garm:listener_entities_declared", instance="high-mem-server"}'
+            value: 3
+      # the `or 0 * <creates>` arm: before the first delete there is no
+      # DeleteMessageSession series at all, and this must still be 3, not empty
+      - expr: garm:message_sessions_live
+        eval_time: 5m
+        exp_samples:
+          - labels: '{__name__="garm:message_sessions_live", instance="high-mem-server"}'
+            value: 3
+      - expr: garm:message_sessions_live
+        eval_time: 20m
+        exp_samples:
+          - labels: '{__name__="garm:message_sessions_live", instance="high-mem-server"}'
+            value: 2
+    alert_rule_test:
+      - eval_time: 20m # for: 15m not elapsed
+        alertname: GarmListenerSessionShortfall
+        exp_alerts: []
+      - eval_time: 26m
+        alertname: GarmListenerSessionShortfall
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: garm-fleet
+              instance: high-mem-server
+            exp_annotations:
+              summary: 'GARM listeners MISSING on high-mem-server (1 message session(s) short)'
+              description: 'Controller high-mem-server has had 1 fewer live GitHub message session(s) (CreateMessageSession minus DeleteMessageSession) than it has declared scale sets/pools, for 15m. Those scale sets are no longer claiming jobs and GARM will not say so — it logs no error, no warning and no backoff for a dead listener, which is how this went unnoticed for four days on 2026-09-02. Corroborate with garm:message_session_poll_interval_seconds (healthy is roughly 45-50s per session), then restart GARM on that host and confirm every scale set logs starting consumer.'
+
+  - interval: 1m
+    name: 'a controlled restart drops every session in one scrape and does NOT page'
+    input_series:
+      - series: 'garm_scaleset_info{instance="high-mem-server", id="5", scaleset_owner="acme", name="eph-linux-x64"}'
+        values: '1x40'
+      - series: 'garm_scaleset_info{instance="high-mem-server", id="6", scaleset_owner="acme", name="eph-win-x64"}'
+        values: '1x40'
+      - series: 'garm_scaleset_info{instance="high-mem-server", id="7", scaleset_owner="acme", name="eph-macos-arm64"}'
+        values: '1x40'
+      # restart at t=20m: both counters reset together, consumers back at t=21m
+      - series: 'garm_github_operations_total{instance="high-mem-server", operation="CreateMessageSession", scope="Organization"}'
+        values: '6+0x19 0 3+0x20'
+      - series: 'garm_github_operations_total{instance="high-mem-server", operation="DeleteMessageSession", scope="Organization"}'
+        values: '3+0x19 0+0x21'
+    promql_expr_test:
+      # the dip is REAL — this is what a per-sample rule would page on
+      - expr: garm:listener_entities_declared - garm:message_sessions_live
+        eval_time: 20m
+        exp_samples:
+          - labels: '{instance="high-mem-server"}'
+            value: 3
+      - expr: garm:message_sessions_live
+        eval_time: 21m
+        exp_samples:
+          - labels: '{__name__="garm:message_sessions_live", instance="high-mem-server"}'
+            value: 3
+    alert_rule_test:
+      - eval_time: 19m
+        alertname: GarmListenerSessionShortfall
+        exp_alerts: []
+      - eval_time: 20m # the dip sample itself
+        alertname: GarmListenerSessionShortfall
+        exp_alerts: []
+      - eval_time: 21m
+        alertname: GarmListenerSessionShortfall
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: GarmListenerSessionShortfall
+        exp_alerts: []
+
+  - interval: 1m
+    name: 'a long poll that stalls while sessions still count live pages; a healthy 45s poll does not'
+    input_series:
+      - series: 'garm_scaleset_info{instance="high-mem-server", id="5", scaleset_owner="acme", name="eph-linux-x64"}'
+        values: '1x90'
+      - series: 'garm_scaleset_info{instance="high-mem-server", id="6", scaleset_owner="acme", name="eph-win-x64"}'
+        values: '1x90'
+      - series: 'garm_scaleset_info{instance="high-mem-server", id="7", scaleset_owner="acme", name="eph-macos-arm64"}'
+        values: '1x90'
+      - series: 'garm_github_operations_total{instance="high-mem-server", operation="CreateMessageSession", scope="Organization"}'
+        values: '3x90'
+      # 4 polls/min for three sessions = 45s each, then a trickle from t=30m:
+      # the sessions are still counted live, but nobody is listening on them.
+      - series: 'garm_github_operations_total{instance="high-mem-server", operation="GetMessage", scope="Organization"}'
+        values: '0+4x30 120+0.2x60'
+    promql_expr_test:
+      - expr: garm:message_session_poll_interval_seconds
+        eval_time: 25m
+        exp_samples:
+          - labels: '{__name__="garm:message_session_poll_interval_seconds", instance="high-mem-server"}'
+            value: 45
+    alert_rule_test:
+      - eval_time: 25m # healthy long poll
+        alertname: GarmListenerPollStalled
+        exp_alerts: []
+      - eval_time: 40m # stalled, but for: 15m not elapsed
+        alertname: GarmListenerPollStalled
+        exp_alerts: []
+      - eval_time: 60m
+        alertname: GarmListenerPollStalled
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              component: garm-fleet
+              instance: high-mem-server
+            exp_annotations:
+              summary: 'GARM long-poll STALLED on high-mem-server (900s between GetMessage calls)'
+              description: 'Controller high-mem-server still counts live GitHub message sessions, but the mean interval between GetMessage long-polls has been above 180s for 15m (900s). A healthy long poll returns every 45-50s per session, so the sessions exist on paper while nothing is actually listening — the other half of the 2026-09-02 failure mode, and the signal its session count was reconstructed from. Restart GARM on that host.'
+      # a stall does not disturb the session arithmetic: the two signals are
+      # independent, not one restated twice
+      - eval_time: 60m
+        alertname: GarmListenerSessionShortfall
+        exp_alerts: []
+
+  # A POOL-mode controller is webhook-driven and opens NO message sessions at
+  # all (measured on a live pool-mode GARM 2026-09-15: 18 garm_pool_info, 8368
+  # garm_webhook_received, and not one CreateMessageSession/GetMessage series).
+  # Counting its pools into an expected-session total would page forever, so the
+  # declared count takes pools only where there are no scale sets and the
+  # shortfall alert needs a live-session series on the same instance to subtract
+  # from. This is the false-positive guard for the whole family.
+  - interval: 1m
+    name: 'a pool-mode, webhook-driven controller with no message sessions never pages'
+    input_series:
+      - series: 'garm_pool_info{instance="gpu-server-002", id="0e1a", pool_owner="acme", provider_name="incus"}'
+        values: '1x40'
+      - series: 'garm_pool_info{instance="gpu-server-002", id="1f2b", pool_owner="acme", provider_name="incus"}'
+        values: '1x40'
+      - series: 'garm_webhook_received{instance="gpu-server-002", reason="", valid="true"}'
+        values: '100+3x40'
+    promql_expr_test:
+      - expr: garm:listener_entities_declared
+        eval_time: 30m
+        exp_samples:
+          - labels: '{__name__="garm:listener_entities_declared", instance="gpu-server-002"}'
+            value: 2
+      - expr: garm:message_sessions_live
+        eval_time: 30m
+        exp_samples: []
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: GarmListenerSessionShortfall
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: GarmListenerPollStalled
+        exp_alerts: []
+
   # ── Watchdog (dead-man's switch heartbeat) ─────────────────────────────────
   # The only alert with no firing/silent duality: it fires ALWAYS, by design.
   # Its silence (a dead alerter) is what the off-host sink alarms on — there is
@@ -439,7 +609,7 @@ tests:
               component: garm-fleet
             exp_annotations:
               summary: 'Alerting pipeline heartbeat (always firing)'
-              description: 'This alert is always firing. It is routed to an off-host dead-man''s switch that alarms if these notifications STOP arriving — i.e. if Prometheus, Alertmanager, this host, or the network has died. If YOU are reading this as a page, the routing is misconfigured (the Watchdog must go only to the dead-man receiver).'
+              description: "This alert is always firing. It is routed to an off-host dead-man's switch that alarms if these notifications STOP arriving — i.e. if Prometheus, Alertmanager, this host, or the network has died. If YOU are reading this as a page, the routing is misconfigured (the Watchdog must go only to the dead-man receiver)."
       - eval_time: 30m
         alertname: Watchdog
         exp_alerts:
@@ -448,4 +618,4 @@ tests:
               component: garm-fleet
             exp_annotations:
               summary: 'Alerting pipeline heartbeat (always firing)'
-              description: 'This alert is always firing. It is routed to an off-host dead-man''s switch that alarms if these notifications STOP arriving — i.e. if Prometheus, Alertmanager, this host, or the network has died. If YOU are reading this as a page, the routing is misconfigured (the Watchdog must go only to the dead-man receiver).'
+              description: "This alert is always firing. It is routed to an off-host dead-man's switch that alarms if these notifications STOP arriving — i.e. if Prometheus, Alertmanager, this host, or the network has died. If YOU are reading this as a page, the routing is misconfigured (the Watchdog must go only to the dead-man receiver)."

@@ -52,16 +52,31 @@ _top@{ ... }:
               || fail "a fault-injection unit test did not fire/stay-silent as asserted"
 
             # Guard against silent shrinkage: every failure mode the gate names
-            # must have an alert. (13 alerts + 5 recording rules: 2 capacity +
-            # 3 RC5 over-provision.)
+            # must have an alert. (15 alerts + 8 recording rules: 2 capacity +
+            # 3 RC5 over-provision + 3 MA6 listener liveness.)
             for a in \
               GarmControllerDown GarmControllerUnhealthy GarmPoolManagerNotRunning \
               GarmProviderCreateFailures GarmProviderHighErrorRatio \
               GarmGithubRateLimitLow GarmGithubRateLimitCritical GarmFleetStarvation \
               GarmFleetOverProvision \
+              GarmListenerSessionShortfall GarmListenerPollStalled \
               GithubAppTokenMintFailing GithubWebhookDeliveryFailing \
               GithubWebhookEndpointProbeDown GarmWebhookHmacFailures; do
               grep -q "alert: $a" garm-fleet-alerts.yml || fail "alert $a missing from the library"
+            done
+
+            # The listener-liveness pair is the one family whose whole point is
+            # a DURATION clause: a controlled GARM restart drops every message
+            # session in the same scrape, so a per-sample rule pages on every
+            # deploy. Assert the `for:` is there as text — the promtool suite
+            # asserts what it DOES.
+            for a in GarmListenerSessionShortfall GarmListenerPollStalled; do
+              awk -v want="      - alert: $a" '
+                $0 == want { inblock = 1; next }
+                inblock && /^      - (alert|record): / { exit }
+                inblock && /^        for: / { found = 1; exit }
+                END { exit(found ? 0 : 1) }
+              ' garm-fleet-alerts.yml || fail "alert $a has no 'for:' clause — it would page on every controlled GARM restart"
             done
 
             echo "[t_fleet_alerting][PASS] library valid; all fault-injection tests fire/stay-silent as asserted"

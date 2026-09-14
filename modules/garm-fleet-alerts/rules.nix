@@ -21,6 +21,19 @@
 #                                                             AND jobs-served (RC5)
 #   garm_runner_operations_total{operation="CreateInstance"} -> runners-created (RC5)
 #   garm_webhook_received{valid,reason}                    -> HMAC failures (pool mode only)
+#   garm_github_operations_total{operation=...}            -> LISTENER LIVENESS (MA6):
+#     "CreateMessageSession" / "DeleteMessageSession"         live long-poll sessions
+#     "GetMessage"                                            the poll interval that
+#                                                             corroborates the count
+#
+# LISTENER LIVENESS: a scale-set controller opens ONE message session per scale
+# set and long-polls it. A worker whose session dies and is never re-opened logs
+# NOTHING — no error, no warning, no backoff — so the arithmetic above is the
+# only signal there is (2026-09-02: four days of dead listeners, silent). See
+# the `garm-fleet-listeners` group and the README section of the same name; note
+# in particular that POOL mode is webhook-driven and opens no message sessions
+# at all, which is why the declared count takes pools only where there are no
+# scale sets.
 #
 # RC5 OVER-PROVISION: a thundering-herd watch for the pools cutover — runners
 # CREATED / jobs SERVED over a window (`garm:overprovision_ratio`), which sits
@@ -61,6 +74,8 @@
   providerCreateFailFor ? "5m",
   providerErrorRatioFor ? "10m",
   rateLimitFor ? "5m",
+  listenerShortfallFor ? "15m",
+  listenerPollStalledFor ? "15m",
   starvationFor ? "10m",
   overProvisionFor ? "30m",
   appTokenMintFor ? "15m",
@@ -72,6 +87,18 @@
   providerErrorRatioCrit ? "0.2", # errors/ops ratio over 15m.
   rateLimitWarn ? 200,
   rateLimitCrit ? 50,
+  # LISTENER LIVENESS (scale-set long-poll workers). A GARM in scale-set mode
+  # opens ONE GitHub message session per scale set and long-polls it with
+  # GetMessage; the poll returns when a message arrives or when GitHub times the
+  # request out. MEASURED on a live controller (m3:9997, 2026-09-15, 31.8h of
+  # counters, 6 scale sets / 6 live sessions): GetMessage rate 0.0673/s for the
+  # Organization scope and 0.0594/s for the Enterprise scope, i.e. a mean
+  # 44.6s / 50.5s per session and 47.4s fleet-wide — the same ~47s the
+  # 2026-09-02 incident was reconstructed from. `listenerPollIntervalCrit` is
+  # therefore set ~3.8x above the observed long-poll ceiling: only a session
+  # that has stopped polling ALTOGETHER (rate -> 0, interval -> +Inf) reaches it.
+  listenerPollWindow ? "15m",
+  listenerPollIntervalCrit ? 180,
   # RC5 over-provision (thundering-herd) ratio: runners CREATED / jobs SERVED
   # over `overProvisionWindow`. Healthy pool mode is ~1 (one ephemeral runner per
   # job); a herd creates many runners per job. Only judged once at least
@@ -219,6 +246,68 @@ let
         garm:class_queued_jobs
           and on (garm_owner, garm_class) (garm:class_saturated == 1)'';
 
+  # ── LISTENER LIVENESS (see the `garm-fleet-listeners` group below). ─────────
+  #
+  # DECLARED LISTENERS. One message session per SCALE SET. Pools are counted
+  # only on controllers that declare no scale sets, and that is deliberate, not
+  # laziness: MEASURED on the two live controllers 2026-09-15, a POOL-mode GARM
+  # opens no message sessions at all — high-mem-server:9997 exports 18
+  # `garm_pool_info`, `garm_webhook_received` (8368 valid), and ZERO
+  # `garm_github_operations_total{operation=~".*MessageSession|GetMessage"}`
+  # series, because pool mode is webhook-driven.
+  #
+  # BE PRECISE ABOUT WHAT THE `unless` BUYS. A pool-ONLY controller is already
+  # excluded from the shortfall alert by vector matching alone: with no
+  # message-session counters there is no garm:message_sessions_live series on
+  # that instance, and `declared - live` over a missing right-hand side is
+  # EMPTY, not `declared - 0`. So counting its pools would NOT by itself page
+  # forever (verified 2026-09-15 against the live fleet: both the shipped
+  # expression and a naive `count(garm_scaleset_info or garm_pool_info)` variant
+  # return zero series). It would page forever only if the live term ALSO
+  # defaulted an absent creates counter to zero — which is exactly the mistake
+  # the `or 0 * <creates>` arm below invites on the delete term, so the risk is
+  # real but conditional.
+  #
+  # What the `unless on (instance)` actually prevents is a MIXED controller —
+  # one exporting both families — having its pools added on top of its scale
+  # sets, which would invent a permanent phantom shortfall there, because pools
+  # open no sessions to cover the inflated expectation. It also keeps the count
+  # on the DECLARED TOTAL, so a fleet that retires its scale sets in favour of
+  # pools is still counted rather than silently dropping to nothing.
+  declaredListenersExpr = ''
+    count by (instance) (
+      ${m.info}
+        or
+      (${if isPool then "garm_scaleset_info" else "garm_pool_info"} unless on (instance) ${m.info})
+    )'';
+
+  # LIVE SESSIONS. Both counters reset together when GARM restarts, so the raw
+  # difference is restart-safe; the `for:` on the alert covers the seconds in
+  # which the sessions are being re-opened. The `or 0 * <creates>` arm matters:
+  # a controller that has not deleted a session yet exports NO
+  # DeleteMessageSession series at all, and `sum(a) - sum(b)` with an empty `b`
+  # is EMPTY — the rule would go silent on exactly the healthy-so-far controller
+  # it is meant to watch.
+  liveSessionsExpr = ''
+    sum by (instance) (garm_github_operations_total{operation="CreateMessageSession"})
+      -
+    (
+      sum by (instance) (garm_github_operations_total{operation="DeleteMessageSession"})
+        or
+      0 * sum by (instance) (garm_github_operations_total{operation="CreateMessageSession"})
+    )'';
+
+  # CORROBORATING SIGNAL: mean seconds between GetMessage long-polls per live
+  # session. rate(GetMessage) is polls/second across all of the controller's
+  # sessions, so live / rate is the per-session interval — the arithmetic the
+  # 2026-09-02 session count was actually recovered from (one live org session
+  # polling at ~47s; two enterprise sessions at ~24s, exactly half). A session
+  # that is counted live but has stopped listening drives rate -> 0 and the
+  # interval -> +Inf.
+  pollIntervalExpr = ''
+    garm:message_sessions_live
+      / sum by (instance) (rate(garm_github_operations_total{operation="GetMessage"}[${listenerPollWindow}]))'';
+
   # DEAD-MAN'S SWITCH heartbeat. `vector(1)` is always 1, so this alert is always
   # firing; the routing layer sends it to an off-host Healthchecks ping. Its
   # absence (dead Prometheus/Alertmanager/host) is what actually raises the alarm.
@@ -324,6 +413,62 @@ let
             severity = "critical";
             summary = "GitHub API rate limit critically low ({{ $labels.credential_name }})";
             description = "Credential {{ $labels.credential_name }} has only {{ $value }} GitHub API requests remaining (< ${s rateLimitCrit}). GARM is about to be throttled — runner provisioning will stall.";
+          }
+        ];
+      }
+      {
+        name = "garm-fleet-listeners";
+        comment = [
+          "# ── LISTENER LIVENESS (the 2026-09-02 silent failure) ──"
+          "# GARM opens ONE GitHub message session per scale set and long-polls it."
+          "# When a worker's session dies and is never re-opened, GARM logs NOTHING"
+          "# — no error, no warning, no backoff — and that scale set simply stops"
+          "# claiming jobs. On 2026-09-02 that state lasted FOUR DAYS. The only"
+          "# signal that existed was this arithmetic: CreateMessageSession minus"
+          "# DeleteMessageSession against the declared entity count, corroborated"
+          "# by the GetMessage long-poll interval. Both are duration-gated: a"
+          "# controlled restart drops every session at once and must not page."
+        ];
+        records = [
+          {
+            record = "garm:listener_entities_declared";
+            expr = declaredListenersExpr;
+          }
+          {
+            record = "garm:message_sessions_live";
+            expr = liveSessionsExpr;
+          }
+          {
+            # Depends on garm:message_sessions_live, so it MUST stay after it:
+            # rules inside a group are evaluated in order.
+            record = "garm:message_session_poll_interval_seconds";
+            expr = pollIntervalExpr;
+          }
+        ];
+        rules = [
+          {
+            name = "GarmListenerSessionShortfall";
+            # `-` binds tighter than `>=`, so this is (declared - live) >= 1.
+            # Vector matching on `instance` is what keeps a pool-mode controller
+            # out of it: with no message-session counters there is no
+            # garm:message_sessions_live series for that instance and the
+            # subtraction yields nothing.
+            expr = "garm:listener_entities_declared - garm:message_sessions_live >= 1";
+            for = listenerShortfallFor;
+            severity = "critical";
+            summary = "GARM listeners MISSING on {{ $labels.instance }} ({{ $value }} message session(s) short)";
+            description = "Controller {{ $labels.instance }} has had {{ $value }} fewer live GitHub message session(s) (CreateMessageSession minus DeleteMessageSession) than it has declared scale sets/pools, for ${listenerShortfallFor}. Those scale sets are no longer claiming jobs and GARM will not say so — it logs no error, no warning and no backoff for a dead listener, which is how this went unnoticed for four days on 2026-09-02. Corroborate with garm:message_session_poll_interval_seconds (healthy is roughly 45-50s per session), then restart GARM on that host and confirm every scale set logs starting consumer.";
+          }
+          {
+            name = "GarmListenerPollStalled";
+            # Interval first so `$value` is the interval, not the session count.
+            expr = ''
+              garm:message_session_poll_interval_seconds > ${s listenerPollIntervalCrit}
+                and on (instance) (garm:message_sessions_live > 0)'';
+            for = listenerPollStalledFor;
+            severity = "critical";
+            summary = "GARM long-poll STALLED on {{ $labels.instance }} ({{ $value | printf \\\"%.0f\\\" }}s between GetMessage calls)";
+            description = "Controller {{ $labels.instance }} still counts live GitHub message sessions, but the mean interval between GetMessage long-polls has been above ${s listenerPollIntervalCrit}s for ${listenerPollStalledFor} ({{ $value | printf \\\"%.0f\\\" }}s). A healthy long poll returns every 45-50s per session, so the sessions exist on paper while nothing is actually listening — the other half of the 2026-09-02 failure mode, and the signal its session count was reconstructed from. Restart GARM on that host.";
           }
         ];
       }
