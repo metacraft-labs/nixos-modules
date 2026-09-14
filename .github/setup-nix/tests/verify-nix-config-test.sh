@@ -33,6 +33,43 @@
 
 set -euo pipefail
 
+# BEGIN contract-harness system utility PATH bootstrap
+# This suite runs after setup-nix on both ephemeral and persistent runners. A
+# native Darwin runner service can retain the selected Nix store/profile path
+# while omitting /usr/bin, so the TEST HARNESS must establish its own platform
+# utilities before it uses dirname/grep/etc. Do not delegate this to the guard
+# under test: that would let a production-code mutation repair its own test.
+setup_nix_test_incoming_path="${PATH:-}"
+setup_nix_test_system_paths=(
+  /usr/bin
+  /bin
+  /usr/sbin
+  /sbin
+  /run/current-system/sw/bin
+  /nix/var/nix/profiles/default/bin
+)
+for setup_nix_test_system_dir in ${setup_nix_test_system_paths[@]+"${setup_nix_test_system_paths[@]}"}; do
+  if [ -d "$setup_nix_test_system_dir" ]; then
+    case ":${PATH:-}:" in
+      *":$setup_nix_test_system_dir:"*) ;;
+      *) PATH="${PATH:+$PATH:}$setup_nix_test_system_dir" ;;
+    esac
+  fi
+done
+export PATH
+
+missing_setup_nix_test_utilities=""
+for setup_nix_test_utility in bash cat chmod cut dirname grep head ln mkdir mktemp rm rmdir sed sort tr; do
+  if ! command -v "$setup_nix_test_utility" >/dev/null 2>&1; then
+    missing_setup_nix_test_utilities="$missing_setup_nix_test_utilities $setup_nix_test_utility"
+  fi
+done
+if [ -n "$missing_setup_nix_test_utilities" ]; then
+  echo "FAIL — required contract-test utilities are not on PATH:${missing_setup_nix_test_utilities}" >&2
+  exit 1
+fi
+# END contract-harness system utility PATH bootstrap
+
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 setup_nix_dir="$(cd -- "$script_dir/.." && pwd)"
 guard="$setup_nix_dir/verify-nix-config.sh"
@@ -67,6 +104,44 @@ if ! command -v nix >/dev/null 2>&1; then
   echo "FAIL — nix is not on PATH; this suite must run where a real Nix exists," >&2
   echo "       because it verifies real Nix behaviour rather than a mock of it." >&2
   exit 1
+fi
+
+# Run the complete contract suite from a deterministic approximation of the
+# persistent-Darwin service environment: the incoming PATH selects a real Nix
+# but contains none of the platform utilities. The child skips this wrapper,
+# independently bootstraps the harness utilities above, and runs every existing
+# positive and negative assertion. Removing or moving the harness bootstrap
+# makes the child fail before its first source-inspection grep.
+if [ "${SETUP_NIX_TEST_SERVICE_PATH_CHILD:-}" != "1" ]; then
+  harness_service_path_root="$(mktemp -d)"
+  harness_service_path_bin="$harness_service_path_root/bin"
+  harness_selected_nix="$(command -v nix)"
+  mkdir "$harness_service_path_bin"
+  ln -s "$harness_selected_nix" "$harness_service_path_bin/nix"
+
+  if PATH="$harness_service_path_bin" \
+    SETUP_NIX_TEST_SERVICE_PATH_CHILD=1 \
+    SETUP_NIX_TEST_EXPECTED_NIX="$harness_service_path_bin/nix" \
+    "$BASH" "${BASH_SOURCE[0]}"; then
+    harness_child_status=0
+  else
+    harness_child_status=$?
+  fi
+  rm -rf "$harness_service_path_root"
+  exit "$harness_child_status"
+fi
+
+incoming_service_nix="$({
+  PATH="$setup_nix_test_incoming_path"
+  export PATH
+  command -v nix
+})"
+if [ "$incoming_service_nix" = "${SETUP_NIX_TEST_EXPECTED_NIX:-}" ] &&
+  ! (PATH="$setup_nix_test_incoming_path"; export PATH; command -v grep >/dev/null 2>&1) &&
+  command -v grep >/dev/null 2>&1; then
+  pass "contract suite bootstraps its own utilities from a service PATH containing only the selected Nix"
+else
+  fail "contract harness service-PATH regression is broken (incoming nix=$incoming_service_nix expected=${SETUP_NIX_TEST_EXPECTED_NIX:-<unset>})"
 fi
 
 # ---------------------------------------------------------------------------
@@ -380,6 +455,15 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Pin the reviewed count so deleting a whole assertion block cannot leave a
+# shorter, apparently green contract suite.
+expected_assertions=26
+if [ "$assertions" -ne "$expected_assertions" ]; then
+  echo "FAIL — expected $expected_assertions assertions, but ran $assertions" >&2
+  echo "       contract coverage changed without updating the reviewed count" >&2
+  exit 1
+fi
+
 echo
 echo "verify-nix-config-test: $assertions assertions, $failures failure(s)"
 if [ "$failures" -ne 0 ]; then
