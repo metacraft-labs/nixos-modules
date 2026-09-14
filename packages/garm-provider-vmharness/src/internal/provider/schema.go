@@ -29,7 +29,7 @@ const configJSONSchema = `{
 		},
 		"remote": {
 			"type": "object",
-			"description": "RB1 remote-target mode (consulted only when backend == 'remote'): drive a remote 'vm-harness serve' daemon over the RA1 RPC instead of a local backend. Company-agnostic — no host or credential is baked in.",
+			"description": "RB1 remote-target mode (consulted only when backend == 'remote'): drive a remote 'vm-harness serve' daemon over the RA1 RPC instead of a local backend. Company-agnostic — no host or credential is baked in. Incus capability grants are trusted provider-admin configuration and map only to fixed vm-harness flags; workflow/bootstrap/user-data cannot choose arbitrary Incus keys or devices.",
 			"properties": {
 				"endpoint": {
 					"type": "string",
@@ -58,8 +58,19 @@ const configJSONSchema = `{
 				"request_timeout_sec": {
 					"type": "integer",
 					"description": "Bounds a single non-streaming RPC (/v1/info). 0 uses a built-in default; the create/delete streams are bounded by the remote worker's own --timeout-sec."
+				},
+				"incus_security_nesting": {
+					"type": "boolean",
+					"default": false,
+					"description": "Remote Incus only: append the fixed vm-harness --incus-security-nesting grant before guest start. The provider does not expose arbitrary Incus config keys. Default false preserves the existing remote create argv."
+				},
+				"incus_nested_kvm": {
+					"type": "boolean",
+					"default": false,
+					"description": "Remote Incus only: append the fixed vm-harness --incus-nested-kvm grant, which maps only host /dev/kvm at guest /dev/kvm, verifies exact mode 0666, and opens it read-write. Device path and mode are not configurable. Default false preserves the existing remote create argv."
 				}
-			}
+			},
+			"additionalProperties": false
 		},
 		"virsh_path": {
 			"type": "string",
@@ -167,9 +178,12 @@ const configJSONSchema = `{
 	"additionalProperties": false
 }`
 
-// extraSpecsJSONSchema is the JSON schema for per-pool extra_specs. M1 keeps
-// this permissive (an open object); pool-level overrides (flavor sizing,
-// per-pool golden overrides) are formalised in later milestones.
+// extraSpecsJSONSchema is the historical JSON schema for per-pool extra_specs.
+// It remains permissive for compatibility and advertises two local-Incus names
+// that CreateInstance does not currently consume. In particular, remote Incus
+// grants never flow through this object: they come only from trusted [remote]
+// provider configuration. Formalising the older pool-level surface belongs to
+// a separate compatibility milestone.
 const extraSpecsJSONSchema = `{
 	"$schema": "http://json-schema.org/draft-07/schema#",
 	"title": "garm-provider-vmharness extra_specs",

@@ -24,13 +24,13 @@
 # Bump `rev`/`hash` to roll the serve binary forward; the mainline is `dev`.
 stdenv.mkDerivation (finalAttrs: {
   pname = "vm-harness";
-  version = "0.1.0-unstable-2026-09-09";
+  version = "0.1.0-unstable-2026-09-14";
 
   src = fetchFromGitHub {
     owner = "metacraft-labs";
     repo = "vm-harness";
-    rev = "fef86ff6ad147fd5cd2027fa254118b0c35f312f";
-    hash = "sha256-kIyfk/gKkTyHMEtHG+DtBoOQMQ2oey0HLQV9y6Txm/M=";
+    rev = "b5df21a2375446d2929a583a112d70d564085d21";
+    hash = "sha256-XKtLJTpM+54EILNVeBOL3tHc1b8b9x0yw28CzkxAq3I=";
   };
 
   nativeBuildInputs = [ nim ];

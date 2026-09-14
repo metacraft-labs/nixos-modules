@@ -113,6 +113,22 @@ type RemoteConfig struct {
 	// conservative built-in default. The create/delete streams are NOT bounded
 	// here — the remote worker owns the job lifetime (its own --timeout-sec).
 	RequestTimeoutSec int `toml:"request_timeout_sec"`
+
+	// IncusSecurityNesting grants the fixed vm-harness nested-container
+	// capability to remote Incus guests. It maps only to
+	// --incus-security-nesting; callers cannot choose arbitrary Incus config
+	// keys. This is trusted provider configuration, never pool tools, workflow
+	// input, CreateArgs, bootstrap, or guest-controlled data. Default false
+	// preserves the pre-capability remote create argv byte-for-byte.
+	IncusSecurityNesting bool `toml:"incus_security_nesting"`
+
+	// IncusNestedKvm grants the fixed vm-harness nested-KVM capability to remote
+	// Incus guests. It maps only to --incus-nested-kvm, whose vm-harness
+	// implementation attaches the fixed host /dev/kvm -> guest /dev/kvm
+	// mapping, verifies exact mode 0666, and opens it read-write. Device paths
+	// and modes are deliberately not configurable.
+	// Default false preserves the pre-capability remote create argv byte-for-byte.
+	IncusNestedKvm bool `toml:"incus_nested_kvm"`
 }
 
 // GoldenImage maps a pool label/flavor to a concrete libvirt source.
@@ -421,6 +437,10 @@ func (c *Config) applyDefaults() {
 
 // Validate returns an error if the config is internally inconsistent.
 func (c *Config) Validate() error {
+	if c.Remote != nil && (c.Remote.IncusSecurityNesting || c.Remote.IncusNestedKvm) &&
+		(c.Backend != BackendRemote || c.Remote.TargetBackend != string(BackendIncus)) {
+		return fmt.Errorf("remote Incus capabilities incus_security_nesting/incus_nested_kvm require backend %q with remote.target_backend %q", BackendRemote, BackendIncus)
+	}
 	switch c.Backend {
 	case BackendLibvirt:
 	case BackendIncus:
