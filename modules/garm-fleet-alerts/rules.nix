@@ -241,244 +241,246 @@ let
     ];
   };
 
-  groups = optionals watchdog [ watchdogGroup ] ++ [
-    {
-      name = "garm-fleet-controller";
-      comment = [ "# ── Controller / host reachability & health ──" ];
-      rules = [
-        {
-          name = "GarmControllerDown";
-          expr = "up{job=\"${garmJob}\"} == 0";
-          for = controllerDownFor;
-          severity = "critical";
-          summary = "GARM controller unreachable ({{ $labels.instance }})";
-          description = "Prometheus cannot scrape GARM at {{ $labels.instance }} (job ${garmJob}) for ${controllerDownFor}. No runners can be created or reaped while the controller is down — check the garm.service unit and the host.";
-        }
-        {
-          name = "GarmControllerUnhealthy";
-          expr = "garm_health == 0";
-          for = controllerUnhealthyFor;
-          severity = "critical";
-          summary = "GARM controller reports unhealthy ({{ $labels.controller_id }})";
-          description = "garm_health for controller {{ $labels.controller_id }} has been 0 for ${controllerUnhealthyFor} — the process is up but degraded. Check the garm.service journal.";
-        }
-        {
-          name = "GarmPoolManagerNotRunning";
-          expr = "garm_organization_pool_manager_status == 0";
-          for = poolManagerDownFor;
-          severity = "critical";
-          summary = "GARM pool manager not running ({{ $labels.name }})";
-          description = "The pool manager for org {{ $labels.name }} has been stopped for ${poolManagerDownFor}. That org gets no new runners even though the controller is up — restart / check the org credentials.";
-        }
-      ];
-    }
-    {
-      name = "garm-fleet-provider";
-      comment = [ "# ── Provider (CreateInstance) health ──" ];
-      rules = [
-        {
-          name = "GarmProviderCreateFailures";
-          expr = "increase(garm_runner_errors_total{operation=\"CreateInstance\"}[15m]) >= ${s providerCreateFailCount}";
-          for = providerCreateFailFor;
-          severity = "warning";
-          summary = "GARM provider failing to create runners ({{ $labels.provider }})";
-          description = "Provider {{ $labels.provider }} has had at least ${s providerCreateFailCount} CreateInstance failures in the last 15m. The backend (incus/libvirt/tart/EC2) is likely broken — check the provider host.";
-        }
-        {
-          name = "GarmProviderHighErrorRatio";
-          # Plain division is safe here: every error is also a counted
-          # operation (operations_total >= errors_total per operation/provider),
-          # so the denominator is never 0 while the numerator is > 0, and a
-          # no-traffic provider yields 0/0 = NaN which never trips `> x`. (Do NOT
-          # reintroduce clamp_min(rate, 1): rates are per-SECOND, so a floor of 1
-          # makes the ratio meaningless below 1 failed op/s.)
-          expr = ''
-            rate(garm_runner_errors_total[15m])
-              / rate(garm_runner_operations_total[15m])
-              > ${providerErrorRatioCrit}'';
-          for = providerErrorRatioFor;
-          severity = "critical";
-          summary = "GARM provider failing >${providerErrorRatioCrit} of operations ({{ $labels.provider }})";
-          description = "Provider {{ $labels.provider }} is failing more than ${providerErrorRatioCrit} of its runner operations over 15m ({{ $value | humanizePercentage }}). The backend is broken (incus/libvirt/tart down, or AWS quota/subnet/AMI errors) — runners are not being provisioned.";
-        }
-      ];
-    }
-    {
-      name = "garm-fleet-github";
-      comment = [ "# ── GitHub API rate limits ──" ];
-      rules = [
-        {
-          name = "GarmGithubRateLimitLow";
-          expr = "garm_github_rate_limit_remaining < ${s rateLimitWarn}";
-          for = rateLimitFor;
-          severity = "warning";
-          summary = "GitHub API rate limit low ({{ $labels.credential_name }})";
-          description = "Credential {{ $labels.credential_name }} has {{ $value }} GitHub API requests remaining (< ${s rateLimitWarn}) for ${rateLimitFor}. Approaching a throttle that will stall runner provisioning.";
-        }
-        {
-          name = "GarmGithubRateLimitCritical";
-          expr = "garm_github_rate_limit_remaining < ${s rateLimitCrit}";
-          for = rateLimitFor;
-          severity = "critical";
-          summary = "GitHub API rate limit critically low ({{ $labels.credential_name }})";
-          description = "Credential {{ $labels.credential_name }} has only {{ $value }} GitHub API requests remaining (< ${s rateLimitCrit}). GARM is about to be throttled — runner provisioning will stall.";
-        }
-      ];
-    }
-    {
-      name = "garm-fleet-capacity";
-      comment = [
-        "# ── Capacity / STARVATION (the priority page) ──"
-        "# Recording rules derive per-(owner,class) saturation + queued demand"
-        "# from the base metrics so the alert stays legible and promtool can"
-        "# assert the whole chain from raw series. See rules.nix for the join."
-      ];
-      records = [
-        {
-          record = "garm:class_saturated";
-          expr = if isPool then poolSaturatedExpr else scalesetSaturatedExpr;
-        }
-        {
-          record = "garm:class_queued_jobs";
-          expr = queuedJobsExpr;
-        }
-      ];
-      rules = [
-        {
-          name = "GarmFleetStarvation";
-          expr = starvationExpr;
-          for = starvationFor;
-          severity = "critical";
-          summary = "Runner STARVATION: {{ $labels.garm_owner }}/{{ $labels.garm_class }} saturated with jobs queued";
-          description = "{{ $value }} job(s) have been queued for ${starvationFor} for class {{ $labels.garm_class }} (owner {{ $labels.garm_owner }}) while that class is at its runner ceiling. Jobs are starving — raise max-runners, add a qualifying host, or check that the AWS burst spill is firing.";
-        }
-      ];
-    }
-    {
-      name = "garm-fleet-overprovision";
-      comment = [
-        "# ── OVER-PROVISION / thundering-herd ratio (RC5 cutover watch) ──"
-        "# runners CREATED / jobs SERVED over ${overProvisionWindow}. The"
-        "# numerator is garm_runner_operations_total{operation=CreateInstance} —"
-        "# labelled only by (operation, provider), so it is summed per provider"
-        "# and the ratio is a FLEET figure (a herd is a fleet phenomenon; there"
-        "# is no per-(owner,class) creation counter in GARM to attribute it"
-        "# finer). The denominator is a served-jobs counter DERIVED from the"
-        "# garm_job_status{status=completed} gauge via a subquery increase, kept"
-        "# per (owner,class) for the dashboard. Mode-independent: both base"
-        "# metrics exist in scale-set and pool mode."
-      ];
-      records = [
-        {
-          record = "garm:runners_created:increase";
-          expr = ''sum by (provider) (increase(garm_runner_operations_total{operation="CreateInstance"}[${overProvisionWindow}]))'';
-        }
-        {
-          # Served jobs per (owner,class). garm_job_status is a GAUGE (1 per job
-          # while its record is retained); count-of-completed rises as jobs
-          # finish, and the subquery increase turns that into new completions in
-          # the window (counter-reset-safe, so job-record pruning only undercounts
-          # slightly at the boundary rather than going negative).
-          record = "garm:jobs_served:increase";
-          expr = ''
-            increase(
-              sum by (garm_owner, garm_class) (
-                label_replace(
+  groups =
+    optionals watchdog [ watchdogGroup ]
+    ++ [
+      {
+        name = "garm-fleet-controller";
+        comment = [ "# ── Controller / host reachability & health ──" ];
+        rules = [
+          {
+            name = "GarmControllerDown";
+            expr = "up{job=\"${garmJob}\"} == 0";
+            for = controllerDownFor;
+            severity = "critical";
+            summary = "GARM controller unreachable ({{ $labels.instance }})";
+            description = "Prometheus cannot scrape GARM at {{ $labels.instance }} (job ${garmJob}) for ${controllerDownFor}. No runners can be created or reaped while the controller is down — check the garm.service unit and the host.";
+          }
+          {
+            name = "GarmControllerUnhealthy";
+            expr = "garm_health == 0";
+            for = controllerUnhealthyFor;
+            severity = "critical";
+            summary = "GARM controller reports unhealthy ({{ $labels.controller_id }})";
+            description = "garm_health for controller {{ $labels.controller_id }} has been 0 for ${controllerUnhealthyFor} — the process is up but degraded. Check the garm.service journal.";
+          }
+          {
+            name = "GarmPoolManagerNotRunning";
+            expr = "garm_organization_pool_manager_status == 0";
+            for = poolManagerDownFor;
+            severity = "critical";
+            summary = "GARM pool manager not running ({{ $labels.name }})";
+            description = "The pool manager for org {{ $labels.name }} has been stopped for ${poolManagerDownFor}. That org gets no new runners even though the controller is up — restart / check the org credentials.";
+          }
+        ];
+      }
+      {
+        name = "garm-fleet-provider";
+        comment = [ "# ── Provider (CreateInstance) health ──" ];
+        rules = [
+          {
+            name = "GarmProviderCreateFailures";
+            expr = "increase(garm_runner_errors_total{operation=\"CreateInstance\"}[15m]) >= ${s providerCreateFailCount}";
+            for = providerCreateFailFor;
+            severity = "warning";
+            summary = "GARM provider failing to create runners ({{ $labels.provider }})";
+            description = "Provider {{ $labels.provider }} has had at least ${s providerCreateFailCount} CreateInstance failures in the last 15m. The backend (incus/libvirt/tart/EC2) is likely broken — check the provider host.";
+          }
+          {
+            name = "GarmProviderHighErrorRatio";
+            # Plain division is safe here: every error is also a counted
+            # operation (operations_total >= errors_total per operation/provider),
+            # so the denominator is never 0 while the numerator is > 0, and a
+            # no-traffic provider yields 0/0 = NaN which never trips `> x`. (Do NOT
+            # reintroduce clamp_min(rate, 1): rates are per-SECOND, so a floor of 1
+            # makes the ratio meaningless below 1 failed op/s.)
+            expr = ''
+              rate(garm_runner_errors_total[15m])
+                / rate(garm_runner_operations_total[15m])
+                > ${providerErrorRatioCrit}'';
+            for = providerErrorRatioFor;
+            severity = "critical";
+            summary = "GARM provider failing >${providerErrorRatioCrit} of operations ({{ $labels.provider }})";
+            description = "Provider {{ $labels.provider }} is failing more than ${providerErrorRatioCrit} of its runner operations over 15m ({{ $value | humanizePercentage }}). The backend is broken (incus/libvirt/tart down, or AWS quota/subnet/AMI errors) — runners are not being provisioned.";
+          }
+        ];
+      }
+      {
+        name = "garm-fleet-github";
+        comment = [ "# ── GitHub API rate limits ──" ];
+        rules = [
+          {
+            name = "GarmGithubRateLimitLow";
+            expr = "garm_github_rate_limit_remaining < ${s rateLimitWarn}";
+            for = rateLimitFor;
+            severity = "warning";
+            summary = "GitHub API rate limit low ({{ $labels.credential_name }})";
+            description = "Credential {{ $labels.credential_name }} has {{ $value }} GitHub API requests remaining (< ${s rateLimitWarn}) for ${rateLimitFor}. Approaching a throttle that will stall runner provisioning.";
+          }
+          {
+            name = "GarmGithubRateLimitCritical";
+            expr = "garm_github_rate_limit_remaining < ${s rateLimitCrit}";
+            for = rateLimitFor;
+            severity = "critical";
+            summary = "GitHub API rate limit critically low ({{ $labels.credential_name }})";
+            description = "Credential {{ $labels.credential_name }} has only {{ $value }} GitHub API requests remaining (< ${s rateLimitCrit}). GARM is about to be throttled — runner provisioning will stall.";
+          }
+        ];
+      }
+      {
+        name = "garm-fleet-capacity";
+        comment = [
+          "# ── Capacity / STARVATION (the priority page) ──"
+          "# Recording rules derive per-(owner,class) saturation + queued demand"
+          "# from the base metrics so the alert stays legible and promtool can"
+          "# assert the whole chain from raw series. See rules.nix for the join."
+        ];
+        records = [
+          {
+            record = "garm:class_saturated";
+            expr = if isPool then poolSaturatedExpr else scalesetSaturatedExpr;
+          }
+          {
+            record = "garm:class_queued_jobs";
+            expr = queuedJobsExpr;
+          }
+        ];
+        rules = [
+          {
+            name = "GarmFleetStarvation";
+            expr = starvationExpr;
+            for = starvationFor;
+            severity = "critical";
+            summary = "Runner STARVATION: {{ $labels.garm_owner }}/{{ $labels.garm_class }} saturated with jobs queued";
+            description = "{{ $value }} job(s) have been queued for ${starvationFor} for class {{ $labels.garm_class }} (owner {{ $labels.garm_owner }}) while that class is at its runner ceiling. Jobs are starving — raise max-runners, add a qualifying host, or check that the AWS burst spill is firing.";
+          }
+        ];
+      }
+      {
+        name = "garm-fleet-overprovision";
+        comment = [
+          "# ── OVER-PROVISION / thundering-herd ratio (RC5 cutover watch) ──"
+          "# runners CREATED / jobs SERVED over ${overProvisionWindow}. The"
+          "# numerator is garm_runner_operations_total{operation=CreateInstance} —"
+          "# labelled only by (operation, provider), so it is summed per provider"
+          "# and the ratio is a FLEET figure (a herd is a fleet phenomenon; there"
+          "# is no per-(owner,class) creation counter in GARM to attribute it"
+          "# finer). The denominator is a served-jobs counter DERIVED from the"
+          "# garm_job_status{status=completed} gauge via a subquery increase, kept"
+          "# per (owner,class) for the dashboard. Mode-independent: both base"
+          "# metrics exist in scale-set and pool mode."
+        ];
+        records = [
+          {
+            record = "garm:runners_created:increase";
+            expr = ''sum by (provider) (increase(garm_runner_operations_total{operation="CreateInstance"}[${overProvisionWindow}]))'';
+          }
+          {
+            # Served jobs per (owner,class). garm_job_status is a GAUGE (1 per job
+            # while its record is retained); count-of-completed rises as jobs
+            # finish, and the subquery increase turns that into new completions in
+            # the window (counter-reset-safe, so job-record pruning only undercounts
+            # slightly at the boundary rather than going negative).
+            record = "garm:jobs_served:increase";
+            expr = ''
+              increase(
+                sum by (garm_owner, garm_class) (
                   label_replace(
-                    garm_job_status{status="completed"},
-                    "garm_owner", "$1", "owner", "(.*)"),
-                  "garm_class", "$1", "requested_labels", "(.*)")
-              )[${overProvisionWindow}:1m]
-            )'';
-        }
-        {
-          # Fleet headline ratio. clamp_min keeps the denominator >= 1 so a burst
-          # of creations with zero served jobs is a large finite number, not a
-          # divide-by-zero — the served-floor guard on the alert decides whether
-          # that is worth paging.
-          record = "garm:overprovision_ratio";
-          expr = ''
-            sum(garm:runners_created:increase)
-              / clamp_min(sum(garm:jobs_served:increase), 1)'';
-        }
-      ];
-      rules = [
-        {
-          name = "GarmFleetOverProvision";
-          expr = ''
-            garm:overprovision_ratio > ${overProvisionRatioCrit}
-              and sum(garm:jobs_served:increase) >= ${s overProvisionServedFloor}'';
-          for = overProvisionFor;
-          severity = "warning";
-          summary = "Runner OVER-PROVISION: {{ $value | humanize }}x more runners created than jobs served";
-          description = "Over the last ${overProvisionWindow} the fleet created more than ${overProvisionRatioCrit}x as many runners as jobs it served ({{ $value | humanize }}x), sustained for ${overProvisionFor}, with at least ${s overProvisionServedFloor} jobs served — a thundering-herd over-provision. In the coordinated central-GARM pool topology this ratio should sit near 1 (one ephemeral runner per job); a spike means a provider is spinning up runners that never serve a job. Check garm:runners_created:increase per provider for the offending host and the provider CreateInstance/DeleteInstance churn.";
-        }
-      ];
-    }
-  ]
-  ++ optionals externalChecks [
-    {
-      name = "garm-fleet-external";
-      comment = [
-        "# ── EXTERNAL checks: things garm_* cannot see ──"
-        "# Fed by the garm-fleet-external-checks exporter, NOT by GARM. If the"
-        "# exporter is down these go inactive (a blind spot, not a false page) —"
-        "# the generic up==0 scrape-target alert notices a dead exporter."
-      ];
-      rules = [
-        {
-          name = "GithubAppTokenMintFailing";
-          expr = "github_app_installation_token_mint_ok == 0";
-          for = appTokenMintFor;
-          severity = "critical";
-          summary = "GitHub App token minting is failing ({{ $labels.app }})";
-          description = "The garm-fleet-external-checks exporter could not mint an installation token for App {{ $labels.app }} for ${appTokenMintFor}. The App private key/JWT is rejected (rotated, revoked, clock skew, or the installation was removed) — GARM cannot register or reap runners for that org. Rotate/repair the App credential.";
-        }
-      ]
-      ++ optionals webhookChecks [
-        {
-          name = "GithubWebhookDeliveryFailing";
-          expr = "github_webhook_last_delivery_ok == 0";
-          for = webhookDeliveryFor;
-          severity = "critical";
-          summary = "GitHub webhook deliveries are failing ({{ $labels.org }})";
-          description = "GitHub reports the most recent webhook delivery to the controller endpoint for {{ $labels.org }} (hook {{ $labels.hook_id }}) as non-2xx for ${webhookDeliveryFor}. Job events are not reaching GARM — check the Cloudflare Tunnel / public endpoint and the org webhook config.";
-        }
-        {
-          name = "GithubWebhookEndpointProbeDown";
-          expr = "probe_success{job=~\"${webhookProbeJobRegex}\"} == 0";
-          for = webhookProbeFor;
-          severity = "critical";
-          summary = "GARM public webhook endpoint probe is failing ({{ $labels.instance }})";
-          description = "The blackbox probe of the public webhook endpoint {{ $labels.instance }} has failed for ${webhookProbeFor} (tunnel down, cert expired, or endpoint unreachable). GitHub cannot deliver workflow_job events.";
-        }
-      ];
-    }
-  ]
-  ++ optionals webhookChecks [
-    {
-      name = "garm-fleet-webhook";
-      comment = [
-        "# ── GARM-side webhook HMAC (POST-PHASE-C) ──"
-        "# garm_webhook_received only exists in pool mode. valid=false is an HMAC"
-        "# or parse failure: a secret mismatch, a bad relay, or a spoof attempt."
-      ];
-      rules = [
-        {
-          name = "GarmWebhookHmacFailures";
-          expr = "increase(garm_webhook_received{valid=\"false\"}[10m]) >= 1";
-          for = webhookHmacFor;
-          severity = "warning";
-          summary = "GARM is rejecting webhook deliveries (HMAC/parse)";
-          description = "GARM has recorded webhook deliveries with valid=\\\"false\\\" (reason {{ $labels.reason }}) for ${webhookHmacFor}. The per-entity webhook secret likely does not match GitHub, or a relay is corrupting the payload — new jobs from the affected org will not scale runners.";
-        }
-      ];
-    }
-  ];
+                    label_replace(
+                      garm_job_status{status="completed"},
+                      "garm_owner", "$1", "owner", "(.*)"),
+                    "garm_class", "$1", "requested_labels", "(.*)")
+                )[${overProvisionWindow}:1m]
+              )'';
+          }
+          {
+            # Fleet headline ratio. clamp_min keeps the denominator >= 1 so a burst
+            # of creations with zero served jobs is a large finite number, not a
+            # divide-by-zero — the served-floor guard on the alert decides whether
+            # that is worth paging.
+            record = "garm:overprovision_ratio";
+            expr = ''
+              sum(garm:runners_created:increase)
+                / clamp_min(sum(garm:jobs_served:increase), 1)'';
+          }
+        ];
+        rules = [
+          {
+            name = "GarmFleetOverProvision";
+            expr = ''
+              garm:overprovision_ratio > ${overProvisionRatioCrit}
+                and sum(garm:jobs_served:increase) >= ${s overProvisionServedFloor}'';
+            for = overProvisionFor;
+            severity = "warning";
+            summary = "Runner OVER-PROVISION: {{ $value | humanize }}x more runners created than jobs served";
+            description = "Over the last ${overProvisionWindow} the fleet created more than ${overProvisionRatioCrit}x as many runners as jobs it served ({{ $value | humanize }}x), sustained for ${overProvisionFor}, with at least ${s overProvisionServedFloor} jobs served — a thundering-herd over-provision. In the coordinated central-GARM pool topology this ratio should sit near 1 (one ephemeral runner per job); a spike means a provider is spinning up runners that never serve a job. Check garm:runners_created:increase per provider for the offending host and the provider CreateInstance/DeleteInstance churn.";
+          }
+        ];
+      }
+    ]
+    ++ optionals externalChecks [
+      {
+        name = "garm-fleet-external";
+        comment = [
+          "# ── EXTERNAL checks: things garm_* cannot see ──"
+          "# Fed by the garm-fleet-external-checks exporter, NOT by GARM. If the"
+          "# exporter is down these go inactive (a blind spot, not a false page) —"
+          "# the generic up==0 scrape-target alert notices a dead exporter."
+        ];
+        rules = [
+          {
+            name = "GithubAppTokenMintFailing";
+            expr = "github_app_installation_token_mint_ok == 0";
+            for = appTokenMintFor;
+            severity = "critical";
+            summary = "GitHub App token minting is failing ({{ $labels.app }})";
+            description = "The garm-fleet-external-checks exporter could not mint an installation token for App {{ $labels.app }} for ${appTokenMintFor}. The App private key/JWT is rejected (rotated, revoked, clock skew, or the installation was removed) — GARM cannot register or reap runners for that org. Rotate/repair the App credential.";
+          }
+        ]
+        ++ optionals webhookChecks [
+          {
+            name = "GithubWebhookDeliveryFailing";
+            expr = "github_webhook_last_delivery_ok == 0";
+            for = webhookDeliveryFor;
+            severity = "critical";
+            summary = "GitHub webhook deliveries are failing ({{ $labels.org }})";
+            description = "GitHub reports the most recent webhook delivery to the controller endpoint for {{ $labels.org }} (hook {{ $labels.hook_id }}) as non-2xx for ${webhookDeliveryFor}. Job events are not reaching GARM — check the Cloudflare Tunnel / public endpoint and the org webhook config.";
+          }
+          {
+            name = "GithubWebhookEndpointProbeDown";
+            expr = "probe_success{job=~\"${webhookProbeJobRegex}\"} == 0";
+            for = webhookProbeFor;
+            severity = "critical";
+            summary = "GARM public webhook endpoint probe is failing ({{ $labels.instance }})";
+            description = "The blackbox probe of the public webhook endpoint {{ $labels.instance }} has failed for ${webhookProbeFor} (tunnel down, cert expired, or endpoint unreachable). GitHub cannot deliver workflow_job events.";
+          }
+        ];
+      }
+    ]
+    ++ optionals webhookChecks [
+      {
+        name = "garm-fleet-webhook";
+        comment = [
+          "# ── GARM-side webhook HMAC (POST-PHASE-C) ──"
+          "# garm_webhook_received only exists in pool mode. valid=false is an HMAC"
+          "# or parse failure: a secret mismatch, a bad relay, or a spoof attempt."
+        ];
+        rules = [
+          {
+            name = "GarmWebhookHmacFailures";
+            expr = "increase(garm_webhook_received{valid=\"false\"}[10m]) >= 1";
+            for = webhookHmacFor;
+            severity = "warning";
+            summary = "GARM is rejecting webhook deliveries (HMAC/parse)";
+            description = "GARM has recorded webhook deliveries with valid=\\\"false\\\" (reason {{ $labels.reason }}) for ${webhookHmacFor}. The per-entity webhook secret likely does not match GitHub, or a relay is corrupting the payload — new jobs from the affected org will not scale runners.";
+          }
+        ];
+      }
+    ];
 in
 ''
-# GENERATED by nixos-modules/modules/garm-fleet-alerts/rules.nix — do not edit
-# the deployed copy; change the library and re-render. mode=${mode}, job=${garmJob}.
-groups:
-${concatMapStringsSep "\n" mkGroup groups}
+  # GENERATED by nixos-modules/modules/garm-fleet-alerts/rules.nix — do not edit
+  # the deployed copy; change the library and re-render. mode=${mode}, job=${garmJob}.
+  groups:
+  ${concatMapStringsSep "\n" mkGroup groups}
 ''
