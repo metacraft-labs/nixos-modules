@@ -19,7 +19,7 @@ Unlike the [Desktop VMs](./desktop-vms.md) NixOS module (for running VMs locally
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    nixos-modules.url = "github:metacraft-labs/nixos-modules";
+    nixos-modules.url = "github:metacraft-labs/devops-modules";
 
     # Required for macOS VM building
     osx-kvm = { url = "github:kholia/OSX-KVM"; flake = false; };

@@ -56,7 +56,7 @@
   that identity through =job.workflow_repository= and =job.workflow_sha=; the
   workflow does not substitute the caller repository/SHA or accept a duplicate
   caller-provided revision. The caller selects the reusable source with its
-  literal =uses: metacraft-labs/nixos-modules/...@<ref>= declaration, and
+  literal =uses: metacraft-labs/devops-modules/...@<ref>= declaration, and
   GitHub resolves that selection to the full =job.workflow_sha= used by every
   Terraform job. This is intentionally distinct from =github.sha=, which can
   name the consumer repository's synthetic pull-request merge. The checkout

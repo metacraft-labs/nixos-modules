@@ -110,8 +110,8 @@ unittest
 {
     version (none)
     {
-        // See: https://github.com/metacraft-labs/nixos-modules/blob/b70f5bf556a0afc25d45ff5abd9d4eeae58d2647/flake.nix
-        auto flakeRef = "github:metacraft-labs/nixos-modules?rev=b70f5bf556a0afc25d45ff5abd9d4eeae58d2647";
+        // See: https://github.com/metacraft-labs/devops-modules/blob/b70f5bf556a0afc25d45ff5abd9d4eeae58d2647/flake.nix
+        auto flakeRef = "github:metacraft-labs/devops-modules?rev=b70f5bf556a0afc25d45ff5abd9d4eeae58d2647";
     }
     else
     {

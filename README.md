@@ -15,7 +15,7 @@ To use this repo's CI workflow, add the following to your repository:
 ```yml
 jobs:
   call-ci:
-    uses: metacraft-labs/nixos-modules/.github/workflows/ci.yml@main
+    uses: metacraft-labs/devops-modules/.github/workflows/ci.yml@dev
     secrets: inherit
 ```
 
@@ -30,7 +30,7 @@ Runs flake checks with shard-based parallelization. See [Shard Splitting Archite
 ```yml
 jobs:
   ci:
-    uses: metacraft-labs/nixos-modules/.github/workflows/reusable-flake-checks-ci-matrix.yml@main
+    uses: metacraft-labs/devops-modules/.github/workflows/reusable-flake-checks-ci-matrix.yml@dev
     secrets:
       ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
     with:
@@ -51,7 +51,7 @@ Runs pre-commit hooks for linting and formatting checks.
 ```yml
 jobs:
   lint:
-    uses: metacraft-labs/nixos-modules/.github/workflows/reusable-lint.yml@main
+    uses: metacraft-labs/devops-modules/.github/workflows/reusable-lint.yml@dev
     secrets:
       NIX_GITHUB_TOKEN: ${{ secrets.NIX_GITHUB_TOKEN }}
 ```
@@ -63,7 +63,7 @@ Merges a source branch into a target branch with `--no-ff` and pushes the result
 ```yml
 jobs:
   promote:
-    uses: metacraft-labs/nixos-modules/.github/workflows/reusable-merge.yml@main
+    uses: metacraft-labs/devops-modules/.github/workflows/reusable-merge.yml@dev
     with:
       source_branch: main
       target_branch: testnet
@@ -76,7 +76,7 @@ On pull requests, builds every machine under a flake attribute on both the PR an
 ```yml
 jobs:
   nix-diff:
-    uses: metacraft-labs/nixos-modules/.github/workflows/reusable-nix-diff.yml@main
+    uses: metacraft-labs/devops-modules/.github/workflows/reusable-nix-diff.yml@dev
     secrets:
       NIX_GITHUB_TOKEN: ${{ secrets.NIX_GITHUB_TOKEN }}
     with:
@@ -91,7 +91,7 @@ Shared lint-and-test CI for the CodeTracer recorder fleet: `setup-dev-env`, an o
 ```yml
 jobs:
   ci:
-    uses: metacraft-labs/nixos-modules/.github/workflows/reusable-recorder-ci.yml@main
+    uses: metacraft-labs/devops-modules/.github/workflows/reusable-recorder-ci.yml@dev
     secrets: inherit
 ```
 
@@ -102,7 +102,7 @@ Terraform/OpenTofu CI for a single root, in one of three modes: `pr` (offline ch
 ```yml
 jobs:
   terraform:
-    uses: metacraft-labs/nixos-modules/.github/workflows/reusable-terraform-ci.yml@main
+    uses: metacraft-labs/devops-modules/.github/workflows/reusable-terraform-ci.yml@dev
     secrets:
       AGENIX_CI_PRIVATE_KEY: ${{ secrets.AGENIX_CI_PRIVATE_KEY }}
       NIX_GITHUB_TOKEN: ${{ secrets.NIX_GITHUB_TOKEN }}
@@ -118,7 +118,7 @@ Updates `flake.lock` and creates a PR. Supports GPG-signed commits.
 ```yml
 jobs:
   update-flake-lock:
-    uses: metacraft-labs/nixos-modules/.github/workflows/reusable-update-flake-lock.yml@main
+    uses: metacraft-labs/devops-modules/.github/workflows/reusable-update-flake-lock.yml@dev
     secrets:
       CREATE_PR_APP_ID: ${{ secrets.APP_ID }}
       CREATE_PR_APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
@@ -136,7 +136,7 @@ Updates individual flake packages using [`nix-update-action`](https://github.com
 ```yml
 jobs:
   update-packages:
-    uses: metacraft-labs/nixos-modules/.github/workflows/reusable-update-flake-packages.yml@main
+    uses: metacraft-labs/devops-modules/.github/workflows/reusable-update-flake-packages.yml@dev
     secrets:
       CREATE_PR_APP_ID: ${{ secrets.APP_ID }}
       CREATE_PR_APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}

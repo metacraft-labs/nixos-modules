@@ -95,7 +95,7 @@ def assert_in_order(text: str, fragments: tuple[str, ...], context: str) -> None
 
 def validate(workflow: str) -> None:
     forbidden = (
-        "metacraft-labs/nixos-modules/.github/setup-nix@main",
+        "metacraft-labs/devops-modules/.github/setup-nix@dev",
         "github.action_ref",
         "raw.githubusercontent.com",
         "/tmp/tofu-plan-policy",
@@ -444,7 +444,7 @@ def test_negative_mutations(workflow: str) -> None:
             replace_once(
                 workflow,
                 f"uses: {LOCAL_SETUP_ACTION}",
-                "uses: metacraft-labs/nixos-modules/.github/setup-nix@main",
+                "uses: metacraft-labs/devops-modules/.github/setup-nix@dev",
             ),
             "mutable/downloaded source remains",
         ),
@@ -452,7 +452,7 @@ def test_negative_mutations(workflow: str) -> None:
             replace_once(
                 workflow,
                 f"uses: {LOCAL_SETUP_ACTION}",
-                "uses: metacraft-labs/nixos-modules/.github/setup-nix@"
+                "uses: metacraft-labs/devops-modules/.github/setup-nix@"
                 + "2" * 40,
             ),
             "every and only every Terraform job must use Setup Nix",
@@ -608,7 +608,7 @@ def initialize_source_checkout(path: Path) -> str:
         "remote",
         "add",
         "origin",
-        "https://github.com/metacraft-labs/nixos-modules.git",
+        "https://github.com/metacraft-labs/devops-modules.git",
     )
     scripts = path / "scripts"
     scripts.mkdir()
@@ -655,7 +655,7 @@ def test_verification_behavior(workflow: str) -> None:
         env = os.environ.copy()
         env.update(
             {
-                "EXPECTED_WORKFLOW_REPOSITORY": "metacraft-labs/nixos-modules",
+                "EXPECTED_WORKFLOW_REPOSITORY": "metacraft-labs/devops-modules",
                 "EXPECTED_WORKFLOW_SHA": sha,
                 "EXPECTED_WORKFLOW_SERVER_URL": "https://github.com",
                 "WORKFLOW_SOURCE": str(source),
@@ -670,7 +670,7 @@ def test_verification_behavior(workflow: str) -> None:
             "remote",
             "set-url",
             "origin",
-            "https://github.enterprise.example/metacraft-labs/nixos-modules.git",
+            "https://github.enterprise.example/metacraft-labs/devops-modules.git",
         )
         enterprise_env = env | {
             "EXPECTED_WORKFLOW_SERVER_URL": "https://github.enterprise.example"
@@ -682,7 +682,7 @@ def test_verification_behavior(workflow: str) -> None:
             "remote",
             "set-url",
             "origin",
-            "https://github.com/metacraft-labs/nixos-modules.git",
+            "https://github.com/metacraft-labs/devops-modules.git",
         )
 
         bad_sha_env = env | {"EXPECTED_WORKFLOW_SHA": "main"}
