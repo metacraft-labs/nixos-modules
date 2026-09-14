@@ -10,68 +10,130 @@ import (
 	"time"
 )
 
+// GATE t_vmharness_image_is_honoured, assertion (a): "the local-exec provider
+// passes the configured image on the flag vm-harness actually resolves from".
+// The gate is wired as checks.t_vmharness_image_is_honoured in
+// nixos-modules/checks/vmharness-image-is-honoured.nix, which selects every
+// TestVMHarnessImageIsHonoured* test in this package; assertions (b) and (c)
+// live in remote_test.go and in vm-harness'
+// tests/unit/t_vmharness_image_is_honoured.nim respectively.
+//
 // vm-harness resolves the golden from --source-image, not --baseline: cli.nim's
 // applyDefaults maps the two flags to BaselineSpec.sourceImage and
 // BaselineSpec.name respectively. Passing only --baseline left sourceImage
 // empty, and the tart backends answer that by substituting their built-in
 // cirruslabs golden, so the configured image was silently discarded and macOS
-// runners booted an image nobody declared. Assert both flags carry it.
-func TestVMHarnessRunBackendCreatePassesSourceImage(t *testing.T) {
+// runners booted an image nobody declared. Assert both flags carry it, for
+// every backend id the provider drives over the local-exec path — the argv is
+// built once but the Windows branch appends a different tail, so covering only
+// a tart id would leave the qemu-windows-arm argv unproven.
+func TestVMHarnessImageIsHonouredLocalExecPassesSourceImage(t *testing.T) {
+	cases := []struct {
+		backendID string
+		guestOS   string
+		osName    string
+		bootstrap string
+	}{
+		{"tart-macos", "macos", "macos", "#!/bin/sh\necho hi\n"},
+		{"tart-linux-arm", "linux", "linux", "#!/bin/sh\necho hi\n"},
+		{"qemu-windows-arm", "windows", "windows", "echo hi\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.backendID, func(t *testing.T) {
+			t.Setenv("VM_HARNESS_DARWIN_ASUSER_UID", "")
+			tmp := t.TempDir()
+			logPath := filepath.Join(tmp, "argv.log")
+			mock := filepath.Join(tmp, "vm-harness")
+			script := "#!/bin/sh\n" +
+				"printf '%s\\n' \"$@\" > " + shellSingleQuote(logPath) + "\n" +
+				"sleep 30\n"
+			if err := os.WriteFile(mock, []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+
+			const wantImage = "ghcr.io/metacraft-labs/macos-tart-runner:tahoe-nix-v1"
+			b := &VMHarnessRunBackend{
+				VMHarnessPath: mock,
+				BackendID:     tc.backendID,
+				GuestOS:       tc.guestOS,
+				StateDir:      filepath.Join(tmp, "state"),
+			}
+			inst, err := b.Create(context.Background(), CreateArgs{
+				Name:        "garm-source-image-test",
+				SourceImage: wantImage,
+				OSName:      tc.osName,
+				Bootstrap:   []byte(tc.bootstrap),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = b.Delete(context.Background(), inst.Name) }()
+
+			var argv string
+			deadline := time.Now().Add(3 * time.Second)
+			for time.Now().Before(deadline) {
+				if data, err := os.ReadFile(logPath); err == nil {
+					argv = string(data)
+					break
+				}
+				time.Sleep(25 * time.Millisecond)
+			}
+			if argv == "" {
+				t.Fatal("mock vm-harness did not record argv")
+			}
+			if !strings.Contains(argv, "--source-image\n"+wantImage+"\n") {
+				t.Fatalf("Create did not pass --source-image; vm-harness would fall back to its\nbuilt-in golden and ignore the configured image. argv:\n%s", argv)
+			}
+			if !strings.Contains(argv, "--baseline\n"+wantImage+"\n") {
+				t.Fatalf("Create dropped --baseline, which the qemu-windows-arm backend\nresolves the golden directory from. argv:\n%s", argv)
+			}
+		})
+	}
+}
+
+// GATE t_vmharness_image_is_honoured — the negative half of assertion (a): a
+// Create with no configured image must not reach vm-harness at all. An empty
+// --source-image reads as "configured, to the empty string" rather than as
+// absent, which is the shape that let a default be substituted in the first
+// place.
+func TestVMHarnessImageIsHonouredLocalExecRefusesEmptyImage(t *testing.T) {
 	t.Setenv("VM_HARNESS_DARWIN_ASUSER_UID", "")
 	tmp := t.TempDir()
-	logPath := filepath.Join(tmp, "argv.log")
 	mock := filepath.Join(tmp, "vm-harness")
-	script := "#!/bin/sh\n" +
-		"printf '%s\\n' \"$@\" > " + shellSingleQuote(logPath) + "\n" +
-		"sleep 30\n"
-	if err := os.WriteFile(mock, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(mock, []byte("#!/bin/sh\nsleep 30\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-
-	const wantImage = "ghcr.io/metacraft-labs/macos-tart-runner:tahoe-nix-v1"
 	b := &VMHarnessRunBackend{
 		VMHarnessPath: mock,
 		BackendID:     "tart-macos",
 		GuestOS:       "macos",
 		StateDir:      filepath.Join(tmp, "state"),
 	}
-	inst, err := b.Create(context.Background(), CreateArgs{
-		Name:        "garm-source-image-test",
-		SourceImage: wantImage,
-		OSName:      "macos",
-		Bootstrap:   []byte("#!/bin/sh\necho hi\n"),
+	_, err := b.Create(context.Background(), CreateArgs{
+		Name:      "garm-no-image",
+		OSName:    "macos",
+		Bootstrap: []byte("#!/bin/sh\necho hi\n"),
 	})
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		t.Fatal("Create with no SourceImage should fail rather than let vm-harness pick a default")
 	}
-	defer func() { _ = b.Delete(context.Background(), inst.Name) }()
-
-	var argv string
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if data, err := os.ReadFile(logPath); err == nil {
-			argv = string(data)
-			break
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
-	if argv == "" {
-		t.Fatal("mock vm-harness did not record argv")
-	}
-	if !strings.Contains(argv, "--source-image\n"+wantImage+"\n") {
-		t.Fatalf("Create did not pass --source-image; vm-harness would fall back to its\nbuilt-in golden and ignore the configured image. argv:\n%s", argv)
-	}
-	if !strings.Contains(argv, "--baseline\n"+wantImage+"\n") {
-		t.Fatalf("Create dropped --baseline, which the qemu-windows-arm backend\nresolves the golden directory from. argv:\n%s", argv)
+	if !strings.Contains(err.Error(), "SourceImage") {
+		t.Fatalf("Create error does not name the missing image: %v", err)
 	}
 }
 
+// GATE t_vmharness_create_fails_on_dead_guest — "a vm-harness that exits during
+// baseline validation makes Create return an error carrying the child's exit
+// status and log tail, and persists NO instance state". Wired as
+// checks.t_vmharness_create_fails_on_dead_guest in
+// nixos-modules/checks/vmharness-image-is-honoured.nix.
+//
 // A guest that dies during vm-harness' own baseline validation — a missing or
 // unreadable golden being the case seen in production — must surface as a
 // failed Create. Reporting success there recorded a dead instance as healthy,
 // so GARM waited out the full bootstrap timeout, reaped it, and immediately
 // created another, looping indefinitely with no provider error ever recorded.
-func TestVMHarnessRunBackendCreateFailsWhenHarnessDiesImmediately(t *testing.T) {
+func TestVMHarnessCreateFailsOnDeadGuest(t *testing.T) {
 	t.Setenv("VM_HARNESS_DARWIN_ASUSER_UID", "")
 	tmp := t.TempDir()
 	mock := filepath.Join(tmp, "vm-harness")
@@ -82,17 +144,21 @@ func TestVMHarnessRunBackendCreateFailsWhenHarnessDiesImmediately(t *testing.T) 
 		t.Fatal(err)
 	}
 
+	stateDir := filepath.Join(tmp, "state")
 	b := &VMHarnessRunBackend{
 		VMHarnessPath: mock,
 		BackendID:     "qemu-windows-arm",
 		GuestOS:       "windows",
-		StateDir:      filepath.Join(tmp, "state"),
+		StateDir:      stateDir,
 	}
+	const name = "garm-dead-on-arrival"
 	_, err := b.Create(context.Background(), CreateArgs{
-		Name:        "garm-dead-on-arrival",
-		SourceImage: filepath.Join(tmp, "golden", "win-arm-runner"),
-		OSName:      "windows",
-		Bootstrap:   []byte("echo hi\n"),
+		Name:         name,
+		SourceImage:  filepath.Join(tmp, "golden", "win-arm-runner"),
+		OSName:       "windows",
+		ControllerID: "ctrl-1",
+		PoolID:       "pool-1",
+		Bootstrap:    []byte("echo hi\n"),
 	})
 	if err == nil {
 		t.Fatal("Create reported success for a vm-harness that exited immediately")
@@ -103,8 +169,22 @@ func TestVMHarnessRunBackendCreateFailsWhenHarnessDiesImmediately(t *testing.T) 
 	if !strings.Contains(err.Error(), "windows.qcow2") {
 		t.Fatalf("Create error did not carry the vm-harness log tail, which is the\nonly place the actual cause appears: %v", err)
 	}
-	if _, statErr := os.Stat(filepath.Join(tmp, "state", "garm-dead-on-arrival", "state.json")); statErr == nil {
+
+	// NO instance state. Assert it at the path the backend really writes
+	// (StateDir/instances/<name>/state.json) and, independently, through the
+	// two read paths GARM uses — a stat of a path the backend never writes to
+	// would pass no matter what Create persisted.
+	if _, statErr := os.Stat(filepath.Join(stateDir, "instances", name, "state.json")); statErr == nil {
 		t.Fatal("Create persisted state for an instance that never started")
+	}
+	if _, getErr := b.Get(context.Background(), name); getErr == nil {
+		t.Fatal("Get resolved an instance whose Create failed")
+	}
+	if insts, listErr := b.List(context.Background(), "pool-1"); listErr != nil || len(insts) != 0 {
+		t.Fatalf("List returned %d instances (err %v) after a failed Create", len(insts), listErr)
+	}
+	if insts, listErr := b.ListByController(context.Background(), "ctrl-1"); listErr != nil || len(insts) != 0 {
+		t.Fatalf("ListByController returned %d instances (err %v) after a failed Create", len(insts), listErr)
 	}
 }
 

@@ -255,6 +255,12 @@ func TestRemoteCreateWithoutBootstrapSendsNoUserData(t *testing.T) {
 	}
 }
 
+// GATE t_vmharness_image_is_honoured, assertion (b): "the remote RPC recipe
+// does the same for every non-incus target". Wired as
+// checks.t_vmharness_image_is_honoured in
+// nixos-modules/checks/vmharness-image-is-honoured.nix, which selects every
+// TestVMHarnessImageIsHonoured* test in this package.
+//
 // The ephemeral recipe is the fallback for every non-noop target, not just
 // incus. --base-image is the incus image alias; other backends resolve their
 // golden from --source-image, which cli.nim maps to BaselineSpec.sourceImage
@@ -262,8 +268,21 @@ func TestRemoteCreateWithoutBootstrapSendsNoUserData(t *testing.T) {
 // empty for tart and qemu-windows-arm, and the tart backends answer an empty
 // image by substituting their built-in cirruslabs golden — silently running an
 // image that appears in no configuration.
-func TestRemoteCreateCarriesSourceImageForNonIncusTargets(t *testing.T) {
-	for _, target := range []string{"tart-macos", "tart-linux-arm", "qemu-windows-arm"} {
+//
+// "Every non-incus target" is asserted against the named production targets AND
+// against targets the recipe table has never heard of, because b.recipe() sends
+// everything except "noop" down this path: a future target must inherit the fix
+// rather than have to be added to a list.
+func TestVMHarnessImageIsHonouredRemoteRecipeCarriesSourceImage(t *testing.T) {
+	targets := []string{
+		// The production targets MA2 puts behind the remote path.
+		"tart-macos", "tart-linux-arm", "qemu-windows-arm",
+		// Already-remote non-incus targets.
+		"libvirt", "hyperv", "wsl", "lima", "utm",
+		// Not in any table: proves the default branch, not a per-target case.
+		"some-future-backend",
+	}
+	for _, target := range targets {
 		t.Run(target, func(t *testing.T) {
 			b, fs, closeFn := newFakeBackend(t, target, 0)
 			defer closeFn()
@@ -281,9 +300,25 @@ func TestRemoteCreateCarriesSourceImageForNonIncusTargets(t *testing.T) {
 	}
 }
 
+// GATE t_vmharness_image_is_honoured — incus keeps its own alias. The fix must
+// not regress the one target that resolves its image from --base-image; the
+// recipe sends both and each backend reads the flag it understands.
+func TestVMHarnessImageIsHonouredRemoteRecipeKeepsIncusAlias(t *testing.T) {
+	b, fs, closeFn := newFakeBackend(t, "incus", 0)
+	defer closeFn()
+	if _, err := b.Create(context.Background(),
+		CreateArgs{Name: "job-9", SourceImage: "runner-linux"}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	argv := fs.execArgv[0]
+	assertContains(t, argv, "--base-image", "runner-linux")
+	assertContains(t, argv, "--source-image", "runner-linux")
+}
+
+// GATE t_vmharness_image_is_honoured — the negative half of assertion (b).
 // With no configured image there is nothing to forward, and an empty
 // --source-image would be worse than its absence: it would look configured.
-func TestRemoteCreateOmitsImageFlagsWhenUnset(t *testing.T) {
+func TestVMHarnessImageIsHonouredRemoteRecipeOmitsImageFlagsWhenUnset(t *testing.T) {
 	b, fs, closeFn := newFakeBackend(t, "tart-macos", 0)
 	defer closeFn()
 	if _, err := b.Create(context.Background(), CreateArgs{Name: "job-8"}); err != nil {
