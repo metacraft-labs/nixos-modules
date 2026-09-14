@@ -58,6 +58,10 @@ func New(configFile string) (*Provider, error) {
 // NewWithConfig builds a Provider from an already-parsed config, wiring the
 // backend the config selects. Exposed for tests.
 func NewWithConfig(cfg *config.Config) (*Provider, error) {
+	if cfg.Remote != nil && (cfg.Remote.IncusSecurityNesting || cfg.Remote.IncusNestedKvm) &&
+		(cfg.Backend != config.BackendRemote || cfg.Remote.TargetBackend != string(config.BackendIncus)) {
+		return nil, fmt.Errorf("remote Incus capabilities require backend %q with target backend %q", config.BackendRemote, config.BackendIncus)
+	}
 	var b backend.Backend
 	switch cfg.Backend {
 	case config.BackendLibvirt:
@@ -136,8 +140,10 @@ func NewWithConfig(cfg *config.Config) (*Provider, error) {
 			Client: backend.NewServeClient(
 				cfg.Remote.Endpoint, token,
 				time.Duration(cfg.Remote.RequestTimeoutSec)*time.Second),
-			TargetBackend: cfg.Remote.TargetBackend,
-			GuestOS:       cfg.Remote.GuestOS,
+			TargetBackend:        cfg.Remote.TargetBackend,
+			GuestOS:              cfg.Remote.GuestOS,
+			IncusSecurityNesting: cfg.Remote.IncusSecurityNesting,
+			IncusNestedKvm:       cfg.Remote.IncusNestedKvm,
 		}
 	default:
 		return nil, fmt.Errorf("unsupported backend %q", cfg.Backend)

@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -119,18 +120,22 @@ func TestRemoteCreateDeleteNoop(t *testing.T) {
 	if inst.OSName != "linux" {
 		t.Fatalf("OSName=%q want linux", inst.OSName)
 	}
-	// The noop recipe forwards a `provision --backend noop` argv.
-	if len(fs.execArgv) != 1 || fs.execArgv[0][0] != "provision" {
-		t.Fatalf("create argv=%v want provision", fs.execArgv)
+	// The noop recipe stays byte-for-byte unchanged and cannot receive Incus
+	// capability flags.
+	wantCreate := []string{"provision", "--backend", "noop", "--baseline", "garm-r-1", "--log-format", "json"}
+	if len(fs.execArgv) != 1 || !reflect.DeepEqual(fs.execArgv[0], wantCreate) {
+		t.Fatalf("create argv=%v want exact %v", fs.execArgv, wantCreate)
 	}
-	assertContains(t, fs.execArgv[0], "--backend", "noop")
-	assertContains(t, fs.execArgv[0], "--baseline", "garm-r-1")
 
 	if err := b.Delete(ctx, "garm-r-1"); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 	if len(fs.execArgv) != 2 || fs.execArgv[1][0] != "ephemeral-destroy" {
 		t.Fatalf("delete argv=%v want ephemeral-destroy", fs.execArgv)
+	}
+	wantDelete := []string{"ephemeral-destroy", "--backend", "noop", "--baseline", "garm-r-1", "--log-format", "json"}
+	if !reflect.DeepEqual(fs.execArgv[1], wantDelete) {
+		t.Fatalf("delete argv=%v want exact %v", fs.execArgv[1], wantDelete)
 	}
 }
 
@@ -140,15 +145,74 @@ func TestRemoteCreateIncusRecipe(t *testing.T) {
 	if _, err := b.Create(context.Background(), CreateArgs{Name: "job-42", SourceImage: "runner-linux"}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	argv := fs.execArgv[0]
-	// The production-shaped ephemeral recipe: run --ephemeral --keep.
-	if argv[0] != "run" {
-		t.Fatalf("incus create argv[0]=%q want run", argv[0])
+	want := []string{
+		"run", "--ephemeral", "--backend", "incus", "--baseline", "job-42",
+		"--base-image", "runner-linux", "--keep", "--log-format", "json",
 	}
-	assertContains(t, argv, "--backend", "incus")
-	assertContains(t, argv, "--base-image", "runner-linux")
-	if !hasFlag(argv, "--ephemeral") || !hasFlag(argv, "--keep") {
-		t.Fatalf("incus create argv missing --ephemeral/--keep: %v", argv)
+	if !reflect.DeepEqual(fs.execArgv[0], want) {
+		t.Fatalf("default incus create argv=%v want byte-for-byte prior argv %v", fs.execArgv[0], want)
+	}
+}
+
+func TestRemoteCreateIncusCapabilityFlagOrderAndDeleteIsolation(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		nesting    bool
+		nestedKvm  bool
+		capability []string
+	}{
+		{name: "nesting only", nesting: true, capability: []string{"--incus-security-nesting"}},
+		{name: "nested KVM only", nestedKvm: true, capability: []string{"--incus-nested-kvm"}},
+		{name: "both in fixed order", nesting: true, nestedKvm: true, capability: []string{"--incus-security-nesting", "--incus-nested-kvm"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b, fs, closeFn := newFakeBackend(t, "incus", 0)
+			defer closeFn()
+			b.IncusSecurityNesting = tc.nesting
+			b.IncusNestedKvm = tc.nestedKvm
+
+			if _, err := b.Create(context.Background(), CreateArgs{Name: "job-cap"}); err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			wantCreate := []string{"run", "--ephemeral", "--backend", "incus", "--baseline", "job-cap"}
+			wantCreate = append(wantCreate, tc.capability...)
+			wantCreate = append(wantCreate, "--keep", "--log-format", "json")
+			if !reflect.DeepEqual(fs.execArgv[0], wantCreate) {
+				t.Fatalf("create argv=%v want exact %v", fs.execArgv[0], wantCreate)
+			}
+
+			if err := b.Delete(context.Background(), "job-cap"); err != nil {
+				t.Fatalf("Delete: %v", err)
+			}
+			wantDelete := []string{"ephemeral-destroy", "--backend", "incus", "--baseline", "job-cap", "--log-format", "json"}
+			if !reflect.DeepEqual(fs.execArgv[1], wantDelete) {
+				t.Fatalf("delete argv=%v want exact capability-free argv %v", fs.execArgv[1], wantDelete)
+			}
+		})
+	}
+}
+
+func TestRemoteNonIncusRecipesNeverReceiveIncusCapabilities(t *testing.T) {
+	for _, target := range []string{"noop", "libvirt", "hyperv", "tart-macos"} {
+		t.Run(target, func(t *testing.T) {
+			b, fs, closeFn := newFakeBackend(t, target, 0)
+			defer closeFn()
+			b.IncusSecurityNesting = true
+			b.IncusNestedKvm = true
+
+			if _, err := b.Create(context.Background(), CreateArgs{Name: "job-other"}); err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			var want []string
+			if target == "noop" {
+				want = []string{"provision", "--backend", target, "--baseline", "job-other", "--log-format", "json"}
+			} else {
+				want = []string{"run", "--ephemeral", "--backend", target, "--baseline", "job-other", "--keep", "--log-format", "json"}
+			}
+			if !reflect.DeepEqual(fs.execArgv[0], want) {
+				t.Fatalf("target %q argv=%v want exact capability-free argv %v", target, fs.execArgv[0], want)
+			}
+		})
 	}
 }
 
@@ -267,16 +331,6 @@ func TestGetReportsRunningOnLiveHost(t *testing.T) {
 	if inst.Name != "garm-r-9" || inst.Status != "running" {
 		t.Fatalf("Get instance=%+v", inst)
 	}
-}
-
-func assertContains(t *testing.T, argv []string, flag, val string) {
-	t.Helper()
-	for i := 0; i+1 < len(argv); i++ {
-		if argv[i] == flag && argv[i+1] == val {
-			return
-		}
-	}
-	t.Fatalf("argv %v missing %s %s", argv, flag, val)
 }
 
 func hasFlag(argv []string, flag string) bool {

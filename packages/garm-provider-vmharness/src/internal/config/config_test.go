@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -105,6 +106,9 @@ auth_token_file = "/run/creds/vmh"
 	if cfg.Remote.GuestOS != "linux" {
 		t.Fatalf("GuestOS default=%q want linux", cfg.Remote.GuestOS)
 	}
+	if cfg.Remote.IncusSecurityNesting || cfg.Remote.IncusNestedKvm {
+		t.Fatalf("remote Incus capability defaults must be false, got %+v", cfg.Remote)
+	}
 
 	// Missing [remote] entirely.
 	if _, err := ParseBytes([]byte(`backend = "remote"`)); err == nil {
@@ -137,6 +141,67 @@ endpoint = "h:1"
 target_backend = "incus"
 `)); err == nil {
 		t.Fatal("remote backend without any token source should fail")
+	}
+}
+
+func TestRemoteIncusCapabilitiesParseAndRejectBackendMismatch(t *testing.T) {
+	t.Setenv(DefaultAuthTokenEnv, "")
+
+	cfg, err := ParseBytes([]byte(`
+backend = "remote"
+[remote]
+endpoint = "runner.example.test:8873"
+target_backend = "incus"
+auth_token = "t"
+incus_security_nesting = true
+incus_nested_kvm = true
+`))
+	if err != nil {
+		t.Fatalf("remote Incus capability config rejected: %v", err)
+	}
+	if !cfg.Remote.IncusSecurityNesting || !cfg.Remote.IncusNestedKvm {
+		t.Fatalf("remote Incus capabilities did not parse: %+v", cfg.Remote)
+	}
+
+	for _, tc := range []struct {
+		name    string
+		backend string
+		flags   string
+	}{
+		{name: "nesting on noop", backend: "noop", flags: "incus_security_nesting = true"},
+		{name: "kvm on libvirt", backend: "libvirt", flags: "incus_nested_kvm = true"},
+		{name: "both on hyperv", backend: "hyperv", flags: "incus_security_nesting = true\nincus_nested_kvm = true"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseBytes([]byte(`
+backend = "remote"
+[remote]
+endpoint = "runner.example.test:8873"
+target_backend = "` + tc.backend + `"
+auth_token = "t"
+` + tc.flags + "\n"))
+			if err == nil {
+				t.Fatalf("remote Incus capability unexpectedly accepted for target_backend=%q", tc.backend)
+			}
+			if !strings.Contains(err.Error(), `remote.target_backend "incus"`) {
+				t.Fatalf("mismatch error is not actionable: %v", err)
+			}
+		})
+	}
+
+	// A [remote] capability table cannot be smuggled into a non-remote
+	// provider and silently ignored.
+	_, err = ParseBytes([]byte(`
+backend = "libvirt"
+[remote]
+target_backend = "incus"
+incus_nested_kvm = true
+`))
+	if err == nil {
+		t.Fatal("remote Incus capability unexpectedly accepted by a non-remote provider")
+	}
+	if !strings.Contains(err.Error(), `backend "remote"`) {
+		t.Fatalf("non-remote mismatch error is not actionable: %v", err)
 	}
 }
 

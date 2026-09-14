@@ -226,6 +226,9 @@
       # token itself never enters the store: `auth_token_file` points at a path
       # (agenix / LoadCredential-staged) resolved at runtime, or the provider
       # reads `auth_token_env` from the environment (value supplied by infra).
+      # The two optional Incus capability grants are likewise operator-owned:
+      # they map to fixed, audited vm-harness flags and expose no raw config key,
+      # device path, or mode to workflows, bootstrap/user-data, or guests.
       mkRemoteKeys =
         name: p:
         ''
@@ -244,6 +247,14 @@
         ''
         + optionalString (p.remote.requestTimeoutSec > 0) ''
           request_timeout_sec = ${toString p.remote.requestTimeoutSec}
+        ''
+        # Omit false values so every existing remote provider keeps a
+        # byte-identical config.toml and, downstream, byte-identical create argv.
+        + optionalString p.remote.incusSecurityNesting ''
+          incus_security_nesting = true
+        ''
+        + optionalString p.remote.incusNestedKvm ''
+          incus_nested_kvm = true
         '';
       # RE3: the `garm-provider-aws` config.toml (config/config.go). It carries
       # ONLY the region, the subnet, and the credential TYPE — never a secret.
@@ -256,15 +267,13 @@
       # / AWS_SESSION_TOKEN) or a mounted shared-credentials file. NOTE: unlike
       # the vm-harness backends, this config carries NO golden-image map — the
       # AMI is a per-pool value (`burstPools.<name>.image`), not a provider one.
-      mkAwsKeys =
-        p:
-        ''
-          region = "${p.aws.region}"
-          subnet_id = "${p.aws.subnetId}"
+      mkAwsKeys = p: ''
+        region = "${p.aws.region}"
+        subnet_id = "${p.aws.subnetId}"
 
-          [credentials]
-          credential_type = "${p.aws.credentialType}"
-        '';
+        [credentials]
+        credential_type = "${p.aws.credentialType}"
+      '';
       mkProviderConfigText =
         name: p:
         ''
@@ -2104,6 +2113,30 @@
                       `--timeout-sec`, not this.
                     '';
                   };
+                  incusSecurityNesting = mkOption {
+                    type = types.bool;
+                    default = false;
+                    description = ''
+                      Trusted operator grant for a remote Incus provider. When
+                      true, the provider appends only vm-harness's fixed
+                      `--incus-security-nesting` flag before guest start. It
+                      does not expose arbitrary Incus configuration to pools,
+                      workflows, bootstrap/user-data, or guests. Rejected for
+                      non-remote providers and non-Incus remote targets.
+                    '';
+                  };
+                  incusNestedKvm = mkOption {
+                    type = types.bool;
+                    default = false;
+                    description = ''
+                      Trusted operator grant for a remote Incus provider. When
+                      true, the provider appends only vm-harness's fixed
+                      `--incus-nested-kvm` flag; vm-harness maps the fixed host
+                      `/dev/kvm` to guest `/dev/kvm`, verifies exact mode 0666,
+                      and opens it read-write. No path or mode is configurable.
+                      Rejected for non-remote providers and non-Incus targets.
+                    '';
+                  };
                 };
               };
             };
@@ -2572,12 +2605,10 @@
         # `Restart=always` already handles — it makes that path FAST and, above
         # all, makes it never permanently give up on the SPOF.
         recovery = {
-          enable =
-            mkEnableOption "the RE2 fast-restart recovery posture for the central GARM"
-            // {
-              default = true;
-              example = false;
-            };
+          enable = mkEnableOption "the RE2 fast-restart recovery posture for the central GARM" // {
+            default = true;
+            example = false;
+          };
 
           restartSec = mkOption {
             type = types.str;
@@ -2630,20 +2661,19 @@
           };
 
           warmStandby = {
-            enable =
-              mkEnableOption ''
-                a documented WARM-STANDBY posture for the central GARM. NOTE the
-                trade-off: GARM is DB-as-truth and reconciles against GitHub, so
-                running a SECOND live controller against the same forge risks a
-                split-brain double-provision. Warm standby here therefore does
-                NOT mean two live controllers — it means the DB backup
-                (`services.garm.backup`) is continuously shipped to a standby
-                host, which can be PROMOTED by restoring that DB + starting garm
-                (a documented, seconds-to-minutes manual/scripted step in the
-                runbook). It is heavier than fast-restart and only pays off when
-                the whole HOST is lost, not merely the process — most deploys
-                should leave this off and rely on fast-restart + backup
-              '';
+            enable = mkEnableOption ''
+              a documented WARM-STANDBY posture for the central GARM. NOTE the
+              trade-off: GARM is DB-as-truth and reconciles against GitHub, so
+              running a SECOND live controller against the same forge risks a
+              split-brain double-provision. Warm standby here therefore does
+              NOT mean two live controllers — it means the DB backup
+              (`services.garm.backup`) is continuously shipped to a standby
+              host, which can be PROMOTED by restoring that DB + starting garm
+              (a documented, seconds-to-minutes manual/scripted step in the
+              runbook). It is heavier than fast-restart and only pays off when
+              the whole HOST is lost, not merely the process — most deploys
+              should leave this off and rely on fast-restart + backup
+            '';
 
             host = mkOption {
               type = types.nullOr types.str;
@@ -3865,9 +3895,7 @@
             )
             # RB2: the serve-token source paths, asserted present (AssertPathExists)
             # so a genuinely missing token is a legible failure one phase earlier.
-            ++ lib.mapAttrsToList (
-              _: p: toString p.remote.authTokenFile
-            ) enabledRemoteTokenProviders;
+            ++ lib.mapAttrsToList (_: p: toString p.remote.authTokenFile) enabledRemoteTokenProviders;
 
           # The dedicated-user base (shared by both provider postures).
           userBaseServiceConfig = {
@@ -4015,6 +4043,18 @@
               assertion = !(providerIsRemote p) || p.remote.endpoint != "";
               message = "services.garm.providers.${n}: backend = \"remote\" requires remote.endpoint (host:port of the vm-harness serve daemon).";
             }) cfg.providers
+            # Remote Incus capability grants are deliberately narrow and
+            # provider-admin controlled. Refuse configurations whose target
+            # cannot honour them instead of silently ignoring a privilege grant.
+            ++ lib.mapAttrsToList (n: p: {
+              assertion =
+                !p.remote.incusSecurityNesting || (providerIsRemote p && p.remote.targetBackend == "incus");
+              message = "services.garm.providers.${n}.remote.incusSecurityNesting requires backend = \"remote\" and remote.targetBackend = \"incus\"; it maps only to vm-harness --incus-security-nesting.";
+            }) cfg.providers
+            ++ lib.mapAttrsToList (n: p: {
+              assertion = !p.remote.incusNestedKvm || (providerIsRemote p && p.remote.targetBackend == "incus");
+              message = "services.garm.providers.${n}.remote.incusNestedKvm requires backend = \"remote\" and remote.targetBackend = \"incus\"; it maps only to vm-harness --incus-nested-kvm with the fixed /dev/kvm device contract.";
+            }) cfg.providers
             # Resource-guard (eval time): the sum over all scale sets of
             # maxRunners * (its provider's per-VM RAM) must fit the declared host
             # RAM budget, and likewise vCPUs. A bad config FAILS TO EVAL instead
@@ -4074,8 +4114,7 @@
             # eval rather than silently promise an HA that ships nothing.
             ++ [
               {
-                assertion =
-                  !rcvcfg.warmStandby.enable || (bcfg.enable && bcfg.remoteCommand != null);
+                assertion = !rcvcfg.warmStandby.enable || (bcfg.enable && bcfg.remoteCommand != null);
                 message = ''
                   services.garm.recovery.warmStandby.enable requires
                   services.garm.backup.enable = true AND a

@@ -218,6 +218,33 @@ suite (cap / scale-to-zero / warm-pool at a higher concurrency than the Windows
 path) **through the module-built hardened incus unit**, and asserts the posture
 above + `/metrics` served + the declarative egress option.
 
+### Remote Incus capability grants
+
+These two remote Incus capabilities are disabled by default. Opt-in booleans
+under `services.garm.providers.<name>.remote` grant the fixed capabilities
+implemented by the pinned `vm-harness` mainline:
+
+- `incusSecurityNesting` maps only to `--incus-security-nesting`.
+- `incusNestedKvm` maps only to `--incus-nested-kvm`, whose contract attaches
+  host `/dev/kvm` at guest `/dev/kvm` with the fixed device type, verifies the
+  exact guest mode `0666`, and actually opens it read-write before returning
+  success so a device-policy denial cannot masquerade as usable KVM.
+
+Both default to `false`; false values are omitted from the rendered provider
+TOML, preserving the prior remote create command exactly. The module and provider
+reject either grant unless `backend = "remote"` and
+`remote.targetBackend = "incus"`. These are controller-operator settings, not
+pool tools, workflow inputs, bootstrap/user-data, or guest settings. There is no
+raw Incus config/device-path/mode escape hatch. A consumer must enable them only
+for a host whose verified capability manifest and live runner probe establish
+the corresponding capability.
+
+The older permissive `extra_specs` schema still advertises similarly named
+local-Incus keys for compatibility, although the provider does not currently
+consume them. This milestone deliberately neither implements nor expands that
+per-pool surface: remote grants come only from the provider's `[remote]` table,
+and hostile pool `extra_specs` cannot change the remote create command.
+
 ---
 
 ## 3. Declarative App / provider wiring
@@ -293,7 +320,7 @@ unless `reconcile.pruneUnmanaged` is also set. `garm-cli controller update
 ## 4a. Capability POOLS + classic runners (RC2 / RB3)
 
 Scale sets name **one** class and pin it to one host. **Pools** register
-*classic* runners advertising a **capability label set**, so
+_classic_ runners advertising a **capability label set**, so
 `runs-on: [self-hosted, linux, x64, x86-64-v3]` matches **any** runner that
 proves all those labels. The reconcile applies pools via `garm-cli pool`
 (id-tracked in `managed-pool-ids.json` — GARM pools have no name).
@@ -468,18 +495,18 @@ campaign's Phase-B end state), that controller is a deliberate provisioning
 against GitHub, and GitHub re-queues any job whose runner disappeared — so a
 crashed controller loses **no jobs** as long as it comes back fast over a
 **surviving DB**. Two option blocks harden that, and they compose with the
-`healthcheck` watchdog (which recovers a process-*alive*-but-API-*dead* garm):
+`healthcheck` watchdog (which recovers a process-_alive_-but-API-_dead_ garm):
 
 **`recovery`** — the fast declarative restart posture (default `enable = true`):
 
-| option | default | effect |
-|---|---|---|
-| `restartSec` | `"5s"` | `RestartSec` — respawn delay after a crash |
-| `startLimitIntervalSec` | `"300s"` | widened `StartLimitIntervalSec` |
-| `startLimitBurst` | `50` | `StartLimitBurst` |
-| `targetRecoverySeconds` | `30` | the documented RTO (informational + gate bound) |
-| `warmStandby.enable` | `false` | see the trade-off below |
-| `warmStandby.host` | `null` | informational standby host |
+| option                  | default  | effect                                          |
+| ----------------------- | -------- | ----------------------------------------------- |
+| `restartSec`            | `"5s"`   | `RestartSec` — respawn delay after a crash      |
+| `startLimitIntervalSec` | `"300s"` | widened `StartLimitIntervalSec`                 |
+| `startLimitBurst`       | `50`     | `StartLimitBurst`                               |
+| `targetRecoverySeconds` | `30`     | the documented RTO (informational + gate bound) |
+| `warmStandby.enable`    | `false`  | see the trade-off below                         |
+| `warmStandby.host`      | `null`   | informational standby host                      |
 
 The start-limit widening is the load-bearing SPOF property: systemd's **default**
 (5 restarts / 10s) would drop the crown-jewel controller into a permanent
@@ -489,7 +516,7 @@ disk full) and is then **left failed on purpose**, so RE1's
 `up==0`/`GarmControllerDown` pages a human instead of hiding a hard fault behind
 an endless loop.
 
-> **Warm-standby trade-off.** A *second live controller* against the same forge
+> **Warm-standby trade-off.** A _second live controller_ against the same forge
 > would double-provision (split-brain), because both would reconcile the same
 > desired state. So `warmStandby` here is **not** two live controllers — it is
 > the DB backup continuously shipped to a standby host that can be **promoted**
@@ -501,14 +528,14 @@ an endless loop.
 
 **`backup`** — online SQLite snapshot + off-host hook (default `enable = false`):
 
-| option | default | effect |
-|---|---|---|
-| `enable` | `false` | install `garm-db-backup` oneshot + timer |
-| `interval` | `"15min"` | snapshot cadence |
-| `dir` | `/var/backup/garm` | local rotated snapshot dir (put it on a **different** filesystem than `stateDir`) |
-| `retain` | `24` | snapshots kept |
-| `compress` | `true` | gzip each snapshot |
-| `remoteCommand` | `null` | operator hook: ship `$1` / `$GARM_DB_SNAPSHOT` off-host |
+| option          | default            | effect                                                                            |
+| --------------- | ------------------ | --------------------------------------------------------------------------------- |
+| `enable`        | `false`            | install `garm-db-backup` oneshot + timer                                          |
+| `interval`      | `"15min"`          | snapshot cadence                                                                  |
+| `dir`           | `/var/backup/garm` | local rotated snapshot dir (put it on a **different** filesystem than `stateDir`) |
+| `retain`        | `24`               | snapshots kept                                                                    |
+| `compress`      | `true`             | gzip each snapshot                                                                |
+| `remoteCommand` | `null`             | operator hook: ship `$1` / `$GARM_DB_SNAPSHOT` off-host                           |
 
 Snapshots use SQLite's own `.backup` (a consistent copy of committed pages under
 a shared lock — **not** `cp`, which can catch a torn WAL write) and are

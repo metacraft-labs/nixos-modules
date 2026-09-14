@@ -63,11 +63,17 @@ type RemoteBackend struct {
 	// GuestOS is the reported guest OS for created instances when the
 	// golden-image map carries no os_name.
 	GuestOS string
+	// IncusSecurityNesting and IncusNestedKvm are trusted provider-admin
+	// grants for the remote Incus recipe. They map only to vm-harness's two
+	// fixed capability flags; no workflow, bootstrap, or guest field can
+	// select arbitrary Incus configuration, device paths, or modes.
+	IncusSecurityNesting bool
+	IncusNestedKvm       bool
 }
 
 // remoteRecipe builds the create/delete argv for a specific target backend.
 type remoteRecipe struct {
-	create func(target string, args CreateArgs) []string
+	create func(backend *RemoteBackend, args CreateArgs) []string
 	del    func(target, name string) []string
 }
 
@@ -75,8 +81,8 @@ type remoteRecipe struct {
 // both succeed against `--backend noop` (verified), so a real create+delete
 // round-trip exercises the whole wire path without a hypervisor.
 var noopRecipe = remoteRecipe{
-	create: func(target string, args CreateArgs) []string {
-		return []string{"provision", "--backend", target, "--baseline", args.Name, "--log-format", "json"}
+	create: func(backend *RemoteBackend, args CreateArgs) []string {
+		return []string{"provision", "--backend", backend.TargetBackend, "--baseline", args.Name, "--log-format", "json"}
 	},
 	del: func(target, name string) []string {
 		return []string{"ephemeral-destroy", "--backend", target, "--baseline", name, "--log-format", "json"}
@@ -93,10 +99,22 @@ var noopRecipe = remoteRecipe{
 // so the remote `run --ephemeral` injects it exactly as the local path would.
 // The recipe stays argv-only; user-data travels alongside the argv, not in it.
 var ephemeralRecipe = remoteRecipe{
-	create: func(target string, args CreateArgs) []string {
-		argv := []string{"run", "--ephemeral", "--backend", target, "--baseline", args.Name}
+	create: func(backend *RemoteBackend, args CreateArgs) []string {
+		argv := []string{"run", "--ephemeral", "--backend", backend.TargetBackend, "--baseline", args.Name}
 		if args.SourceImage != "" {
 			argv = append(argv, "--base-image", args.SourceImage)
+		}
+		// Only remote Incus consumes these provider-admin grants. The fixed
+		// flag order is part of the contract: nesting first, nested KVM second,
+		// then the pre-existing lifecycle/logging suffix. With both grants off
+		// the emitted argv is byte-for-byte identical to the RB1/RB2 path.
+		if backend.TargetBackend == "incus" {
+			if backend.IncusSecurityNesting {
+				argv = append(argv, "--incus-security-nesting")
+			}
+			if backend.IncusNestedKvm {
+				argv = append(argv, "--incus-nested-kvm")
+			}
 		}
 		argv = append(argv, "--keep", "--log-format", "json")
 		return argv
@@ -134,7 +152,7 @@ func (b *RemoteBackend) Create(ctx context.Context, args CreateArgs) (Instance, 
 	if args.Name == "" {
 		return Instance{}, fmt.Errorf("remote Create: instance name is required")
 	}
-	argv := b.recipe().create(b.TargetBackend, args)
+	argv := b.recipe().create(b, args)
 	// Ship the rendered runner bootstrap (if any) as cloud-init user-data. It is
 	// empty for the noop test recipe and whenever GARM supplied no tools, in
 	// which case ExecStreamWithUserData sends nothing extra (omitempty) and the
