@@ -121,7 +121,7 @@ def main(argv: list[str] | None = None) -> int:
     workflows = iter_workflows([Path(p) for p in args.paths])
     total = 0
     for wf in workflows:
-        text = wf.read_text()
+        text = wf.read_text(encoding="utf-8")
         new, changes = rewrite_text(text)
         if not changes:
             continue
@@ -131,7 +131,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  - {lineno}: {old.strip()}")
             print(f"  + {lineno}: {rewritten.strip()}")
         if args.write:
-            wf.write_text(new)
+            wf.write_text(new, encoding="utf-8")
 
     if total == 0:
         print("codemod-runs-on-labels: no legacy eph-* classes found.")

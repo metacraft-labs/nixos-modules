@@ -135,7 +135,7 @@ def check_workflow(path: Path) -> tuple[list[str], list[list[str]]]:
     """
     violations: list[str] = []
     resolved: list[list[str]] = []
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     try:
         doc = yaml.safe_load(text)
     except yaml.YAMLError as exc:  # pragma: no cover
