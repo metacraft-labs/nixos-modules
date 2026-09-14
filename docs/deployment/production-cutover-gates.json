@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "status": "ci-backend-cutover-complete-operational-retirement-pending",
-  "defaultCutoverPath": { "name": "attic-direct-ssh-shadow", "cacheBackend": "attic", "activation": "mcl deploy-ssh or mcl deploy-reconcile", "usesCachixDeploy": false },
+  "defaultCutoverPath": { "name": "attic-direct-ssh-shadow", "cacheBackend": "attic", "activation": "mcl-devops deploy-ssh or mcl-devops deploy-reconcile", "usesCachixDeploy": false },
   "m7FullTopology": { "requiredBeforeFirstProductionTarget": true, "evidenceRecorded": false, "requiredScenarios": ["full-topology","full-topology-failures","offline-latest-only","forced-command","pull-agent"], "acceptedEvidence": ["runtime artifact directory","runtime command log without Cachix Deploy activation","deployment event JSONL","target journal snippets","cache logs","metrics or status collector output","final state for every rollout group"] },
   "firstTargetSelection": { "selectedProductionTarget": null, "simulationTarget": { "name": "local-production-cutover-canary", "kind": "local-simulation", "production": false }, "requiresHumanApprovalBeforeLiveSelection": true },
   "liveCanaryCycles": { "requiredBeforeCachixDeployRemoval": 2, "recorded": 0, "evidence": [] },

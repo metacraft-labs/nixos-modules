@@ -1,4 +1,4 @@
-name "mcl"
+name "mcl-devops"
 description "Swiss-knife for managing NixOS deployments"
 authors "Metacraft Labs"
 copyright "Copyright © 2024, Metacraft Labs"

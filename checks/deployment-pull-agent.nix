@@ -104,12 +104,12 @@ top@{ config, ... }:
           imports = [ flake.modules.nixos.deployment-pull-agent ];
           networking.hostName = "target";
           environment.systemPackages = [
-            self'.packages.mcl
+            self'.packages.mcl-devops
             pkgs.python3
           ];
           services.mcl-deploy-agent = {
             enable = true;
-            package = self'.packages.mcl;
+            package = self'.packages.mcl-devops;
             targetName = "target";
             manifestPublicKeys = [ manifestPublicKey ];
             manifestDirectories = [ "/var/lib/mcl/deployments/inbox" ];
@@ -123,12 +123,12 @@ top@{ config, ... }:
           };
         };
       slowMcl = pkgs.writeShellApplication {
-        name = "mcl";
+        name = "mcl-devops";
         runtimeInputs = [ pkgs.coreutils ];
         text = ''
           set -euo pipefail
           if [ "''${1:-}" != deploy-agent ]; then
-            echo "fake mcl only supports deploy-agent" >&2
+            echo "fake mcl-devops only supports deploy-agent" >&2
             exit 64
           fi
 
@@ -139,12 +139,12 @@ top@{ config, ... }:
           printf 'end:%s\n' "$$" >> /var/lib/mcl-test/agent-runs
         '';
       };
-      preflightProbeMcl = pkgs.writeShellScriptBin "mcl" ''
+      preflightProbeMcl = pkgs.writeShellScriptBin "mcl-devops" ''
         set -euo pipefail
         test "$(${pkgs.coreutils}/bin/stat -c '%u:%g:%a' /var/lib/mcl/preflight-state/locks)" = 0:0:700
         ${pkgs.coreutils}/bin/mkdir -p /var/lib/mcl-test
         printf 'invoked-after-0700\n' >> /var/lib/mcl-test/preflight-mcl-runs
-        exec ${lib.getExe self'.packages.mcl} "$@"
+        exec ${lib.getExe self'.packages.mcl-devops} "$@"
       '';
       preflightTargetModule =
         { ... }:
@@ -152,7 +152,7 @@ top@{ config, ... }:
           imports = [ flake.modules.nixos.deployment-pull-agent ];
           networking.hostName = "target";
           environment.systemPackages = [
-            self'.packages.mcl
+            self'.packages.mcl-devops
             pkgs.python3
           ];
           services.mcl-deploy-agent = {
@@ -179,7 +179,7 @@ top@{ config, ... }:
             networking.hostName = "target-a";
             services.mcl-deploy-agent = {
               enable = true;
-              package = self'.packages.mcl;
+              package = self'.packages.mcl-devops;
               targetName = "target-a";
               manifestPublicKeys = [ manifestPublicKey ];
               manifestSources = [ "/var/lib/mcl/deployments/target-a/latest.json" ];
@@ -218,7 +218,7 @@ top@{ config, ... }:
         ) "pull-agent service does not use configured flock lock")
         (lib.optional (
           !lib.hasInfix "deploy-agent" staticExecStart
-        ) "pull-agent service does not call mcl deploy-agent")
+        ) "pull-agent service does not call mcl-devops deploy-agent")
         (lib.optional (
           !lib.hasInfix "--target target-a" staticExecStart
         ) "pull-agent service does not pass target")
@@ -281,7 +281,7 @@ top@{ config, ... }:
                 target.succeed("install -d -m 0750 /var/lib/mcl/deployments/inbox")
                 target.succeed("install -m 0600 ${manifestPrivateKey} /tmp/manifest-key")
                 target.succeed(
-                    "${fakeClosureEnv} mcl deploy-plan "
+                    "${fakeClosureEnv} mcl-devops deploy-plan "
                     "--target target "
                     "--desired-system-path ${oldSystemPath} "
                     "--git-revision 0123456789abcdef0123456789abcdef01234567 "
@@ -292,7 +292,7 @@ top@{ config, ... }:
                     "--output /var/lib/mcl/deployments/inbox/old.json"
                 )
                 target.succeed(
-                    "${fakeClosureEnv} mcl deploy-plan "
+                    "${fakeClosureEnv} mcl-devops deploy-plan "
                     "--target target "
                     "--desired-system-path ${newSystemPath} "
                     "--git-revision 0123456789abcdef0123456789abcdef01234568 "
@@ -352,7 +352,7 @@ top@{ config, ... }:
 
             with subtest("wrong target manifest is non-retryable and does not apply"):
                 target.succeed(
-                    "${fakeClosureEnv} mcl deploy-plan "
+                    "${fakeClosureEnv} mcl-devops deploy-plan "
                     "--target other-target "
                     "--desired-system-path ${wrongTargetSystemPath} "
                     "--git-revision 0123456789abcdef0123456789abcdef01234567 "
@@ -378,7 +378,7 @@ top@{ config, ... }:
                 target.succeed("rm -f /var/lib/mcl/deployments/inbox/*.json")
                 target.succeed("systemctl reset-failed mcl-deploy-agent.service")
                 target.succeed(
-                    "${fakeClosureEnv} mcl deploy-plan "
+                    "${fakeClosureEnv} mcl-devops deploy-plan "
                     "--target target "
                     "--desired-system-path ${tamperedSystemPath} "
                     "--git-revision 0123456789abcdef0123456789abcdef01234567 "
@@ -553,7 +553,7 @@ top@{ config, ... }:
                 target.succeed("rm -rf -- " + generic_state)
                 target.succeed(
                     "umask 0022; "
-                    "if ${lib.getExe self'.packages.mcl} deploy-agent "
+                    "if ${lib.getExe self'.packages.mcl-devops} deploy-agent "
                     "--target target "
                     "--trusted-manifest-public-key ${lib.escapeShellArg manifestPublicKey} "
                     "--state-dir " + generic_state + " "
@@ -569,7 +569,7 @@ top@{ config, ... }:
                 target.succeed("chmod 0755 " + generic_state + "/locks")
                 target.succeed(
                     "umask 0022; "
-                    "if ${lib.getExe self'.packages.mcl} deploy-agent "
+                    "if ${lib.getExe self'.packages.mcl-devops} deploy-agent "
                     "--target target "
                     "--trusted-manifest-public-key ${lib.escapeShellArg manifestPublicKey} "
                     "--state-dir " + generic_state + " "
@@ -584,7 +584,7 @@ top@{ config, ... }:
             with subtest("publish signed desired state without invoking the service package"):
                 target.succeed("install -m 0600 ${manifestPrivateKey} /tmp/manifest-key")
                 target.succeed(
-                    "${fakeClosureEnv} ${lib.getExe self'.packages.mcl} deploy-plan "
+                    "${fakeClosureEnv} ${lib.getExe self'.packages.mcl-devops} deploy-plan "
                     "--target target "
                     "--desired-system-path ${newSystemPath} "
                     "--git-revision 0123456789abcdef0123456789abcdef01234568 "
@@ -731,7 +731,7 @@ top@{ config, ... }:
                 target.succeed("systemctl start mcl-deploy-agent.service")
                 assert_signed_deployment_succeeded("/tmp/legacy-0750.inode")
 
-            with subtest("absent locks directory is created exact 0700 before mcl"):
+            with subtest("absent locks directory is created exact 0700 before mcl-devops"):
                 reset_service()
                 remove_locks()
                 target.succeed("systemctl start mcl-deploy-agent.service")
@@ -806,12 +806,12 @@ top@{ config, ... }:
               imports = [ flake.modules.nixos.deployment-pull-agent ];
               networking.hostName = "target";
               environment.systemPackages = [
-                self'.packages.mcl
+                self'.packages.mcl-devops
                 pkgs.python3
               ];
               services.mcl-deploy-agent = {
                 enable = true;
-                package = self'.packages.mcl;
+                package = self'.packages.mcl-devops;
                 targetName = "target";
                 manifestPublicKeys = [ manifestPublicKey ];
                 manifestDirectories = [ "/var/lib/mcl/deployments/inbox" ];
@@ -835,7 +835,7 @@ top@{ config, ... }:
                 target.succeed("install -d -m 0750 /var/lib/mcl/deployments/inbox")
                 target.succeed("install -m 0600 ${manifestPrivateKey} /tmp/manifest-key")
                 target.succeed(
-                    "${fakeClosureEnv} mcl deploy-plan "
+                    "${fakeClosureEnv} mcl-devops deploy-plan "
                     "--target target "
                     "--desired-system-path ${newSystemPath} "
                     "--git-revision 0123456789abcdef0123456789abcdef01234568 "

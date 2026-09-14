@@ -1,10 +1,10 @@
 # MCL Agent Guidelines
 
-This document provides instructions for AI agents working on the `mcl` (Metacraft Labs CLI) codebase.
+This document provides instructions for AI agents working on the `mcl-devops` (Metacraft Labs CLI) codebase.
 
 ## Project Overview
 
-`mcl` is a Swiss-knife CLI tool for managing NixOS deployments, written in D. It provides commands for:
+`mcl-devops` is a Swiss-knife CLI tool for managing NixOS deployments, written in D. It provides commands for:
 
 - Host information gathering (`host-info`)
 - Remote host management (`hosts`)
@@ -16,7 +16,7 @@ This document provides instructions for AI agents working on the `mcl` (Metacraf
 
 A module under `src/mcl/commands/` becomes a top-level command only when it is
 listed in `commandModulesToExport` in `src/mcl/commands/package.d` — that map is
-the authoritative command registry, and `mcl --help` prints exactly what it
+the authoritative command registry, and `mcl-devops --help` prints exactly what it
 contains. Everything else in `commands/` is reachable only as a subcommand (for
 example `match_invoices.d`, wired in under `host-info`), or not at all.
 
@@ -46,13 +46,13 @@ else
 
 ```bash
 # Build the project
-dub --root ./packages/mcl/ build
+dub --root ./packages/mcl-devops/ build
 
 # The binary is output to:
-./packages/mcl/build/mcl
+./packages/mcl-devops/build/mcl-devops
 ```
 
-> **Note**: In the Nix devshell, `packages/mcl/build` is automatically added to `PATH` (see `shells/default.nix`). After running `dub build`, you can invoke `mcl` directly without the full path.
+> **Note**: In the Nix devshell, `packages/mcl-devops/build` is automatically added to `PATH` (see `shells/default.nix`). After running `dub build`, you can invoke `mcl-devops` directly without the full path.
 
 ## Testing
 
@@ -60,7 +60,7 @@ dub --root ./packages/mcl/ build
 
 ```bash
 # Exclude coda tests (requires auth token)
-dub --root ./packages/mcl/ test -- -e coda
+dub --root ./packages/mcl-devops/ test -- -e coda
 ```
 
 ### Run Specific Tests
@@ -69,10 +69,10 @@ Use `-i` (include) to filter tests by regex pattern:
 
 ```bash
 # Run tests matching "loadHostsFrom"
-dub --root ./packages/mcl/ test -- -i "loadHostsFrom"
+dub --root ./packages/mcl-devops/ test -- -i "loadHostsFrom"
 
 # Run tests matching "parseDmi"
-dub --root ./packages/mcl/ test -- -i "parseDmi"
+dub --root ./packages/mcl-devops/ test -- -i "parseDmi"
 ```
 
 ### Test Options
@@ -91,16 +91,16 @@ Test CLI commands directly after building:
 
 ```bash
 # Show host information
-mcl host-info
+mcl-devops host-info
 
 # Show purchasable parts (for invoice matching)
-mcl host-info parts
+mcl-devops host-info parts
 
 # Scan network for hosts with SSH
-mcl hosts scan --network 192.168.1
+mcl-devops hosts scan --network 192.168.1
 
 # Get help for any command
-mcl host-info --help
+mcl-devops host-info --help
 ```
 
 ## Code Style
@@ -239,7 +239,7 @@ chore(flake.lock): Update all Flake inputs
 ## File Structure
 
 ```
-packages/mcl/
+packages/mcl-devops/
 ├── src/mcl/
 │   ├── commands/       # CLI command implementations
 │   │   ├── host_info.d # host-info command
@@ -301,7 +301,7 @@ foreach (record; records)
 3. **Test single functions**: Use `-i "functionName"` to isolate tests
 4. **Check JSON output**: Pipe commands through `jq` for readable output:
    ```bash
-   mcl host-info | jq .
+   mcl-devops host-info | jq .
    ```
 
 ## Dependencies
@@ -321,7 +321,7 @@ All dependencies are managed via `dub.sdl` and Nix flake.
 After changing dependencies in `dub.sdl`, regenerate the Nix lock file used by `buildDubPackage`:
 
 ```bash
-cd packages/mcl
+cd packages/mcl-devops
 dub upgrade          # update dub.selections.json
 dub-to-nix > dub-lock.json  # regenerate dub-lock.json from selections
 ```

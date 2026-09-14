@@ -144,7 +144,7 @@ jobs:
 
 ## MCL CLI Tool
 
-The `mcl` tool is a Swiss-knife CLI for managing NixOS deployments. For development best practices, see [packages/mcl/AGENTS.md](packages/mcl/AGENTS.md).
+The `mcl-devops` tool is a Swiss-knife CLI for managing NixOS deployments. For development best practices, see [packages/mcl-devops/AGENTS.md](packages/mcl-devops/AGENTS.md).
 
 ### Available Commands
 
@@ -169,4 +169,4 @@ The `mcl` tool is a Swiss-knife CLI for managing NixOS deployments. For developm
 | `config`            | Manage NixOS machine configurations (system, home, VM)                                                                   |
 | `secret`            | Manage age-encrypted secrets for NixOS machines                                                                          |
 
-Run `mcl --help` or `mcl <command> --help` for usage details, subcommands, and environment variables.
+Run `mcl-devops --help` or `mcl-devops <command> --help` for usage details, subcommands, and environment variables.

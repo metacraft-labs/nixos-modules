@@ -6,7 +6,7 @@ on:
     inputs:
       runner:
         description: 'JSON-encoded runner class (single-name self-hosted class, e.g. "eph-linux-x64")'
-        default: '["eph-linux-x64"]'
+        default: '["self-hosted", "linux", "x64"]'
         required: false
         type: string
 
@@ -33,7 +33,7 @@ on:
 
 jobs:
   updateFlakePackages:
-    runs-on: ${{ fromJSON(inputs.runner || '["eph-linux-x64"]') }}
+    runs-on: ${{ fromJSON(inputs.runner || '["self-hosted", "linux", "x64"]') }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6.0.2
@@ -58,4 +58,4 @@ jobs:
         uses: metacraft-labs/nix-update-action@main
         with:
           token: ${{ steps.generate-token.outputs.token }}
-          blacklist: 'ci-matrix,folder-size-metrics,mcl'
+          blacklist: 'ci-matrix,folder-size-metrics,mcl-devops'

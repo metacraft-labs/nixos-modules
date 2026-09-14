@@ -1,4 +1,4 @@
-# Integration test for `mcl secret` — verifies edit, re-encrypt, and
+# Integration test for `mcl-devops secret` — verifies edit, re-encrypt, and
 # re-encrypt-all against a minimal nixosConfiguration that imports the
 # mcl secrets module.
 #
@@ -40,7 +40,7 @@ let
 in
 {
   # ---------------------------------------------------------------------------
-  # 1.  Define nixosConfigurations to test the mcl.secrets and `mcl secret`
+  # 1.  Define nixosConfigurations to test the mcl.secrets and `mcl-devops secret`
   #     command. Besides the primary machine, we add:
   #       - `broken-machine`: its `mcl.secrets.services` throws on evaluation,
   #         exercising the per-machine `tryEval` error path in `list` (the
@@ -61,7 +61,7 @@ in
     };
   };
 
-  # A machine-shaped fixture whose secrets fail to evaluate. `mcl secret list`
+  # A machine-shaped fixture whose secrets fail to evaluate. `mcl-devops secret list`
   # forces `attrNames services.<name>.secrets`, so a throwing `secrets` attrset
   # triggers the `builtins.tryEval` guard and yields an `__error__` marker
   # instead of aborting the whole-fleet evaluation.
@@ -105,7 +105,7 @@ in
   };
 
   # ---------------------------------------------------------------------------
-  # 2.  A runnable test script that exercises `mcl secret` subcommands.
+  # 2.  A runnable test script that exercises `mcl-devops secret` subcommands.
   # ---------------------------------------------------------------------------
   perSystem =
     {
@@ -121,7 +121,7 @@ in
         secret-integration = pkgs.writeShellApplication {
           name = "test-mcl-secret";
           runtimeInputs = [
-            self'.packages.mcl
+            self'.packages.mcl-devops
             pkgs.age
             pkgs.openssh
             pkgs.nix

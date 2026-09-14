@@ -187,7 +187,7 @@ int deployReconcileImpl(DeployReconcileArgs args, DeployReconcileDependencies de
                 "activate-requested",
                 manifestTarget(manifest),
                 manifestDesiredSystemPath(manifest),
-                "mcl deploy-reconcile --dry-run",
+                "mcl-devops deploy-reconcile --dry-run",
                 command,
                 "pending",
                 0,
@@ -209,7 +209,7 @@ int deployReconcileImpl(DeployReconcileArgs args, DeployReconcileDependencies de
             "activate-requested",
             manifestTarget(manifest),
             manifestDesiredSystemPath(manifest),
-            "mcl deploy-reconcile ssh",
+            "mcl-devops deploy-reconcile ssh",
             command,
             result.succeeded ? "succeeded" : "failed",
             result.exitCode,
@@ -273,7 +273,7 @@ unittest
     args.stateDir = stateDir;
     args.targets = ["app-1"];
     args.sshHost = "127.0.0.1";
-    args.remoteCommand = "mcl deploy-apply --manifest -";
+    args.remoteCommand = "mcl-devops deploy-apply --manifest -";
 
     assert(deployReconcileImpl(args, DeployReconcileDependencies(
         queryProcess: (string[] command) => ProcessResult(0, "{}", ""),

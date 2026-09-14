@@ -9,7 +9,9 @@
     }:
     let
       cfg = config.services.mcl-deploy-agent;
-      defaultPackage = withSystem pkgs.stdenv.hostPlatform.system ({ config, ... }: config.packages.mcl);
+      defaultPackage = withSystem pkgs.stdenv.hostPlatform.system (
+        { config, ... }: config.packages.mcl-devops
+      );
       inherit (lib)
         concatMapStringsSep
         escapeShellArg
@@ -192,7 +194,7 @@
         package = mkOption {
           type = types.package;
           default = defaultPackage;
-          description = "Package providing the mcl binary.";
+          description = "Package providing the mcl-devops binary.";
         };
 
         targetName = mkOption {
@@ -323,7 +325,7 @@
           after = [ "network-online.target" ];
           wants = [ "network-online.target" ];
           # Hardening: this service runs switch-to-configuration, and the closure it
-          # activates contains a new version of this very unit (its mcl store path
+          # activates contains a new version of this very unit (its mcl-devops store path
           # changes on every publish). Keep restartIfChanged false so a change to
           # this unit can't make switch-to-configuration restart it mid-switch; the
           # new definition takes effect on the next timer activation instead.
@@ -340,7 +342,7 @@
           # the running invocation to service that job -- which kills the switch
           # process mid-activation, so its own restart job never completes and the
           # deploy wedges (verified on gpu-server-001/002). The fix lives in
-          # `mcl deploy-agent`/`deploy-apply`: switch-to-configuration is executed in
+          # `mcl-devops deploy-agent`/`deploy-apply`: switch-to-configuration is executed in
           # a detached `systemd-run` transient unit (its OWN cgroup), so systemd can
           # freely (re)start this unit without tearing the switch down, while the
           # agent still `--wait`s for and reports the switch exit code. Verified:

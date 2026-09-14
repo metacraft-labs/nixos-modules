@@ -12,7 +12,7 @@
     "results"
   ],
   "removedDeployPath": {
-    "note": "Cachix Deploy in-CI activation removed in c056211; activation is now out-of-band via mcl deploy-ssh / mcl deploy-reconcile.",
+    "note": "Cachix Deploy in-CI activation removed in c056211; activation is now out-of-band via mcl-devops deploy-ssh / mcl-devops deploy-reconcile.",
     "absentTokens": ["run-cachix-deploy", "deploy-spec", "cachix"]
   },
   "deploymentCachePublishPath": {

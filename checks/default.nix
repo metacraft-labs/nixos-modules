@@ -35,6 +35,7 @@
     ./garm-macos-runner-install-wrapper.nix
     ./garm-provider-vmharness-backend.nix
     ./garm-provider-remote.nix
+    ./garm-remote-incus-capabilities.nix
     ./garm-central-multi-host.nix
     ./garm-central-recovery.nix
     ./garm-provider-vmharness-protocol.nix
@@ -50,6 +51,7 @@
     ./repro-deploy-agent-https.nix
     ./consumer-flake-attic.nix
     ./linux-vm-cloud-init
+    ./mcl-devops-rename.nix
     ./netbird-with-agenix.nix
     ./ci-build-batching.nix
     ./packages-ci-matrix.nix

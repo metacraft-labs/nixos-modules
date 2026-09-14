@@ -9,7 +9,9 @@
     }:
     let
       cfg = config.services.mcl-deployment-reconciler;
-      defaultPackage = withSystem pkgs.stdenv.hostPlatform.system ({ config, ... }: config.packages.mcl);
+      defaultPackage = withSystem pkgs.stdenv.hostPlatform.system (
+        { config, ... }: config.packages.mcl-devops
+      );
       inherit (lib)
         concatMapStringsSep
         escapeShellArg
@@ -45,7 +47,7 @@
         package = mkOption {
           type = types.package;
           default = defaultPackage;
-          description = "Package providing the mcl binary.";
+          description = "Package providing the mcl-devops binary.";
         };
 
         stateDir = mkOption {
@@ -102,7 +104,7 @@
             "BatchMode=yes"
             "ConnectTimeout=15"
           ];
-          description = "Extra ssh -o options passed to mcl deploy-reconcile.";
+          description = "Extra ssh -o options passed to mcl-devops deploy-reconcile.";
         };
 
         identityFile = mkOption {

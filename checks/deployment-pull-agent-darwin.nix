@@ -147,7 +147,7 @@ top@{
       fakeMcl =
         generation:
         pkgs.writeShellApplication {
-          name = "mcl";
+          name = "mcl-devops";
           text = ''
             if [[ -n "''${MCL_DARWIN_PREREQUISITE_MARKER:-}" ]]; then
               touch "$MCL_DARWIN_PREREQUISITE_MARKER"
@@ -970,7 +970,7 @@ top@{
               system.stateVersion = 6;
               services.mcl-deploy-agent = fixturePathOptions // {
                 enable = true;
-                package = self'.packages.mcl;
+                package = self'.packages.mcl-devops;
                 targetName = "m3";
                 manifestPublicKeys = [ manifestPublicKey ];
                 manifestDirectories = [ "${integrationRoot}/state/inbox" ];
@@ -1025,7 +1025,7 @@ top@{
               system.stateVersion = 6;
               services.mcl-deploy-agent = fixturePathOptions // {
                 enable = true;
-                package = self'.packages.mcl;
+                package = self'.packages.mcl-devops;
                 targetName = "m3";
                 manifestPublicKeys = [ manifestPublicKey ];
                 manifestDirectories = [ "${lockRoot}/state/inbox" ];
@@ -1053,7 +1053,7 @@ top@{
         pkgs.runCommand "deployment-pull-agent-darwin-integration"
           {
             nativeBuildInputs = [
-              self'.packages.mcl
+              self'.packages.mcl-devops
               pkgs.coreutils
               pkgs.jq
               pkgs.nix
@@ -1084,7 +1084,7 @@ top@{
                   if [[ $# -gt 6 ]]; then
                     extra_args=("''${@:7}")
                   fi
-                  GITHUB_RUN_ID="$run_id" mcl deploy-plan \
+                  GITHUB_RUN_ID="$run_id" mcl-devops deploy-plan \
                         --target "$target" \
                         --system aarch64-darwin \
                         --desired-system-path "$desired" \

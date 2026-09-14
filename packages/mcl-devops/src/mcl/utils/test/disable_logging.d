@@ -1,4 +1,4 @@
-module packages.mcl.src.src.mcl.utils.test.unittests;
+module mcl.utils.test.disable_logging;
 
 version (unittest)
 {

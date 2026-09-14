@@ -30,15 +30,15 @@ Each retired class maps to a **minimum** label set. Add a micro-arch level or a
 capability **only if the job genuinely needs it** (see
 [Justifying a narrowing capability](#justifying-a-narrowing-capability)):
 
-| Retired class (`runs-on: <name>`) | Capability label set (`runs-on: [ … ]`) | Notes |
-| --- | --- | --- |
-| `eph-linux-x64` | `[self-hosted, linux, x64]` | add `x86-64-v3` only if the job needs AVX2/v3 |
-| `eph-linux-x64-gpu` | `[self-hosted, linux, x64, gpu]` | |
-| `eph-linux-x64-nested` | `[self-hosted, linux, x64, nested]` | add `docker` only if a container runtime is needed specifically |
-| `eph-linux-arm64` | `[self-hosted, linux, arm64]` | |
-| `eph-macos-arm64` | `[self-hosted, macos, arm64]` | |
-| `eph-win-x64` | `[self-hosted, windows, x64]` | |
-| `eph-win-arm64` | `[self-hosted, windows, arm64]` | |
+| Retired class (`runs-on: <name>`) | Capability label set (`runs-on: [ … ]`) | Notes                                                                                         |
+| --------------------------------- | --------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `eph-linux-x64`                   | `[self-hosted, linux, x64]`             | add `x86-64-v3` only if the job needs AVX2/v3                                                 |
+| `eph-linux-x64-gpu`               | `[self-hosted, linux, x64, gpu]`        |                                                                                               |
+| `eph-linux-x64-nested`            | `[self-hosted, linux, x64]`             | container runtimes and nested VMs are universal across the fleet — no extra label (see below) |
+| `eph-linux-arm64`                 | `[self-hosted, linux, arm64]`           |                                                                                               |
+| `eph-macos-arm64`                 | `[self-hosted, macos, arm64]`           |                                                                                               |
+| `eph-win-x64`                     | `[self-hosted, windows, x64]`           |                                                                                               |
+| `eph-win-arm64`                   | `[self-hosted, windows, arm64]`         |                                                                                               |
 
 During RC5 the old class names stay live as **aliases**, so an unmigrated repo
 keeps working; they are withdrawn once the fleet runs entirely on pool+label
@@ -77,10 +77,25 @@ jobs:
     runs-on: [self-hosted, linux, x64, gpu]
 ```
 
-The narrowing labels are: `gpu`, `nested`, `docker`, `podman`, `rr-hw-counters`,
-`x86-64-v2/v3/v4`, and the hypervisor labels `incus`/`libvirt`/`hyperv`/`tart`.
-Prefer requesting the **capability** (`nested`), not the **mechanism** that
-provides it (`incus`).
+The narrowing labels are: `gpu`, `rr-hw-counters`, `benchmark`, `x86-64-v2/v3/v4`,
+and the hypervisor labels `incus`/`libvirt`/`hyperv`/`tart`. Prefer requesting
+the **capability** (`gpu`), not the **mechanism** that provides it (`incus`).
+
+**Container and nested-VM support are universal, not routing labels.** Every
+runner in the fleet can run Docker/Podman containers and boot nested VMs, so
+`docker`, `podman`, and `nested` are **not** targetable capability labels — do
+not add them to a `runs-on` array. A job needing a container runtime or a nested
+VM simply targets the OS/arch it needs and uses containers/nested virt directly.
+(They were narrowing labels in an earlier draft of the taxonomy and were removed
+once every runner image gained universal container + nested-VM support.)
+
+Provider-admin controls that make these universal guest capabilities available
+are deployment plumbing, not runner-selection labels. For a pool backed by a
+remote Incus provider, the fleet operator must opt that provider into
+`remote.incusNestedKvm`; the shared provider then passes only vm-harness's fixed
+`--incus-nested-kvm` contract. Without that operator setting the guest receives
+no `/dev/kvm`. Nested Docker similarly requires the separate
+`remote.incusSecurityNesting` operator grant. Workflows cannot set either value.
 
 ### 3. Lint (the over-constrained checker)
 
@@ -101,13 +116,13 @@ is exactly the reusable-workflow / RD3-preflight shape.
 The `nixos-modules` reusable workflows now default their `runs-on` inputs to
 capability label sets, so a consumer that just calls them inherits the migration:
 
-| Reusable workflow | Input | New default |
-| --- | --- | --- |
-| `reusable-lint.yml` | `runner` | `["self-hosted","linux","x64"]` |
-| `reusable-merge.yml` | `runner` | `["self-hosted","linux","x64"]` |
-| `reusable-nix-diff.yml` | `runner` | `["self-hosted","linux","x64"]` |
+| Reusable workflow                     | Input                                           | New default                                                                                                            |
+| ------------------------------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `reusable-lint.yml`                   | `runner`                                        | `["self-hosted","linux","x64"]`                                                                                        |
+| `reusable-merge.yml`                  | `runner`                                        | `["self-hosted","linux","x64"]`                                                                                        |
+| `reusable-nix-diff.yml`               | `runner`                                        | `["self-hosted","linux","x64"]`                                                                                        |
 | `reusable-flake-checks-ci-matrix.yml` | `runners` / `non-nix-runner` / `results-runner` | label sets per Nix system (`x86_64-linux` → `[self-hosted,linux,x64]`, `aarch64-darwin` → `[self-hosted,macos,arm64]`) |
-| `reusable-recorder-ci.yml` | `runners` | `[[self-hosted,linux,x64],[self-hosted,linux,arm64],[self-hosted,macos,arm64]]` |
+| `reusable-recorder-ci.yml`            | `runners`                                       | `[[self-hosted,linux,x64],[self-hosted,linux,arm64],[self-hosted,macos,arm64]]`                                        |
 
 The RD3 `reusable-choose-runner.yml` preflight already emits its self-hosted
 target as a capability label set (`fallback` default
