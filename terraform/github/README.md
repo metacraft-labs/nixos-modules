@@ -146,6 +146,44 @@ org's inventory and secret facts. Only the mapper is shared. See
 [`governance.example.nix`](./governance.example.nix) for a minimal renderable
 model and [`tests/test-render.sh`](./tests/test-render.sh) for the offline check.
 
+### Org-wide team grants
+
+`governance.teamRepositories` enumerates one grant per (team, repo). For an
+access policy phrased as _"this team reaches **every** repo"_, enumerating is the
+wrong shape: the list is correct only until the next repo is created, and the
+gap it leaves is invisible — the rule still reads as "all".
+
+`governance.orgWideTeamRepositories` states that policy once and lets the engine
+expand it over `governance.repositories`:
+
+```nix
+orgWideTeamRepositories = [
+  { teamSlug = "codetracer"; permission = "maintain"; }
+];
+```
+
+A repository added to the model later inherits the grant with no edit to the
+rule.
+
+Where a rule and an explicit `teamRepositories` entry cover the same (team,
+repo) pair, **the stronger permission wins** (`pull` < `triage` < `push` <
+`maintain` < `admin`). Both directions are deliberate:
+
+- an explicit `admin` is **not** downgraded by a blanket `maintain` rule — adding
+  an org-wide floor must never quietly strip a privilege someone chose;
+- an explicit `push` **is** raised to `maintain` — otherwise a single stale row
+  silently falsifies a rule that claims to cover everything.
+
+Two guardrails throw at eval rather than half-applying a rule: a rule whose
+`permission` is a custom repository role (unrankable, so it could not be
+compared consistently against explicit grants), and more than one rule for the
+same team (the outcome would depend on list order). An _explicit_ custom role is
+left exactly as written — the engine cannot know whether it outranks `maintain`,
+and guessing could strip privileges or invent them.
+
+[`tests/test-org-wide-team-grants.sh`](./tests/test-org-wide-team-grants.sh)
+covers the expansion, both precedence directions, and both throws.
+
 ### Security posture the engine models
 
 Three free-on-every-plan dimensions, all optional and all rendered only when the

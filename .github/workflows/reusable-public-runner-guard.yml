@@ -11,7 +11,7 @@
 #
 #   jobs:
 #     runner-policy:
-#       uses: metacraft-labs/nixos-modules/.github/workflows/reusable-public-runner-guard.yml@main
+#       uses: metacraft-labs/devops-modules/.github/workflows/reusable-public-runner-guard.yml@dev
 
 name: public-runner-guard
 
@@ -36,7 +36,7 @@ jobs:
       - name: Checkout nixos-modules (checker source)
         uses: actions/checkout@v6.0.2
         with:
-          repository: metacraft-labs/nixos-modules
+          repository: metacraft-labs/devops-modules
           ref: ${{ inputs.ref }}
           path: _ci-guard
       - name: Run the public-repo billed-runner guard

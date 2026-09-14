@@ -105,7 +105,7 @@
                     assert outputs["workflow_sha"] == expected_ref, (name, outputs)
                     expected_cmd = (
                         "nix --option download-attempts 5 run --accept-flake-config "
-                        f"github:metacraft-labs/nixos-modules/{expected_ref}#mcl-devops"
+                        f"github:metacraft-labs/devops-modules/{expected_ref}#mcl-devops"
                     )
                     assert outputs["mcl_flake_cmd"] == expected_cmd, (name, outputs)
                     assert "{" not in outputs["mcl_flake_cmd"], (name, outputs)
@@ -118,8 +118,8 @@
                     "reusable_workflow_sha",
                     {
                         "GITHUB_WORKFLOW_REF": (
-                            "metacraft-labs/nixos-modules/.github/workflows/"
-                            "reusable-flake-checks-ci-matrix.yml@refs/heads/main"
+                            "metacraft-labs/devops-modules/.github/workflows/"
+                            "reusable-flake-checks-ci-matrix.yml@refs/heads/dev"
                         ),
                         "GITHUB_WORKFLOW_SHA": workflow_sha,
                         "GITHUB_REPOSITORY": "metacraft-labs/infra",
@@ -130,10 +130,10 @@
                 run_case(
                     "local_repo_pr_sha",
                     {
-                        "GITHUB_REPOSITORY": "metacraft-labs/nixos-modules",
+                        "GITHUB_REPOSITORY": "metacraft-labs/devops-modules",
                         "GITHUB_SHA": caller_sha,
                         "GITHUB_WORKFLOW_REF": (
-                            "metacraft-labs/nixos-modules/.github/workflows/"
+                            "metacraft-labs/devops-modules/.github/workflows/"
                             "reusable-flake-checks-ci-matrix.yml@refs/pull/1/merge"
                         ),
                         "GITHUB_WORKFLOW_SHA": workflow_sha,
@@ -144,16 +144,16 @@
                     "forbidden_api_json_falls_back",
                     {
                         "GITHUB_WORKFLOW_REF": (
-                            "metacraft-labs/nixos-modules/.github/workflows/"
-                            "reusable-flake-checks-ci-matrix.yml@refs/heads/main"
+                            "metacraft-labs/devops-modules/.github/workflows/"
+                            "reusable-flake-checks-ci-matrix.yml@refs/heads/dev"
                         ),
                         "GITHUB_WORKFLOW_SHA": '{"message":"Resource not accessible by integration","status":"403"}',
                         "GITHUB_REPOSITORY": "metacraft-labs/infra",
                         "GITHUB_SHA": caller_sha,
                     },
-                    "main",
+                    "dev",
                 )
-                run_case("empty_context_falls_back", {}, "main")
+                run_case("empty_context_falls_back", {}, "dev")
             PY
 
             touch "$out"

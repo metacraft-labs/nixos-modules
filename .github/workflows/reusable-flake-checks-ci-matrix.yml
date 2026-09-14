@@ -125,33 +125,33 @@ jobs:
 
           workflow_repo=""
           case "${GITHUB_WORKFLOW_REF:-}" in
-            metacraft-labs/nixos-modules/.github/workflows/reusable-flake-checks-ci-matrix.yml@*)
-              workflow_repo="metacraft-labs/nixos-modules"
+            metacraft-labs/devops-modules/.github/workflows/reusable-flake-checks-ci-matrix.yml@*)
+              workflow_repo="metacraft-labs/devops-modules"
               ;;
           esac
 
           mcl_ref=""
 
-          if [[ "${GITHUB_REPOSITORY:-}" == "metacraft-labs/nixos-modules" ]] &&
+          if [[ "${GITHUB_REPOSITORY:-}" == "metacraft-labs/devops-modules" ]] &&
             is_commit_sha "${GITHUB_SHA:-}"; then
-            # Local calls from nixos-modules PRs should test the PR commit.
+            # Local calls from devops-modules PRs should test the PR commit.
             mcl_ref="$GITHUB_SHA"
-          elif [[ "$workflow_repo" == "metacraft-labs/nixos-modules" ]] &&
+          elif [[ "$workflow_repo" == "metacraft-labs/devops-modules" ]] &&
             is_commit_sha "${GITHUB_WORKFLOW_SHA:-}"; then
             mcl_ref="$GITHUB_WORKFLOW_SHA"
           else
-            echo "::warning title=MCL workflow ref fallback::Could not read a valid nixos-modules workflow SHA from GitHub Actions context; using main"
-            mcl_ref="main"
+            echo "::warning title=MCL workflow ref fallback::Could not read a valid devops-modules workflow SHA from GitHub Actions context; using dev"
+            mcl_ref="dev"
           fi
 
-          if ! is_commit_sha "$mcl_ref" && [[ "$mcl_ref" != "main" ]]; then
-            echo "::warning title=Invalid MCL workflow ref::Ignoring invalid workflow ref '$mcl_ref'; using main"
-            mcl_ref="main"
+          if ! is_commit_sha "$mcl_ref" && [[ "$mcl_ref" != "dev" ]]; then
+            echo "::warning title=Invalid MCL workflow ref::Ignoring invalid workflow ref '$mcl_ref'; using dev"
+            mcl_ref="dev"
           fi
 
           {
             printf 'workflow_sha=%s\n' "$mcl_ref"
-            printf 'mcl_flake_cmd=nix --option download-attempts 5 run --accept-flake-config github:metacraft-labs/nixos-modules/%s#mcl-devops\n' "$mcl_ref"
+            printf 'mcl_flake_cmd=nix --option download-attempts 5 run --accept-flake-config github:metacraft-labs/devops-modules/%s#mcl-devops\n' "$mcl_ref"
           } >> "$GITHUB_OUTPUT"
 
   post-initial-comment:
@@ -163,7 +163,7 @@ jobs:
       pull-requests: write
     steps:
       - name: 'Post initial package status comment'
-        uses: metacraft-labs/nixos-modules/.github/sticky-comment@main
+        uses: metacraft-labs/devops-modules/.github/sticky-comment@dev
         with:
           message: |
             Thanks for your Pull Request!
@@ -179,7 +179,7 @@ jobs:
       pull-requests: write
     steps:
       - name: Setup Nix
-        uses: metacraft-labs/nixos-modules/.github/setup-nix@main
+        uses: metacraft-labs/devops-modules/.github/setup-nix@dev
         with: &setup-nix-no-push
           push-to-cache: false
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
@@ -217,7 +217,7 @@ jobs:
 
       - name: Post CI matrix comment
         if: steps.generate-matrix.outputs.full_matrix
-        uses: metacraft-labs/nixos-modules/.github/sticky-comment@main
+        uses: metacraft-labs/devops-modules/.github/sticky-comment@dev
         with:
           path: comment.md
 
@@ -234,7 +234,7 @@ jobs:
       matrix: ${{fromJSON(needs.shard-matrix.outputs.eval_matrix)}}
     steps:
       - name: Setup Nix
-        uses: metacraft-labs/nixos-modules/.github/setup-nix@main
+        uses: metacraft-labs/devops-modules/.github/setup-nix@dev
         with:
           push-to-cache: false
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
@@ -301,7 +301,7 @@ jobs:
       - uses: actions/checkout@v6.0.2
 
       - name: Setup Nix
-        uses: metacraft-labs/nixos-modules/.github/setup-nix@main
+        uses: metacraft-labs/devops-modules/.github/setup-nix@dev
         with:
           push-to-cache: false
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
@@ -399,7 +399,7 @@ jobs:
         run: ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} print-table
 
       - name: Post CI matrix comment
-        uses: metacraft-labs/nixos-modules/.github/sticky-comment@main
+        uses: metacraft-labs/devops-modules/.github/sticky-comment@dev
         with:
           path: comment.md
 
@@ -664,7 +664,7 @@ jobs:
 
       - name: Setup Nix
         if: ${{ !matrix.noop }}
-        uses: metacraft-labs/nixos-modules/.github/setup-nix@main
+        uses: metacraft-labs/devops-modules/.github/setup-nix@dev
         with:
           push-to-cache: false
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
@@ -1066,7 +1066,7 @@ jobs:
       pull-requests: write
     steps:
       - name: Setup Nix
-        uses: metacraft-labs/nixos-modules/.github/setup-nix@main
+        uses: metacraft-labs/devops-modules/.github/setup-nix@dev
         with:
           push-to-cache: false
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
@@ -1089,7 +1089,7 @@ jobs:
         run: ${{ needs.compute-mcl-ref.outputs.mcl_flake_cmd }} print-table
 
       - name: Update GitHub Comment
-        uses: metacraft-labs/nixos-modules/.github/sticky-comment@main
+        uses: metacraft-labs/devops-modules/.github/sticky-comment@dev
         with:
           path: comment.md
 

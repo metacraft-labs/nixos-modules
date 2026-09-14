@@ -199,7 +199,7 @@ def check_workflow(path: Path, is_public: bool, extra_billed: set[str]) -> tuple
     violations: list[str] = []
     warnings: list[str] = []
     try:
-        doc = yaml.safe_load(path.read_text())
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
     except yaml.YAMLError as exc:  # pragma: no cover - surfaced as a hard error
         return [f"{path}: not parseable as YAML: {exc}"], warnings
     if not isinstance(doc, dict):

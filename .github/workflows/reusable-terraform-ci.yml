@@ -3,7 +3,7 @@ name: 'Terraform CI'
 on:
   workflow_call:
     # The caller selects this file with a literal
-    # metacraft-labs/nixos-modules/...@<ref> value. GitHub resolves that ref
+    # metacraft-labs/devops-modules/...@<ref> value. GitHub resolves that ref
     # to job.workflow_sha for every called job; source-bearing steps below use
     # that immutable identity rather than github.sha (which may be a synthetic
     # pull-request merge) or a second caller-provided ref.

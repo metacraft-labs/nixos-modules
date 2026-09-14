@@ -83,12 +83,12 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          repository: metacraft-labs/nixos-modules
+          repository: metacraft-labs/devops-modules
           ref: ${{ inputs.nixos_modules_ref }}
           path: .ci/nixos-modules
 
       - name: Setup Nix
-        uses: metacraft-labs/nixos-modules/.github/setup-nix@main
+        uses: metacraft-labs/devops-modules/.github/setup-nix@dev
         with:
           push-to-cache: false
           nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
@@ -138,12 +138,12 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          repository: metacraft-labs/nixos-modules
+          repository: metacraft-labs/devops-modules
           ref: ${{ inputs.nixos_modules_ref }}
           path: .ci/nixos-modules
 
       - name: Setup Nix
-        uses: metacraft-labs/nixos-modules/.github/setup-nix@main
+        uses: metacraft-labs/devops-modules/.github/setup-nix@dev
         with:
           push-to-cache: false
           nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}
@@ -298,12 +298,12 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          repository: metacraft-labs/nixos-modules
+          repository: metacraft-labs/devops-modules
           ref: ${{ inputs.nixos_modules_ref }}
           path: .ci/nixos-modules
 
       - name: Setup Nix
-        uses: metacraft-labs/nixos-modules/.github/setup-nix@main
+        uses: metacraft-labs/devops-modules/.github/setup-nix@dev
         with:
           push-to-cache: false
           nix-github-token: ${{ secrets.NIX_GITHUB_TOKEN }}

@@ -128,7 +128,7 @@ on:
       confirm_apply: { type: string, required: false }
 jobs:
   import:
-    uses: metacraft-labs/nixos-modules/.github/workflows/reusable-cloudflare-import.yml@main
+    uses: metacraft-labs/devops-modules/.github/workflows/reusable-cloudflare-import.yml@dev
     with:
       root_config: cloudflare/<name>-prod
       backend_config_file: backends/cloudflare-<name>-prod.hcl

@@ -34,7 +34,7 @@ Wire it into a consumer repo:
 ```yaml
 jobs:
   runner-policy:
-    uses: metacraft-labs/nixos-modules/.github/workflows/reusable-public-runner-guard.yml@main
+    uses: metacraft-labs/devops-modules/.github/workflows/reusable-public-runner-guard.yml@dev
 ```
 
 The reusable workflow derives visibility from `github.event.repository.private`
@@ -59,7 +59,7 @@ Consumer pattern (with the reactive safety net):
 ```yaml
 jobs:
   choose:
-    uses: metacraft-labs/nixos-modules/.github/workflows/reusable-choose-runner.yml@main
+    uses: metacraft-labs/devops-modules/.github/workflows/reusable-choose-runner.yml@dev
     with:
       preferred: ubuntu-latest
       fallback: '["self-hosted","linux","x64"]'
@@ -92,7 +92,7 @@ on:
   workflow_dispatch:
 jobs:
   sync:
-    uses: metacraft-labs/nixos-modules/.github/workflows/reusable-sync-hosted-minutes.yml@main
+    uses: metacraft-labs/devops-modules/.github/workflows/reusable-sync-hosted-minutes.yml@dev
     with: { org: metacraft-labs, min_minutes_remaining: 300 }
     secrets:
       billing_token: ${{ secrets.ORG_BILLING_READ_TOKEN }}
