@@ -28,6 +28,7 @@
     ./fit-monitoring.nix
     ./hybrid-ci-runner.nix
     ./runner-mode-switch.nix
+    ./runner-mode-manager.nix
     ./ci-runs-on-capability.nix
     ./garm-reconcile.nix
     ./garm-stale-scaleset-job-reaped.nix
