@@ -122,9 +122,17 @@ func TestRemoteIncusCapabilitiesCannotComeFromExtraSpecs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateInstance with pre-existing permissive extra_specs: %v", err)
 	}
+	// DELIBERATE VECTOR CHANGE (MA0): `--source-image runner-linux` is inserted
+	// immediately after `--base-image runner-linux` because ephemeralRecipe now
+	// sends both image aliases (incus reads --base-image; every other target
+	// resolves its golden from --source-image). It carries the SAME pool-declared
+	// image the prior vector did, so this test's property is untouched: hostile
+	// extra_specs still cannot add, remove or alter a single argument, and no
+	// `--incus-*` grant appears.
 	wantArgv := []string{
 		"run", "--ephemeral", "--backend", "incus", "--baseline", "pool-hostile",
-		"--base-image", "runner-linux", "--keep", "--log-format", "json",
+		"--base-image", "runner-linux", "--source-image", "runner-linux",
+		"--keep", "--log-format", "json",
 	}
 	if !reflect.DeepEqual(gotArgv, wantArgv) {
 		t.Fatalf("hostile pool extra_specs changed remote argv=%v want exact %v", gotArgv, wantArgv)

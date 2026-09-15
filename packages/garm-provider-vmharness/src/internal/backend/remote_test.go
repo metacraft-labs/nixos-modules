@@ -145,12 +145,20 @@ func TestRemoteCreateIncusRecipe(t *testing.T) {
 	if _, err := b.Create(context.Background(), CreateArgs{Name: "job-42", SourceImage: "runner-linux"}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
+	// DELIBERATE VECTOR CHANGE (MA0). `--source-image runner-linux` is new here
+	// relative to the pre-MA0 argv: ephemeralRecipe is the fallback for every
+	// non-noop target and every backend except incus resolves its golden from
+	// --source-image, so the recipe now sends both aliases. incus reads
+	// --base-image and ignores --source-image, so its behaviour is unchanged;
+	// the pair is inserted immediately after --base-image and nothing else in
+	// the vector moved. See TestVMHarnessImageIsHonouredRemoteRecipe* below.
 	want := []string{
 		"run", "--ephemeral", "--backend", "incus", "--baseline", "job-42",
-		"--base-image", "runner-linux", "--keep", "--log-format", "json",
+		"--base-image", "runner-linux", "--source-image", "runner-linux",
+		"--keep", "--log-format", "json",
 	}
 	if !reflect.DeepEqual(fs.execArgv[0], want) {
-		t.Fatalf("default incus create argv=%v want byte-for-byte prior argv %v", fs.execArgv[0], want)
+		t.Fatalf("default incus create argv=%v want byte-for-byte prior argv + the MA0 --source-image pair %v", fs.execArgv[0], want)
 	}
 }
 
@@ -273,6 +281,13 @@ func TestRemoteCreateWithoutBootstrapSendsNoUserData(t *testing.T) {
 // against targets the recipe table has never heard of, because b.recipe() sends
 // everything except "noop" down this path: a future target must inherit the fix
 // rather than have to be added to a list.
+//
+// ASSERTION STYLE. These assert the WHOLE argv with reflect.DeepEqual, matching
+// the rest of this file: a containment check would pass even if the flag landed
+// in the wrong position, and position is contractual here (see ephemeralRecipe's
+// fixed flag order). Asserting the whole vector also makes every one of these
+// sub-tests a second witness for the capability-isolation invariant — none of
+// these targets is "incus", and no `--incus-*` flag may appear.
 func TestVMHarnessImageIsHonouredRemoteRecipeCarriesSourceImage(t *testing.T) {
 	targets := []string{
 		// The production targets MA2 puts behind the remote path.
@@ -291,11 +306,17 @@ func TestVMHarnessImageIsHonouredRemoteRecipeCarriesSourceImage(t *testing.T) {
 				CreateArgs{Name: "job-7", SourceImage: image}); err != nil {
 				t.Fatalf("Create: %v", err)
 			}
-			argv := fs.execArgv[0]
-			assertContains(t, argv, "--source-image", image)
-			// --baseline still names the instance, so it must not be mistaken
-			// for the image.
-			assertContains(t, argv, "--baseline", "job-7")
+			// --baseline still names the INSTANCE; the image rides on
+			// --source-image (and on incus's --base-image alias). Pinning the
+			// whole vector is what keeps the two from being confused again.
+			want := []string{
+				"run", "--ephemeral", "--backend", target, "--baseline", "job-7",
+				"--base-image", image, "--source-image", image,
+				"--keep", "--log-format", "json",
+			}
+			if !reflect.DeepEqual(fs.execArgv[0], want) {
+				t.Fatalf("target %q create argv=%v want exact %v", target, fs.execArgv[0], want)
+			}
 		})
 	}
 }
@@ -310,14 +331,61 @@ func TestVMHarnessImageIsHonouredRemoteRecipeKeepsIncusAlias(t *testing.T) {
 		CreateArgs{Name: "job-9", SourceImage: "runner-linux"}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	argv := fs.execArgv[0]
-	assertContains(t, argv, "--base-image", "runner-linux")
-	assertContains(t, argv, "--source-image", "runner-linux")
+	// --base-image must still come FIRST and still carry the image: incus is
+	// the one backend that reads it, so a "fix" that replaced the alias rather
+	// than adding beside it would break the currently-green lane.
+	want := []string{
+		"run", "--ephemeral", "--backend", "incus", "--baseline", "job-9",
+		"--base-image", "runner-linux", "--source-image", "runner-linux",
+		"--keep", "--log-format", "json",
+	}
+	if !reflect.DeepEqual(fs.execArgv[0], want) {
+		t.Fatalf("incus create argv=%v want exact %v", fs.execArgv[0], want)
+	}
+}
+
+// GATE t_vmharness_image_is_honoured — where the image flags sit relative to
+// the Incus capability grants. ephemeralRecipe declares a fixed flag order, and
+// MA0's --source-image is an insertion INTO that order, so the interaction has
+// to be pinned rather than left to the two changes' separate tests: upstream's
+// capability test passes no image, and the tests above pass an image with the
+// grants off. Contract: image pair (base, source) first, then nesting, then
+// nested KVM, then the lifecycle/logging suffix.
+func TestVMHarnessImageIsHonouredRemoteRecipeOrdersImageFlagsBeforeIncusGrants(t *testing.T) {
+	b, fs, closeFn := newFakeBackend(t, "incus", 0)
+	defer closeFn()
+	b.IncusSecurityNesting = true
+	b.IncusNestedKvm = true
+	if _, err := b.Create(context.Background(),
+		CreateArgs{Name: "job-cap-img", SourceImage: "runner-linux"}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	want := []string{
+		"run", "--ephemeral", "--backend", "incus", "--baseline", "job-cap-img",
+		"--base-image", "runner-linux", "--source-image", "runner-linux",
+		"--incus-security-nesting", "--incus-nested-kvm",
+		"--keep", "--log-format", "json",
+	}
+	if !reflect.DeepEqual(fs.execArgv[0], want) {
+		t.Fatalf("incus create argv with image + both grants=%v want exact %v", fs.execArgv[0], want)
+	}
+	// Delete isolation holds with an image configured too: teardown names the
+	// instance and carries neither an image nor a capability flag.
+	if err := b.Delete(context.Background(), "job-cap-img"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	wantDelete := []string{"ephemeral-destroy", "--backend", "incus", "--baseline", "job-cap-img", "--log-format", "json"}
+	if !reflect.DeepEqual(fs.execArgv[1], wantDelete) {
+		t.Fatalf("delete argv=%v want exact image- and capability-free argv %v", fs.execArgv[1], wantDelete)
+	}
 }
 
 // GATE t_vmharness_image_is_honoured — the negative half of assertion (b).
 // With no configured image there is nothing to forward, and an empty
 // --source-image would be worse than its absence: it would look configured.
+// This is also where the "identical to the RB1/RB2 path" property is still
+// literally true: no image configured, grants off, so the vector is the
+// pre-MA0, pre-capability one unchanged.
 func TestVMHarnessImageIsHonouredRemoteRecipeOmitsImageFlagsWhenUnset(t *testing.T) {
 	b, fs, closeFn := newFakeBackend(t, "tart-macos", 0)
 	defer closeFn()
@@ -327,6 +395,13 @@ func TestVMHarnessImageIsHonouredRemoteRecipeOmitsImageFlagsWhenUnset(t *testing
 	argv := fs.execArgv[0]
 	if hasFlag(argv, "--source-image") || hasFlag(argv, "--base-image") {
 		t.Fatalf("create argv carries an image flag with no image set: %v", argv)
+	}
+	want := []string{
+		"run", "--ephemeral", "--backend", "tart-macos", "--baseline", "job-8",
+		"--keep", "--log-format", "json",
+	}
+	if !reflect.DeepEqual(argv, want) {
+		t.Fatalf("image-less create argv=%v want exact pre-MA0 argv %v", argv, want)
 	}
 }
 

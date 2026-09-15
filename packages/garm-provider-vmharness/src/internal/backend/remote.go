@@ -116,9 +116,19 @@ var ephemeralRecipe = remoteRecipe{
 				"--source-image", args.SourceImage)
 		}
 		// Only remote Incus consumes these provider-admin grants. The fixed
-		// flag order is part of the contract: nesting first, nested KVM second,
-		// then the pre-existing lifecycle/logging suffix. With both grants off
-		// the emitted argv is byte-for-byte identical to the RB1/RB2 path.
+		// flag order is part of the contract: the image pair first (base then
+		// source, above), then nesting, then nested KVM, then the pre-existing
+		// lifecycle/logging suffix.
+		//
+		// The "with both grants off the argv is byte-for-byte identical to the
+		// RB1/RB2 path" property still holds, MODULO the deliberate
+		// `--source-image <image>` pair added above: with both grants off the
+		// emitted argv is the pre-capability argv with exactly that pair
+		// inserted immediately after `--base-image <image>`, and nothing else
+		// moved or dropped. When no image is configured neither image flag is
+		// emitted, so the grants-off argv is then literally identical to the
+		// RB1/RB2 one. The capability flags are unreachable for any target
+		// other than "incus", image or no image.
 		if backend.TargetBackend == "incus" {
 			if backend.IncusSecurityNesting {
 				argv = append(argv, "--incus-security-nesting")

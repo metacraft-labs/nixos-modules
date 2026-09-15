@@ -94,8 +94,9 @@
         name = "t_vmharness_image_is_honoured";
         pattern = "'TestVMHarnessImageIsHonoured'";
         # (a) local-exec passes / local-exec refuses empty;
-        # (b) remote carries / remote keeps the incus alias / remote omits.
-        minTests = 5;
+        # (b) remote carries / remote keeps the incus alias / remote orders the
+        #     image pair ahead of the Incus capability grants / remote omits.
+        minTests = 6;
         preamble = ''
           echo "t_vmharness_image_is_honoured: assertions (a) local-exec and (b) remote recipe."
           echo "  Assertion (c) — a registry-constructed tart backend with no image RAISES —"
