@@ -1,0 +1,277 @@
+# Sovereign-CI-Fleet S2 (gate `t_runner_mode_manager`) — the runner-mode
+# MANAGING SERVICE.
+#
+# Poll an org's GitHub Actions billing usage + budget and write the
+# AUTHORITATIVE org Actions variable `CI_RUNNER_MODE ∈ {github-hosted,
+# self-hosted}` that S1's `reusable-choose-runner.yml` consumes. While included
+# minutes remain above a buffer AND the org is under its billing budget, the
+# org rides free GitHub-hosted minutes (`github-hosted`); as minutes near
+# exhaustion — or the budget is reached — it flips to `self-hosted` (the RC4
+# capability-label fleet), and flips back after the monthly reset restores the
+# allowance. See reprobuild-specs/Sovereign-CI-Fleet.md ("The runner-mode
+# switch") and metacraft-dev-guidelines/policies/ci-workflow-standards.md.
+#
+# Campaign: Sovereign-CI-Fleet-And-GOSTI-Substrate, milestone S2. This is the
+# evolution of RD3's `reusable-sync-hosted-minutes.yml`: that cron wrote the
+# advisory `GH_HOSTED_OK` signal from remaining minutes ALONE; S2 writes the
+# authoritative `CI_RUNNER_MODE` from usage AND budget, fail-safe, with
+# Prometheus signals. The two coexist (GH_HOSTED_OK stays a lower-priority RD3
+# fallback beneath the switch), so this is a NEW file rather than an edit.
+#
+# FAIL-SAFE (non-negotiable): on ANY billing read/parse/HTTP error, unreachable
+# endpoint, or ambiguous data, the decision resolves to `self-hosted`. The org
+# budget is a HARD $0 with prevent_further_usage (RD1), so the fleet must never
+# be left in a billable mode by an outage in this service — self-hosted is the
+# only safe default.
+#
+# This is a REUSABLE workflow (workflow_call). A `schedule:` trigger must live
+# in the repo it runs in, so an ops repo wraps it, per org:
+#
+#   # .github/workflows/manage-runner-mode.yml  (in an ops repo, per org)
+#   name: manage-runner-mode
+#   on:
+#     schedule: [{ cron: '*/30 * * * *' }]
+#     workflow_dispatch:
+#   jobs:
+#     manage:
+#       uses: metacraft-labs/devops-modules/.github/workflows/reusable-manage-runner-mode.yml@dev
+#       with:
+#         org: metacraft-labs
+#         min_minutes_remaining: 300
+#         included_minutes: 3000        # Team plan monthly allowance
+#         max_billed_amount: 0          # hard $0 cap; any overage -> self-hosted
+#         # metrics_textfile: /var/lib/node_exporter/textfile/ci-runner-mode.prom
+#       secrets:
+#         billing_token: ${{ secrets.ORG_BILLING_READ_TOKEN }}
+#         variables_token: ${{ secrets.ORG_VARIABLES_WRITE_TOKEN }}
+#
+# Tokens (operator prerequisite):
+#   * billing_token   — org billing READ. May be a GOVERNANCE-APP installation
+#                       token (org billing:read via the App — verified 2026-09-15
+#                       that an App install token drives the enhanced-billing
+#                       endpoint `GET /organizations/{org}/settings/billing/usage`
+#                       -> 200), or a classic PAT (admin:org). Reads the enhanced
+#                       usage endpoint for the billed-amount (budget) dimension
+#                       and the classic `/orgs/{org}/settings/billing/actions`
+#                       endpoint for the included/used-minutes dimension.
+#   * variables_token — org VARIABLES write (fine-grained: Organization
+#                       "Variables" read/write). Writes CI_RUNNER_MODE.
+#     GITHUB_TOKEN cannot do either, so both are required secrets.
+#
+# Prometheus signals (see the `metrics` step): a decision gauge, remaining
+# minutes, billed amount, a fail-safe flag, and a last-SUCCESS timestamp that is
+# the dead-man's-switch for a STUCK service (repeated billing-read failures stop
+# advancing it). Paging on staleness / persistent fail-safe is owned by the
+# alerting fleet — wire an alert against these series in
+# ../../modules/alertmanager-fleet-routing rather than here.
+
+name: manage-runner-mode
+
+on:
+  workflow_call:
+    inputs:
+      org:
+        description: 'The organization whose billing drives CI_RUNNER_MODE.'
+        type: string
+        required: true
+      min_minutes_remaining:
+        description: 'Flip to self-hosted once remaining included minutes drop below this buffer.'
+        type: number
+        default: 300
+      included_minutes:
+        description: >-
+          Monthly included-minutes allowance for the plan (metacraft-labs Team =
+          3000). Used only if the classic billing endpoint omits it.
+        type: number
+        default: 3000
+      max_billed_amount:
+        description: >-
+          Hard billed-amount cap in USD for the current cycle. Once the org has
+          been billed MORE than this for Actions, flip to self-hosted (budget
+          dimension). Default 0 enforces the $0 policy: any overage flips.
+        type: number
+        default: 0
+      metrics_textfile:
+        description: >-
+          Optional node-exporter textfile-collector path to write the Prometheus
+          signals to (self-hosted runner with a textfile dir). Empty = print only.
+        type: string
+        default: ''
+      pushgateway_url:
+        description: 'Optional Prometheus Pushgateway base URL (alternative metrics sink).'
+        type: string
+        default: ''
+    secrets:
+      billing_token:
+        description: 'Org billing-READ token (governance-App install token or classic PAT).'
+        required: true
+      variables_token:
+        description: 'Org variables-WRITE token (may equal billing_token if it has both scopes).'
+        required: true
+    outputs:
+      mode:
+        description: 'The CI_RUNNER_MODE written this run: github-hosted or self-hosted.'
+        value: ${{ jobs.manage.outputs.mode }}
+      failsafe:
+        description: '"1" if the decision fell back to the fail-safe self-hosted default, else "0".'
+        value: ${{ jobs.manage.outputs.failsafe }}
+
+jobs:
+  manage:
+    # The poll itself is cheap and must always run for free: ubuntu-latest is a
+    # negligible slice of the included allowance.
+    runs-on: ubuntu-latest
+    outputs:
+      mode: ${{ steps.decide.outputs.mode }}
+      failsafe: ${{ steps.decide.outputs.failsafe }}
+    steps:
+      - id: decide
+        env:
+          GH_TOKEN: ${{ secrets.billing_token }}
+          ORG: ${{ inputs.org }}
+          MIN_REMAIN: ${{ inputs.min_minutes_remaining }}
+          INCLUDED_DEFAULT: ${{ inputs.included_minutes }}
+          MAX_BILLED: ${{ inputs.max_billed_amount }}
+        run: |
+          # No `set -e` at top level: a compute failure must NOT fail the job,
+          # it must resolve fail-safe to self-hosted. Errors are trapped by the
+          # subshell `set -e` inside compute() and surfaced as a non-zero status.
+          set -uo pipefail
+
+          # compute: read billing, echo "remaining|billed" or return non-zero on
+          # ANY unreachable/parse/ambiguous condition (subshell `set -e` + `jq
+          # -e` make every failure a non-zero return -> the caller fails safe).
+          compute() {
+            set -e
+            local aj included used remaining uj billed
+            # Minutes dimension — classic actions endpoint (RD3's proven read).
+            aj="$(gh api -H "X-GitHub-Api-Version: 2022-11-28" \
+              "/orgs/${ORG}/settings/billing/actions")"
+            included="$(printf '%s' "$aj" | jq -e -r '.included_minutes // empty')"
+            used="$(printf '%s' "$aj" | jq -e -r '.total_minutes_used')"
+            # included_minutes may be absent on some plans -> fall back to input.
+            [ -n "$included" ] || included="$INCLUDED_DEFAULT"
+            # Both must be non-negative integers, else the data is ambiguous.
+            [ "$included" -ge 0 ] 2>/dev/null || return 1
+            [ "$used" -ge 0 ] 2>/dev/null || return 1
+            remaining=$(( included - used ))
+            # Budget dimension — enhanced usage endpoint (works with a
+            # governance-App install token). Sum netAmount over Actions items =
+            # USD billed this cycle (0 while inside the free allowance).
+            uj="$(gh api -H "X-GitHub-Api-Version: 2022-11-28" \
+              "/organizations/${ORG}/settings/billing/usage")"
+            billed="$(printf '%s' "$uj" \
+              | jq -e -r '[.usageItems[]? | select(.product=="Actions") | .netAmount] | add // 0')"
+            printf '%s|%s\n' "$remaining" "$billed"
+          }
+
+          # NB: call compute in a PLAIN subshell assignment (not `if compute`):
+          # bash disables `set -e` inside a function invoked in a tested context
+          # (an `if`/`&&`/`||` condition), which would swallow a mid-compute
+          # billing failure. A standalone `$( set -e; compute )` keeps set -e
+          # live, and its exit status is captured explicitly below.
+          result="$(set -e; compute)"
+          rc=$?
+          if [ "$rc" -eq 0 ]; then
+            remaining="${result%%|*}"
+            billed="${result#*|}"
+            failsafe=0
+            if awk -v b="$billed" -v cap="$MAX_BILLED" 'BEGIN { exit !(b > cap) }'; then
+              mode="self-hosted"
+              reason="over budget: billed ${billed} USD > ${MAX_BILLED} USD cap"
+            elif [ "$remaining" -lt "$MIN_REMAIN" ]; then
+              mode="self-hosted"
+              reason="near exhaustion: ${remaining}m remaining < ${MIN_REMAIN}m buffer"
+            else
+              mode="github-hosted"
+              reason="healthy: ${remaining}m remaining >= ${MIN_REMAIN}m buffer, billed ${billed} USD <= ${MAX_BILLED} USD cap"
+            fi
+          else
+            mode="self-hosted"
+            remaining=-1
+            billed=-1
+            failsafe=1
+            reason="fail-safe: billing unreachable / unparseable / ambiguous"
+          fi
+
+          {
+            printf 'mode=%s\n' "$mode"
+            printf 'remaining=%s\n' "$remaining"
+            printf 'billed=%s\n' "$billed"
+            printf 'failsafe=%s\n' "$failsafe"
+          } >> "$GITHUB_OUTPUT"
+          printf 'manage-runner-mode: org=%s -> CI_RUNNER_MODE=%s (%s)\n' \
+            "$ORG" "$mode" "$reason"
+
+      - id: metrics
+        env:
+          ORG: ${{ inputs.org }}
+          MODE: ${{ steps.decide.outputs.mode }}
+          REMAINING: ${{ steps.decide.outputs.remaining }}
+          BILLED: ${{ steps.decide.outputs.billed }}
+          FAILSAFE: ${{ steps.decide.outputs.failsafe }}
+          TEXTFILE: ${{ inputs.metrics_textfile }}
+          PUSHGATEWAY_URL: ${{ inputs.pushgateway_url }}
+        run: |
+          set -uo pipefail
+          now="$(date +%s)"
+          if [ "$MODE" = "self-hosted" ]; then self=1; else self=0; fi
+
+          # last-SUCCESS timestamp is the STUCK-state dead-man's-switch: only a
+          # non-fail-safe run advances it, so repeated billing-read failures let
+          # it go stale for the alerting fleet to page on. Preserve the previous
+          # value across a fail-safe run rather than resetting it to zero.
+          last_success=0
+          if [ -n "$TEXTFILE" ] && [ -f "$TEXTFILE" ]; then
+            prev="$(grep '^ci_runner_mode_last_success_timestamp_seconds' "$TEXTFILE" \
+              | awk '{ print $2 }' | tail -1)"
+            [ -n "${prev:-}" ] && last_success="$prev"
+          fi
+          if [ "$FAILSAFE" = "0" ]; then last_success="$now"; fi
+
+          render() {
+            printf '# HELP ci_runner_mode_self_hosted 1 if CI_RUNNER_MODE is self-hosted, 0 if github-hosted.\n'
+            printf '# TYPE ci_runner_mode_self_hosted gauge\n'
+            printf 'ci_runner_mode_self_hosted{org="%s"} %s\n' "$ORG" "$self"
+            printf '# HELP ci_runner_mode The active runner mode (label = the written value).\n'
+            printf '# TYPE ci_runner_mode gauge\n'
+            printf 'ci_runner_mode{org="%s",mode="%s"} 1\n' "$ORG" "$MODE"
+            printf '# HELP ci_runner_mode_included_minutes_remaining Remaining included Actions minutes (-1 on fail-safe).\n'
+            printf '# TYPE ci_runner_mode_included_minutes_remaining gauge\n'
+            printf 'ci_runner_mode_included_minutes_remaining{org="%s"} %s\n' "$ORG" "$REMAINING"
+            printf '# HELP ci_runner_mode_billed_amount_usd USD billed for Actions this cycle (-1 on fail-safe).\n'
+            printf '# TYPE ci_runner_mode_billed_amount_usd gauge\n'
+            printf 'ci_runner_mode_billed_amount_usd{org="%s"} %s\n' "$ORG" "$BILLED"
+            printf '# HELP ci_runner_mode_failsafe_active 1 if this run fell back to the fail-safe self-hosted default.\n'
+            printf '# TYPE ci_runner_mode_failsafe_active gauge\n'
+            printf 'ci_runner_mode_failsafe_active{org="%s"} %s\n' "$ORG" "$FAILSAFE"
+            printf '# HELP ci_runner_mode_last_run_timestamp_seconds Unix time of the last poll (any outcome).\n'
+            printf '# TYPE ci_runner_mode_last_run_timestamp_seconds gauge\n'
+            printf 'ci_runner_mode_last_run_timestamp_seconds{org="%s"} %s\n' "$ORG" "$now"
+            printf '# HELP ci_runner_mode_last_success_timestamp_seconds Unix time of the last SUCCESSFUL billing read (stuck-state dead-man switch).\n'
+            printf '# TYPE ci_runner_mode_last_success_timestamp_seconds gauge\n'
+            printf 'ci_runner_mode_last_success_timestamp_seconds{org="%s"} %s\n' "$ORG" "$last_success"
+          }
+
+          if [ -n "$TEXTFILE" ]; then
+            render > "${TEXTFILE}.$$" && mv "${TEXTFILE}.$$" "$TEXTFILE"
+            printf 'manage-runner-mode: wrote Prometheus textfile %s\n' "$TEXTFILE"
+          elif [ -n "$PUSHGATEWAY_URL" ]; then
+            render | curl -sf --data-binary @- \
+              "${PUSHGATEWAY_URL}/metrics/job/manage_runner_mode/org/${ORG}"
+            printf 'manage-runner-mode: pushed Prometheus metrics to %s\n' "$PUSHGATEWAY_URL"
+          else
+            printf 'manage-runner-mode: no metrics sink configured; preview:\n'
+            render
+          fi
+
+      - name: Write CI_RUNNER_MODE org variable
+        env:
+          GH_TOKEN: ${{ secrets.variables_token }}
+          ORG: ${{ inputs.org }}
+          MODE: ${{ steps.decide.outputs.mode }}
+        run: |
+          set -euo pipefail
+          # create-or-update the org-visible variable (idempotent).
+          gh variable set CI_RUNNER_MODE --org "$ORG" --visibility all --body "$MODE"
+          printf 'manage-runner-mode: CI_RUNNER_MODE set to %s for org %s\n' "$MODE" "$ORG"
