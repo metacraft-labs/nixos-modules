@@ -95,10 +95,15 @@ cleanup() {
 trap cleanup EXIT
 
 # Fixture credentials, shaped so a substring search for one cannot accidentally
-# match the other or any ordinary text.
-GH_TOK="ghs_netrcWIREsuiteGITHUBtoken00000000000"
-ATTIC_TOK="eyJhbGciOiJIUzI1NiJ9.netrcWIREsuiteATTICtoken.sig0"
-STALE_TOK="eyJhbGciOiJIUzI1NiJ9.netrcWIREsuiteSTALEtoken.sig0"
+# match the other or any ordinary text -- and DELIBERATELY not shaped like a
+# real credential of any kind. An earlier revision used a JWT-looking
+# `eyJhbGciOiJIUzI1NiJ9.` prefix; on a GitHub runner the diagnostics for a
+# failing assertion came back as `expected [***], got [***]`, i.e. the log
+# scrubber ate exactly the two values a failure needs to show. A fixture that
+# cannot be printed cannot be diagnosed.
+GH_TOK="FIXTURE-github-4a1c9e2b7d3f6081"
+ATTIC_TOK="FIXTURE-attic-current-5b2d8f30c17e94a6"
+STALE_TOK="FIXTURE-attic-previous-job-9e4f1a7c26b0d385"
 ATTIC_HOST="cache.example.com"
 ATTIC_ENDPOINT_DEFAULT="https://${ATTIC_HOST}/"
 
@@ -368,12 +373,14 @@ else
 fi
 
 echo
-echo "== 4. a reused \$HOME: a stale cache entry must not shadow this job's =="
+echo "== 4. a reused \$HOME: a previous job's cache entry must not survive =="
 
-# Self-hosted runners in this org reuse \$HOME between jobs. curl takes the
-# FIRST matching `machine`, so a previous job's entry left in place would win
-# and this job would present a credential it was never given — observably
-# identical, from inside the job, to the 401 being fixed.
+# Self-hosted runners in this org reuse \$HOME between jobs, so a netrc this
+# job publishes can start life as the one the last job left. The property is
+# that the file this job hands to Nix carries no credential this job was not
+# given: an entry the owner has since rotated away is a credential presented
+# to the cache on every request, and which of two entries for one host wins
+# is not even a fixed answer — see the control at the end of this section.
 H4="$(fresh_home home-4)"
 {
 	printf 'machine %s password %s\n' "$ATTIC_HOST" "$STALE_TOK"
@@ -403,8 +410,21 @@ check "a stale entry spelled in another case is dropped too" \
 	"$(grep -c "$STALE_TOK" "$NIX_NETRC")" "0"
 
 # NEGATIVE CONTROL: the filter told to drop github.com only, which is what it
-# did before this change. The stale cache entry then survives, comes first, and
-# curl presents it.
+# did before this change. The previous job's cache entry then survives into the
+# file this job hands to Nix, alongside this job's own -- two credentials under
+# one machine name.
+#
+# THE ASSERTION IS ON THE FILE HERE, NOT ON THE WIRE, and that is a finding
+# rather than a convenience. An earlier revision asserted "curl then sends the
+# PREVIOUS job's token", on the usual claim that a netrc reader takes the FIRST
+# matching `machine`. Two curls agree with that; the curl on `ubuntu-latest`
+# does not, and that one assertion failed there while the other 53 passed. So
+# WHICH of two same-host entries is presented is a property of the client, not
+# of the format -- which makes a file carrying both strictly worse than either
+# bug alone: the credential the job presents depends on the curl Nix happens to
+# link against. The observed choice is PRINTED below rather than asserted, so
+# the log records it on every platform without pinning behaviour this
+# repository does not control.
 M_KEEP="$TMPROOT/mutant-keep-stale.sh"
 # The mutation arguments are literal lines of the target script, not expansions.
 # shellcheck disable=SC2016
@@ -415,9 +435,17 @@ printf 'machine %s password %s\n' "$ATTIC_HOST" "$STALE_TOK" >"$HMK/.config/nix/
 run_writer "$M_KEEP" "$HMK" SETUP_NIX_GITHUB_TOKEN="$GH_TOK" \
 	SETUP_NIX_ATTIC_TOKEN="$ATTIC_TOK" \
 	SETUP_NIX_ATTIC_ENDPOINT="$ATTIC_ENDPOINT_DEFAULT"
+check "CONTROL: without the drop, the PREVIOUS job's token survives into the file" \
+	"$(grep -c "$STALE_TOK" "$NIX_NETRC")" "1"
+check "CONTROL: and the host then carries two conflicting credentials" \
+	"$(grep -c "^machine ${ATTIC_HOST} password " "$NIX_NETRC")" "2"
 probe "$NIX_NETRC" "$ATTIC_HOST" "/codetracer/nix-cache-info"
-check "CONTROL: keeping the stale entry makes curl send the PREVIOUS job's token" \
-	"$CRED_PASS" "$STALE_TOK"
+CURL_ID="$(curl --version | head -n 1 | cut -d' ' -f1-2)"
+case "$CRED_PASS" in
+"$STALE_TOK") ok "CONTROL: the two-credential file presents one of them ($CURL_ID chose the FIRST entry, the previous job's)" ;;
+"$ATTIC_TOK") ok "CONTROL: the two-credential file presents one of them ($CURL_ID chose the LAST entry, this job's)" ;;
+*) bad "CONTROL: the two-credential file presents one of the two tokens" "it presented [$CRED_PASS]" ;;
+esac
 
 echo
 echo "== 5. a token that cannot be filed is a loud failure, never a silent one =="
