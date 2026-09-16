@@ -357,7 +357,18 @@ runs:
       # able to read /proc could see it.
       env:
         SETUP_NIX_GITHUB_TOKEN: ${{ inputs.nix-github-token }}
+        # The cache credential belongs here and not only in the Attic step
+        # below: that step runs `attic login`, which configures the Attic CLI
+        # for UPLOADING and writes nothing Nix reads. Nix reads netrc, and
+        # netrc is written here. Without this the private substituter declared
+        # two lines down is read ANONYMOUSLY, answers 401, and every path not
+        # on cache.nixos.org is built from source.
+        SETUP_NIX_ATTIC_TOKEN: ${{ inputs.attic-token }}
+        SETUP_NIX_ATTIC_ENDPOINT: ${{ inputs.attic-endpoint }}
+        SETUP_NIX_SUBSTITUTERS: ${{ inputs.substituters }}
       run: |
+        if [[ -n "${SETUP_NIX_ATTIC_TOKEN:-}" ]]; then echo "::add-mask::$SETUP_NIX_ATTIC_TOKEN"; fi
+
         mkdir -p $HOME/.config/nix
 
         cat << EOF > "$HOME/.config/nix/nix.conf"
@@ -397,10 +408,20 @@ runs:
         touch "$HOME/.config/nix/netrc"
         chmod 0600 "$HOME/.config/nix/netrc"
 
-        # `access-tokens` above only reaches Nix's OWN GitHub/GitLab fetchers
-        # (`github:` / `gitlab:` refs). A `type = "git"` input over https is
-        # fetched by shelling out to git, which never sees it — see the header
-        # of write-netrc.sh for the full reasoning and the real failure it fixes.
+        # Two credentials, one file, neither of which `access-tokens` above can
+        # carry:
+        #
+        #   * github.com — `access-tokens` only reaches Nix's OWN GitHub/GitLab
+        #     fetchers (`github:` / `gitlab:` refs). A `type = "git"` input over
+        #     https is fetched by shelling out to git, which never sees it.
+        #   * the private Attic substituter declared in `substituters` above —
+        #     nothing wrote a credential for it at all, so `nix-cache-info`
+        #     answered 401 and everything not on cache.nixos.org was built from
+        #     source.
+        #
+        # See the header of write-netrc.sh for both, and the real failures they
+        # fix. Contract suites: tests/write-netrc-test.sh (file semantics) and
+        # tests/netrc-wire-test.sh (what curl actually SENDS).
         bash "${{ github.action_path }}/write-netrc.sh"
 
     # Writing nix.conf is not the same as the setting being IN EFFECT, and the

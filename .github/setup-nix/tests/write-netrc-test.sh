@@ -682,7 +682,7 @@ if [[ "${SETUP_NIX_SKIP_WRITE_NETRC_MUTATIONS:-0}" != "1" ]]; then
   run_rejected_mutation \
     'stale GitHub credential retention' \
     'user netrc contains no old GitHub credential' \
-    's/dropping_github=1/dropping_github=0/'
+    's/dropping=1/dropping=0/'
   # This inserts a behavior-neutral probe before the real Bash parser. The
   # normal PATH can satisfy it; the deliberately sparse production analogue
   # must reject the reintroduced dependency by actually executing the mutant.
@@ -690,7 +690,7 @@ if [[ "${SETUP_NIX_SKIP_WRITE_NETRC_MUTATIONS:-0}" != "1" ]]; then
   run_rejected_mutation \
     'reintroduced pre-Nix awk dependency' \
     'runs successfully on a deliberately awk-free pre-Nix PATH' \
-    's@^    filter_existing_netrc < "$netrc" > "$temporary_file"$@    awk "BEGIN { exit 0 }"; &@'
+    's@^    filter_existing_netrc .*$@    awk "BEGIN { exit 0 }"; &@'
   run_rejected_mutation \
     'unterminated macdef acceptance' \
     'an unterminated macdef fails closed' \
@@ -706,7 +706,7 @@ if [[ "${SETUP_NIX_SKIP_WRITE_NETRC_MUTATIONS:-0}" != "1" ]]; then
   run_rejected_mutation \
     'omission of the git-visible user netrc' \
     'user netrc contains exactly one github.com stanza' \
-    '/^write_netrc "$user_netrc"$/d'
+    '/^  write_netrc "$user_netrc" 0$/d'
   run_rejected_mutation \
     'disabled failure propagation' \
     'a forced mkdir failure returns nonzero' \
