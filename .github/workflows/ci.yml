@@ -163,35 +163,6 @@ jobs:
         shell: bash
         run: bash .github/setup-nix/tests/write-netrc-test.sh
 
-  # What the netrc MAKES CURL SEND, which is a different claim from what the
-  # netrc contains — and the only one that can see the defect this guards.
-  # A `machine` name carrying a port or a path is well-formed netrc that matches
-  # nothing, so it is observationally identical to a missing entry: a grep-only
-  # suite goes green on the exact bug. The suite runs the real curl against a
-  # local origin that journals the credential each request arrived with.
-  #
-  # `ubuntu-latest` deliberately, not a self-hosted class: the suite needs only
-  # python3 and curl (both stock on that image), it must not queue behind the
-  # Linux pool, and this repository is public so a standard hosted runner is
-  # free — the condition `reusable-public-runner-guard.yml` states.
-  test-setup-nix-netrc-wire:
-    name: Validate the netrc on the wire
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6.0.2
-
-      - name: Run the netrc wire contract test
-        shell: bash
-        run: bash .github/setup-nix/tests/netrc-wire-test.sh
-
-      # The file-semantics half. It needs no Nix either, and running both here
-      # means a change to write-netrc.sh is answered by both suites without
-      # waiting on self-hosted capacity.
-      - name: Run the netrc file contract test
-        shell: bash
-        run: bash .github/setup-nix/tests/write-netrc-test.sh
-
   test-mcl-secret-integration:
     runs-on: [self-hosted, linux, x64]
     steps:

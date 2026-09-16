@@ -421,7 +421,9 @@ runs:
         #
         # See the header of write-netrc.sh for both, and the real failures they
         # fix. Contract suites: tests/write-netrc-test.sh (file semantics) and
-        # tests/netrc-wire-test.sh (what curl actually SENDS).
+        # tests/netrc-wire-test.sh (what curl actually SENDS; run by the
+        # `setup-nix netrc` workflow, which does not share ci.yml's concurrency
+        # group and so is not blocked behind the self-hosted pool).
         bash "${{ github.action_path }}/write-netrc.sh"
 
     # Writing nix.conf is not the same as the setting being IN EFFECT, and the
